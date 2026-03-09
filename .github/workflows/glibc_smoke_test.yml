@@ -2,6 +2,13 @@ name: GLIBC Smoke Test
 # Testing GLIBC compatibility
 
 on:
+  # Seed the GitHub Actions cache on master so PRs get cache hits on first run
+  # Reasoning: cache are not shared across branches, but feature branches can read from the default branch cache
+  # So we need to run the build on master to populate the cache.
+  push:
+    branches: [ master ]
+    paths:
+      - '**/pom.xml'
   pull_request:
     types: [ synchronize, opened, reopened, edited ]
     paths:
@@ -35,17 +42,34 @@ jobs:
           tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
           ldd /__e/node20/bin/node
       - uses: actions/checkout@v4
+      - name: Cache JDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
+          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'maven'
+      - name: Cache Maven installation and repository
+        id: maven-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/apache-maven-3.9.9
+            /root/.m2/repository
+          key: maven-3.9.9-repo-${{ runner.arch }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-3.9.9-repo-${{ runner.arch }}-
       - name: Install Apache Maven
+        if: steps.maven-cache.outputs.cache-hit != 'true'
         # Amazon Linux 2 has too old version of Maven, so we need to install a newer one
         run: |
-          wget https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.6/apache-maven-3.9.6-bin.tar.gz
-          tar xf apache-maven-3.9.6-bin.tar.gz -C /opt
-          ln -sf /opt/apache-maven-3.9.6 /opt/maven
+          wget https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.tar.gz
+          tar xf apache-maven-3.9.9-bin.tar.gz -C /opt
+      - name: Setup Maven
+        run: |
+          ln -sf /opt/apache-maven-3.9.9 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
       - name: Build distribution
@@ -79,20 +103,37 @@ jobs:
         run: dnf install -y curl zip unzip git bash wget
       - name: Print GLIBC version
         run: ldd --version
-      - name: Install Maven - the version in AlmaLinux 8 is too old
-        run: |
-          cd /opt
-          wget https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
-          unzip apache-maven-3.9.9-bin.zip
-          ln -s /opt/apache-maven-3.9.9 /opt/maven
-          echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
-          echo "/opt/maven/bin" >> $GITHUB_PATH
       - uses: actions/checkout@v4
+      - name: Cache JDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
+          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'maven'
+      - name: Cache Maven installation and repository
+        id: maven-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/apache-maven-3.9.9
+            /root/.m2/repository
+          key: maven-3.9.9-repo-${{ runner.arch }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-3.9.9-repo-${{ runner.arch }}-
+      - name: Install Maven
+        if: steps.maven-cache.outputs.cache-hit != 'true'
+        # AlmaLinux 8 has too old version of Maven, so we need to install a newer one
+        run: |
+          wget https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.tar.gz
+          tar xf apache-maven-3.9.9-bin.tar.gz -C /opt
+      - name: Setup Maven
+        run: |
+          ln -sf /opt/apache-maven-3.9.9 /opt/maven
+          echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
+          echo "/opt/maven/bin" >> $GITHUB_PATH
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
         env:

@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.TelemetryJob;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.test.AbstractCairoTest;
@@ -32,6 +34,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY;
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 @SuppressWarnings("SameParameterValue")
 public class WalTelemetryTest extends AbstractCairoTest {
@@ -39,6 +42,45 @@ public class WalTelemetryTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         setProperty(CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 8);
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testTelemetryWalEmptyReplaceCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1000);
+            try (TelemetryJob telemetryJob = new TelemetryJob(engine)) {
+                String tableName = testName.getMethodName();
+                execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                setCurrentMicros(2000);
+                execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z'), (2, '2022-02-24T00:00:01.000000Z')");
+
+                // empty replace range commit (0 rows) — minTimestamp and maxTimestamp must be NULL
+                setCurrentMicros(3000);
+                TableToken tt = engine.verifyTableName(tableName);
+                try (WalWriter ww = engine.getWalWriter(tt)) {
+                    ww.commitWithParams(
+                            1645660800000000L, // 2022-02-24T00:00:00.000000Z
+                            1645660802000001L, // 2022-02-24T00:00:02.000001Z
+                            WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+
+                setCurrentMicros(4000);
+                drainWalQueue();
+
+                setCurrentMicros(5000);
+                telemetryJob.runSerially();
+            }
+
+            CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
+            // event 109 = WAL_TXN_COMMITTED: first has 2 rows with timestamps, second has 0 rows with NULL timestamps
+            assertSql("""
+                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
+                    1970-01-01T00:00:00.005000Z\t109\t5\t1\t1\t2\t2\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:01.000000Z
+                    1970-01-01T00:00:00.005000Z\t109\t5\t1\t2\t0\t0\t0.0\t\t
+                    """, sysPrefix + TelemetryWalTask.TABLE_NAME + " WHERE event = 109");
+        });
     }
 
     @Test
@@ -82,11 +124,13 @@ public class WalTelemetryTest extends AbstractCairoTest {
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             assertSql("""
-                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency
-                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0
-                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0
-                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0
-                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0
+                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
+                    1970-01-01T00:00:00.004000Z\t109\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t109\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
                     """, sysPrefix + TelemetryWalTask.TABLE_NAME);
 
             assertSql("""

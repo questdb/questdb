@@ -128,17 +128,19 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1 // used for single-threaded exec plans
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
+                        1 // used for single-threaded exec plans,
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
             }
         }
-        return pageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return pageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     /**

@@ -1398,6 +1398,60 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with keyed WINDOW JOIN and multiple slave partitions.
+        // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-03T12:00:00.000000Z', 'TSLA', 100.0),
+                                ('2024-01-03T18:00:00.000000Z', 'AMZN', 200.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 'TSLA', 10.0),
+                                ('2024-01-02T06:00:00.000000Z', 'AMZN', 20.0),
+                                ('2024-01-03T06:00:00.000000Z', 'TSLA', 30.0),
+                                ('2024-01-03T15:00:00.000000Z', 'AMZN', 40.0)
+                            """
+            );
+
+            // Window covers all data, so prevailing has no effect.
+            // TSLA at day3 12:00: window matches TSLA in [~Dec30, day3 12:00+1s] → 10.0 + 30.0 = 40.0
+            // AMZN at day3 18:00: window matches AMZN in [~Dec30, day3 18:00+1s] → 20.0 + 40.0 = 60.0
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\twindow_price
+                            TSLA\t100.0\t40.0
+                            AMZN\t200.0\t60.0
+                            """,
+                    "SELECT t.sym, t.price, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
+                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMasterFilterLimit() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -1842,6 +1896,60 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
                     "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with no-key WINDOW JOIN and multiple slave partitions.
+        // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-03T12:00:00.000000Z', 100.0),
+                                ('2024-01-03T18:00:00.000000Z', 200.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 10.0),
+                                ('2024-01-02T06:00:00.000000Z', 20.0),
+                                ('2024-01-03T06:00:00.000000Z', 30.0),
+                                ('2024-01-03T15:00:00.000000Z', 40.0)
+                            """
+            );
+
+            // Window covers all data, so prevailing has no effect.
+            // Trade at day3 12:00: prices in [~Dec30, day3 12:00+1s] → 10.0 + 20.0 + 30.0 = 60.0
+            // Trade at day3 18:00: prices in [~Dec30, day3 18:00+1s] → 10.0 + 20.0 + 30.0 + 40.0 = 100.0
+            assertQueryNoLeakCheck(
+                    """
+                            price\twindow_price
+                            100.0\t60.0
+                            200.0\t100.0
+                            """,
+                    "SELECT t.price, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
+                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts",
+                    null,
                     true,
                     false
             );

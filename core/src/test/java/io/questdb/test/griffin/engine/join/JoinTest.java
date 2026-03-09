@@ -2864,6 +2864,77 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerPostJoinAndConstFilter() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6762
+        // When WHERE has both a column-referencing condition (postJoinWhereClause)
+        // and a non-column, non-constant condition (constWhereClause), the code
+        // generator must combine them into a single filter rather than nesting
+        // two FilteredRecordCursorFactory instances (which triggers an assertion).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1
+                            1\t2
+                            1\t3
+                            2\t3
+                            """,
+                    "SELECT T1.val, T2.val FROM t T1 " +
+                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                            "WHERE T1.val > 0 AND NOW() = NOW()",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinMultipleJoinsFilter() throws Exception {
+        // When multiple joins each have a post-join WHERE clause and parallel filter
+        // is disabled, successive iterations of the join loop must combine filters
+        // rather than nesting FilteredRecordCursorFactory instances.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (10, '2024-01-02T00:00:00.000000Z'),
+                    (20, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (100, '2024-01-03T00:00:00.000000Z'),
+                    (200, '2024-01-04T00:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1\tval2
+                            1\t10\t100
+                            1\t10\t200
+                            1\t20\t200
+                            2\t20\t200
+                            """,
+                    "SELECT a.val, b.val, c.val FROM t1 a " +
+                            "INNER JOIN t2 b ON a.ts < b.ts " +
+                            "INNER JOIN t3 c ON b.ts < c.ts " +
+                            "WHERE a.val + b.val > 5 AND b.val + c.val > 50",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
     public void testJoinInnerTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """

@@ -127,7 +127,7 @@ pub type QdbMetaSchema = Vec<QdbMetaCol>;
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QdbMetaV1 {
     version: U32Const<1>,
-    pub(crate) schema: QdbMetaSchema,
+    pub schema: QdbMetaSchema,
 }
 
 impl QdbMetaV1 {
