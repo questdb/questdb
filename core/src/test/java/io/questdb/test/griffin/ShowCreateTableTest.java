@@ -281,6 +281,21 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCompressionWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, s SYMBOL PARQUET COMPRESSION ZSTD) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ts SYMBOL PARQUET COMPRESSION zstd
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
     public void testParquetCompressionUncompressed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET COMPRESSION UNCOMPRESSED) TIMESTAMP(ts) PARTITION BY DAY");

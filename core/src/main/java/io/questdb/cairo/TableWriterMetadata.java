@@ -283,6 +283,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.getReplacingIndex(),
                 oldMeta.isSymbolCacheFlag()
         );
+        newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 
