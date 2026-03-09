@@ -3,6 +3,8 @@
 //! `RleDictionaryDecoder` switches between these iterator shapes when it moves
 //! across run boundaries in a hybrid-RLE stream.
 
+#![allow(clippy::should_implement_trait)]
+
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::plain::BOOLEAN_BITMAP_LUT;

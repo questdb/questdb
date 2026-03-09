@@ -324,6 +324,36 @@ public class CopyExportTest extends AbstractCairoTest {
                 69,
                 "invalid parquet version: 3, expected 1 or 2"
         );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 0;",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 1;",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '1.5';",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '-0.1';",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp abc;",
+                70,
+                "bad number"
+        );
     }
 
     @Test
@@ -1945,6 +1975,93 @@ public class CopyExportTest extends AbstractCairoTest {
                     "copy (INSERT INTO reject_non_select_test SELECT * FROM reject_non_select_test) to 'test_table' with format parquet;",
                     6,
                     "table and column names that are SQL keywords have to be enclosed in double quotes, such as"
+            );
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING, z DOUBLE)");
+            execute("INSERT INTO test_table VALUES (1, 'hello', 1.5), (2, 'world', 2.5)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'bloom_cols' with format parquet bloom_filter_columns 'x,z'", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_cols.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("""
+                                        x\ty\tz
+                                        1\thello\t1.5
+                                        2\tworld\t2.5
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_cols.parquet') ORDER BY x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterColumnsAndFpp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING, z DOUBLE)");
+            execute("INSERT INTO test_table VALUES (1, 'hello', 1.5), (2, 'world', 2.5)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'bloom_both' with format parquet bloom_filter_columns 'x,z' bloom_filter_fpp '0.05'", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_both.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("""
+                                        x\ty\tz
+                                        1\thello\t1.5
+                                        2\tworld\t2.5
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_both.parquet') ORDER BY x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterFpp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING)");
+            execute("INSERT INTO test_table VALUES (1, 'test')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'bloom_fpp' with format parquet bloom_filter_fpp '0.01'", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_fpp.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("x\ty\n1\ttest\n",
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_fpp.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterNonExistentColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING)");
+            execute("INSERT INTO test_table VALUES (1, 'test')");
+            assertException(
+                    "copy test_table to 'bloom_bad_col' with format parquet bloom_filter_columns 'x,nonexistent'",
+                    79,
+                    "bloom_filter_columns contains non-existent column: nonexistent"
             );
         });
     }

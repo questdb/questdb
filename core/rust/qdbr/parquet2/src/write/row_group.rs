@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "async")]
 use futures::AsyncWrite;
@@ -75,6 +77,7 @@ fn compute_num_rows(columns: &[(ColumnChunk, Vec<PageWriteSpec>)]) -> Result<i64
         .unwrap_or(Ok(0))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn write_row_group<
     'a,
     W,
@@ -86,18 +89,27 @@ pub fn write_row_group<
     columns: DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>,
     sorting_columns: &Option<Vec<SortingColumn>>,
     ordinal: usize,
+    bloom_filter_fpp: f64,
+    bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
 ) -> std::result::Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64), E>
 where
     W: Write,
     E: std::error::Error + From<Error>,
 {
-    let column_iter = descriptors.iter().zip(columns);
+    let column_iter = descriptors.iter().zip(columns).zip(bloom_hashes.iter());
 
     let initial = offset;
     let columns = column_iter
-        .map(|(descriptor, page_iter)| {
-            let (column, page_specs, size) =
-                write_column_chunk(writer, offset, descriptor, page_iter?)?;
+        .map(|((descriptor, page_iter), bloom)| {
+            let bloom_ref = bloom.as_ref().map(|arc| arc.as_ref());
+            let (column, page_specs, size) = write_column_chunk(
+                writer,
+                offset,
+                descriptor,
+                page_iter?,
+                bloom_filter_fpp,
+                bloom_ref,
+            )?;
             offset += size;
             Ok((column, page_specs))
         })
@@ -153,19 +165,29 @@ pub async fn write_row_group_async<
     columns: DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>,
     sorting_columns: &Option<Vec<SortingColumn>>,
     ordinal: usize,
+    bloom_filter_fpp: f64,
+    bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
 ) -> Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64)>
 where
     W: AsyncWrite + Unpin + Send,
     Error: From<E>,
     E: std::error::Error,
 {
-    let column_iter = descriptors.iter().zip(columns);
+    let column_iter = descriptors.iter().zip(columns).zip(bloom_hashes.iter());
 
     let initial = offset;
     let mut columns = vec![];
-    for (descriptor, page_iter) in column_iter {
-        let (column, page_specs, size) =
-            write_column_chunk_async(writer, offset, descriptor, page_iter?).await?;
+    for ((descriptor, page_iter), bloom) in column_iter {
+        let bloom_ref = bloom.as_ref().map(|arc| arc.as_ref());
+        let (column, page_specs, size) = write_column_chunk_async(
+            writer,
+            offset,
+            descriptor,
+            page_iter?,
+            bloom_filter_fpp,
+            bloom_ref,
+        )
+        .await?;
         offset += size;
         columns.push((column, page_specs));
     }

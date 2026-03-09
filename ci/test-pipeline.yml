@@ -271,7 +271,11 @@ stages:
               for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
                 OBJECT_ARGS+=(--object "$rust_test_object")
               done
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
+              if [ ${#OBJECT_ARGS[@]} -le 1 ]; then
+                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
+                exit 1
+              fi
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work|/home/vsts/work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
                 exit 1
@@ -283,6 +287,7 @@ stages:
               llvm-cov export \
               --format=lcov \
               --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              $PATH_EQUIV_ARGS \
               "${OBJECT_ARGS[@]}" \
               --instr-profile=questdbr.profdata \
               > questdbr.lcov.dat
