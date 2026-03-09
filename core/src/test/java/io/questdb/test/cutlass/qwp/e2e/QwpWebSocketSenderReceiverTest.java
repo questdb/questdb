@@ -672,6 +672,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
 
+                serverMain.awaitTable("ws_autoflush_bytes");
                 serverMain.assertSql("select count() from ws_autoflush_bytes", "count\n20\n");
             }
         });
