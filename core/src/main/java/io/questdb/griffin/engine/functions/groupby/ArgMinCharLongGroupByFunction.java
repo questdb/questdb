@@ -49,7 +49,7 @@ public class ArgMinCharLongGroupByFunction extends CharFunction implements Group
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long key = keyArg.getLong(record);
         if (key == Numbers.LONG_NULL) {
-            mapValue.putChar(valueIndex, (char) 0);
+            mapValue.putChar(valueIndex, Numbers.CHAR_NULL);
             mapValue.putLong(valueIndex + 1, Numbers.LONG_NULL);
         } else {
             mapValue.putChar(valueIndex, valueArg.getChar(record));
@@ -132,7 +132,7 @@ public class ArgMinCharLongGroupByFunction extends CharFunction implements Group
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putChar(valueIndex, (char) 0);
+        mapValue.putChar(valueIndex, Numbers.CHAR_NULL);
         mapValue.putLong(valueIndex + 1, Numbers.LONG_NULL);
     }
 

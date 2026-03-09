@@ -44,6 +44,21 @@ public class ArgMaxCharTimestampGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testArgMaxEmptyTable() throws SqlException {
+        execute("create table tab (value char, key timestamp)");
+        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+        execute("create table tab (value char, key timestamp)");
+        execute("insert into tab values (null, '2023-01-05T00:00:00.000000Z')");
+        execute("insert into tab values ('X', null)");
+        execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
+        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_char() value, cast(null as timestamp) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
@@ -94,6 +109,15 @@ public class ArgMaxCharTimestampGroupByFunctionFactoryTest extends AbstractCairo
         execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('Z', '2023-01-02T00:00:00.000000Z')");
         assertSql("arg_max\nY\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMaxTieBreaking() throws SqlException {
+        execute("create table tab (value char, key timestamp)");
+        execute("insert into tab values ('X', '2023-01-03T00:00:00.000000Z')");
+        execute("insert into tab values ('Y', '2023-01-03T00:00:00.000000Z')");
+        execute("insert into tab values ('Z', '2023-01-01T00:00:00.000000Z')");
+        assertSql("arg_max\nX\n", "select arg_max(value, key) from tab");
     }
 
     @Test

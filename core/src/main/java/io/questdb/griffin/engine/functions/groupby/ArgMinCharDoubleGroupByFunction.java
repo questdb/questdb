@@ -49,7 +49,7 @@ public class ArgMinCharDoubleGroupByFunction extends CharFunction implements Gro
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         double key = keyArg.getDouble(record);
         if (Numbers.isNull(key)) {
-            mapValue.putChar(valueIndex, (char) 0);
+            mapValue.putChar(valueIndex, Numbers.CHAR_NULL);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
         } else {
             mapValue.putChar(valueIndex, valueArg.getChar(record));
@@ -132,7 +132,7 @@ public class ArgMinCharDoubleGroupByFunction extends CharFunction implements Gro
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putChar(valueIndex, (char) 0);
+        mapValue.putChar(valueIndex, Numbers.CHAR_NULL);
         mapValue.putDouble(valueIndex + 1, Double.NaN);
     }
 

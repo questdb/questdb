@@ -44,6 +44,21 @@ public class ArgMaxCharLongGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testArgMaxEmptyTable() throws SqlException {
+        execute("create table tab (value char, key long)");
+        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+        execute("create table tab (value char, key long)");
+        execute("insert into tab values (null, 500)");
+        execute("insert into tab values ('X', null)");
+        execute("insert into tab values ('Y', 300)");
+        assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
     public void testArgMaxParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_char() value, cast(null as long) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
@@ -94,6 +109,15 @@ public class ArgMaxCharLongGroupByFunctionFactoryTest extends AbstractCairoTest 
         execute("insert into tab values ('Y', 300)");
         execute("insert into tab values ('Z', 200)");
         assertSql("arg_max\nY\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMaxTieBreaking() throws SqlException {
+        execute("create table tab (value char, key long)");
+        execute("insert into tab values ('X', 300)");
+        execute("insert into tab values ('Y', 300)");
+        execute("insert into tab values ('Z', 100)");
+        assertSql("arg_max\nX\n", "select arg_max(value, key) from tab");
     }
 
     @Test

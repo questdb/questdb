@@ -44,6 +44,21 @@ public class ArgMinCharDoubleGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
+    public void testArgMinEmptyTable() throws SqlException {
+        execute("create table tab (value char, key double)");
+        assertSql("arg_min\n\n", "select arg_min(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMinMixedNullValueAndNullKey() throws SqlException {
+        execute("create table tab (value char, key double)");
+        execute("insert into tab values (null, 1.0)");
+        execute("insert into tab values ('X', null)");
+        execute("insert into tab values ('Y', 3.0)");
+        assertSql("arg_min\n\n", "select arg_min(value, key) from tab");
+    }
+
+    @Test
     public void testArgMinParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_char() value, cast(null as double) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
@@ -94,6 +109,15 @@ public class ArgMinCharDoubleGroupByFunctionFactoryTest extends AbstractCairoTes
         execute("insert into tab values ('Y', 3.0)");
         execute("insert into tab values ('Z', 2.0)");
         assertSql("arg_min\nX\n", "select arg_min(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMinTieBreaking() throws SqlException {
+        execute("create table tab (value char, key double)");
+        execute("insert into tab values ('X', 5.0)");
+        execute("insert into tab values ('Y', 1.0)");
+        execute("insert into tab values ('Z', 1.0)");
+        assertSql("arg_min\nY\n", "select arg_min(value, key) from tab");
     }
 
     @Test
