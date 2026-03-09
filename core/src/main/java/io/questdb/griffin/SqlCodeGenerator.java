@@ -73,8 +73,8 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -257,10 +257,12 @@ import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -5704,6 +5706,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
                         ) {
                             return new LongSortedLightRecordCursorFactory(
+                                    configuration,
+                                    orderedMetadata,
+                                    recordCursorFactory,
+                                    listColumnFilterA.copy()
+                            );
+                        }
+
+                        if (SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                            return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
                                     recordCursorFactory,

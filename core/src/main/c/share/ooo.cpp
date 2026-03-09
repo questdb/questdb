@@ -63,6 +63,36 @@ struct long_3x {
     }
 };
 
+struct long_4x {
+    uint64_t l1;
+    uint64_t l2;
+    uint64_t l3;
+    uint64_t l4;
+
+    bool operator<=(const long_4x &other) const {
+        if (l1 != other.l1) return l1 < other.l1;
+        if (l2 != other.l2) return l2 < other.l2;
+        if (l3 != other.l3) return l3 < other.l3;
+        return l4 <= other.l4;
+    }
+};
+
+struct long_5x {
+    uint64_t l1;
+    uint64_t l2;
+    uint64_t l3;
+    uint64_t l4;
+    uint64_t l5;
+
+    bool operator<=(const long_5x &other) const {
+        if (l1 != other.l1) return l1 < other.l1;
+        if (l2 != other.l2) return l2 < other.l2;
+        if (l3 != other.l3) return l3 < other.l3;
+        if (l4 != other.l4) return l4 < other.l4;
+        return l5 <= other.l5;
+    }
+};
+
 inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
                              const uint64_t sizeB, index_t *dest, int64_t minValue, uint16_t sh) {
     MM_PREFETCH_T0(counts);
@@ -1228,6 +1258,16 @@ Java_io_questdb_std_Vect_sort128BitAscInPlace(JNIEnv *env, jclass cl, jlong pLon
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_sort4LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    quick_sort_long_index_asc_in_place<long_4x>(reinterpret_cast<long_4x *>(pLong), 0, count - 1);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_sort5LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    quick_sort_long_index_asc_in_place<long_5x>(reinterpret_cast<long_5x *>(pLong), 0, count - 1);
 }
 
 JNIEXPORT void JNICALL
