@@ -49,6 +49,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
@@ -190,50 +191,31 @@ public class IndexSuiteBenchmark {
         double readMs;
     }
 
-    private static FormatResult runFormat(
-            Format format,
-            CairoConfiguration config,
-            String dir,
-            int[] keyAssignment,
-            int valsPerKey,
-            long rowOffset,
-            int[] readKeys
-    ) {
-        FormatResult fr = new FormatResult();
-
-        // Write phase
-        long writeT0 = System.nanoTime();
-        switch (format) {
-            case LEGACY:
-                createLegacyIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
-                break;
-            case DELTA:
-                createDeltaIndex(config, dir, keyAssignment, rowOffset);
-                break;
-            case FOR:
-                createFORIndex(config, dir, keyAssignment, rowOffset);
-                break;
-            case LZ4:
-                createLZ4Index(config, dir, keyAssignment, valsPerKey, rowOffset);
-                break;
-            case FSST:
-                createFSSTIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
-                break;
-            case BP:
-                createBPIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
-                break;
+    private static void createBPIndex(CairoConfiguration config, String dir, int[] keyAssignment, long rowOffset) {
+        try (Path path = new Path().of(dir)) {
+            int plen = path.size();
+            FilesFacade ff = config.getFilesFacade();
+            try (MemoryMA mem = Vm.getSmallCMARWInstance(
+                    ff,
+                    BPBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
+                    MemoryTag.MMAP_DEFAULT,
+                    config.getWriterFileOpenOpts()
+            )) {
+                BPBitmapIndexWriter.initKeyMemory(mem, BPBitmapIndexUtils.BLOCK_CAPACITY);
+            }
+            ff.touch(BPBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
-        fr.writeSec = (System.nanoTime() - writeT0) / 1e9;
-
-        // Size
-        long sizeBytes = getDirectorySize(dir);
-        fr.sizeMB = sizeBytes / (1024.0 * 1024.0);
-        fr.bPerVal = (double) sizeBytes / TOTAL_ROWS;
-
-        // Read latency
-        fr.readMs = measureReadLatency(format, config, dir, readKeys);
-
-        return fr;
+        try (Path path = new Path().of(dir)) {
+            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
+                writer.of(path, "test", COLUMN_NAME_TXN, false);
+                for (int i = 0; i < keyAssignment.length; i++) {
+                    writer.add(keyAssignment[i], (long) i + rowOffset);
+                    if ((i + 1) % BP_COMMIT_INTERVAL == 0) {
+                        writer.commit();
+                    }
+                }
+            }
+        }
     }
 
     // ========================= Index creation (write) =========================
@@ -345,35 +327,6 @@ public class IndexSuiteBenchmark {
         }
     }
 
-    private static void createBPIndex(CairoConfiguration config, String dir, int[] keyAssignment, int valsPerKey, long rowOffset) {
-        try (Path path = new Path().of(dir)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(
-                    ff,
-                    BPBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
-                    MemoryTag.MMAP_DEFAULT,
-                    config.getWriterFileOpenOpts()
-            )) {
-                BPBitmapIndexWriter.initKeyMemory(mem, BPBitmapIndexUtils.BLOCK_CAPACITY);
-            }
-            ff.touch(BPBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
-        }
-        try (Path path = new Path().of(dir)) {
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
-                writer.of(path, "test", COLUMN_NAME_TXN, false);
-                for (int i = 0; i < keyAssignment.length; i++) {
-                    writer.add(keyAssignment[i], (long) i + rowOffset);
-                    if ((i + 1) % BP_COMMIT_INTERVAL == 0) {
-                        writer.commit();
-                    }
-                }
-            }
-        }
-    }
-
-    // ========================= Read =========================
-
     private static double measureReadLatency(Format format, CairoConfiguration config, String dir, int[] readKeys) {
         ReadTest test = () -> {
             try (Path path = new Path().of(dir)) {
@@ -386,12 +339,10 @@ public class IndexSuiteBenchmark {
                     case BP -> new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                 };
                 try {
-                    return readBatch(reader, readKeys);
+                    readBatch(reader, readKeys);
                 } finally {
-                    ((java.io.Closeable) reader).close();
+                    Misc.free(reader);
                 }
-            } catch (java.io.IOException e) {
-                throw new RuntimeException(e);
             }
         };
 
@@ -410,15 +361,61 @@ public class IndexSuiteBenchmark {
         return total / (READ_RUNS * 1e6);
     }
 
-    private static long readBatch(BitmapIndexReader reader, int[] keys) {
-        long sum = 0;
+    // ========================= Read =========================
+
+    private static void readBatch(BitmapIndexReader reader, int[] keys) {
         for (int key : keys) {
             RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
-                sum += cursor.next();
+                cursor.next();
             }
         }
-        return sum;
+    }
+
+    private static FormatResult runFormat(
+            Format format,
+            CairoConfiguration config,
+            String dir,
+            int[] keyAssignment,
+            int valsPerKey,
+            long rowOffset,
+            int[] readKeys
+    ) {
+        FormatResult fr = new FormatResult();
+
+        // Write phase
+        long writeT0 = System.nanoTime();
+        switch (format) {
+            case LEGACY:
+                createLegacyIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
+                break;
+            case DELTA:
+                createDeltaIndex(config, dir, keyAssignment, rowOffset);
+                break;
+            case FOR:
+                createFORIndex(config, dir, keyAssignment, rowOffset);
+                break;
+            case LZ4:
+                createLZ4Index(config, dir, keyAssignment, valsPerKey, rowOffset);
+                break;
+            case FSST:
+                createFSSTIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
+                break;
+            case BP:
+                createBPIndex(config, dir, keyAssignment, rowOffset);
+                break;
+        }
+        fr.writeSec = (System.nanoTime() - writeT0) / 1e9;
+
+        // Size
+        long sizeBytes = getDirectorySize(dir);
+        fr.sizeMB = sizeBytes / (1024.0 * 1024.0);
+        fr.bPerVal = (double) sizeBytes / TOTAL_ROWS;
+
+        // Read latency
+        fr.readMs = measureReadLatency(format, config, dir, readKeys);
+
+        return fr;
     }
 
     // ========================= Key assignment =========================
@@ -559,6 +556,6 @@ public class IndexSuiteBenchmark {
 
     @FunctionalInterface
     private interface ReadTest {
-        long run();
+        void run();
     }
 }
