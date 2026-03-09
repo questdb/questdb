@@ -175,21 +175,33 @@ public class QwpResponseEncoder {
      * @return encoded bytes
      */
     public static byte[] encode(QwpResponse response) {
-        // Calculate required size
         int size = calculateSize(response);
         byte[] buf = new byte[size];
+        int offset = 0;
 
-        // Encode to native memory then copy
-        long address = Unsafe.malloc(size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-        try {
-            int written = encode(response, address, size);
-            for (int i = 0; i < written; i++) {
-                buf[i] = Unsafe.getUnsafe().getByte(address + i);
-            }
+        byte statusCode = response.getStatusCode();
+        buf[offset++] = statusCode;
+
+        if (statusCode == QwpStatusCode.OK) {
             return buf;
-        } finally {
-            Unsafe.free(address, size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
         }
+
+        if (statusCode == QwpStatusCode.PARTIAL) {
+            ObjList<QwpResponse.TableError> errors = response.getTableErrors();
+            int errorCount = errors != null ? errors.size() : 0;
+            offset = QwpVarint.encode(buf, offset, errorCount);
+
+            for (int i = 0; i < errorCount; i++) {
+                QwpResponse.TableError error = errors.get(i);
+                offset = QwpVarint.encode(buf, offset, error.tableIndex());
+                buf[offset++] = error.errorCode();
+                offset = encodeString(buf, offset, error.errorMessage());
+            }
+        } else {
+            encodeString(buf, offset, response.getErrorMessage());
+        }
+
+        return buf;
     }
 
     /**
@@ -293,6 +305,16 @@ public class QwpResponseEncoder {
                 QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                 "incomplete varint"
         );
+    }
+
+    private static int encodeString(byte[] buf, int offset, String str) {
+        if (str == null) {
+            return QwpVarint.encode(buf, offset, 0);
+        }
+        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
+        offset = QwpVarint.encode(buf, offset, bytes.length);
+        System.arraycopy(bytes, 0, buf, offset, bytes.length);
+        return offset + bytes.length;
     }
 
     private static int encodeString(String str, long address, int maxLen) {
