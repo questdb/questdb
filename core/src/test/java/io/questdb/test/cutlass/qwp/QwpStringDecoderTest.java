@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
@@ -152,7 +153,10 @@ public class QwpStringDecoderTest {
 
     @Test
     public void testNonMonotonicOffsets() {
-        // Create data where offsets go backwards: 0, 10, 5 (non-monotonic)
+        // Create data where offsets go backwards: 0, 10, 5 (non-monotonic).
+        // A crafted message with such offsets would cause a negative string length
+        // and out-of-bounds native memory reads. The cursor must reject this
+        // when advanceRow() encounters the backward offset.
         int rowCount = 2;
         int offsetArraySize = (rowCount + 1) * 4;
         int size = offsetArraySize + 10;
@@ -165,15 +169,17 @@ public class QwpStringDecoderTest {
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
             cursor.of(address, rowCount, TYPE_STRING, false);
 
-            // Advance to row 0: offset 0..10, length 10
+            // Row 0: offset 0..10 is valid
             cursor.advanceRow();
             Assert.assertEquals(10, cursor.getUtf8Value().size());
 
-            // Advance to row 1: offset 10..5, length -5 (invalid)
-            // The cursor computes a negative string length from non-monotonic offsets.
-            // DirectUtf8String.of() with end < start produces undefined behavior.
-            cursor.advanceRow();
-            // We verify the cursor didn't throw but produced a degenerate result
+            // Row 1: offset 10..5 goes backward, must throw
+            try {
+                cursor.advanceRow();
+                Assert.fail("expected CairoException for non-monotonic offset array");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("invalid QWP string offset array"));
+            }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }

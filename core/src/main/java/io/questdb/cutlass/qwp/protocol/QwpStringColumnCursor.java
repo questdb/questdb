@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -76,6 +77,18 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         // Read string bounds from offset array
         int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
         int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
+
+        if (endOffset < startOffset) {
+            throw CairoException.nonCritical()
+                    .put("invalid QWP string offset array: offset[")
+                    .put(currentValueIndex + 1)
+                    .put("]=")
+                    .put(endOffset)
+                    .put(" < offset[")
+                    .put(currentValueIndex)
+                    .put("]=")
+                    .put(startOffset);
+        }
 
         // Update flyweight to point to this string's bytes - NO ALLOCATION!
         int stringLen = endOffset - startOffset;
