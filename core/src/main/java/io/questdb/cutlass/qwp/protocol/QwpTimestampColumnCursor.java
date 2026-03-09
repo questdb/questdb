@@ -50,8 +50,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     private int currentValueIndex;
     // Gorilla state
     private long firstTimestamp;
-    private long gorillaDataAddress;  // For Gorilla mode
-    private int gorillaDataLength;
+    private long[] gorillaDecodedValues;  // Cached decoded values (index 2+)
     private boolean gorillaEnabled;
     // Wire pointers
     private long nullBitmapAddress;
@@ -82,7 +81,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
             } else if (currentValueIndex == 1) {
                 currentTimestamp = secondTimestamp;
             } else {
-                currentTimestamp = gorillaDecoder.decodeNext();
+                currentTimestamp = gorillaDecodedValues[currentValueIndex - 2];
             }
         } else {
             currentTimestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) currentValueIndex * 8);
@@ -98,12 +97,20 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         gorillaEnabled = false;
         nullBitmapAddress = 0;
         valuesAddress = 0;
-        gorillaDataAddress = 0;
-        gorillaDataLength = 0;
         firstTimestamp = 0;
         secondTimestamp = 0;
         valueCount = 0;
         resetRowPosition();
+    }
+
+    /**
+     * Returns the total number of Gorilla decode operations performed
+     * since the last {@link #of} call.
+     *
+     * @return decode count, or 0 if Gorilla encoding is not used
+     */
+    public int getGorillaDecodeCount() {
+        return gorillaDecoder.getDecodeCount();
     }
 
     /**
@@ -218,26 +225,24 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                     this.secondTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
                     offset += 8;
 
-                    this.gorillaDataAddress = dataAddress + offset;
-                    this.gorillaDataLength = dataLength - offset;
+                    long gorillaDataAddress = dataAddress + offset;
+                    int gorillaDataLength = dataLength - offset;
 
                     gorillaDecoder.reset(firstTimestamp, secondTimestamp);
                     gorillaDecoder.resetReader(gorillaDataAddress, gorillaDataLength);
 
-                    // Calculate bytes consumed by decoding all remaining values
-                    // This is necessary to know where the next column's data starts
+                    // Decode all remaining values and cache them to avoid double decoding.
+                    // This also computes the byte count of the compressed data.
                     int remainingValues = valueCount - 2;
-                    for (int i = 0; i < remainingValues; i++) {
-                        gorillaDecoder.decodeNext();
+                    if (gorillaDecodedValues == null || gorillaDecodedValues.length < remainingValues) {
+                        gorillaDecodedValues = new long[remainingValues];
                     }
-                    // Calculate bytes consumed from bit position (round up to full bytes)
+                    for (int i = 0; i < remainingValues; i++) {
+                        gorillaDecodedValues[i] = gorillaDecoder.decodeNext();
+                    }
                     long bitsConsumed = gorillaDecoder.getBitPosition();
                     int gorillaBytesConsumed = (int) ((bitsConsumed + 7) / 8);
                     offset += gorillaBytesConsumed;
-
-                    // Reset decoder state for iteration (caller will decode values again)
-                    gorillaDecoder.reset(firstTimestamp, secondTimestamp);
-                    gorillaDecoder.resetReader(gorillaDataAddress, gorillaDataLength);
                 }
             } else {
                 throw QwpParseException.create(
@@ -259,12 +264,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         currentValueIndex = 0;
         currentIsNull = false;
         currentTimestamp = 0;
-
-        // Reset Gorilla decoder state if enabled
-        if (gorillaEnabled && valueCount > 2) {
-            gorillaDecoder.reset(firstTimestamp, secondTimestamp);
-            gorillaDecoder.resetReader(gorillaDataAddress, gorillaDataLength);
-        }
     }
 
     /**

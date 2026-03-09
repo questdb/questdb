@@ -86,6 +86,58 @@ public class QwpTimestampDecoderTest {
     }
 
     @Test
+    public void testDecodeGorillaDecodesOnlyOnce() throws Exception {
+        // Verify that Gorilla-compressed timestamps are decoded exactly once,
+        // not twice (once in of() pre-scan + once in advanceRow() iteration).
+        // With the double-decode bug, a batch of N timestamps causes 2*(N-2)
+        // decode operations instead of N-2.
+        int count = 1000;
+        long[] timestamps = new long[count];
+        timestamps[0] = 1_000_000_000L;
+        timestamps[1] = 1_000_001_000L;
+        for (int i = 2; i < count; i++) {
+            long prevDelta = timestamps[i - 1] - timestamps[i - 2];
+            int variation = (i % 50 == 0) ? (i % 500) - 250 : 0;
+            timestamps[i] = timestamps[i - 1] + prevDelta + variation;
+        }
+        int expectedDecodeCount = count - 2;
+
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                encoder.setGorillaEnabled(true);
+                QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, false);
+                for (long ts : timestamps) {
+                    tsCol.addLong(ts);
+                    buffer.nextRow();
+                }
+                int size = encoder.encode(buffer, false);
+                QwpBufferWriter buf = encoder.getBuffer();
+                long ptr = buf.getBufferPtr();
+                try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+                    QwpMessageCursor msg = decoder.decode(ptr, size);
+                    Assert.assertTrue(msg.hasNextTable());
+                    QwpTableBlockCursor table = msg.nextTable();
+                    int tsColIdx = table.getColumnCount() - 1;
+
+                    // Iterate all rows (this triggers advanceRow on the timestamp cursor)
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertTrue(table.hasNextRow());
+                        table.nextRow();
+                    }
+
+                    QwpTimestampColumnCursor cursor = table.getTimestampColumn(tsColIdx);
+                    Assert.assertEquals(
+                            "Gorilla decoder should decode each value exactly once",
+                            expectedDecodeCount,
+                            cursor.getGorillaDecodeCount()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDecodeGorillaDeltaHuge() throws Exception {
         // Huge DoD outside [-2047, 2048] -> 36-bit encoding
         // DoD = 10000

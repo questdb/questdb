@@ -51,6 +51,7 @@ public class QwpGorillaDecoder {
     private static final int BUCKET_9BIT_MAX = 255;
     private static final int BUCKET_9BIT_MIN = -256;
     private final QwpBitReader bitReader;
+    private int decodeCount;
     private long prevDelta;
     // State for decoding
     private long prevTimestamp;
@@ -121,8 +122,18 @@ public class QwpGorillaDecoder {
 
         prevDelta = delta;
         prevTimestamp = timestamp;
+        decodeCount++;
 
         return timestamp;
+    }
+
+    /**
+     * Returns the number of values decoded since the last {@link #reset}.
+     *
+     * @return decode count
+     */
+    public int getDecodeCount() {
+        return decodeCount;
     }
 
     /**
