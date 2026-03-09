@@ -25,7 +25,7 @@ use questdbr::parquet_write::bench::{
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
 use std::sync::atomic::AtomicUsize;
 
@@ -178,6 +178,8 @@ fn write_options() -> WriteOptions {
         row_group_size: None,
         data_page_size: None,
         raw_array_encoding: true,
+        bloom_filter_columns: HashSet::new(),
+        bloom_filter_fpp: 0.01,
     }
 }
 
@@ -242,12 +244,10 @@ fn make_i8_data(row_count: usize, null_pct: u8, null_value: i8) -> Vec<i8> {
         };
         let v = if is_null_at(i, null_pct) {
             null_value
+        } else if base == null_value {
+            base.wrapping_add(1)
         } else {
-            if base == null_value {
-                base.wrapping_add(1)
-            } else {
-                base
-            }
+            base
         };
         data.push(v);
     }
@@ -264,12 +264,10 @@ fn make_i16_data(row_count: usize, null_pct: u8, null_value: i16) -> Vec<i16> {
         };
         let v = if is_null_at(i, null_pct) {
             null_value
+        } else if base == null_value {
+            base.wrapping_add(1)
         } else {
-            if base == null_value {
-                base.wrapping_add(1)
-            } else {
-                base
-            }
+            base
         };
         data.push(v);
     }
@@ -877,8 +875,9 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
     primitive_type: PrimitiveType,
 ) -> (DataPage, DictPage) {
     let elem_size = std::mem::size_of::<T>();
-    let raw_data: &[u8] =
-        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * elem_size) };
+    let raw_data: &[u8] = unsafe {
+        std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+    };
 
     let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
@@ -887,13 +886,12 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
     let mut min_value: Option<T> = None;
     let mut max_value: Option<T> = None;
 
-    for i in 0..row_count {
+    for (i, &val) in data.iter().enumerate().take(row_count) {
         if is_null_at(i, null_pct) {
             null_count += 1;
             continue;
         }
 
-        let val = data[i];
         min_value = Some(match min_value {
             Some(m) => {
                 if val.ord(&m) == std::cmp::Ordering::Less {
@@ -1256,7 +1254,7 @@ macro_rules! simd_cases {
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
                 let page = data_page_from(
-                    slice_to_page_simd(&data, 0, $opts, pt, encoding).expect("page"),
+                    slice_to_page_simd(&data, 0, $opts.clone(), pt, encoding, None).expect("page"),
                 );
                 $cases.push(build_case(
                     format!(
@@ -1285,8 +1283,15 @@ macro_rules! int_notnull_cases {
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
                 let page = data_page_from(
-                    int_slice_to_page_notnull::<$T, $U>(&data, 0, $opts, pt, encoding)
-                        .expect("page"),
+                    int_slice_to_page_notnull::<$T, $U>(
+                        &data,
+                        0,
+                        $opts.clone(),
+                        pt,
+                        encoding,
+                        None,
+                    )
+                    .expect("page"),
                 );
                 $cases.push(build_case(
                     format!(
@@ -1315,8 +1320,15 @@ macro_rules! int_nullable_cases {
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
                 let page = data_page_from(
-                    int_slice_to_page_nullable::<$T, $U>(&data, 0, $opts, pt, encoding)
-                        .expect("page"),
+                    int_slice_to_page_nullable::<$T, $U, false>(
+                        &data,
+                        0,
+                        $opts.clone(),
+                        pt,
+                        encoding,
+                        None,
+                    )
+                    .expect("page"),
                 );
                 $cases.push(build_case(
                     format!(
@@ -1342,7 +1354,9 @@ macro_rules! bytes_cases {
             let data = $data;
             let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
             let pt = primitive_type_for(ct);
-            let page = data_page_from(bytes_to_page(&data, $swap, 0, $opts, pt).expect("page"));
+            let page = data_page_from(
+                bytes_to_page(&data, $swap, 0, $opts.clone(), pt, None).expect("page"),
+            );
             $cases.push(build_case(
                 format!(concat!($name, "_plain_n{null_pct}"), null_pct = $np),
                 page,
@@ -1393,7 +1407,8 @@ macro_rules! decimal_flba_cases {
         for &null_pct in null_pcts(true) {
             let data = make_decimal_flba_data::<$src_len>(ROW_COUNT, null_pct);
             let page = data_page_from(
-                bytes_to_page(&data, false, 0, $opts, primitive_type.clone()).expect("page"),
+                bytes_to_page(&data, false, 0, $opts.clone(), primitive_type.clone(), None)
+                    .expect("page"),
             );
             $cases.push(build_case(
                 format!(concat!($label, "_plain_n{null_pct}"), null_pct = null_pct),
@@ -1441,7 +1456,7 @@ fn build_cases() -> Vec<BenchCase> {
         let column_type = ColumnType::new(ColumnTypeTag::Boolean, 0);
         let primitive_type = primitive_type_for(column_type);
         let page = data_page_from(
-            boolean_to_page(&data, 0, options, primitive_type.clone()).expect("page"),
+            boolean_to_page(&data, 0, options.clone(), primitive_type.clone()).expect("page"),
         );
         cases.push(build_case(
             format!("boolean_plain_n{null_pct}"),
@@ -1511,7 +1526,8 @@ fn build_cases() -> Vec<BenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_int96_data(ROW_COUNT, null_pct);
             let page = data_page_from(
-                bytes_to_page(&data, false, 0, options, int96_pt.clone()).expect("page"),
+                bytes_to_page(&data, false, 0, options.clone(), int96_pt.clone(), None)
+                    .expect("page"),
             );
             cases.push(build_case(
                 format!("timestamp_int96_plain_n{null_pct}"),
@@ -1586,12 +1602,13 @@ fn build_cases() -> Vec<BenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_decimal_i32_data(ROW_COUNT, null_pct);
             let page = data_page_from(
-                int_slice_to_page_nullable::<i32, i32>(
+                int_slice_to_page_nullable::<i32, i32, false>(
                     &data,
                     0,
-                    options,
+                    options.clone(),
                     primitive_type.clone(),
                     Encoding::Plain,
+                    None,
                 )
                 .expect("page"),
             );
@@ -1634,12 +1651,13 @@ fn build_cases() -> Vec<BenchCase> {
             for &null_pct in null_pcts(true) {
                 let data = make_decimal_i64_data(ROW_COUNT, null_pct);
                 let page = data_page_from(
-                    int_slice_to_page_nullable::<i64, i64>(
+                    int_slice_to_page_nullable::<i64, i64, false>(
                         &data,
                         0,
-                        options,
+                        options.clone(),
                         primitive_type.clone(),
                         encoding,
+                        None,
                     )
                     .expect("page"),
                 );
@@ -1683,9 +1701,10 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options,
+                    options.clone(),
                     primitive_type.clone(),
                     Encoding::Plain,
+                    None,
                 )
                 .expect("page"),
             );
@@ -1744,9 +1763,10 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options,
+                    options.clone(),
                     primitive_type,
                     encoding,
+                    None,
                 )
                 .expect("page"),
             );
@@ -1768,8 +1788,16 @@ fn build_cases() -> Vec<BenchCase> {
             let column_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
             let primitive_type = primitive_type_for(column_type);
             let page = data_page_from(
-                varchar_to_page(&data.aux, &data.data, 0, options, primitive_type, encoding)
-                    .expect("page"),
+                varchar_to_page(
+                    &data.aux,
+                    &data.data,
+                    0,
+                    options.clone(),
+                    primitive_type,
+                    encoding,
+                    None,
+                )
+                .expect("page"),
             );
             cases.push(build_case(
                 format!("varchar_{enc}_n{null_pct}"),
@@ -1812,9 +1840,10 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options,
+                    options.clone(),
                     primitive_type,
                     encoding,
+                    None,
                 )
                 .expect("page"),
             );
@@ -1855,8 +1884,15 @@ fn build_cases() -> Vec<BenchCase> {
             let column_type = encode_array_type(ColumnTypeTag::Double, 1).expect("array type");
             let primitive_type = primitive_type_for(column_type);
             let page = data_page_from(
-                array_to_raw_page(&data.aux, &data.data, 0, options, primitive_type, encoding)
-                    .expect("page"),
+                array_to_raw_page(
+                    &data.aux,
+                    &data.data,
+                    0,
+                    options.clone(),
+                    primitive_type,
+                    encoding,
+                )
+                .expect("page"),
             );
             cases.push(build_case(
                 format!("array_{enc}_n{null_pct}"),
@@ -1897,9 +1933,10 @@ fn build_cases() -> Vec<BenchCase> {
             &data.offsets,
             &data.chars,
             0,
-            options,
+            options.clone(),
             primitive_type,
             false,
+            None,
         )
         .expect("symbol pages");
         for page in iter {

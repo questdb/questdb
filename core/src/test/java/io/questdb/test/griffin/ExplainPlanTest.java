@@ -4950,6 +4950,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoArgMixedConstAndRuntimeExprInJoin() throws Exception {
+        // When constWhereClause mixes compile-time false with a runtime expression,
+        // the optimizer keeps the compile-time false in constWhereClause and the
+        // code generator folds it to Empty table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP)");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()",
+                    """
+                            SelectedRecord
+                                Empty table
+                            """);
+        });
+    }
+
+    @Test
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
