@@ -37,6 +37,8 @@ public class WindowJoinContext implements Mutable {
     private int hiKind = CURRENT;
     private int hiKindPos;
     private boolean includePrevailing = true;
+    private boolean isDynamicHi;
+    private boolean isDynamicLo;
     private long lo = Long.MIN_VALUE;
     private ExpressionNode loExpr;
     private int loExprPos;
@@ -61,6 +63,8 @@ public class WindowJoinContext implements Mutable {
         hiKind = CURRENT;
         hiKindPos = 0;
         includePrevailing = true;
+        isDynamicHi = false;
+        isDynamicLo = false;
         prevailingPos = 0;
         parentModel = null;
     }
@@ -121,8 +125,24 @@ public class WindowJoinContext implements Mutable {
         return prevailingPos;
     }
 
+    public boolean isDynamicHi() {
+        return isDynamicHi;
+    }
+
+    public boolean isDynamicLo() {
+        return isDynamicLo;
+    }
+
     public boolean isIncludePrevailing() {
         return includePrevailing;
+    }
+
+    public void setDynamicHi(boolean isDynamicHi) {
+        this.isDynamicHi = isDynamicHi;
+    }
+
+    public void setDynamicLo(boolean isDynamicLo) {
+        this.isDynamicLo = isDynamicLo;
     }
 
     public void setHi(long hi) {

@@ -1474,6 +1474,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private @Nullable ObjList<Function> compileWorkerFunctionsConditionally(
+            SqlExecutionContext executionContext,
+            @Nullable Function func,
+            int sharedQueryWorkerCount,
+            @Nullable ExpressionNode funcExpr,
+            RecordMetadata metadata
+    ) throws SqlException {
+        if (func != null && !func.isThreadSafe() && sharedQueryWorkerCount > 0) {
+            assert funcExpr != null;
+            ObjList<Function> workerFunctions = new ObjList<>();
+            for (int i = 0; i < sharedQueryWorkerCount; i++) {
+                Function workerFunc = functionParser.parseFunction(funcExpr, metadata, executionContext);
+                workerFunctions.extendAndSet(i, workerFunc);
+            }
+            return workerFunctions;
+        }
+        return null;
+    }
+
     private @Nullable ObjList<ObjList<GroupByFunction>> compileWorkerGroupByFunctionsConditionally(
             SqlExecutionContext executionContext,
             QueryModel model,
@@ -4338,6 +4357,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 RecordCursorFactory slave = null;
                 Function joinFilter = null;
+                Function windowHiFunc = null;
+                Function windowLoFunc = null;
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
                 try {
@@ -4502,15 +4523,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final WindowJoinContext context = slaveModel.getWindowJoinContext();
                                 final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
                                 long hi = context.getHi();
-                                if (context.getHiExprTimeUnit() != 0) {
+                                if (!context.isDynamicHi() && context.getHiExprTimeUnit() != 0) {
                                     hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                 }
                                 long lo = context.getLo();
-                                if (context.getLoExprTimeUnit() != 0) {
+                                if (!context.isDynamicLo() && context.getLoExprTimeUnit() != 0) {
                                     lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
                                 }
 
-                                if (hi < lo * -1) {
+                                // Compile dynamic bound functions against master metadata.
+                                final boolean isDynamicWindow = context.isDynamicLo() || context.isDynamicHi();
+                                int loSign = 0;
+                                int hiSign = 0;
+                                char loTimeUnit = 0;
+                                char hiTimeUnit = 0;
+                                if (context.isDynamicLo()) {
+                                    windowLoFunc = functionParser.parseFunction(context.getLoExpr(), masterMetadata, executionContext);
+                                    loSign = context.getLoKind() == WindowJoinContext.PRECEDING ? 1 : -1;
+                                    loTimeUnit = context.getLoExprTimeUnit();
+                                }
+                                if (context.isDynamicHi()) {
+                                    windowHiFunc = functionParser.parseFunction(context.getHiExpr(), masterMetadata, executionContext);
+                                    hiSign = context.getHiKind() == WindowJoinContext.FOLLOWING ? 1 : -1;
+                                    hiTimeUnit = context.getHiExprTimeUnit();
+                                }
+
+                                if (!isDynamicWindow && hi < lo * -1) {
                                     throw SqlException.position(Math.max(context.getHiExprPos(), context.getLoExprPos())).put("WINDOW join hi value cannot be less than lo value");
                                 }
 
@@ -4782,7 +4820,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                     // WINDOW JOIN tasks are "heavy", hence smaller frame sizes
                                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-                                    if (leftSymbolIndex != -1) {
+                                    if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         assert rightSymbolIndex != -1;
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
@@ -4854,6 +4892,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ),
                                                 lo,
                                                 hi,
+                                                windowLoFunc,
+                                                windowHiFunc,
+                                                compileWorkerFunctionsConditionally(
+                                                        executionContext,
+                                                        windowLoFunc,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        context.getLoExpr(),
+                                                        masterMetadata
+                                                ),
+                                                compileWorkerFunctionsConditionally(
+                                                        executionContext,
+                                                        windowHiFunc,
+                                                        executionContext.getSharedQueryWorkerCount(),
+                                                        context.getHiExpr(),
+                                                        masterMetadata
+                                                ),
+                                                loSign,
+                                                hiSign,
+                                                loTimeUnit,
+                                                hiTimeUnit,
+                                                isDynamicWindow ? timestampDriver : null,
                                                 valueTypes,
                                                 groupByFunctions,
                                                 compileWorkerGroupByFunctionsConditionally(
@@ -4879,10 +4938,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
+                                        // Factory now owns these functions.
+                                        windowLoFunc = null;
+                                        windowHiFunc = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slave.supportsTimeFrameCursor()) {
-                                    if (leftSymbolIndex != -1) {
+                                    if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
                                                 configuration,
@@ -4913,10 +4975,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 lo,
                                                 hi,
+                                                windowLoFunc,
+                                                windowHiFunc,
+                                                loSign,
+                                                hiSign,
+                                                loTimeUnit,
+                                                hiTimeUnit,
+                                                isDynamicWindow ? timestampDriver : null,
                                                 groupByFunctions,
                                                 valueTypes,
                                                 joinFilter
                                         );
+                                        // Factory now owns these functions.
+                                        windowLoFunc = null;
+                                        windowHiFunc = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {
@@ -5002,6 +5074,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (Throwable th) {
                     Misc.free(joinMetadata);
                     Misc.free(joinFilter);
+                    Misc.free(windowHiFunc);
+                    Misc.free(windowLoFunc);
                     Misc.freeObjList(groupByFunctions);
                     master = Misc.free(master);
                     if (closeSlaveOnFailure) {

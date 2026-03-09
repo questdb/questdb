@@ -10329,34 +10329,60 @@ public class SqlOptimiser implements Mutable {
                 WindowJoinContext context = windowJoinModel.getWindowJoinContext();
                 long lo = 0, hi = 0;
                 switch (context.getLoKind()) {
-                    case WindowJoinContext.PRECEDING:
-                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
-                        break;
-                    case WindowJoinContext.FOLLOWING:
-                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
-                        if (lo == Long.MAX_VALUE) {
-                            lo = Long.MIN_VALUE;
+                    case WindowJoinContext.PRECEDING: {
+                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getLoExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicLo(true);
                         } else {
-                            lo *= -1;
+                            lo = val;
                         }
+                        break;
+                    }
+                    case WindowJoinContext.FOLLOWING: {
+                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getLoExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicLo(true);
+                        } else {
+                            lo = val;
+                            if (lo == Long.MAX_VALUE) {
+                                lo = Long.MIN_VALUE;
+                            } else {
+                                lo *= -1;
+                            }
+                        }
+                        break;
+                    }
                 }
-                if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
+                if (!context.isDynamicLo() && (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE)) {
                     throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
                 }
 
                 switch (context.getHiKind()) {
-                    case WindowJoinContext.PRECEDING:
-                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
-                        if (hi == Long.MAX_VALUE) {
-                            hi = Long.MIN_VALUE;
+                    case WindowJoinContext.PRECEDING: {
+                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getHiExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicHi(true);
                         } else {
-                            hi *= -1;
+                            hi = val;
+                            if (hi == Long.MAX_VALUE) {
+                                hi = Long.MIN_VALUE;
+                            } else {
+                                hi *= -1;
+                            }
                         }
                         break;
-                    case WindowJoinContext.FOLLOWING:
-                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+                    }
+                    case WindowJoinContext.FOLLOWING: {
+                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getHiExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicHi(true);
+                        } else {
+                            hi = val;
+                        }
+                        break;
+                    }
                 }
-                if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
+                if (!context.isDynamicHi() && (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE)) {
                     throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
                 }
                 context.setHi(hi);
@@ -10468,19 +10494,33 @@ public class SqlOptimiser implements Mutable {
     }
 
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        long result = tryEvalNonNegativeLongConstant(functionParser, expr, sqlExecutionContext);
+        if (result == -1) {
+            assert expr != null;
+            throw SqlException.$(expr.position, "constant expression expected");
+        }
+        return result;
+    }
+
+    /**
+     * Tries to evaluate the expression as a non-negative long constant.
+     * Returns -1 if the expression is non-constant (i.e., it references columns).
+     * Returns {@link Long#MAX_VALUE} if expr is null.
+     */
+    static long tryEvalNonNegativeLongConstant(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
-            final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!loFunc.isConstant()) {
-                Misc.free(loFunc);
-                throw SqlException.$(expr.position, "constant expression expected");
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                return -1;
             }
 
             try {
                 long value;
-                if (!(loFunc instanceof CharConstant)) {
-                    value = loFunc.getLong(null);
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
                 } else {
-                    long tmp = (byte) (loFunc.getChar(null) - '0');
+                    long tmp = (byte) (func.getChar(null) - '0');
                     value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 
@@ -10491,7 +10531,7 @@ public class SqlOptimiser implements Mutable {
             } catch (UnsupportedOperationException | ImplicitCastException e) {
                 throw SqlException.$(expr.position, "integer expression expected");
             } finally {
-                Misc.free(loFunc);
+                Misc.free(func);
             }
         }
         return Long.MAX_VALUE;
