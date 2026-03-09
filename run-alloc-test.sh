@@ -21,7 +21,7 @@
 #   ./run-alloc-test.sh server-lock [options]  - Profile server lock contention
 #
 # Options (passed to client):
-#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket
+#   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket, qwp-udp
 #   --host=HOST              Server host (default: localhost)
 #   --port=PORT              Server port
 #   --rows=N                 Total rows to send
@@ -30,6 +30,8 @@
 #   --flush-interval-ms=N    Auto-flush after N ms (WebSocket only)
 #   --in-flight-window=N     Max batches awaiting server ACK (WebSocket only, default: 8)
 #   --send-queue=N           Max batches waiting to send (WebSocket only, default: 16)
+#   --max-datagram-size=N    Max datagram size in bytes (UDP only, default: 1400)
+#   --target-throughput=N    Target throughput in rows/sec (0 = unlimited, default: 0)
 #   --warmup=N               Warmup rows
 #   --report=N               Report interval
 #   --no-warmup              Skip warmup
@@ -479,7 +481,7 @@ case "$1" in
         echo "Make sure QuestDB server is running!"
         echo ""
 
-        for protocol in ilp-tcp ilp-http qwp-websocket; do
+        for protocol in ilp-tcp ilp-http qwp-websocket qwp-udp; do
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
@@ -503,7 +505,7 @@ case "$1" in
         echo "  wall [options]      Run with wall-clock profiling - find I/O waits and blocking (JFR format)"
         echo "  lock [options]      Run with lock contention profiling - find thread contention (JFR format)"
         echo "  jfr [options]       Run with Java Flight Recorder"
-        echo "  compare [options]   Run all 3 protocols and compare"
+        echo "  compare [options]   Run all 4 protocols and compare"
         echo ""
         echo "Server-side profiling (attach to running server):"
         echo "  server-cpu [options]     Profile SERVER CPU during client test"
@@ -514,15 +516,17 @@ case "$1" in
         echo "Options:"
         echo "  --dbroot=DIR             Server data directory (default: ./qdb-alloc-test)"
         echo "  --debug                  Enable debug logging"
-        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket (default: qwp-websocket)"
+        echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket, qwp-udp (default: qwp-websocket)"
         echo "  --host=HOST              Server host (default: localhost)"
-        echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WebSocket)"
+        echo "  --port=PORT              Server port (default: 9009 for TCP, 9000 for HTTP/WS, 9007 for UDP)"
         echo "  --rows=N                 Total rows to send (default: 80000000)"
         echo "  --batch=N                Auto-flush after N rows (default: 10000)"
         echo "  --flush-bytes=N          Auto-flush after N bytes (WebSocket only, default: 1MB)"
         echo "  --flush-interval-ms=N    Auto-flush after N ms (WebSocket only, default: 100ms)"
         echo "  --in-flight-window=N     Max batches awaiting server ACK (WebSocket only, default: 8)"
         echo "  --send-queue=N           Max batches waiting to send (WebSocket only, default: 16)"
+        echo "  --max-datagram-size=N    Max datagram size in bytes (UDP only, default: 1400)"
+        echo "  --target-throughput=N    Target throughput in rows/sec (0 = unlimited, default: 0)"
         echo "  --warmup=N               Warmup rows (default: 100000)"
         echo "  --report=N               Report progress every N rows (default: 1000000)"
         echo "  --no-warmup              Skip warmup phase"
@@ -531,6 +535,7 @@ case "$1" in
         echo "  Terminal 1: $0 server"
         echo "  Terminal 2: $0 client --protocol=qwp-websocket --rows=1000000 --batch=5000"
         echo "  Terminal 2: $0 client --protocol=qwp-websocket --rows=100000 --no-warmup"
+        echo "  Terminal 2: $0 client --protocol=qwp-udp --rows=1000000 --max-datagram-size=8192"
         echo "  Terminal 2: $0 profile --rows=100000000 --warmup=1000000  # client allocation profiling"
         echo "  Terminal 2: $0 cpu --rows=100000000 --warmup=1000000      # client CPU hotspots"
         echo "  Terminal 2: $0 wall --rows=100000000 --warmup=1000000     # client I/O and blocking"
