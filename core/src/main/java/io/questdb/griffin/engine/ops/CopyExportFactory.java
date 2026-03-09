@@ -73,6 +73,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private final StringSink exportIdSink = new StringSink();
     private final CopyImportFactory.CopyRecord record = new CopyImportFactory.CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
+    private @Nullable CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
+    private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
     private CopyExportContext copyContext;
@@ -170,7 +173,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                             createOp.validateAndUpdateMetadataFromSelect(
                                     rcf.getMetadata(), rcf.getScanDirection()
                             );
+                            CopyExportRequestTask.validateBloomFilterColumns(
+                                    bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos
+                            );
                         } else {
+                            CopyExportRequestTask.validateBloomFilterColumns(
+                                    bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos
+                            );
                             selectFactory = rcf;
                             rcf = null;
                         }
@@ -183,6 +192,11 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 } catch (CairoException ex) {
                     ex.position(tableOrSelectTextPos + ex.getPosition());
                     throw ex;
+                }
+            } else if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                TableToken token = executionContext.getTableTokenIfExists(tableName);
+                try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(token)) {
+                    CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, meta, bloomFilterColumnsPosition);
                 }
             }
 
@@ -235,7 +249,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         null,
                         null,
                         exportMode,
-                        resolvedSelectText
+                        resolvedSelectText,
+                        bloomFilterColumns,
+                        bloomFilterColumnsPosition,
+                        bloomFilterFpp
                 );
                 task.setSelectFactory(selectFactory);
                 selectFactory = null;
@@ -305,6 +322,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.statisticsEnabled = model.isStatisticsEnabled();
         this.parquetVersion = model.getParquetVersion();
         this.rawArrayEncoding = model.isRawArrayEncoding();
+        CharSequence filterColumns = model.getBloomFilterColumns();
+        if (filterColumns != null && !filterColumns.isEmpty()) {
+            this.bloomFilterColumns = filterColumns.toString();
+        }
+        this.bloomFilterColumnsPosition = model.getBloomFilterColumnsPosition();
+        this.bloomFilterFpp = model.getBloomFilterFpp();
         this.sqlText = sqlText;
     }
 

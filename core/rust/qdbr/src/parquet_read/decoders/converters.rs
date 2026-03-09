@@ -23,6 +23,16 @@ where
     _marker: std::marker::PhantomData<(A, B)>,
 }
 
+impl<A, B> Default for PrimitiveConverter<A, B>
+where
+    B: 'static + Copy,
+    A: AsPrimitive<B>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<A, B> PrimitiveConverter<A, B>
 where
     B: 'static + Copy,
@@ -70,6 +80,7 @@ pub mod int32 {
     }
 
     /// Converts "days since epoch" values into milliseconds.
+    #[derive(Default)]
     pub struct DayToMillisConverter;
 
     impl Converter<i32, i64> for DayToMillisConverter {
@@ -99,6 +110,7 @@ pub mod int96 {
     }
 
     /// Converts Parquet `INT96` (Julian day + nanos) into epoch nanoseconds.
+    #[derive(Default)]
     pub struct Int96ToTimestampConverter;
 
     impl Converter<Int96Timestamp, i64> for Int96ToTimestampConverter {
@@ -128,6 +140,7 @@ pub mod int128 {
     use super::*;
 
     /// Converts Parquet UUID binary order into QuestDB in-memory order.
+    #[derive(Default)]
     pub struct Int128ToUuidConverter {}
 
     impl Int128ToUuidConverter {

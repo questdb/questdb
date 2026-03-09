@@ -281,7 +281,7 @@ pub fn column_type_to_parquet_type(
             PhysicalType::Int32,
             repetition,
             None,
-            None,
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt32)),
             Some(column_id),
         )?),
         ColumnTypeTag::Decimal8
@@ -331,7 +331,7 @@ pub struct Column {
 }
 
 impl Column {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
     pub fn from_raw_data(
         id: i32,
         name: &'static str,

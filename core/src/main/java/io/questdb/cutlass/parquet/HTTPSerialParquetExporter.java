@@ -287,5 +287,4 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                 .$(", totalRows=").$(totalRows)
                 .$(']').$();
     }
-
 }
