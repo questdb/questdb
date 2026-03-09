@@ -35,6 +35,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -167,11 +168,37 @@ public class QwpSymbolDecoderTest {
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
             cursor.of(address, actualSize, 1, false);
             cursor.advanceRow();
-            cursor.getSymbolCharSequence();
-            Assert.fail("Expected exception for out-of-bounds dictionary index");
-        } catch (Throwable e) {
-            // Expect an error when accessing an invalid dictionary index
-            Assert.assertTrue(e.getMessage() != null || e instanceof ArrayIndexOutOfBoundsException);
+            Assert.fail("Expected QwpParseException for out-of-bounds dictionary index");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains("symbol index out of range"));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testInvalidDictionaryIndexDeltaMode() {
+        int size = 100;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long pos = address;
+
+            // Value: index 3 (invalid, connection dictionary has only 2 entries)
+            pos = QwpVarint.encode(pos, 3);
+
+            int actualSize = (int) (pos - address);
+            ObjList<String> connectionDict = new ObjList<>();
+            connectionDict.add("alpha");
+            connectionDict.add("beta");
+
+            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
+            cursor.of(address, actualSize, 1, false, connectionDict);
+            cursor.advanceRow();
+            Assert.fail("Expected QwpParseException for out-of-bounds delta dictionary index");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains("symbol index out of range"));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }

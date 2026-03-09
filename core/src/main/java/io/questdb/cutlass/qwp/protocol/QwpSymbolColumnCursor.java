@@ -88,6 +88,15 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         QwpVarint.decode(currentIndexAddress, indicesEnd, decodeResult);
         currentSymbolIndex = (int) decodeResult.value;
         currentIndexAddress += decodeResult.bytesRead;
+
+        // Validate dictionary index against wire data
+        int limit = deltaMode ? (connectionDict != null ? connectionDict.size() : 0) : dictionarySize;
+        if (currentSymbolIndex < 0 || currentSymbolIndex >= limit) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
+                    "symbol index out of range: " + currentSymbolIndex
+            );
+        }
         return false;
     }
 
