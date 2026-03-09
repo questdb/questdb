@@ -44,6 +44,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -61,30 +62,8 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.*;
 @RunWith(Parameterized.class)
 public class QwpUdpAllTypesTest extends AbstractCairoTest {
 
-    @FunctionalInterface
-    interface ReceiverFactory {
-        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
-    }
-
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19002;
-
-    private final ReceiverFactory receiverFactory;
-
-    public QwpUdpAllTypesTest(String label, ReceiverFactory factory) {
-        this.receiverFactory = factory;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        List<Object[]> params = new ArrayList<>();
-        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
-        if (Os.isLinux()) {
-            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
-        }
-        return params;
-    }
-
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -101,7 +80,6 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             return false;
         }
     };
-
     private static final QwpUdpReceiverConfiguration STRESS_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -123,6 +101,21 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             return false;
         }
     };
+    private final ReceiverFactory receiverFactory;
+
+    public QwpUdpAllTypesTest(String label, ReceiverFactory factory) {
+        this.receiverFactory = factory;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> params = new ArrayList<>();
+        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
+        if (Os.isLinux()) {
+            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
+        }
+        return params;
+    }
 
     @Test
     public void testAllTypesInOneRow() throws Exception {
@@ -902,5 +895,10 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 Net.close(fd);
             }
         }
+    }
+
+    @FunctionalInterface
+    interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }
