@@ -969,6 +969,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "posthog.enabled\tQDB_POSTHOG_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n" +
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.commit.rate\tQDB_QWP_UDP_COMMIT_RATE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.enabled\tQDB_QWP_UDP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.join\tQDB_QWP_UDP_JOIN\t224.1.1.1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.msg.buffer.size\tQDB_QWP_UDP_MSG_BUFFER_SIZE\t65536\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.msg.count\tQDB_QWP_UDP_MSG_COUNT\t10000\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.own.thread\tQDB_QWP_UDP_OWN_THREAD\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.own.thread.affinity\tQDB_QWP_UDP_OWN_THREAD_AFFINITY\t-1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.receive.buffer.size\tQDB_QWP_UDP_RECEIVE_BUFFER_SIZE\t-1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.unicast\tQDB_QWP_UDP_UNICAST\ttrue\tdefault\tfalse\tfalse\n" +
                                     "ram.usage.limit.bytes\tQDB_RAM_USAGE_LIMIT_BYTES\t0\tdefault\tfalse\tfalse\n" +
                                     "ram.usage.limit.percent\tQDB_RAM_USAGE_LIMIT_PERCENT\t90\tdefault\tfalse\tfalse\n" +
                                     "readonly\tQDB_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
