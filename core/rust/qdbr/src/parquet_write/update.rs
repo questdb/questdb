@@ -21,15 +21,14 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::uleb128;
-use parquet2::metadata::{FileMetaData, KeyValue, SortingColumn};
+use parquet2::metadata::{FileMetaData, KeyValue, SchemaDescriptor, SortingColumn};
 use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
-use parquet2::metadata::SchemaDescriptor;
 use parquet2::schema::types::ParquetType;
 use parquet2::schema::Repetition;
 use parquet2::write;
@@ -40,6 +39,7 @@ use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, Encoding as ThriftEncoding,
     PageHeader, PageType, RowGroup, Type,
 };
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{
@@ -48,16 +48,6 @@ use crate::parquet::error::{
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Partition};
-use parquet2::compression::CompressionOptions;
-use parquet2::metadata::{FileMetaData, KeyValue, SortingColumn};
-use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
-use parquet2::write;
-use parquet2::write::footer_cache::FooterCache;
-use parquet2::write::{ParquetFile, Version};
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
-use std::collections::HashSet;
-use std::fs::File;
-use std::io::{Read as _, Seek, SeekFrom};
 
 #[repr(C)]
 pub struct ParquetUpdater {
@@ -293,7 +283,7 @@ impl ParquetUpdater {
 
     pub fn insert_row_group(
         &mut self,
-        partition: &Partition<'_>,
+        partition: &Partition,
         position: i16,
     ) -> ParquetResult<()> {
         self.ensure_schema_matches_columns(partition);
@@ -416,7 +406,7 @@ impl ParquetUpdater {
     /// Also builds a target QdbMeta that `end()` uses instead of the old file's
     /// metadata. Format hints (e.g. `LocalKeyIsGlobal` for SYMBOL columns)
     /// are preserved from the old schema for columns that still exist.
-    pub fn set_target_schema(&mut self, partition: &Partition<'_>) -> ParquetResult<()> {
+    pub fn set_target_schema(&mut self, partition: &Partition) -> ParquetResult<()> {
         let (schema, _kv) = to_parquet_schema(partition, self.raw_array_encoding)?;
         self.parquet_file.set_schema(schema);
 
@@ -725,7 +715,7 @@ impl ParquetUpdater {
     /// (Required in the schema). Only safe in rewrite mode where all row groups
     /// are re-encoded; in update mode untouched row groups would have data
     /// encoded with the old schema.
-    fn ensure_schema_matches_columns(&mut self, partition: &Partition<'_>) {
+    fn ensure_schema_matches_columns(&mut self, partition: &Partition) {
         if self.schema_updated || !self.is_rewrite {
             return;
         }
