@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::mem;
 
 use super::util::ExactSizedIter;
@@ -7,6 +8,7 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, BinaryMaxMinStats,
 };
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -55,6 +57,7 @@ pub fn varchar_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     assert!(
         mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
@@ -72,23 +75,28 @@ pub fn varchar_to_page(
         .map(|entry| {
             if is_null(entry.header) {
                 null_count += 1;
-                None
+                Ok(None)
             } else if is_inlined(entry.header) {
                 let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-                Some(&entry.chars[..size])
+                Ok(Some(&entry.chars[..size]))
             } else {
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
                 let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
-                assert!(
-                    offset + size <= data.len(),
-                    "Data corruption in VARCHAR column"
-                );
-                Some(&data[offset..][..size])
+                if offset + size > data.len() {
+                    return Err(fmt_err!(
+                        Layout,
+                        "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
+                        offset,
+                        size,
+                        data.len()
+                    ));
+                }
+                Ok(Some(&data[offset..][..size]))
             }
         })
-        .collect();
+        .collect::<ParquetResult<Vec<_>>>()?;
 
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());
@@ -100,10 +108,21 @@ pub fn varchar_to_page(
 
     match encoding {
         Encoding::Plain => {
-            encode_plain(&utf8_slices, &mut buffer, &mut stats);
+            encode_plain(
+                &utf8_slices,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes.as_deref_mut(),
+            );
         }
         Encoding::DeltaLengthByteArray => {
-            encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
+            encode_delta(
+                &utf8_slices,
+                null_count,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes,
+            );
         }
         _ => {
             return Err(fmt_err!(
@@ -136,12 +155,16 @@ fn encode_plain(
     utf8_slices: &[Option<&[u8]>],
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         let len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
         buffer.extend_from_slice(utf8);
         stats.update(utf8);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(utf8));
+        }
     }
 }
 
@@ -150,6 +173,7 @@ fn encode_delta(
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     let lengths = utf8_slices
         .iter()
@@ -160,6 +184,9 @@ fn encode_delta(
     for utf8 in utf8_slices.iter().filter_map(|&option| option) {
         buffer.extend_from_slice(utf8);
         stats.update(utf8);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(utf8));
+        }
     }
 }
 
@@ -189,7 +216,14 @@ pub fn append_varchar(
         aux_mem.resize(len_before_value + VARCHAR_MAX_BYTES_FULLY_INLINED, 0u8)?;
         append_offset(aux_mem, data_mem.len())
     } else {
-        assert!(value_size <= LENGTH_LIMIT_BYTES);
+        if value_size > LENGTH_LIMIT_BYTES {
+            return Err(fmt_err!(
+                Layout,
+                "VARCHAR value size {} exceeds limit {}",
+                value_size,
+                LENGTH_LIMIT_BYTES
+            ));
+        }
         let header = ((value_size as u32) << HEADER_FLAGS_WIDTH) | is_ascii(value);
         aux_mem.extend_from_slice(&header.to_le_bytes())?;
         aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES])?;
@@ -223,7 +257,14 @@ pub fn append_varchar_null(aux_mem: &mut AcVec<u8>, data_mem: &[u8]) -> ParquetR
 }
 
 fn append_offset(aux_mem: &mut AcVec<u8>, offset: usize) -> ParquetResult<()> {
-    assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
+    if offset >= VARCHAR_MAX_COLUMN_SIZE {
+        return Err(fmt_err!(
+            Layout,
+            "VARCHAR column offset {} exceeds maximum size {}",
+            offset,
+            VARCHAR_MAX_COLUMN_SIZE
+        ));
+    }
     aux_mem.extend_from_slice(&(offset as u16).to_le_bytes())?;
     aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes())?;
     Ok(())
@@ -255,7 +296,14 @@ pub fn append_varchar_nulls(
         _ => {
             const ENTRY_SIZE: usize = 16; // 10 bytes header + 6 bytes offset
             let offset = data_mem.len();
-            assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
+            if offset >= VARCHAR_MAX_COLUMN_SIZE {
+                return Err(fmt_err!(
+                    Layout,
+                    "VARCHAR column offset {} exceeds maximum size {}",
+                    offset,
+                    VARCHAR_MAX_COLUMN_SIZE
+                ));
+            }
 
             let mut null_entry = [0u8; ENTRY_SIZE];
             null_entry[..10].copy_from_slice(&VARCHAR_HEADER_FLAG_NULL);

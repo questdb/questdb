@@ -4,12 +4,14 @@
 //! portable SIMD operations. Definition levels indicate which values are present
 //! vs null in nullable columns.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::simd::cmp::{SimdOrd, SimdPartialEq, SimdPartialOrd};
 use std::simd::num::{SimdFloat, SimdInt};
 use std::simd::Simd;
 
 use crate::parquet_write::util::MaxMin;
+use parquet2::bloom_filter::hash_native;
 
 /// Result of SIMD definition level encoding, containing both the encoded
 /// buffer and statistics computed during the encoding pass.
@@ -144,16 +146,17 @@ pub fn encode_i64_def_levels<W: Write>(
     slice: &[i64],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<i64>> {
     // Fast path: if no column_top, try RLE encoding (all present or all null)
     if column_top == 0 {
-        if let Some(result) = try_encode_i64_rle(writer, slice, compute_stats)? {
+        if let Some(result) = try_encode_i64_rle(writer, slice, compute_stats, &mut bloom_hashes)? {
             return Ok(result);
         }
     }
 
     // Slow path: mixed nulls or column_top, use bitpacked encoding
-    encode_i64_def_levels_bitpacked(writer, slice, column_top, compute_stats)
+    encode_i64_def_levels_bitpacked(writer, slice, column_top, compute_stats, bloom_hashes)
 }
 
 /// Fast path: probe-based check for uniform null patterns.
@@ -163,6 +166,7 @@ fn try_encode_i64_rle<W: Write>(
     writer: &mut W,
     slice: &[i64],
     compute_stats: bool,
+    bloom_hashes: &mut Option<&mut HashSet<u64>>,
 ) -> std::io::Result<Option<DefLevelResult<i64>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
@@ -210,7 +214,14 @@ fn try_encode_i64_rle<W: Write>(
     let rest_slice = &slice[probe_len..];
 
     if all_not_null {
-        scan_i64_verify_all_not_null(writer, slice, rest_slice, compute_stats, null_val)
+        scan_i64_verify_all_not_null(
+            writer,
+            slice,
+            rest_slice,
+            compute_stats,
+            bloom_hashes.as_deref_mut(),
+            null_val,
+        )
     } else {
         scan_i64_verify_all_null(writer, slice, rest_slice, null_val)
     }
@@ -222,6 +233,7 @@ fn scan_i64_verify_all_not_null<W: Write>(
     full_slice: &[i64],
     rest_slice: &[i64],
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
     null_val: Simd<i64, 8>,
 ) -> std::io::Result<Option<DefLevelResult<i64>>> {
     let chunks = rest_slice.chunks_exact(8);
@@ -232,30 +244,85 @@ fn scan_i64_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(8) {
-            let values = Simd::<i64, 8>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(8);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_native(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(8).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
+            h.insert(hash_native(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<i64, 8>::from_slice(chunk);
-        let mask = values.simd_ne(null_val).to_bitmask();
-
-        if mask != 0xFF {
-            return Ok(None); // Found null, pattern broken
+    if compute_stats {
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
         }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<i64, 8>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
+            }
+            for &val in chunk {
+                h.insert(hash_native(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<i64, 8>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
+            }
         }
     }
 
@@ -271,12 +338,25 @@ fn scan_i64_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_i = min_vec.reduce_min();
         let mut max_i = max_vec.reduce_max();
-        for &val in remainder {
-            min_i = min_i.min(val);
-            max_i = max_i.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+                h.insert(hash_native(val));
+            }
+        } else {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+            }
         }
         (Some(min_i), Some(max_i))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_native(val));
+            }
+        }
         (None, None)
     };
 
@@ -328,6 +408,7 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
     slice: &[i64],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<i64>> {
     let null_val = Simd::<i64, 8>::splat(i64::MIN);
     let mut data_null_count = 0usize; // Only nulls in slice data, not column_top
@@ -360,11 +441,16 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
         let chunk_nulls = 8 - byte.count_ones() as usize;
         data_null_count += chunk_nulls;
 
-        // Update statistics for non-null values
-        if compute_stats && chunk_nulls < 8 {
+        // Update statistics and bloom hashes for non-null values
+        if chunk_nulls < 8 {
             for &val in chunk {
                 if val != i64::MIN {
-                    stats.update(val);
+                    if compute_stats {
+                        stats.update(val);
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_native(val));
+                    }
                 }
             }
         }
@@ -380,6 +466,9 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
                 rem_byte |= 1 << i;
                 if compute_stats {
                     stats.update(val);
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(val));
                 }
             } else {
                 data_null_count += 1;
@@ -406,16 +495,17 @@ pub fn encode_i32_def_levels<W: Write>(
     slice: &[i32],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<i32>> {
     // Fast path: if no column_top, try RLE encoding (all present or all null)
     if column_top == 0 {
-        if let Some(result) = try_encode_i32_rle(writer, slice, compute_stats)? {
+        if let Some(result) = try_encode_i32_rle(writer, slice, compute_stats, &mut bloom_hashes)? {
             return Ok(result);
         }
     }
 
     // Slow path: mixed nulls or column_top, use bitpacked encoding
-    encode_i32_def_levels_bitpacked(writer, slice, column_top, compute_stats)
+    encode_i32_def_levels_bitpacked(writer, slice, column_top, compute_stats, bloom_hashes)
 }
 
 /// Fast path: probe-based check for uniform null patterns.
@@ -423,6 +513,7 @@ fn try_encode_i32_rle<W: Write>(
     writer: &mut W,
     slice: &[i32],
     compute_stats: bool,
+    bloom_hashes: &mut Option<&mut HashSet<u64>>,
 ) -> std::io::Result<Option<DefLevelResult<i32>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
@@ -469,7 +560,14 @@ fn try_encode_i32_rle<W: Write>(
     let rest_slice = &slice[probe_len..];
 
     if all_not_null {
-        scan_i32_verify_all_not_null(writer, slice, rest_slice, compute_stats, null_val)
+        scan_i32_verify_all_not_null(
+            writer,
+            slice,
+            rest_slice,
+            compute_stats,
+            bloom_hashes.as_deref_mut(),
+            null_val,
+        )
     } else {
         scan_i32_verify_all_null(writer, slice, rest_slice, null_val)
     }
@@ -480,6 +578,7 @@ fn scan_i32_verify_all_not_null<W: Write>(
     full_slice: &[i32],
     rest_slice: &[i32],
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
     null_val: Simd<i32, 16>,
 ) -> std::io::Result<Option<DefLevelResult<i32>>> {
     let chunks = rest_slice.chunks_exact(16);
@@ -490,30 +589,85 @@ fn scan_i32_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(16) {
-            let values = Simd::<i32, 16>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(16);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_native(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(16).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
+            h.insert(hash_native(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<i32, 16>::from_slice(chunk);
-        let mask = values.simd_ne(null_val).to_bitmask();
-
-        if mask != 0xFFFF {
-            return Ok(None);
+    if compute_stats {
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
         }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<i32, 16>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
+            }
+            for &val in chunk {
+                h.insert(hash_native(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<i32, 16>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
+            }
         }
     }
 
@@ -528,12 +682,25 @@ fn scan_i32_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_i = min_vec.reduce_min();
         let mut max_i = max_vec.reduce_max();
-        for &val in remainder {
-            min_i = min_i.min(val);
-            max_i = max_i.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+                h.insert(hash_native(val));
+            }
+        } else {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+            }
         }
         (Some(min_i), Some(max_i))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_native(val));
+            }
+        }
         (None, None)
     };
 
@@ -584,6 +751,7 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
     slice: &[i32],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<i32>> {
     let null_val = Simd::<i32, 16>::splat(i32::MIN);
     let mut data_null_count = 0usize; // Only nulls in slice data, not column_top
@@ -614,10 +782,15 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
         let chunk_nulls = 16 - mask16.count_ones() as usize;
         data_null_count += chunk_nulls;
 
-        if compute_stats && chunk_nulls < 16 {
+        if chunk_nulls < 16 {
             for &val in chunk {
                 if val != i32::MIN {
-                    stats.update(val);
+                    if compute_stats {
+                        stats.update(val);
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_native(val));
+                    }
                 }
             }
         }
@@ -636,6 +809,9 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
                     rem_byte |= 1 << i;
                     if compute_stats {
                         stats.update(val);
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_native(val));
                     }
                 } else {
                     data_null_count += 1;
@@ -662,16 +838,17 @@ pub fn encode_f64_def_levels<W: Write>(
     slice: &[f64],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<f64>> {
     // Fast path: if no column_top, try RLE encoding (all present or all null)
     if column_top == 0 {
-        if let Some(result) = try_encode_f64_rle(writer, slice, compute_stats)? {
+        if let Some(result) = try_encode_f64_rle(writer, slice, compute_stats, &mut bloom_hashes)? {
             return Ok(result);
         }
     }
 
     // Slow path: mixed nulls or column_top, use bitpacked encoding
-    encode_f64_def_levels_bitpacked(writer, slice, column_top, compute_stats)
+    encode_f64_def_levels_bitpacked(writer, slice, column_top, compute_stats, bloom_hashes)
 }
 
 #[inline]
@@ -680,11 +857,20 @@ fn f64_is_nan(val: f64) -> bool {
     (bits & F64_SIGN_MASK) > F64_INFINITY_BITS
 }
 
+/// Hash f64 for bloom filter, canonicalizing -0.0 to +0.0.
+/// This ensures +0.0 == -0.0 semantics are preserved in bloom filter lookups.
+#[inline]
+fn hash_f64(val: f64) -> u64 {
+    let normalized = if val == 0.0 { 0.0f64 } else { val };
+    hash_native(normalized)
+}
+
 /// Fast path: probe-based check for uniform null patterns.
 fn try_encode_f64_rle<W: Write>(
     writer: &mut W,
     slice: &[f64],
     compute_stats: bool,
+    bloom_hashes: &mut Option<&mut HashSet<u64>>,
 ) -> std::io::Result<Option<DefLevelResult<f64>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
@@ -740,6 +926,7 @@ fn try_encode_f64_rle<W: Write>(
             slice,
             rest_slice,
             compute_stats,
+            bloom_hashes.as_deref_mut(),
             sign_mask_vec,
             infinity_vec,
         )
@@ -753,6 +940,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
     full_slice: &[f64],
     rest_slice: &[f64],
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
     sign_mask_vec: Simd<i64, 8>,
     infinity_vec: Simd<i64, 8>,
 ) -> std::io::Result<Option<DefLevelResult<f64>>> {
@@ -764,33 +952,97 @@ fn scan_f64_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(8) {
-            let values = Simd::<f64, 8>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(8);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_f64(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_f64(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(8).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
+            h.insert(hash_f64(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<f64, 8>::from_slice(chunk);
-        let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
-        let abs_bits = bits & sign_mask_vec;
-        let is_not_nan = abs_bits.simd_le(infinity_vec);
-        let mask = is_not_nan.to_bitmask();
-
-        if mask != 0xFF {
-            return Ok(None);
+    if compute_stats {
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_f64(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
         }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<f64, 8>::from_slice(chunk);
+            let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
+            }
+            for &val in chunk {
+                h.insert(hash_f64(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<f64, 8>::from_slice(chunk);
+            let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
+            }
         }
     }
 
@@ -805,12 +1057,25 @@ fn scan_f64_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_f = min_vec.reduce_min();
         let mut max_f = max_vec.reduce_max();
-        for &val in remainder {
-            min_f = min_f.min(val);
-            max_f = max_f.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+                h.insert(hash_f64(val));
+            }
+        } else {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+            }
         }
         (Some(min_f), Some(max_f))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_f64(val));
+            }
+        }
         (None, None)
     };
 
@@ -865,6 +1130,7 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
     slice: &[f64],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<f64>> {
     let mut data_null_count = 0usize; // Only nulls in slice data, not column_top
     let mut max_val: Option<f64> = None;
@@ -902,11 +1168,16 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
         let chunk_nulls = 8 - byte.count_ones() as usize;
         data_null_count += chunk_nulls;
 
-        if compute_stats && chunk_nulls < 8 {
+        if chunk_nulls < 8 {
             for &val in chunk {
                 if !val.is_nan() {
-                    max_val = Some(max_val.map_or(val, |m| m.max(val)));
-                    min_val = Some(min_val.map_or(val, |m| m.min(val)));
+                    if compute_stats {
+                        max_val = Some(max_val.map_or(val, |m| m.max(val)));
+                        min_val = Some(min_val.map_or(val, |m| m.min(val)));
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_f64(val));
+                    }
                 }
             }
         }
@@ -923,6 +1194,9 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
                 if compute_stats {
                     max_val = Some(max_val.map_or(val, |m| m.max(val)));
                     min_val = Some(min_val.map_or(val, |m| m.min(val)));
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_f64(val));
                 }
             } else {
                 data_null_count += 1;
@@ -948,16 +1222,17 @@ pub fn encode_f32_def_levels<W: Write>(
     slice: &[f32],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<f32>> {
     // Fast path: if no column_top, try RLE encoding (all present or all null)
     if column_top == 0 {
-        if let Some(result) = try_encode_f32_rle(writer, slice, compute_stats)? {
+        if let Some(result) = try_encode_f32_rle(writer, slice, compute_stats, &mut bloom_hashes)? {
             return Ok(result);
         }
     }
 
     // Slow path: mixed nulls or column_top, use bitpacked encoding
-    encode_f32_def_levels_bitpacked(writer, slice, column_top, compute_stats)
+    encode_f32_def_levels_bitpacked(writer, slice, column_top, compute_stats, bloom_hashes)
 }
 
 #[inline]
@@ -966,11 +1241,20 @@ fn f32_is_nan(val: f32) -> bool {
     (bits & F32_SIGN_MASK) > F32_INFINITY_BITS
 }
 
+/// Hash f32 for bloom filter, canonicalizing -0.0 to +0.0.
+/// This ensures +0.0 == -0.0 semantics are preserved in bloom filter lookups.
+#[inline]
+fn hash_f32(val: f32) -> u64 {
+    let normalized = if val == 0.0 { 0.0f32 } else { val };
+    hash_native(normalized)
+}
+
 /// Fast path: probe-based check for uniform null patterns.
 fn try_encode_f32_rle<W: Write>(
     writer: &mut W,
     slice: &[f32],
     compute_stats: bool,
+    bloom_hashes: &mut Option<&mut HashSet<u64>>,
 ) -> std::io::Result<Option<DefLevelResult<f32>>> {
     if slice.is_empty() {
         write_rle_all_ones(writer, 0)?;
@@ -1026,6 +1310,7 @@ fn try_encode_f32_rle<W: Write>(
             slice,
             rest_slice,
             compute_stats,
+            bloom_hashes.as_deref_mut(),
             sign_mask_vec,
             infinity_vec,
         )
@@ -1039,6 +1324,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
     full_slice: &[f32],
     rest_slice: &[f32],
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
     sign_mask_vec: Simd<i32, 16>,
     infinity_vec: Simd<i32, 16>,
 ) -> std::io::Result<Option<DefLevelResult<f32>>> {
@@ -1050,33 +1336,97 @@ fn scan_f32_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(16) {
-            let values = Simd::<f32, 16>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(16);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_f32(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_f32(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(16).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
+            h.insert(hash_f32(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<f32, 16>::from_slice(chunk);
-        let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
-        let abs_bits = bits & sign_mask_vec;
-        let is_not_nan = abs_bits.simd_le(infinity_vec);
-        let mask = is_not_nan.to_bitmask();
-
-        if mask != 0xFFFF {
-            return Ok(None);
+    if compute_stats {
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_f32(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
         }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<f32, 16>::from_slice(chunk);
+            let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
+            }
+            for &val in chunk {
+                h.insert(hash_f32(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<f32, 16>::from_slice(chunk);
+            let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
+            }
         }
     }
 
@@ -1091,12 +1441,25 @@ fn scan_f32_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_f = min_vec.reduce_min();
         let mut max_f = max_vec.reduce_max();
-        for &val in remainder {
-            min_f = min_f.min(val);
-            max_f = max_f.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+                h.insert(hash_f32(val));
+            }
+        } else {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+            }
         }
         (Some(min_f), Some(max_f))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_f32(val));
+            }
+        }
         (None, None)
     };
 
@@ -1151,6 +1514,7 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
     slice: &[f32],
     column_top: usize,
     compute_stats: bool,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> std::io::Result<DefLevelResult<f32>> {
     let mut data_null_count = 0usize; // Only nulls in slice data, not column_top
     let mut max_val: Option<f32> = None;
@@ -1188,11 +1552,16 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
         let chunk_nulls = 16 - mask16.count_ones() as usize;
         data_null_count += chunk_nulls;
 
-        if compute_stats && chunk_nulls < 16 {
+        if chunk_nulls < 16 {
             for &val in chunk {
                 if !val.is_nan() {
-                    max_val = Some(max_val.map_or(val, |m| m.max(val)));
-                    min_val = Some(min_val.map_or(val, |m| m.min(val)));
+                    if compute_stats {
+                        max_val = Some(max_val.map_or(val, |m| m.max(val)));
+                        min_val = Some(min_val.map_or(val, |m| m.min(val)));
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_f32(val));
+                    }
                 }
             }
         }
@@ -1211,6 +1580,9 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
                     if compute_stats {
                         max_val = Some(max_val.map_or(val, |m| m.max(val)));
                         min_val = Some(min_val.map_or(val, |m| m.min(val)));
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_f32(val));
                     }
                 } else {
                     data_null_count += 1;
@@ -1343,7 +1715,7 @@ mod tests {
         let data: Vec<i64> = (0..100).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1360,7 +1732,7 @@ mod tests {
         let data: Vec<i64> = (0..100).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1372,7 +1744,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1390,7 +1762,7 @@ mod tests {
         data[99] = i64::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
         assert_eq!(result.min, Some(0));
@@ -1409,7 +1781,7 @@ mod tests {
         let data: Vec<i64> = (0..50).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 10, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 10, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1433,7 +1805,7 @@ mod tests {
         data[25] = i64::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 10, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 10, true, None).unwrap();
 
         assert_eq!(result.null_count, 2);
 
@@ -1452,7 +1824,7 @@ mod tests {
         let data: Vec<i64> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 20, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 20, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1467,7 +1839,7 @@ mod tests {
         let data: Vec<i64> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1479,7 +1851,7 @@ mod tests {
         let data = vec![42i64];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(42));
@@ -1494,7 +1866,7 @@ mod tests {
         let data = vec![i64::MIN];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, None);
@@ -1507,7 +1879,7 @@ mod tests {
         let data: Vec<i64> = (0..64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1523,7 +1895,7 @@ mod tests {
         let data: Vec<i64> = (0..67).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(66));
@@ -1540,7 +1912,7 @@ mod tests {
         data[65] = i64::MIN; // In the remainder portion
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
 
@@ -1556,7 +1928,7 @@ mod tests {
         let data: Vec<i64> = (0..10).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 3, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 3, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -1574,7 +1946,7 @@ mod tests {
         let data: Vec<i64> = (0..10000).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1588,7 +1960,7 @@ mod tests {
             .collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 50);
 
@@ -1607,7 +1979,7 @@ mod tests {
         let data: Vec<i32> = (0..100).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1622,7 +1994,7 @@ mod tests {
         let data: Vec<i32> = vec![i32::MIN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1637,7 +2009,7 @@ mod tests {
         data[95] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
         assert_eq!(result.min, Some(0));
@@ -1654,7 +2026,7 @@ mod tests {
         let data: Vec<i32> = (0..50).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 15, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 15, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -1672,7 +2044,7 @@ mod tests {
         let data: Vec<i32> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 25, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 25, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1685,7 +2057,7 @@ mod tests {
         let data: Vec<i32> = (0..64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1698,7 +2070,7 @@ mod tests {
         let data: Vec<i32> = (0..67).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(66));
@@ -1712,7 +2084,7 @@ mod tests {
         let data: Vec<i32> = (0..10).collect();
         let mut buffer = Vec::new();
 
-        let _result = encode_i32_def_levels(&mut buffer, &data, 5, true).unwrap();
+        let _result = encode_i32_def_levels(&mut buffer, &data, 5, true, None).unwrap();
 
         let decoded = decode_def_levels(&buffer, 15);
         for &val in &decoded[..5] {
@@ -1728,7 +2100,7 @@ mod tests {
         let data: Vec<i32> = (0..100).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1744,7 +2116,7 @@ mod tests {
         let data: Vec<f64> = (0..100).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -1759,7 +2131,7 @@ mod tests {
         let data: Vec<f64> = vec![f64::NAN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1774,7 +2146,7 @@ mod tests {
         data[99] = f64::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
         assert_eq!(result.min, Some(0.0));
@@ -1791,7 +2163,7 @@ mod tests {
         let data: Vec<f64> = (0..50).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 10, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 10, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -1811,7 +2183,7 @@ mod tests {
         let data: Vec<f64> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 20, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 20, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1823,7 +2195,7 @@ mod tests {
         let data = vec![f64::NEG_INFINITY, -1.0, 0.0, 1.0, f64::INFINITY, f64::NAN];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(f64::NEG_INFINITY));
@@ -1844,7 +2216,7 @@ mod tests {
         let data = vec![1.0, neg_nan, 3.0];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
 
@@ -1857,7 +2229,7 @@ mod tests {
         let data: Vec<f64> = (0..64).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(63.0));
@@ -1868,7 +2240,7 @@ mod tests {
         let data: Vec<f64> = (0..67).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -1881,7 +2253,7 @@ mod tests {
         let data: Vec<f64> = (0..100).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1897,7 +2269,7 @@ mod tests {
         let data: Vec<f32> = (0..100).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -1909,7 +2281,7 @@ mod tests {
         let data: Vec<f32> = vec![f32::NAN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1924,7 +2296,7 @@ mod tests {
         data[95] = f32::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
 
@@ -1939,7 +2311,7 @@ mod tests {
         let data: Vec<f32> = (0..50).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 15, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 15, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -1957,7 +2329,7 @@ mod tests {
         let data: Vec<f32> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 25, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 25, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1976,7 +2348,7 @@ mod tests {
         ];
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(f32::NEG_INFINITY));
@@ -1989,7 +2361,7 @@ mod tests {
         let data: Vec<f32> = (0..64).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(63.0));
@@ -2000,7 +2372,7 @@ mod tests {
         let data: Vec<f32> = (0..67).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -2013,7 +2385,7 @@ mod tests {
         let data: Vec<f32> = (0..10).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let _result = encode_f32_def_levels(&mut buffer, &data, 5, true).unwrap();
+        let _result = encode_f32_def_levels(&mut buffer, &data, 5, true, None).unwrap();
 
         let decoded = decode_def_levels(&buffer, 15);
         for &val in &decoded[..5] {
@@ -2029,7 +2401,7 @@ mod tests {
         let data: Vec<f32> = (0..100).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -2103,7 +2475,7 @@ mod tests {
         data[0] = i64::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 7, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 7, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
 
@@ -2126,7 +2498,7 @@ mod tests {
         let data: Vec<i64> = (0..10).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 16, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 16, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -2148,7 +2520,7 @@ mod tests {
         }
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 8);
         assert_eq!(result.min, Some(8));
@@ -2160,7 +2532,7 @@ mod tests {
         let data: Vec<i64> = (-50..50).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50));
@@ -2172,7 +2544,7 @@ mod tests {
         let data: Vec<f64> = (-50..50).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50.0));
@@ -2189,7 +2561,7 @@ mod tests {
         let data: Vec<i32> = (0..1000).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2215,7 +2587,7 @@ mod tests {
         data[500] = i32::MIN;
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(0));
@@ -2240,7 +2612,7 @@ mod tests {
         let data: Vec<f32> = (0..1000).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2264,7 +2636,7 @@ mod tests {
         data[500] = f32::NAN;
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(0.0));
@@ -2287,7 +2659,7 @@ mod tests {
         let data: Vec<i64> = (0..1000).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2309,7 +2681,7 @@ mod tests {
         let data: Vec<f64> = (0..1000).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2331,7 +2703,7 @@ mod tests {
         let data: Vec<i32> = (-50..50).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50));
@@ -2347,7 +2719,7 @@ mod tests {
         let data: Vec<f32> = (-50..50).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50.0));
@@ -2363,7 +2735,7 @@ mod tests {
         let data: Vec<i32> = (0..100000).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2386,7 +2758,7 @@ mod tests {
         let data: Vec<f32> = (0..100000).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2414,7 +2786,7 @@ mod tests {
         data[50] = i64::MIN; // Null in probe region
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2429,7 +2801,7 @@ mod tests {
         let data: Vec<i64> = (0..500).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2448,7 +2820,7 @@ mod tests {
         data[200] = i64::MIN; // Null after probe region (128)
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2461,7 +2833,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 50];
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 50);
         assert_eq!(result.min, None);
@@ -2479,7 +2851,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 500];
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 500);
         assert_eq!(result.min, None);
@@ -2497,7 +2869,7 @@ mod tests {
         data[200] = 42; // Valid value after probe region
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 499);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2513,7 +2885,7 @@ mod tests {
         data[100] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2525,7 +2897,7 @@ mod tests {
         let data: Vec<i32> = vec![i32::MIN; 1000];
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1000);
         assert!(buffer.len() < 10, "RLE all-zeros should be compact");
@@ -2540,7 +2912,7 @@ mod tests {
         data[500] = 42;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 999);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2553,7 +2925,7 @@ mod tests {
         data[50] = f64::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2565,7 +2937,7 @@ mod tests {
         let data: Vec<f64> = vec![f64::NAN; 500];
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 500);
         assert!(buffer.len() < 10, "RLE all-zeros should be compact");
@@ -2580,7 +2952,7 @@ mod tests {
         data[200] = 42.0;
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 499);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2593,7 +2965,7 @@ mod tests {
         data[100] = f32::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2605,7 +2977,7 @@ mod tests {
         let data: Vec<f32> = vec![f32::NAN; 1000];
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1000);
         assert!(buffer.len() < 10, "RLE all-zeros should be compact");
@@ -2620,7 +2992,7 @@ mod tests {
         data[500] = 42.0;
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 999);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2660,7 +3032,7 @@ mod tests {
         let data: Vec<i64> = (0..128).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert!(buffer.len() < 10);
@@ -2671,7 +3043,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 128];
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 128);
         assert!(buffer.len() < 10);
@@ -2683,7 +3055,7 @@ mod tests {
         let data: Vec<i64> = (0..129).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert!(buffer.len() < 10);
@@ -2698,7 +3070,7 @@ mod tests {
         let data: Vec<i32> = (0..256).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert!(buffer.len() < 10);
@@ -2711,7 +3083,7 @@ mod tests {
         data[255] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2725,10 +3097,707 @@ mod tests {
         data[256] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
         assert!(!decoded[256]);
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_rle_path() {
+        // RLE fast path: all values present (no nulls)
+        let data: Vec<i64> = (0..100).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(result.min, Some(0));
+        assert_eq!(result.max, Some(99));
+
+        // Verify all values are in the bloom filter
+        assert_eq!(bloom_hashes.len(), 100);
+        for val in &data {
+            assert!(
+                bloom_hashes.contains(&hash_native(*val)),
+                "Bloom filter should contain hash for value {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_bitpacked_path() {
+        // Bitpacked slow path: has nulls
+        let mut data: Vec<i64> = (0..100).collect();
+        data[10] = i64::MIN; // null
+        data[50] = i64::MIN; // null
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+
+        // Should have 98 unique hashes (100 - 2 nulls)
+        assert_eq!(bloom_hashes.len(), 98);
+
+        // Verify non-null values are in bloom filter
+        for (i, val) in data.iter().enumerate() {
+            if i != 10 && i != 50 {
+                assert!(
+                    bloom_hashes.contains(&hash_native(*val)),
+                    "Bloom filter should contain hash for value {}",
+                    val
+                );
+            }
+        }
+
+        // Verify null sentinel is NOT in bloom filter
+        assert!(
+            !bloom_hashes.contains(&hash_native(i64::MIN)),
+            "Bloom filter should not contain null sentinel"
+        );
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_with_column_top() {
+        // Column top nulls should not be included in bloom hashes
+        let data: Vec<i64> = (0..50).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 20, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        // Should only have hashes for the 50 data values, not column_top
+        assert_eq!(bloom_hashes.len(), 50);
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_no_stats() {
+        // Bloom filter collection without stats computation
+        let data: Vec<i64> = (0..100).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, false, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(result.min, None);
+        assert_eq!(result.max, None);
+
+        // Bloom filter should still be populated
+        assert_eq!(bloom_hashes.len(), 100);
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_all_nulls() {
+        // All null values - bloom filter should be empty
+        let data: Vec<i64> = vec![i64::MIN; 100];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 100);
+        assert!(
+            bloom_hashes.is_empty(),
+            "Bloom filter should be empty for all nulls"
+        );
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_path() {
+        let data: Vec<i32> = (0..100).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        for val in &data {
+            assert!(bloom_hashes.contains(&hash_native(*val)));
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_bitpacked_path() {
+        let mut data: Vec<i32> = (0..100).collect();
+        data[25] = i32::MIN;
+        data[75] = i32::MIN;
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+        assert_eq!(bloom_hashes.len(), 98);
+        assert!(!bloom_hashes.contains(&hash_native(i32::MIN)));
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_with_column_top() {
+        let data: Vec<i32> = (0..50).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 15, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 50);
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_rle_path() {
+        let data: Vec<f64> = (0..100).map(|x| x as f64).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        for val in &data {
+            assert!(bloom_hashes.contains(&hash_native(*val)));
+        }
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_bitpacked_path() {
+        let mut data: Vec<f64> = (0..100).map(|x| x as f64).collect();
+        data[30] = f64::NAN;
+        data[60] = f64::NAN;
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+        assert_eq!(bloom_hashes.len(), 98);
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_all_nans() {
+        let data: Vec<f64> = vec![f64::NAN; 100];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 100);
+        assert!(bloom_hashes.is_empty());
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_rle_path() {
+        let data: Vec<f32> = (0..100).map(|x| x as f32).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        for val in &data {
+            assert!(bloom_hashes.contains(&hash_native(*val)));
+        }
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_bitpacked_path() {
+        let mut data: Vec<f32> = (0..100).map(|x| x as f32).collect();
+        data[40] = f32::NAN;
+        data[80] = f32::NAN;
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+        assert_eq!(bloom_hashes.len(), 98);
+    }
+
+    #[test]
+    fn test_bloom_filter_large_data() {
+        // Test bloom filter with large dataset to verify SIMD paths
+        let data: Vec<i64> = (0..10000).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 10000);
+    }
+
+    #[test]
+    fn test_bloom_filter_remainder_handling() {
+        // Test with data size that doesn't align to SIMD chunk size
+        // i64 uses 8-element chunks, so 67 elements = 8 chunks + 3 remainder
+        let data: Vec<i64> = (0..67).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 67);
+
+        // Verify all values including remainder
+        for val in &data {
+            assert!(
+                bloom_hashes.contains(&hash_native(*val)),
+                "Missing hash for value {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_bloom_filter_duplicate_values() {
+        // Duplicate values should result in same hash
+        let data: Vec<i64> = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 4];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        // Only 4 unique values: 1, 2, 3, 4
+        assert_eq!(bloom_hashes.len(), 4);
+    }
+
+    #[test]
+    fn test_bloom_filter_negative_values() {
+        let data: Vec<i64> = (-50..50).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        // Verify negative values are correctly hashed
+        assert!(bloom_hashes.contains(&hash_native(-50i64)));
+        assert!(bloom_hashes.contains(&hash_native(-1i64)));
+        assert!(bloom_hashes.contains(&hash_native(0i64)));
+        assert!(bloom_hashes.contains(&hash_native(49i64)));
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_remainder_handling() {
+        // i32 uses 16-element chunks, so 35 elements = 2 chunks + 3 remainder
+        let data: Vec<i32> = (0..35).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 35);
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_special_values() {
+        // Test with special f64 values (infinity is valid, not null)
+        let data = vec![
+            f64::NEG_INFINITY,
+            -1.0,
+            0.0,
+            1.0,
+            f64::INFINITY,
+            f64::NAN, // null
+        ];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        // 5 valid values (excluding NaN)
+        assert_eq!(bloom_hashes.len(), 5);
+
+        // Verify special values are in bloom filter
+        assert!(bloom_hashes.contains(&hash_native(f64::NEG_INFINITY)));
+        assert!(bloom_hashes.contains(&hash_native(f64::INFINITY)));
+        assert!(bloom_hashes.contains(&hash_native(0.0f64)));
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_special_values() {
+        let data = vec![
+            f32::NEG_INFINITY,
+            -1.0f32,
+            0.0f32,
+            1.0f32,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 5);
+
+        assert!(bloom_hashes.contains(&hash_native(f32::NEG_INFINITY)));
+        assert!(bloom_hashes.contains(&hash_native(f32::INFINITY)));
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_signed_zero_canonicalization() {
+        let neg_zero: f64 = -0.0;
+        let pos_zero: f64 = 0.0;
+
+        assert_ne!(neg_zero.to_bits(), pos_zero.to_bits());
+        assert_eq!(neg_zero, pos_zero);
+
+        let data = vec![-1.0f64, neg_zero, 1.0f64];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 3);
+
+        assert!(bloom_hashes.contains(&hash_f64(pos_zero)));
+        assert!(bloom_hashes.contains(&hash_f64(neg_zero)));
+        assert_eq!(hash_f64(neg_zero), hash_f64(pos_zero));
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_signed_zero_canonicalization() {
+        let neg_zero: f32 = -0.0;
+        let pos_zero: f32 = 0.0;
+
+        assert_ne!(neg_zero.to_bits(), pos_zero.to_bits());
+        assert_eq!(neg_zero, pos_zero);
+
+        let data = vec![-1.0f32, neg_zero, 1.0f32];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 3);
+
+        assert!(bloom_hashes.contains(&hash_f32(pos_zero)));
+        assert!(bloom_hashes.contains(&hash_f32(neg_zero)));
+        assert_eq!(hash_f32(neg_zero), hash_f32(pos_zero));
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
+        // Test fallback when NaN is detected during probe phase (within first PROBE_SIZE_64=128 elements).
+        // This tests early exit before verify phase starts.
+        let mut data: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        data.push(f64::NAN);
+        data.extend((101..150).map(|i| i as f64));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0..100 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<f64> = (0..150).map(|i| i as f64).collect();
+        data.push(f64::NAN); // NaN at index 150, after probe window (128)
+        data.extend((151..200).map(|i| i as f64));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 199);
+
+        for i in 0..128 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 128..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 151..200 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
+        let mut data: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        data.push(f32::NAN);
+        data.extend((101..150).map(|i| i as f32));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0..100 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<f32> = (0..300).map(|i| i as f32).collect();
+        data.push(f32::NAN); // NaN at index 300, after probe window (256)
+        data.extend((301..400).map(|i| i as f32));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 399);
+
+        for i in 0..256 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 256..300 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 301..400 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
+        let mut data: Vec<i64> = (0..100).collect();
+        data.push(i64::MIN);
+        data.extend(101..150);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0i64..100 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101i64..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<i64> = (0..150).collect();
+        data.push(i64::MIN);
+        data.extend(151..200);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 199);
+
+        for i in 0i64..128 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 128i64..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 151i64..200 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
+        let mut data: Vec<i32> = (0..100).collect();
+        data.push(i32::MIN);
+        data.extend(101..150);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0i32..100 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101i32..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<i32> = (0..300).collect();
+        data.push(i32::MIN);
+        data.extend(301..400);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 399);
+
+        for i in 0i32..256 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 256i32..300 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 301i32..400 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
     }
 }

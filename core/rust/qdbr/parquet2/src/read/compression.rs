@@ -142,7 +142,7 @@ fn decompress_reuse<P: PageIterator>(
 /// ### un-compressed pages:
 /// > page iter: `a` is swapped with `b`
 /// > decompress iter: `b` is swapped with `d`, `b` is swapped with `a`
-/// therefore:
+/// > therefore:
 /// * `PageReader` has its buffer back
 /// * `Decompressor`'s buffer is un-used
 /// * `DecompressedPage` has the same data as `CompressedPage` had
@@ -153,10 +153,11 @@ fn decompress_reuse<P: PageIterator>(
 /// > * `b` is swapped with `a`
 /// > * `c` is moved to `d`
 /// > * (next iteration): `d` is moved to `c`
-/// therefore, while the page is available:
+/// > therefore, while the page is available:
 /// * `PageReader` has its buffer back
 /// * `Decompressor`'s buffer empty
 /// * `DecompressedPage` has the decompressed buffer
+///
 /// after the page is used:
 /// * `PageReader` has its buffer back
 /// * `Decompressor` has its buffer back
