@@ -56,9 +56,16 @@ import java.io.Closeable;
 
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    // Sentinel for batch-ineligible functions.
+    static final int BATCH_NOT_ELIGIBLE = Integer.MIN_VALUE;
+    // Sentinel for batch-eligible no-arg functions (e.g. count(*)).
+    static final int BATCH_NO_ARG = -1;
+    private final int[] batchColumnIndexes;
     private final AsyncFilterContext filterCtx;
+    private final boolean hasNonBatchFunctions;
     private final GroupByAllocator ownerAllocator;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final SimpleMapValue ownerMapValue;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
@@ -71,6 +78,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            int @NotNull [] batchColumnIndexes,
             int valueCount,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
@@ -84,6 +92,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
         try {
+            this.ownerGroupByFunctions = ownerGroupByFunctions;
+            this.batchColumnIndexes = batchColumnIndexes;
+            boolean hasNonBatch = false;
+            for (int idx : batchColumnIndexes) {
+                if (idx == BATCH_NOT_ELIGIBLE) {
+                    hasNonBatch = true;
+                    break;
+                }
+            }
+            this.hasNonBatchFunctions = hasNonBatch;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
             this.filterCtx = new AsyncFilterContext(
@@ -172,6 +190,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         Misc.free(filterCtx);
     }
 
+    public int[] getBatchColumnIndexes() {
+        return batchColumnIndexes;
+    }
+
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
     }
@@ -181,6 +203,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             return ownerFunctionUpdater;
         }
         return perWorkerFunctionUpdaters.getQuick(slotId);
+    }
+
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     public SimpleMapValue getMapValue(int slotId) {
@@ -198,6 +227,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     // Thread-unsafe, should be used by query owner thread only.
     public ObjList<SimpleMapValue> getPerWorkerMapValues() {
         return perWorkerMapValues;
+    }
+
+    public boolean hasNonBatchFunctions() {
+        return hasNonBatchFunctions;
     }
 
     @Override
