@@ -24,30 +24,26 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.cutlass.qwp.protocol.QwpColumnDecoder;
+import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
+import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
 public class QwpTimestampDecoderTest {
 
     @Test
-    public void testCalculateGorillaSize() {
-        // All zeros DoD - most compact
-        long[] timestamps = {1000L, 2000L, 3000L, 4000L, 5000L};
-        int size = QwpTimestampDecoder.calculateGorillaSize(timestamps, false);
-
-        // Expected: 1 (flag) + 8 (first) + 8 (second) + ceil(3 bits / 8) = 17 + 1 = 18
-        // Actually 3 timestamps with DoD=0 need 3 bits = 1 byte
-        Assert.assertTrue(size > 0);
-        Assert.assertTrue(size <= 1 + timestamps.length * 8); // Should be <= uncompressed
-    }
-
-    @Test
-    public void testDecodeGorillaBitAlignment() throws QwpParseException {
+    public void testDecodeGorillaBitAlignment() throws Exception {
         // Test that bit reading works correctly across byte boundaries
         // by using various bit-width encodings that don't align on byte boundaries
         long[] timestamps = {
@@ -59,11 +55,11 @@ public class QwpTimestampDecoderTest {
                 5200L,            // DoD=150 (12 bits)
                 6100L,            // DoD=-100 (9 bits)
         };
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaBucketBoundaryValues() throws QwpParseException {
+    public void testDecodeGorillaBucketBoundaryValues() throws Exception {
         // Boundary values at the edge of signed two's complement ranges.
         // 7-bit signed range is [-64, 63], so DoD=64 must NOT use the 7-bit bucket
         // (64 overflows 7-bit signed to -64). Same for 9-bit (256) and 12-bit (2048).
@@ -71,135 +67,114 @@ public class QwpTimestampDecoderTest {
 
         // DoD = 64 (just outside 7-bit signed max of 63)
         // t0=1000, t1=2000 (delta=1000), t2=3064 (delta=1064, DoD=64)
-        testGorillaRoundTrip(new long[]{1000L, 2000L, 3064L}, null);
+        assertGorillaRoundTrip(new long[]{1000L, 2000L, 3064L}, null);
 
         // DoD = -64 (at 7-bit signed min, should fit in 7-bit bucket)
-        testGorillaRoundTrip(new long[]{1000L, 2000L, 2936L}, null);
+        assertGorillaRoundTrip(new long[]{1000L, 2000L, 2936L}, null);
 
         // DoD = 256 (just outside 9-bit signed max of 255)
-        testGorillaRoundTrip(new long[]{1000L, 2000L, 3256L}, null);
+        assertGorillaRoundTrip(new long[]{1000L, 2000L, 3256L}, null);
 
         // DoD = -256 (at 9-bit signed min, should fit in 9-bit bucket)
-        testGorillaRoundTrip(new long[]{1000L, 2000L, 2744L}, null);
+        assertGorillaRoundTrip(new long[]{1000L, 2000L, 2744L}, null);
 
         // DoD = 2048 (just outside 12-bit signed max of 2047)
-        testGorillaRoundTrip(new long[]{1000L, 2000L, 5048L}, null);
+        assertGorillaRoundTrip(new long[]{1000L, 2000L, 5048L}, null);
 
         // DoD = -2048 (at 12-bit signed min, should fit in 12-bit bucket)
-        testGorillaRoundTrip(new long[]{1000L, 2000L, -48L}, null);
+        assertGorillaRoundTrip(new long[]{1000L, 2000L, -48L}, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaHuge() throws QwpParseException {
+    public void testDecodeGorillaDeltaHuge() throws Exception {
         // Huge DoD outside [-2047, 2048] -> 36-bit encoding
         // DoD = 10000
         long[] timestamps = {1000L, 2000L, 13000L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
-    // ==================== Gorilla Encoding Flag Tests ====================
-
     @Test
-    public void testDecodeGorillaDeltaLarge() throws QwpParseException {
+    public void testDecodeGorillaDeltaLarge() throws Exception {
         // Large DoD in range [-2047, 2048] but outside [-255, 256] -> 16-bit encoding
         // DoD = 1000
         long[] timestamps = {1000L, 2000L, 4000L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaLargeNegative() throws QwpParseException {
+    public void testDecodeGorillaDeltaLargeNegative() throws Exception {
         // Negative large DoD = -1000
         long[] timestamps = {10000L, 11000L, 11000L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaMedium() throws QwpParseException {
+    public void testDecodeGorillaDeltaMedium() throws Exception {
         // Medium DoD in range [-255, 256] but outside [-63, 64] -> 12-bit encoding
         // DoD = 200
         long[] timestamps = {1000L, 2000L, 3200L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaMediumNegative() throws QwpParseException {
+    public void testDecodeGorillaDeltaMediumNegative() throws Exception {
         // Negative medium DoD = -200
         long[] timestamps = {1000L, 2000L, 2800L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaSmall() throws QwpParseException {
+    public void testDecodeGorillaDeltaSmall() throws Exception {
         // Small DoD in range [-63, 64] -> 9-bit encoding (2 prefix + 7 value)
         // t0=1000, t1=2000, t2=3050 -> delta0=1000, delta1=1050, DoD=50
         long[] timestamps = {1000L, 2000L, 3050L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaSmallNegative() throws QwpParseException {
+    public void testDecodeGorillaDeltaSmallNegative() throws Exception {
         // Negative small DoD
         // t0=1000, t1=2000, t2=2950 -> delta0=1000, delta1=950, DoD=-50
         long[] timestamps = {1000L, 2000L, 2950L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaDeltaZero() throws QwpParseException {
+    public void testDecodeGorillaDeltaZero() throws Exception {
         // Constant interval: DoD = 0 (1-bit encoding)
         // t0=1000, t1=2000, t2=3000 -> delta=1000, DoD=0
         long[] timestamps = {1000L, 2000L, 3000L, 4000L, 5000L};
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaEncodingFlag() throws QwpParseException {
+    public void testDecodeGorillaEncodingFlag() throws Exception {
         // Single timestamp with Gorilla encoding
-        long[] timestamps = {1000000000L};
-        int rowCount = 1;
-
-        // Gorilla with one row: encoding flag (1) + first timestamp (8) = 9 bytes
-        int size = 1 + 8;
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long end = QwpTimestampDecoder.encodeGorilla(address, timestamps, null);
-            Assert.assertEquals(size, end - address);
-
-            // Verify encoding flag
-            Assert.assertEquals(QwpTimestampDecoder.ENCODING_GORILLA, Unsafe.getUnsafe().getByte(address));
-
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = QwpTimestampDecoder.INSTANCE.decode(address, size, rowCount, false, sink);
-
-            Assert.assertEquals(size, consumed);
-            Assert.assertEquals(timestamps[0], sink.getValue(0));
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
+        long[] timestamps = {1_000_000_000L};
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaIrregularInterval() throws QwpParseException {
+    public void testDecodeGorillaIrregularInterval() throws Exception {
         // Irregular intervals with varying deltas
         long[] timestamps = {
-                1000000000L,
-                1000001000L,  // delta=1000
-                1000003000L,  // delta=2000, DoD=1000
-                1000003500L,  // delta=500, DoD=-1500
-                1000010000L,  // delta=6500, DoD=6000
-                1000010001L   // delta=1, DoD=-6499
+                1_000_000_000L,
+                1_000_001_000L,  // delta=1000
+                1_000_003_000L,  // delta=2000, DoD=1000
+                1_000_003_500L,  // delta=500, DoD=-1500
+                1_000_010_000L,  // delta=6500, DoD=6000
+                1_000_010_001L   // delta=1, DoD=-6499
         };
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaLargeColumn() throws QwpParseException {
+    public void testDecodeGorillaLargeColumn() throws Exception {
         // 100K timestamps with varying patterns
-        int count = 100000;
+        int count = 100_000;
         long[] timestamps = new long[count];
-        timestamps[0] = 1000000000L;
-        timestamps[1] = 1000001000L;
+        timestamps[0] = 1_000_000_000L;
+        timestamps[1] = 1_000_001_000L;
 
         // Generate with some variation to exercise different buckets
         for (int i = 2; i < count; i++) {
@@ -209,50 +184,50 @@ public class QwpTimestampDecoderTest {
             timestamps[i] = timestamps[i - 1] + prevDelta + variation;
         }
 
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaMixedBuckets() throws QwpParseException {
+    public void testDecodeGorillaMixedBuckets() throws Exception {
         // Mix of different bucket sizes
         long[] timestamps = {
-                1000000000L,  // t0
-                1000001000L,  // t1, delta=1000
-                1000002000L,  // t2, DoD=0 (1-bit)
-                1000003050L,  // t3, DoD=50 (9-bit)
-                1000004200L,  // t4, DoD=100 (9-bit)
-                1000006200L,  // t5, DoD=850 (16-bit)
-                1000106200L   // t6, DoD=98000 (36-bit)
+                1_000_000_000L,  // t0
+                1_000_001_000L,  // t1, delta=1000
+                1_000_002_000L,  // t2, DoD=0 (1-bit)
+                1_000_003_050L,  // t3, DoD=50 (9-bit)
+                1_000_004_200L,  // t4, DoD=100 (9-bit)
+                1_000_006_200L,  // t5, DoD=850 (16-bit)
+                1_000_106_200L   // t6, DoD=98000 (36-bit)
         };
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaRegularInterval() throws QwpParseException {
+    public void testDecodeGorillaRegularInterval() throws Exception {
         // Regular 1-second interval - all DoD should be 0
         long[] timestamps = new long[100];
         for (int i = 0; i < timestamps.length; i++) {
-            timestamps[i] = 1000000000L + i * 1000000L; // 1ms = 1000000ns
+            timestamps[i] = 1_000_000_000L + i * 1_000_000L; // 1ms = 1000000ns
         }
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaRoundTrip() throws QwpParseException {
+    public void testDecodeGorillaRoundTrip() throws Exception {
         // Comprehensive round-trip test with various patterns
         // Note: DoD values must fit in 32-bit signed range for proper encoding
         long[] timestamps = {
                 0L,
                 1L,
                 2L,
-                1000000000L,  // Large jump, but DoD fits in 32 bits
-                1000000001L,
+                1_000_000_000L,  // Large jump, but DoD fits in 32 bits
+                1_000_000_001L,
         };
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaSignedValues() throws QwpParseException {
+    public void testDecodeGorillaSignedValues() throws Exception {
         // Test with timestamps that produce negative DoD values in all ranges
         // These require proper sign extension during decoding
         long[] timestamps = {
@@ -263,211 +238,155 @@ public class QwpTimestampDecoderTest {
                 48420L,   // t4, DoD=-1500 (in 12-bit range)
                 55000L,   // t5, DoD=-3000 (in 32-bit range)
         };
-        testGorillaRoundTrip(timestamps, null);
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaTwoTimestamps() throws QwpParseException {
+    public void testDecodeGorillaTwoTimestamps() throws Exception {
         // Two timestamps - no delta-of-delta needed
-        long[] timestamps = {1000000000L, 1000001000L};
-        int rowCount = 2;
-
-        // Gorilla with two rows: encoding flag (1) + first (8) + second (8) = 17 bytes
-        int size = 1 + 8 + 8;
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long end = QwpTimestampDecoder.encodeGorilla(address, timestamps, null);
-            Assert.assertEquals(size, end - address);
-
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = QwpTimestampDecoder.INSTANCE.decode(address, size, rowCount, false, sink);
-
-            Assert.assertEquals(size, consumed);
-            Assert.assertEquals(timestamps[0], sink.getValue(0));
-            Assert.assertEquals(timestamps[1], sink.getValue(1));
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
+        long[] timestamps = {1_000_000_000L, 1_000_001_000L};
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeGorillaWithNulls() throws QwpParseException {
+    public void testDecodeGorillaWithNulls() throws Exception {
         long[] timestamps = {1000L, 2000L, 0L, 4000L, 0L, 6000L};
         boolean[] nulls = {false, false, true, false, true, false};
-        testGorillaRoundTrip(timestamps, nulls);
+        assertGorillaRoundTrip(timestamps, nulls);
     }
 
     @Test
     public void testDecodeIncompleteData() {
-        // Not enough data for encoding flag
-        long address = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        // Gorilla flag but insufficient data for timestamps (3 rows need gorilla decoding)
+        int bufSize = 32;
+        long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(5);
-            // Only 1 byte but need at least encoding flag + 8 bytes for first timestamp
+            Unsafe.getUnsafe().putByte(address, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.getUnsafe().putLong(address + 1, 1000L);
+            Unsafe.getUnsafe().putLong(address + 9, 2000L);
+            // No gorilla data follows for the remaining 3 rows
+
+            QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+            // dataLength=17 means 0 bytes for gorilla data, decoder throws on first DoD read
             Assert.assertThrows(QwpParseException.class, () ->
-                    QwpTimestampDecoder.INSTANCE.decode(address, 1, 5, false, sink));
+                    cursor.of(address, 17, 5, TYPE_TIMESTAMP, false, true));
         } finally {
-            Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
     public void testDecodeInsufficientDataForFirstTimestamp() {
-        // Gorilla encoding flag but not enough bytes for first timestamp
-        long address = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
+        // Gorilla encoding flag but insufficient bytes for first timestamp
+        int bufSize = 32;
+        long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, QwpTimestampDecoder.ENCODING_GORILLA);
+            Unsafe.getUnsafe().putByte(address, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            // No valid first timestamp, and 3 rows require gorilla decoding
 
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(1);
+            QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+            // dataLength=5 means gorillaDataLength is negative, decoder throws immediately
             Assert.assertThrows(QwpParseException.class, () ->
-                    QwpTimestampDecoder.INSTANCE.decode(address, 5, 1, false, sink));
+                    cursor.of(address, 5, 3, TYPE_TIMESTAMP, false, true));
         } finally {
-            Unsafe.free(address, 5, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
     public void testDecodeInsufficientDataForSecondTimestamp() {
         // Gorilla encoding flag + first timestamp but not enough for second
-        long address = Unsafe.malloc(12, MemoryTag.NATIVE_DEFAULT);
+        int bufSize = 32;
+        long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, QwpTimestampDecoder.ENCODING_GORILLA);
-            Unsafe.getUnsafe().putLong(address + 1, 1000000L);
+            Unsafe.getUnsafe().putByte(address, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.getUnsafe().putLong(address + 1, 1_000_000L);
+            // No valid second timestamp, and 3 rows require gorilla decoding
 
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(2);
+            QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+            // dataLength=12 means gorillaDataLength is negative, decoder throws immediately
             Assert.assertThrows(QwpParseException.class, () ->
-                    QwpTimestampDecoder.INSTANCE.decode(address, 12, 2, false, sink));
+                    cursor.of(address, 12, 3, TYPE_TIMESTAMP, false, true));
         } finally {
-            Unsafe.free(address, 12, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
     public void testDecodeInvalidEncodingFlag() {
-        long address = Unsafe.malloc(100, MemoryTag.NATIVE_DEFAULT);
+        int bufSize = 100;
+        long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
             // Write invalid encoding flag
             Unsafe.getUnsafe().putByte(address, (byte) 0xFF);
 
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(1);
+            QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
             Assert.assertThrows(QwpParseException.class, () ->
-                    QwpTimestampDecoder.INSTANCE.decode(address, 100, 1, false, sink));
+                    cursor.of(address, bufSize, 1, TYPE_TIMESTAMP, false, true));
         } finally {
-            Unsafe.free(address, 100, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
-    public void testDecodeUncompressedTimestamps() throws QwpParseException {
-        long[] timestamps = {1000000000L, 1000001000L, 1000002000L, 1000003000L, 1000004000L};
-        int rowCount = timestamps.length;
-
-        int size = 1 + rowCount * 8; // encoding flag + values
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long end = QwpTimestampDecoder.encodeUncompressed(address, timestamps, null);
-            Assert.assertEquals(size, end - address);
-
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = QwpTimestampDecoder.INSTANCE.decode(address, size, rowCount, false, sink);
-
-            Assert.assertEquals(size, consumed);
-            for (int i = 0; i < rowCount; i++) {
-                Assert.assertEquals(timestamps[i], sink.getValue(i));
-                Assert.assertFalse(sink.isNull(i));
-            }
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testDecodeUncompressedTimestamps() throws Exception {
+        long[] timestamps = {1_000_000_000L, 1_000_001_000L, 1_000_002_000L, 1_000_003_000L, 1_000_004_000L};
+        assertGorillaRoundTrip(timestamps, null);
     }
 
     @Test
-    public void testDecodeUncompressedWithNulls() throws QwpParseException {
-        long[] timestamps = {1000000000L, 0L, 1000002000L, 0L, 1000004000L};
+    public void testDecodeUncompressedWithNulls() throws Exception {
+        long[] timestamps = {1_000_000_000L, 0L, 1_000_002_000L, 0L, 1_000_004_000L};
         boolean[] nulls = {false, true, false, true, false};
-        int rowCount = timestamps.length;
-
-        // Count non-null values
-        int nullCount = 0;
-        for (boolean isNull : nulls) {
-            if (isNull) nullCount++;
-        }
-        int valueCount = rowCount - nullCount;
-
-        int bitmapSize = (rowCount + 7) / 8;
-        int size = bitmapSize + 1 + valueCount * 8; // bitmap + encoding flag + non-null values only
-        int bufferSize = bitmapSize + 1 + rowCount * 8; // Allocate max possible
-        long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long end = QwpTimestampDecoder.encodeUncompressed(address, timestamps, nulls);
-            Assert.assertEquals(size, end - address);
-
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = QwpTimestampDecoder.INSTANCE.decode(address, bufferSize, rowCount, true, sink);
-
-            Assert.assertEquals(size, consumed);
-            for (int i = 0; i < rowCount; i++) {
-                if (nulls[i]) {
-                    Assert.assertTrue("Row " + i + " should be null", sink.isNull(i));
-                } else {
-                    Assert.assertEquals(timestamps[i], sink.getValue(i));
-                    Assert.assertFalse(sink.isNull(i));
-                }
-            }
-        } finally {
-            Unsafe.free(address, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        assertGorillaRoundTrip(timestamps, nulls);
     }
 
     @Test
     public void testDecodeZeroRows() throws QwpParseException {
-        QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(0);
-        int consumed = QwpTimestampDecoder.INSTANCE.decode(0, 0, 0, false, sink);
+        // Zero rows with gorillaEnabled=false consumes no bytes
+        QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+        int consumed = cursor.of(0, 0, 0, TYPE_TIMESTAMP, false, false);
         Assert.assertEquals(0, consumed);
     }
 
-    @Test
-    public void testExpectedSize() {
-        // expectedSize returns worst case (uncompressed)
-        int rowCount = 10;
-        int expected = 1 + rowCount * 8; // encoding flag + values
-        Assert.assertEquals(expected, QwpTimestampDecoder.INSTANCE.expectedSize(rowCount, false, 0));
-
-        // With nullable
-        int bitmapSize = (rowCount + 7) / 8;
-        expected = bitmapSize + 1 + rowCount * 8;
-        Assert.assertEquals(expected, QwpTimestampDecoder.INSTANCE.expectedSize(rowCount, true, 0));
-    }
-
-    private void testGorillaRoundTrip(long[] timestamps, boolean[] nulls) throws QwpParseException {
-        int rowCount = timestamps.length;
-        boolean nullable = nulls != null;
-
-        // Calculate size and allocate buffer
-        int maxSize = QwpTimestampDecoder.calculateGorillaSize(timestamps, nullable) + 100; // extra padding
-        long address = Unsafe.malloc(maxSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            // Encode
-            long end = QwpTimestampDecoder.encodeGorilla(address, timestamps, nulls);
-            int actualSize = (int) (end - address);
-
-            // Decode
-            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(rowCount);
-            int consumed = QwpTimestampDecoder.INSTANCE.decode(address, actualSize, rowCount, nullable, sink);
-
-            Assert.assertEquals("Consumed bytes should match encoded size", actualSize, consumed);
-
-            // Verify values
-            for (int i = 0; i < rowCount; i++) {
-                if (nullable && nulls[i]) {
-                    Assert.assertTrue("Row " + i + " should be null", sink.isNull(i));
-                } else {
-                    Assert.assertFalse("Row " + i + " should not be null", sink.isNull(i));
-                    Assert.assertEquals("Row " + i + " value mismatch", timestamps[i], sink.getValue(i));
+    private void assertGorillaRoundTrip(long[] timestamps, boolean[] nulls) throws Exception {
+        assertMemoryLeak(() -> {
+            boolean nullable = nulls != null;
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                encoder.setGorillaEnabled(true);
+                QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, nullable);
+                for (int i = 0; i < timestamps.length; i++) {
+                    if (nullable && nulls[i]) {
+                        tsCol.addNull();
+                    } else {
+                        tsCol.addLong(timestamps[i]);
+                    }
+                    buffer.nextRow();
+                }
+                int size = encoder.encode(buffer, false);
+                QwpBufferWriter buf = encoder.getBuffer();
+                long ptr = buf.getBufferPtr();
+                try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+                    QwpMessageCursor msg = decoder.decode(ptr, size);
+                    Assert.assertTrue(msg.hasNextTable());
+                    QwpTableBlockCursor table = msg.nextTable();
+                    Assert.assertEquals(timestamps.length, table.getRowCount());
+                    int tsColIdx = table.getColumnCount() - 1;
+                    for (int i = 0; i < timestamps.length; i++) {
+                        Assert.assertTrue(table.hasNextRow());
+                        table.nextRow();
+                        if (nullable && nulls[i]) {
+                            Assert.assertTrue("Row " + i + " should be null", table.isColumnNull(tsColIdx));
+                        } else {
+                            Assert.assertFalse("Row " + i + " should not be null", table.isColumnNull(tsColIdx));
+                            QwpTimestampColumnCursor cursor = table.getTimestampColumn(tsColIdx);
+                            Assert.assertEquals("Row " + i, timestamps[i], cursor.getTimestamp());
+                        }
+                    }
+                    Assert.assertFalse(table.hasNextRow());
                 }
             }
-        } finally {
-            Unsafe.free(address, maxSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        });
     }
 }
