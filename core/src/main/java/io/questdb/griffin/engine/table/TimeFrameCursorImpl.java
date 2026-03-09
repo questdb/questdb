@@ -47,6 +47,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import java.util.Arrays;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
@@ -355,10 +356,14 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
         partitionCount = reader.getPartitionCount();
 
-        partitionOpened = new boolean[partitionCount];
-        partitionPageFrameStart = new int[partitionCount];
-        partitionPageFrameCount = new int[partitionCount];
-        partitionTotalRows = new long[partitionCount];
+        if (partitionOpened == null || partitionOpened.length < partitionCount) {
+            partitionOpened = new boolean[partitionCount];
+            partitionPageFrameStart = new int[partitionCount];
+            partitionPageFrameCount = new int[partitionCount];
+            partitionTotalRows = new long[partitionCount];
+        } else {
+            Arrays.fill(partitionOpened, 0, partitionCount, false);
+        }
         pageFrameCount = 0;
         pageFrameCumulativeRows.reopen();
 
