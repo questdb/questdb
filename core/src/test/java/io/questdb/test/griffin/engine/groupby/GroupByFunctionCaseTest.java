@@ -37,7 +37,6 @@ import static io.questdb.cairo.ColumnType.*;
 
 
 public class GroupByFunctionCaseTest extends AbstractCairoTest {
-
     private final StringSink planSink = new StringSink();
     private final StringSink sqlSink = new StringSink();
 
@@ -172,49 +171,55 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     @Test
     public void testGetPlan() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE spot_trades (\n" +
-                    "  id LONG,\n" +
-                    "  instrument_key SYMBOL capacity 256 CACHE,\n" +
-                    "  venue SYMBOL capacity 256 CACHE,\n" +
-                    "  base_ccy SYMBOL capacity 256 CACHE,\n" +
-                    "  quote_ccy SYMBOL capacity 256 CACHE,\n" +
-                    "  symbol SYMBOL capacity 256 CACHE index capacity 256,\n" +
-                    "  created_timestamp TIMESTAMP,\n" +
-                    "  trade_timestamp TIMESTAMP,\n" +
-                    "  side SYMBOL capacity 256 CACHE,\n" +
-                    "  qty DOUBLE,\n" +
-                    "  price DOUBLE,\n" +
-                    "  trade_id STRING,\n" +
-                    "  notional_usd DOUBLE,\n" +
-                    "  notional_base_ccy DOUBLE\n" +
-                    ") timestamp (trade_timestamp) PARTITION BY DAY;");
+            execute(
+                    """
+                            CREATE TABLE spot_trades (
+                              id LONG,
+                              instrument_key SYMBOL capacity 256 CACHE,
+                              venue SYMBOL capacity 256 CACHE,
+                              base_ccy SYMBOL capacity 256 CACHE,
+                              quote_ccy SYMBOL capacity 256 CACHE,
+                              symbol SYMBOL capacity 256 CACHE index capacity 256,
+                              created_timestamp TIMESTAMP,
+                              trade_timestamp TIMESTAMP,
+                              side SYMBOL capacity 256 CACHE,
+                              qty DOUBLE,
+                              price DOUBLE,
+                              trade_id STRING,
+                              notional_usd DOUBLE,
+                              notional_base_ccy DOUBLE
+                            ) timestamp (trade_timestamp) PARTITION BY DAY;"""
+            );
 
             assertPlanNoLeakCheck(
-                    "SELECT  \n" +
-                            "    trade_timestamp as candle_st,\n" +
-                            "    venue,\n" +
-                            "    count(*) AS num_ticks,\n" +
-                            "    SUM(qty*price) AS quote_volume,\n" +
-                            "    SUM(qty*price)/SUM(qty) AS vwap\n" +
-                            "  FROM 'spot_trades'\n" +
-                            "  WHERE \n" +
-                            "    instrument_key like 'ETH_USD_S_%'\n" +
-                            "    AND trade_timestamp >= '2022-01-01 00:00'\n" +
-                            "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
-                            "  SAMPLE BY 1h \n" +
-                            "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
-                    "Radix sort light\n" +
-                            "  keys: [candle_st]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [candle_st,venue]\n" +
-                            "          values: [count(*),sum(qty*price),sum(qty)]\n" +
-                            "          filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Interval forward scan on: spot_trades\n" +
-                            "                  intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
+                    """
+                            SELECT \s
+                                trade_timestamp as candle_st,
+                                venue,
+                                count(*) AS num_ticks,
+                                SUM(qty*price) AS quote_volume,
+                                SUM(qty*price)/SUM(qty) AS vwap
+                              FROM 'spot_trades'
+                              WHERE\s
+                                instrument_key like 'ETH_USD_S_%'
+                                AND trade_timestamp >= '2022-01-01 00:00'
+                                AND venue in ('CBS', 'FUS', 'LMX', 'BTS')
+                              SAMPLE BY 1h\s
+                              ALIGN TO CALENDAR TIME ZONE 'UTC'""",
+                    """
+                            Radix sort light
+                              keys: [candle_st]
+                                VirtualRecord
+                                  functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]
+                                    Async Group By workers: 1
+                                      keys: [candle_st,venue]
+                                      values: [count(*),sum(qty*price),sum(qty)]
+                                      filter: (instrument_key ~ ETH.USD.S..*? [state-shared] and venue in [CBS,FUS,LMX,BTS])
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: spot_trades
+                                              intervals: [("2022-01-01T00:00:00.000000Z","MAX")]
+                            """
             );
         });
     }
@@ -234,11 +239,21 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
         boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
 
+        // For non-keyed, non-rosti queries the factory is AsyncGroupByNotKeyedRecordCursorFactory
+        // which reports whether it uses vectorized (batch) computation. Batch is eligible when
+        // the function supports batch computation AND the batch arg type matches the physical column type.
+        boolean asyncVectorized = !rosti && keys == null
+                && ((t == CHAR && f >= 4)                    // min/max on char
+                || (t == FLOAT && (f == 2 || f >= 4)));      // sum/min/max on float
+
         planSink.clear();
         if (rosti) {
             planSink.put("GroupBy vectorized: true workers: 1\n");
         } else {
             planSink.put("Async Group By workers: 1\n");
+            if (keys == null) {
+                planSink.put("  vectorized: ").put(asyncVectorized).put('\n');
+            }
         }
         if (keys != null) {
             planSink.put("  keys: [").put(keys).put("]\n");
@@ -247,9 +262,13 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
         if (!rosti) {
             planSink.put("  filter: null\n");
         }
-        planSink.put("    PageFrame\n" +
-                "        Row forward scan\n" +
-                "        Frame forward scan on: test\n");
+        planSink.put(
+                """
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: test
+                        """
+        );
     }
 
     private void throwWithContext(String typeName, String function, Throwable ae) {

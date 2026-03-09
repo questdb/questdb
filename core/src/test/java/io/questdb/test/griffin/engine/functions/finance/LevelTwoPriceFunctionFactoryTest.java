@@ -264,6 +264,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "VirtualRecord\n" +
                             "  functions: [avg1-avg]\n" +
                             "    Async Group By workers: 1\n" +
+                            "      vectorized: false\n" +
                             "      values: [avg(l2price([14,bid_size,bid_value])),avg(l2price([14,ask_size,ask_value]))]\n" +
                             "      filter: null\n" +
                             "        PageFrame\n" +
