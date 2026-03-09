@@ -1183,7 +1183,7 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -1370,7 +1370,7 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,

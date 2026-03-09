@@ -35,7 +35,7 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
         buffers: &'a mut ColumnChunkBuffers,
         ascii: bool,
     ) -> ParquetResult<Self> {
-        let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
+        let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
 
         let mut dict_aux = Vec::with_capacity(dict_decoder.dict_values.len());
         for &value in &dict_decoder.dict_values {
