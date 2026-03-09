@@ -54,7 +54,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // These are off-heap to reduce GC pressure for large and wide tables.
     private final DirectLongList auxPageAddresses;
     private final DirectLongList auxPageSizes;
-    private final IntList columnIndexes = new IntList();
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
@@ -160,9 +160,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return columnCount;
     }
 
-    // returns local (query) to table reader index mapping
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
     }
 
     public IntList getColumnTypes() {
@@ -223,7 +222,11 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
     }
 
-    public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes, boolean external) {
+    public void of(
+            @Transient RecordMetadata metadata,
+            @Transient ColumnMapping columnMapping,
+            boolean external
+    ) {
         // Reopen off-heap lists in case they were closed.
         pageAddresses.reopen();
         pageSizes.reopen();
@@ -237,8 +240,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
-        this.columnIndexes.clear();
-        this.columnIndexes.addAll(columnIndexes);
+        this.columnMapping.copyFrom(columnMapping);
         this.external = external;
     }
 

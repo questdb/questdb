@@ -1218,7 +1218,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // open new column files
                 long transientRowCount = txWriter.getTransientRowCount();
-                if (transientRowCount > 0) {
+                int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+                if (transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
                     long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                     setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
@@ -1482,7 +1483,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
 
                             final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
-                            final long columnAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                            final LPSZ symColumnFile = dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                            final long symActualFileLen = ff.length(symColumnFile);
+                            if (symActualFileLen < columnSize) {
+                                throw CairoException.critical(0)
+                                        .put("column file too small for partition row count [column=").put(columnName)
+                                        .put(", type=").put(ColumnType.nameOf(columnType))
+                                        .put(", columnTop=").put(columnTop)
+                                        .put(", columnRowCount=").put(columnRowCount)
+                                        .put(", partitionRowCount=").put(partitionRowCount)
+                                        .put(", expectedBytes=").put(columnSize)
+                                        .put(", actualFileLen=").put(symActualFileLen)
+                                        .put(", columnNameTxn=").put(columnNameTxn)
+                                        .put(", path=").put(symColumnFile)
+                                        .put(']');
+                            }
+                            final long columnAddr = mapRONoCache(ff, symColumnFile, LOG, columnSize, memoryTag);
                             ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
@@ -1545,7 +1561,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             partitionDescriptor.setColumnAddr(dataAddr, dataSize);
                         } else {
                             final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
-                            final long fixedAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            final LPSZ columnFile = dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                            final long actualFileLen = ff.length(columnFile);
+                            if (actualFileLen < mapBytes) {
+                                throw CairoException.critical(0)
+                                        .put("column file too small for partition row count [column=").put(columnName)
+                                        .put(", type=").put(ColumnType.nameOf(columnType))
+                                        .put(", columnTop=").put(columnTop)
+                                        .put(", columnRowCount=").put(columnRowCount)
+                                        .put(", partitionRowCount=").put(partitionRowCount)
+                                        .put(", expectedBytes=").put(mapBytes)
+                                        .put(", actualFileLen=").put(actualFileLen)
+                                        .put(", columnNameTxn=").put(columnNameTxn)
+                                        .put(", path=").put(columnFile)
+                                        .put(']');
+                            }
+                            final long fixedAddr = mapRONoCache(ff, columnFile, LOG, mapBytes, memoryTag);
                             ff.madvise(fixedAddr, mapBytes, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.addColumn(
                                     columnName,
@@ -1610,10 +1641,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
         copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
-        final long originalSize = txWriter.getPartitionSize(partitionIndex);
+        final long originalSize = getPartitionSize(partitionIndex);
+
+        // The parquet encoder materializes NULLs for the column-top region, so
+        // columns with 0 < column_top < partitionRowCount now cover all rows
+        // in the parquet file.  Zero those column tops.  Columns that did not
+        // exist (getColumnTop == -1) or have column_top == partitionRowCount
+        // keep column_top = partitionRowCount in the parquet and the decoder
+        // skips them, so do NOT zero those.
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, originalSize, false);
+        columnVersionWriter.commit();
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
 
@@ -1683,15 +1724,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-            final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-            parquetMetadata.copyToSansUnsupported(metadata, false);
 
+            // Build the list of columns to decode, mapping parquet indices to
+            // table column indices via the column ID stored in the parquet schema.
+            // Columns deleted from the table after the parquet was created are skipped.
             parquetColumnIdsAndTypes.clear();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final int columnType = metadata.getColumnType(i);
-                final String columnName = metadata.getColumnName(i);
-                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
+            int decodedColumnCount = 0;
+            for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
+                final int columnType = parquetMetadata.getColumnType(i);
+                if (ColumnType.isUndefined(columnType)) {
+                    continue;
+                }
+
+                final int tableColumnIndex = parquetMetadata.getColumnId(i);
+                if (tableColumnIndex >= this.metadata.getColumnCount() || this.metadata.getColumnType(tableColumnIndex) <= 0) {
+                    // Column has been deleted from the table since the parquet was created
+                    continue;
+                }
+
+                // Use the table's current column name, not the (potentially stale) parquet name,
+                // so that the native files match what openPartition() expects after renames.
+                final CharSequence columnName = this.metadata.getColumnName(tableColumnIndex);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, tableColumnIndex);
 
                 parquetColumnIdsAndTypes.add(i);
                 parquetColumnIdsAndTypes.add(columnType);
@@ -1713,6 +1768,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
                     columnFdAndDataSize.set(auxIndex + 1, dstFixFd);
                 }
+                decodedColumnCount++;
             }
 
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
@@ -1725,8 +1781,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetMetadata.getRowGroupSize(rowGroupIndex)
                 );
                 parquetRowCount += rowGroupRowCount;
-                for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                    final int columnType = metadata.getColumnType(columnIndex);
+                for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
+                    final int parquetIdx = parquetColumnIdsAndTypes.get(2L * columnIndex);
+                    final int columnType = parquetMetadata.getColumnType(parquetIdx);
 
                     final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(columnIndex);
                     final long srcDataSize = rowGroupBuffers.getChunkDataSize(columnIndex);
@@ -1758,6 +1815,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to native [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -5422,6 +5480,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private int findParquetColumnIndex(PartitionDecoder.Metadata parquetMetadata, int metadataColumnIndex) {
+        final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
+        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+            if (parquetMetadata.getColumnId(idx) == writerIndex) {
+                return idx;
+            }
+        }
+        return -1;
+    }
+
     private long findMinSplitPartitionTimestamp() {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -5932,13 +6000,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
 
-            int parquetColumnIndex = -1;
-            for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-                if (parquetMetadata.getColumnId(idx) == columnIndex) {
-                    parquetColumnIndex = idx;
-                    break;
-                }
-            }
+            int parquetColumnIndex = findParquetColumnIndex(parquetMetadata, columnIndex);
             if (parquetColumnIndex == -1) {
                 path.trimTo(plen);
                 LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$substr(pathRootSize, path)
@@ -6375,6 +6437,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
 
                 final long newPartitionTimestamp = partitionTimestamp;
                 final int newPartitionIndex = partitionIndexRaw;
@@ -6400,7 +6463,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
+                if (!isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(true);
@@ -6434,6 +6497,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)
+                        .$(", isParquet=").$(isParquet)
+                        .$(", parquetFileSize=").$(Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES))
+                        .$(", partitionIndexRaw=").$(partitionIndexRaw)
                         .$(", lastPartitionTimestamp=").$ts(timestampDriver, lastPartitionTimestamp)
                         .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
                         .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
@@ -6520,16 +6586,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     } else {
                         final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
-                        final boolean parquetRewrite = Numbers.decodeHighInt(flags) != 0;
+                        // partitionMutates is always true here (in-place update, not rewrite).
                         if (parquetFileSize > -1) {
-                            if (parquetRewrite) {
-                                // Rewrite: new parquet file is in a new txn-named directory.
-                                // Bump the partition name txn and queue old dir for removal.
-                                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
-                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
-                            } else {
-                                txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
-                            }
+                            txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
@@ -6538,10 +6597,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.bumpPartitionTableVersion();
                     }
                 } else {
-                    if (partitionTimestamp != lastPartitionTimestamp) {
+                    final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
+                    if (isParquet && parquetFileSize > -1) {
+                        // Parquet rewrite: new file is in a txn-named directory.
+                        // Bump the partition name txn and queue old dir for removal.
+                        final long srcNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
+                        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                        // After O3 rewrite, the Rust updater zeros all column_tops
+                        // in the parquet metadata (update.rs), so the decoder will
+                        // produce data for every column.  Zero ALL column tops
+                        // here, including previously non-existent columns.
+                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        // Parquet rewrite replaces the partition directory (old dir
+                        // queued for removal). Bump the partition table version so
+                        // readers do a full reconciliation and drop stale references
+                        // to the old directory. Without this, readers on the fast
+                        // reload path may retain the old partitionNameTxn, causing
+                        // the purge job to conflict with active readers.
                         txWriter.bumpPartitionTableVersion();
+                    } else {
+                        txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                        if (partitionTimestamp != lastPartitionTimestamp) {
+                            txWriter.bumpPartitionTableVersion();
+                        }
                     }
-                    txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                 }
             }
         }
@@ -8906,8 +8987,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetAddr = mapRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = metadata.getTimestampIndex();
+            final int parquetTsIndex = findParquetColumnIndex(parquetDecoder.metadata(), timestampIndex);
+            assert parquetTsIndex > -1;
             parquetColumnIdsAndTypes.clear();
-            parquetColumnIdsAndTypes.add(timestampIndex);
+            parquetColumnIdsAndTypes.add(parquetTsIndex);
             parquetColumnIdsAndTypes.add(timestampType);
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             return parquetStatBuffers.getMinValueLong(0);
@@ -9013,8 +9096,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetAddr = mapRO(ff, filePath.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = metadata.getTimestampIndex();
+            final int parquetTsIndex = findParquetColumnIndex(parquetDecoder.metadata(), timestampIndex);
+            assert parquetTsIndex > -1;
             parquetColumnIdsAndTypes.clear();
-            parquetColumnIdsAndTypes.add(timestampIndex);
+            parquetColumnIdsAndTypes.add(parquetTsIndex);
             parquetColumnIdsAndTypes.add(timestampType);
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             attachMinTimestamp = parquetStatBuffers.getMinValueLong(0);
@@ -10637,6 +10722,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todoMem.sync(false);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
+        }
+    }
+
+    /**
+     * After a parquet (re)write, zero column tops so that column-version
+     * records match the parquet content.
+     *
+     * @param zeroAllColumns when {@code true}, zero column tops for ALL
+     *                       columns (including ones that had no data at all).
+     *                       Use {@code true} for the O3 parquet-rewrite path
+     *                       where the Rust updater zeros all column_tops in
+     *                       the parquet metadata, so the decoder produces data
+     *                       for every column.  Use {@code false} for
+     *                       native→parquet conversion, where the encoder
+     *                       preserves the original column_top.  The Rust
+     *                       decoder skips columns whose
+     *                       column_top >= row_group_size (i.e. all-NULL
+     *                       columns), so only columns with partial data
+     *                       (0 < column_top < partitionRowCount) should be
+     *                       zeroed — those are the ones where the encoder
+     *                       fills the top region with NULLs and the decoder
+     *                       produces all rows.
+     */
+    private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
+        final int columnCount = metadata.getColumnCount();
+        for (int column = 0; column < columnCount; column++) {
+            if (metadata.getColumnType(column) > 0) {
+                long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
+                if (zeroAllColumns ? (colTop != 0) : (colTop > 0 && colTop < partitionRowCount)) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
+                }
+            }
         }
     }
 

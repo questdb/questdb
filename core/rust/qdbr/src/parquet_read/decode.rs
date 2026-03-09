@@ -127,7 +127,10 @@ const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const IPV4_NULL: [u8; 4] = 0i32.to_le_bytes();
+const GEO_BYTE_NULL: [u8; 1] = (-1i8).to_le_bytes();
 const GEO_INT_NULL: [u8; 4] = (-1i32).to_le_bytes();
+const GEO_LONG_NULL: [u8; 8] = (-1i64).to_le_bytes();
+const GEO_SHORT_NULL: [u8; 2] = (-1i16).to_le_bytes();
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
 const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
@@ -138,8 +141,29 @@ const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
 fn int32_null(tag: ColumnTypeTag) -> &'static [u8; 4] {
     match tag {
         ColumnTypeTag::IPv4 => &IPV4_NULL,
-        ColumnTypeTag::GeoInt => &GEO_INT_NULL,
+        ColumnTypeTag::GeoByte | ColumnTypeTag::GeoShort | ColumnTypeTag::GeoInt => &GEO_INT_NULL,
         _ => &INT_NULL,
+    }
+}
+
+fn byte_null(tag: ColumnTypeTag) -> &'static [u8; 1] {
+    match tag {
+        ColumnTypeTag::GeoByte => &GEO_BYTE_NULL,
+        _ => &BYTE_NULL,
+    }
+}
+
+fn short_null(tag: ColumnTypeTag) -> &'static [u8; 2] {
+    match tag {
+        ColumnTypeTag::GeoShort => &GEO_SHORT_NULL,
+        _ => &SHORT_NULL,
+    }
+}
+
+fn int64_null(tag: ColumnTypeTag) -> &'static [u8; 8] {
+    match tag {
+        ColumnTypeTag::GeoLong => &GEO_LONG_NULL,
+        _ => &LONG_NULL,
     }
 }
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
@@ -913,7 +937,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         &mut FixedInt2ShortColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
                             bufs,
-                            &SHORT_NULL,
+                            short_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -938,7 +962,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 page_row_count,
                             )?,
                             bufs,
-                            &SHORT_NULL,
+                            short_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -955,7 +979,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         &mut FixedInt2ByteColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
                             bufs,
-                            &BYTE_NULL,
+                            byte_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -980,7 +1004,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 page_row_count,
                             )?,
                             bufs,
-                            &BYTE_NULL,
+                            byte_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -1022,7 +1046,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
                             ),
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -1152,7 +1176,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         dict_decoder,
                         page_row_count,
                         page_row_count,
-                        &INT_NULL,
+                        int32_null(column_type.tag()),
                     )?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
@@ -1162,7 +1186,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, &SHORT_NULL),
+                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, short_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -1170,7 +1194,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Byte,
+                    ColumnTypeTag::Byte | ColumnTypeTag::GeoByte,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -1178,7 +1202,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         dict_decoder,
                         page_row_count,
                         page_row_count,
-                        &INT_NULL,
+                        int32_null(column_type.tag()),
                     )?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
@@ -1188,7 +1212,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, &BYTE_NULL),
+                        &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, byte_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -1363,7 +1387,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         &mut FixedLongColumnSink::new(
                             &mut DataPageFixedSlicer::<8>::new(values_buffer, page_row_count),
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -1411,7 +1435,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                                 page_row_count,
                             )?,
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -1457,7 +1481,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         dict_decoder,
                         page_row_count,
                         page_row_count,
-                        &LONG_NULL,
+                        int64_null(column_type.tag()),
                     )?;
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
@@ -1467,7 +1491,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut FixedLongColumnSink::new(&mut slicer, bufs, int64_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -1955,7 +1979,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         &mut NanoTimestampColumnSink::new(
                             &mut DataPageFixedSlicer::<12>::new(values_buffer, page_row_count),
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -1982,7 +2006,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_lo,
                         row_hi,
                         rows_filter,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, int64_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -2228,7 +2252,7 @@ pub fn decode_page(
                         &mut FixedInt2ShortColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
-                            &SHORT_NULL,
+                            short_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2246,7 +2270,7 @@ pub fn decode_page(
                         &mut FixedInt2ShortColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, row_count)?,
                             bufs,
-                            &SHORT_NULL,
+                            short_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2259,7 +2283,7 @@ pub fn decode_page(
                         &mut FixedInt2ByteColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
-                            &BYTE_NULL,
+                            byte_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2277,7 +2301,7 @@ pub fn decode_page(
                         &mut FixedInt2ByteColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, row_count)?,
                             bufs,
-                            &BYTE_NULL,
+                            byte_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2311,7 +2335,7 @@ pub fn decode_page(
                                 DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             ),
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2419,13 +2443,13 @@ pub fn decode_page(
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &INT_NULL,
+                        int32_null(column_type.tag()),
                     )?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, &SHORT_NULL),
+                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, short_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -2433,7 +2457,7 @@ pub fn decode_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Byte,
+                    ColumnTypeTag::Byte | ColumnTypeTag::GeoByte,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -2441,13 +2465,13 @@ pub fn decode_page(
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &INT_NULL,
+                        int32_null(column_type.tag()),
                     )?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, &BYTE_NULL),
+                        &mut FixedInt2ByteColumnSink::new(&mut slicer, bufs, byte_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -2592,7 +2616,7 @@ pub fn decode_page(
                         &mut FixedLongColumnSink::new(
                             &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2626,7 +2650,7 @@ pub fn decode_page(
                         &mut FixedLongColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, row_count)?,
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -2668,13 +2692,13 @@ pub fn decode_page(
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &LONG_NULL,
+                        int64_null(column_type.tag()),
                     )?;
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
-                        &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut FixedLongColumnSink::new(&mut slicer, bufs, int64_null(column_type.tag())),
                     )?;
                     Ok(())
                 }
@@ -3058,7 +3082,7 @@ pub fn decode_page(
                         &mut NanoTimestampColumnSink::new(
                             &mut DataPageFixedSlicer::<12>::new(values_buffer, row_count),
                             bufs,
-                            &LONG_NULL,
+                            int64_null(column_type.tag()),
                         ),
                     )?;
                     Ok(())
@@ -3081,7 +3105,7 @@ pub fn decode_page(
                         page,
                         row_lo,
                         row_hi,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
+                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, int64_null(column_type.tag())),
                     )?;
                     Ok(())
                 }

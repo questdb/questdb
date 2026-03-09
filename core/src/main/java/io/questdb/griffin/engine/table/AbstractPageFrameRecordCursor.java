@@ -105,7 +105,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     protected void init() {
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

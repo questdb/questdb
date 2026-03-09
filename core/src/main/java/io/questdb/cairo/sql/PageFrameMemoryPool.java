@@ -332,9 +332,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
         buildColumnIdMap(parquetMetadata);
 
-        final int readParquetColumnCount = addressCache.getColumnIndexes().size();
+        final ColumnMapping columnMapping = addressCache.getColumnMapping();
+        final int readParquetColumnCount = columnMapping.getColumnCount();
         for (int i = 0; i < readParquetColumnCount; i++) {
-            final int columnWriterIndex = addressCache.getColumnIndexes().getQuick(i);
+            final int columnWriterIndex = columnMapping.getWriterIndex(i);
             final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
             if (parquetIdx >= 0) {
                 final int columnType = addressCache.getColumnTypes().getQuick(i);
@@ -354,10 +355,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
         buildColumnIdMap(parquetMetadata);
 
-        final int readParquetColumnCount = addressCache.getColumnIndexes().size();
+        final ColumnMapping columnMapping = addressCache.getColumnMapping();
+        final int readParquetColumnCount = columnMapping.getColumnCount();
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
-                final int columnWriterIndex = addressCache.getColumnIndexes().getQuick(i);
+                final int columnWriterIndex = columnMapping.getWriterIndex(i);
                 final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
                 if (parquetIdx >= 0) {
                     final int columnType = addressCache.getColumnTypes().getQuick(i);

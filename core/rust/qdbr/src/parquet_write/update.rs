@@ -29,7 +29,9 @@ use parquet2::compression::CompressionOptions;
 use parquet2::encoding::uleb128;
 use parquet2::metadata::{FileMetaData, KeyValue, SortingColumn};
 use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
+use parquet2::metadata::SchemaDescriptor;
 use parquet2::schema::types::ParquetType;
+use parquet2::schema::Repetition;
 use parquet2::write;
 use parquet2::write::footer_cache::FooterCache;
 use parquet2::write::{ParquetFile, Version};
@@ -62,6 +64,7 @@ pub struct ParquetUpdater {
     accumulated_unused_bytes: u64,
     old_footer_size: u64,
     is_rewrite: bool,
+    schema_updated: bool,
     result_file_size: u64,
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
@@ -203,6 +206,7 @@ impl ParquetUpdater {
             accumulated_unused_bytes,
             old_footer_size,
             is_rewrite,
+            schema_updated: false,
             result_file_size: 0,
             result_unused_bytes: 0,
             target_qdb_meta: None,
@@ -214,6 +218,7 @@ impl ParquetUpdater {
         partition: &Partition<'_>,
         row_group_id: i16,
     ) -> ParquetResult<()> {
+        self.ensure_schema_matches_columns(partition);
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -256,6 +261,7 @@ impl ParquetUpdater {
         partition: &Partition<'_>,
         position: i16,
     ) -> ParquetResult<()> {
+        self.ensure_schema_matches_columns(partition);
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -676,6 +682,52 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
+    /// Updates the file-level schema when any column's required flag disagrees
+    /// with the schema's repetition. This happens when an O3 merge introduces
+    /// null values into a symbol column that was previously all-non-null
+    /// (Required in the schema). Only safe in rewrite mode where all row groups
+    /// are re-encoded; in update mode untouched row groups would have data
+    /// encoded with the old schema.
+    fn ensure_schema_matches_columns(&mut self, partition: &Partition<'_>) {
+        if self.schema_updated || !self.is_rewrite {
+            return;
+        }
+        self.schema_updated = true;
+        let fields = self.parquet_file.schema().fields();
+        debug_assert_eq!(
+            partition.columns.len(),
+            fields.len(),
+            "column count ({}) != schema field count ({})",
+            partition.columns.len(),
+            fields.len()
+        );
+        let needs_update = partition
+            .columns
+            .iter()
+            .zip(fields.iter())
+            .any(|(col, field)| {
+                col.data_type.tag() == ColumnTypeTag::Symbol
+                    && !col.required
+                    && field.get_field_info().repetition == Repetition::Required
+            });
+        if !needs_update {
+            return;
+        }
+        let mut new_fields: Vec<ParquetType> = fields.to_vec();
+        for (col, field) in partition.columns.iter().zip(new_fields.iter_mut()) {
+            if col.data_type.tag() == ColumnTypeTag::Symbol && !col.required {
+                if let ParquetType::PrimitiveType(ref mut pt) = field {
+                    pt.field_info.repetition = Repetition::Optional;
+                }
+            }
+        }
+        let schema = SchemaDescriptor::new(
+            self.parquet_file.schema().name().to_string(),
+            new_fields,
+        );
+        self.parquet_file.set_schema(schema);
+    }
+
     fn row_group_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.parquet_file.options().write_statistics,
@@ -692,6 +744,10 @@ impl ParquetUpdater {
 /// all-zero for Required types) column chunk. The output is a single
 /// uncompressed DataPageV1 containing RLE-encoded definition levels
 /// (all zeros for Optional) or zero-filled values (for Required).
+///
+/// For nested GroupType columns (arrays encoded as nested LIST), the page
+/// includes both repetition and definition levels with correct bit widths
+/// matching the nested schema, and the leaf physical type and full path.
 ///
 /// Returns `(raw_page_bytes, thrift_column_chunk)` where `raw_page_bytes`
 /// must be written at `file_offset` in the output file, and the thrift
@@ -712,6 +768,18 @@ fn generate_null_column_chunk_bytes(
     } else {
         // Optional column: RLE def levels = all zeros, no values.
         generate_optional_null_page(row_count)
+    };
+
+    // Build column path_in_schema.
+    let path = vec![field_info.name.clone()];
+
+    // Determine the parquet physical type.
+    let (thrift_type, _type_length) = match parquet_field {
+        ParquetType::PrimitiveType(pt) => pt.physical_type.into(),
+        ParquetType::GroupType { .. } => {
+            // Group types (arrays) use BYTE_ARRAY as the leaf physical type.
+            (Type::BYTE_ARRAY, None)
+        }
     };
 
     // Serialize the page header.
@@ -751,18 +819,6 @@ fn generate_null_column_chunk_bytes(
 
     let mut chunk_bytes = header_bytes;
     chunk_bytes.extend_from_slice(&page_data);
-
-    // Build column path_in_schema.
-    let path = vec![field_info.name.clone()];
-
-    // Determine the parquet physical type.
-    let (thrift_type, _type_length) = match parquet_field {
-        ParquetType::PrimitiveType(pt) => pt.physical_type.into(),
-        ParquetType::GroupType { .. } => {
-            // Group types (arrays) use BYTE_ARRAY as the leaf physical type.
-            (Type::BYTE_ARRAY, None)
-        }
-    };
 
     let metadata = ColumnMetaData {
         type_: thrift_type,

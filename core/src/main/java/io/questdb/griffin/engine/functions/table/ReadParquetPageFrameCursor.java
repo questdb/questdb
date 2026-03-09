@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -38,7 +39,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -52,7 +52,7 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  */
 public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetPageFrameCursor.class);
-    private final IntList columnIndexes;
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
     private final ReadParquetPageFrame frame = new ReadParquetPageFrame();
@@ -67,7 +67,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         this.ff = ff;
         this.metadata = metadata;
         this.decoder = new PartitionDecoder();
-        this.columnIndexes = new IntList();
     }
 
     @Override
@@ -89,8 +88,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
     }
 
     @Override
@@ -131,8 +130,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        columnIndexes.clear();
-        if (!canProjectMetadata(metadata, decoder, null, columnIndexes)) {
+        columnMapping.clear();
+        if (!canProjectMetadata(metadata, decoder, null, columnMapping)) {
             // We need to recompile the factory as the Parquet metadata has changed.
             throw TableReferenceOutOfDateException.of(path);
         }
@@ -188,7 +187,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
 
         @Override
         public int getColumnCount() {
-            return columnIndexes.size();
+            return columnMapping.getColumnCount();
         }
 
         @Override

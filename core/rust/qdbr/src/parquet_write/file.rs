@@ -907,12 +907,14 @@ fn column_chunk_to_primitive_pages<'a>(
         } else {
             chunk_offset + chunk_length - orig_column_top
         };
-        // Derive the required flag from the schema's ParquetType, not from
-        // Column.required. When a target schema is set (ADD COLUMN), the
-        // file-level schema may differ from the Column's required flag.
-        // The page format must match the schema's repetition so the reader
-        // can correctly decode definition levels.
-        let required = primitive_type.field_info.repetition == Repetition::Required;
+        // Only treat as required when both the Column and schema agree.
+        // Column.required reflects the null flag from the symbol map writer:
+        // false when merged data contains nulls, even if the original schema
+        // had Required repetition (no nulls before the merge).
+        // The schema's repetition may also be Optional for ADD COLUMN cases
+        // where a target schema introduces a new column with column_top nulls.
+        let required =
+            column.required && primitive_type.field_info.repetition == Repetition::Required;
         return symbol::symbol_to_pages(
             &keys[lower_bound..upper_bound],
             offsets,

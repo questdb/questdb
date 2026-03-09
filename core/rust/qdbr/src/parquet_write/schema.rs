@@ -343,7 +343,7 @@ impl<'a> Column<'a> {
         secondary_data_ptr: *const u8,
         secondary_data_size: usize,
         symbol_offsets_ptr: *const u64,
-        symbol_offsets_size: usize,
+        symbol_offsets_count: usize,
         designated_timestamp: bool,
         designated_timestamp_ascending: bool,
     ) -> ParquetResult<Self> {
@@ -356,8 +356,8 @@ impl<'a> Column<'a> {
             "secondary_data_ptr inconsistent with secondary_data_size"
         );
         assert!(
-            !symbol_offsets_ptr.is_null() || symbol_offsets_size == 0,
-            "symbol_offsets_ptr inconsistent with symbol_offsets_size"
+            !symbol_offsets_ptr.is_null() || symbol_offsets_count == 0,
+            "symbol_offsets_ptr inconsistent with symbol_offsets_count"
         );
 
         let required = column_type < 0;
@@ -376,7 +376,7 @@ impl<'a> Column<'a> {
         let symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
-            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) }
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count) }
         };
 
         Ok(Column {

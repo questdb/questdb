@@ -541,7 +541,7 @@ fn create_partition_descriptor(
         let secondary_col_size = col_data[raw_idx + 6];
 
         let symbol_offsets_addr = col_data[raw_idx + 7];
-        let symbol_offsets_size = col_data[raw_idx + 8];
+        let symbol_offsets_count = col_data[raw_idx + 8];
 
         let designated_timestamp = col_id == timestamp_index;
 
@@ -556,7 +556,7 @@ fn create_partition_descriptor(
             secondary_col_addr as *const u8,
             secondary_col_size as usize,
             symbol_offsets_addr as *const u64,
-            symbol_offsets_size as usize,
+            symbol_offsets_count as usize,
             designated_timestamp,
             true,
         )?;
@@ -1047,7 +1047,7 @@ fn update_partition_data(
         let secondary_col_addr = col_data[raw_idx + 3];
         let secondary_col_size = col_data[raw_idx + 4];
         let symbol_offsets_addr = col_data[raw_idx + 5];
-        let symbol_offsets_size = col_data[raw_idx + 6];
+        let symbol_offsets_count = col_data[raw_idx + 6];
         let primary_ptr = primary_col_addr as *const u8;
         let secondary_ptr = secondary_col_addr as *const u8;
         let symbol_offsets_ptr = symbol_offsets_addr as *const u64;
@@ -1067,7 +1067,7 @@ fn update_partition_data(
         column.symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
-            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size as usize) }
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count as usize) }
         };
     }
 

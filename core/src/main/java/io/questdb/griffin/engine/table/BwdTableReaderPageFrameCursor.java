@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
@@ -48,6 +49,7 @@ import static io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor.calc
 public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
+    private final ColumnMapping columnMapping = new ColumnMapping();
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
@@ -89,8 +91,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public IntList getColumnIndexes() {
-        return columnIndexes;
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
     }
 
     @Override
@@ -148,6 +150,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
         this.partitionFrameCursor = partitionFrameCursor;
         reader = partitionFrameCursor.getTableReader();
+        TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
         toTop();
@@ -281,6 +284,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
+
+        // Check partitionHi to be below actual parquet row count
+        assert partitionHi <= metadata.getRowCount();
 
         long rowCount = 0;
         int rowGroupIndex = 0;
