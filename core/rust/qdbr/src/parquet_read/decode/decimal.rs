@@ -226,7 +226,7 @@ pub(super) fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FI
     mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
-    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
+    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
     let mut slicer = RleDictionarySlicer::try_new(
         values_buffer,
         dict_decoder,
