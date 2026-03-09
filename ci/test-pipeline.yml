@@ -259,7 +259,14 @@ stages:
                 echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
                 exit 1
               fi
+              # Restore execute permissions lost during artifact download
+              # (PublishBuildArtifacts does not preserve Unix permissions)
+              find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -exec chmod +x {} +
               mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
+              if [ ${#RUST_TEST_OBJECTS[@]} -eq 0 ]; then
+                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
+                exit 1
+              fi
               OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
               for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
                 OBJECT_ARGS+=(--object "$rust_test_object")
@@ -268,18 +275,19 @@ stages:
                 echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
                 exit 1
               fi
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work|/home/vsts/work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
                 exit 1
               fi
               PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
-              echo "Using ${#OBJECT_ARGS[@]} object files for llvm-cov"
+              echo "Using $((${#OBJECT_ARGS[@]} / 2)) object files for llvm-cov"
 
               # Export the merged coverage report to LCOV format
               llvm-cov export \
               --format=lcov \
               --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              $PATH_EQUIV_ARGS \
               "${OBJECT_ARGS[@]}" \
               --instr-profile=questdbr.profdata \
               > questdbr.lcov.dat

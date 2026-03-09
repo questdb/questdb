@@ -43,6 +43,7 @@ impl SlicedDataPage<'_> {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SlicedPage<'a> {
     Dict(SlicedDictPage<'a>),
     Data(SlicedDataPage<'a>),

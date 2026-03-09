@@ -52,6 +52,8 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     public static final int COPY_OPTION_STATISTICS_ENABLED = COPY_OPTION_DATA_PAGE_SIZE + 1; // 7
     public static final int COPY_OPTION_PARQUET_VERSION = COPY_OPTION_STATISTICS_ENABLED + 1; // 8
     public static final int COPY_OPTION_RAW_ARRAY_ENCODING = COPY_OPTION_PARQUET_VERSION + 1; // 9
+    public static final int COPY_OPTION_BLOOM_FILTER_COLUMNS = COPY_OPTION_RAW_ARRAY_ENCODING + 1; // 10
+    public static final int COPY_OPTION_BLOOM_FILTER_FPP = COPY_OPTION_BLOOM_FILTER_COLUMNS + 1; // 11
     public static final int COPY_TYPE_FROM = 1;
     public static final int COPY_TYPE_TO = 2;
     public static final int COPY_TYPE_UNKNOWN = 0;
@@ -60,6 +62,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     public static final int PARQUET_VERSION_V2 = 2;
     private static final LowerCaseCharSequenceIntHashMap copyOptionsNameToEnumMap = new LowerCaseCharSequenceIntHashMap();
     private int atomicity = -1;
+    @Nullable
+    private CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
+    private double bloomFilterFpp = Double.NaN;
     private boolean cancel;
     private int compressionCodec = -1;
     private int compressionLevel = -1;
@@ -116,10 +122,26 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         rawArrayEncoding = false;
         compressionLevelPos = 0;
         noDelay = false;
+        bloomFilterColumns = null;
+        bloomFilterColumnsPosition = -1;
+        bloomFilterFpp = Double.NaN;
     }
 
     public int getAtomicity() {
         return atomicity;
+    }
+
+    @Nullable
+    public CharSequence getBloomFilterColumns() {
+        return bloomFilterColumns;
+    }
+
+    public int getBloomFilterColumnsPosition() {
+        return bloomFilterColumnsPosition;
+    }
+
+    public double getBloomFilterFpp() {
+        return bloomFilterFpp;
     }
 
     public int getCompressionCodec() {
@@ -240,6 +262,15 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         this.atomicity = atomicity;
     }
 
+    public void setBloomFilterColumns(@Nullable CharSequence bloomFilterColumns, int position) {
+        this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterColumnsPosition = position;
+    }
+
+    public void setBloomFilterFpp(double bloomFilterFpp) {
+        this.bloomFilterFpp = bloomFilterFpp;
+    }
+
     public void setCancel(boolean cancel) {
         this.cancel = cancel;
     }
@@ -286,6 +317,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = configuration.isParquetExportStatisticsEnabled();
         parquetVersion = configuration.getParquetExportVersion();
         rawArrayEncoding = configuration.isParquetExportRawArrayEncoding();
+        bloomFilterFpp = configuration.getParquetExportBloomFilterFpp();
         partitionBy = -1;
         compressionLevelSet = false;
     }
@@ -380,5 +412,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         copyOptionsNameToEnumMap.put("statistics_enabled", COPY_OPTION_STATISTICS_ENABLED);
         copyOptionsNameToEnumMap.put("parquet_version", COPY_OPTION_PARQUET_VERSION);
         copyOptionsNameToEnumMap.put("raw_array_encoding", COPY_OPTION_RAW_ARRAY_ENCODING);
+        copyOptionsNameToEnumMap.put("bloom_filter_columns", COPY_OPTION_BLOOM_FILTER_COLUMNS);
+        copyOptionsNameToEnumMap.put("bloom_filter_fpp", COPY_OPTION_BLOOM_FILTER_FPP);
     }
 }

@@ -46,7 +46,7 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Integer.BYTES;
             long max = Numbers.ipv4ToLong(Numbers.IPv4_NULL);
@@ -56,7 +56,10 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
                     max = value;
                 }
             }
-            mapValue.putInt(valueIndex, (int) max);
+            final long existing = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex));
+            if (max > existing || existing == Numbers.IPv4_NULL) {
+                mapValue.putInt(valueIndex, (int) max);
+            }
         }
     }
 

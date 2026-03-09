@@ -28,10 +28,13 @@ import io.questdb.cairo.TableToken;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -77,7 +80,24 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
      */
     int getOrder();
 
+    @Nullable
+    ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions();
+
     TableToken getTableToken();
+
+    /**
+     * Returns {@code true} if the table has any parquet-format partitions.
+     * <p>
+     * The check is table-level rather than query-level: even for
+     * {@code IntervalPartitionFrameCursorFactory} with static intervals, we do not
+     * narrow the check to only the partitions the query will touch. The table-level
+     * flag is a single cached boolean read under the metadata cache read lock (O(1),
+     * zero IO), whereas a partition-level check would require opening a
+     * {@code TxReader} at compile time.
+     */
+    boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
+
+    void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions);
 
     boolean supportsTableRowId(TableToken tableToken);
 
