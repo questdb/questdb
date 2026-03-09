@@ -26,6 +26,8 @@ package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 /**
@@ -54,10 +56,10 @@ public class QwpSchemaCache {
         misses = 0;
     }
 
-    public QwpSchema get(String tableName, long schemaHash) {
-        long key = combineKey(tableName.hashCode(), schemaHash);
+    public QwpSchema get(DirectUtf8Sequence tableName, long schemaHash) {
+        long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
         Entry entry = cache.get(key);
-        if (entry != null && entry.tableName.equals(tableName)) {
+        if (entry != null && Utf8s.equals(tableName, entry.tableName)) {
             hits++;
             return entry.schema;
         }
@@ -65,10 +67,11 @@ public class QwpSchemaCache {
         return null;
     }
 
-    public QwpSchema get(DirectUtf8Sequence tableName, long schemaHash) {
-        long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
+    public QwpSchema get(String tableName, long schemaHash) {
+        Utf8String utf8Name = new Utf8String(tableName);
+        long key = combineKey(Utf8s.hashCode(utf8Name), schemaHash);
         Entry entry = cache.get(key);
-        if (entry != null && Utf8s.equalsUtf16(entry.tableName, tableName)) {
+        if (entry != null && Utf8s.equals(utf8Name, entry.tableName)) {
             hits++;
             return entry.schema;
         }
@@ -89,9 +92,9 @@ public class QwpSchemaCache {
         return misses;
     }
 
-    public void put(String tableName, QwpSchema schema) {
-        long key = combineKey(tableName.hashCode(), schema.getSchemaHash());
-        cache.put(key, new Entry(tableName, schema));
+    public void put(Utf8Sequence tableName, QwpSchema schema) {
+        long key = combineKey(Utf8s.hashCode(tableName), schema.getSchemaHash());
+        cache.put(key, new Entry(Utf8String.newInstance(tableName), schema));
     }
 
     public int size() {
@@ -102,6 +105,6 @@ public class QwpSchemaCache {
         return ((long) tableNameHash << 32) ^ schemaHash;
     }
 
-    private record Entry(String tableName, QwpSchema schema) {
+    private record Entry(Utf8String tableName, QwpSchema schema) {
     }
 }

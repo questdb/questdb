@@ -337,7 +337,7 @@ public class QwpTableBlockCursor implements Mutable {
             schema = parseResult.schema;
             // Cache the schema if caching is enabled
             if (schemaCache != null) {
-                schemaCache.put(tableHeader.getTableName(), schema);
+                schemaCache.put(tableHeader.getTableNameUtf8(), schema);
             }
         } else {
             // Schema reference mode - look up in cache

@@ -28,8 +28,15 @@ import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
 
 public class QwpSchemaCacheTest {
 
@@ -40,8 +47,8 @@ public class QwpSchemaCacheTest {
         QwpSchema schema1 = createTestSchema("col1", QwpConstants.TYPE_INT);
         QwpSchema schema2 = createTestSchema("col2", QwpConstants.TYPE_DOUBLE);
 
-        cache.put("test_table", schema1);
-        cache.put("test_table", schema2);
+        cache.put(new Utf8String("test_table"), schema1);
+        cache.put(new Utf8String("test_table"), schema2);
 
         Assert.assertEquals(2, cache.size());
         Assert.assertNotNull(cache.get("test_table", schema1.getSchemaHash()));
@@ -54,7 +61,7 @@ public class QwpSchemaCacheTest {
 
         for (int i = 0; i < 10; i++) {
             QwpSchema schema = createTestSchema("col" + i, QwpConstants.TYPE_INT);
-            cache.put("table" + i, schema);
+            cache.put(new Utf8String("table" + i), schema);
         }
 
         Assert.assertEquals(10, cache.size());
@@ -71,8 +78,8 @@ public class QwpSchemaCacheTest {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
-        cache.put("test_table", schema);
-        cache.put("test_table", schema);
+        cache.put(new Utf8String("test_table"), schema);
+        cache.put(new Utf8String("test_table"), schema);
 
         Assert.assertEquals(1, cache.size());
     }
@@ -85,11 +92,39 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
+    public void testCacheGetByDirectUtf8AfterPut() {
+        // Production path: put() receives a DirectUtf8Sequence (from wire),
+        // get() receives a DirectUtf8Sequence (from a later message).
+        // Non-ASCII name verifies consistent UTF-8 hashing end-to-end.
+        String tableName = "t\u00ebst_t\u00e4ble";
+        QwpSchemaCache cache = new QwpSchemaCache();
+        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
+
+        cache.put(new Utf8String(tableName), schema);
+
+        byte[] utf8Bytes = tableName.getBytes(StandardCharsets.UTF_8);
+        long address = Unsafe.malloc(utf8Bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < utf8Bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(address + i, utf8Bytes[i]);
+            }
+            DirectUtf8String directName = new DirectUtf8String();
+            directName.of(address, address + utf8Bytes.length);
+
+            QwpSchema retrieved = cache.get(directName, schema.getSchemaHash());
+            Assert.assertNotNull("schema lookup via DirectUtf8Sequence must hit after put", retrieved);
+            Assert.assertEquals(schema.getSchemaHash(), retrieved.getSchemaHash());
+        } finally {
+            Unsafe.free(address, utf8Bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testCacheHashCollisionDoesNotReturnWrongTable() {
-        // "AaAa" and "BBBB" have identical String.hashCode() (2031744)
-        String tableA = "AaAa";
-        String tableB = "BBBB";
-        Assert.assertEquals(tableA.hashCode(), tableB.hashCode());
+        // "AaAa" and "BBBB" have identical Utf8s.hashCode() for ASCII
+        Utf8String tableA = new Utf8String("AaAa");
+        Utf8String tableB = new Utf8String("BBBB");
+        Assert.assertEquals(Utf8s.hashCode(tableA), Utf8s.hashCode(tableB));
 
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schemaA = createTestSchema("colA", QwpConstants.TYPE_INT);
@@ -97,9 +132,9 @@ public class QwpSchemaCacheTest {
         cache.put(tableA, schemaA);
 
         // Same schema hash, colliding table name hash — must NOT return tableA's schema
-        Assert.assertNull(cache.get(tableB, schemaA.getSchemaHash()));
+        Assert.assertNull(cache.get("BBBB", schemaA.getSchemaHash()));
         // tableA itself must still resolve
-        Assert.assertNotNull(cache.get(tableA, schemaA.getSchemaHash()));
+        Assert.assertNotNull(cache.get("AaAa", schemaA.getSchemaHash()));
     }
 
     @Test
@@ -107,7 +142,7 @@ public class QwpSchemaCacheTest {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
-        cache.put("test_table", schema);
+        cache.put(new Utf8String("test_table"), schema);
 
         Assert.assertEquals(0, cache.getHits());
         Assert.assertEquals(0, cache.getMisses());
@@ -129,7 +164,7 @@ public class QwpSchemaCacheTest {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
-        cache.put("test_table", schema);
+        cache.put(new Utf8String("test_table"), schema);
 
         // 3 hits
         cache.get("test_table", schema.getSchemaHash());
@@ -150,7 +185,7 @@ public class QwpSchemaCacheTest {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
-        cache.put("test_table", schema);
+        cache.put(new Utf8String("test_table"), schema);
 
         cache.get("test_table", 99999L); // Miss (wrong hash)
         cache.get("other_table", schema.getSchemaHash()); // Miss (wrong table)
@@ -164,7 +199,7 @@ public class QwpSchemaCacheTest {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
-        cache.put("test_table", schema);
+        cache.put(new Utf8String("test_table"), schema);
 
         Assert.assertEquals(1, cache.size());
         QwpSchema retrieved = cache.get("test_table", schema.getSchemaHash());
