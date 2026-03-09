@@ -197,9 +197,14 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
-    static final int META_FLAG_INDEX_TYPE_MASK = 0x03; // bits 0-1 for index type
+    // Index type is stored in 3 bits, split across bits 0-1 and bit 4 to avoid
+    // collision with SYMBOL_CACHE (bit 2) and DEDUP_KEY (bit 3).
+    // This encoding is backward-compatible: old tables with META_FLAG_BIT_INDEXED=1
+    // and bit 4 unset decode as IndexType.SYMBOL (1).
+    static final int META_FLAG_INDEX_TYPE_MASK_LO = 0x03; // bits 0-1: lower 2 bits of index type
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
+    static final int META_FLAG_INDEX_TYPE_BIT_HI = 1 << 4; // bit 4: upper bit of index type
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -1989,7 +1994,7 @@ public final class TableUtils {
 
         for (int i = 0; i < count; i++) {
             mem.putInt(tableStruct.getColumnType(i));
-            long flags = tableStruct.getIndexType(i) & META_FLAG_INDEX_TYPE_MASK;
+            long flags = encodeIndexTypeFlags(tableStruct.getIndexType(i));
 
             if (tableStruct.getSymbolCacheFlag(i)) {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
@@ -2111,6 +2116,22 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Decodes the index type from the column flags long.
+     * Index type is stored split: lower 2 bits in positions 0-1, upper bit in position 4.
+     */
+    static byte decodeIndexTypeFlags(long flags) {
+        return (byte) ((flags & META_FLAG_INDEX_TYPE_MASK_LO) | ((flags & META_FLAG_INDEX_TYPE_BIT_HI) >> 2));
+    }
+
+    /**
+     * Encodes the index type into flag bits for storage.
+     * Lower 2 bits go to positions 0-1, upper bit goes to position 4.
+     */
+    static long encodeIndexTypeFlags(byte indexType) {
+        return (indexType & 0x03) | ((indexType & 0x04) << 2);
+    }
+
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
     }
@@ -2128,7 +2149,7 @@ public final class TableUtils {
     }
 
     static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
-        return (byte) (getColumnFlags(metaMem, columnIndex) & META_FLAG_INDEX_TYPE_MASK);
+        return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {

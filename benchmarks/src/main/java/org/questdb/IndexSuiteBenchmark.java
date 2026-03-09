@@ -81,6 +81,7 @@ public class IndexSuiteBenchmark {
     private static final long COLUMN_NAME_TXN = COLUMN_NAME_TXN_NONE;
     private static final int TOTAL_ROWS = 20_000_000;
     private static final int LZ4_PAGE_SIZE = 4096;
+    private static final int BP_COMMIT_INTERVAL = 500_000;
     private static final int READ_WARMUP = 1;
     private static final int READ_RUNS = 5;
     private static final int MAX_READ_KEYS = 10_000;
@@ -150,7 +151,7 @@ public class IndexSuiteBenchmark {
                     System.out.printf("%n=== %s, %d vals/key, %,dK keys, offset=%s (%s) ===%n%n",
                             dist, valsPerKey, keyCount / 1000, OFFSET_LABELS[oi], OFFSET_BITS[oi]);
                     System.out.printf("  %-14s %10s %7s %10s %10s%n", "Format", "Size (MB)", "B/val", "Write (s)", "Read (ms)");
-                    System.out.println("  " + "\u2500".repeat(55));
+                    System.out.println("  " + "─".repeat(55));
 
                     int[] readKeys = selectReadKeys(keyCount);
 
@@ -158,7 +159,7 @@ public class IndexSuiteBenchmark {
                         String dir = tmpDir + File.separator + "idx_suite_" + format + "_" + System.nanoTime();
                         new File(dir).mkdirs();
                         try {
-                            FormatResult fr = runFormat(format, config, dir, keyAssignment, keyCount, valsPerKey, rowOffset, readKeys);
+                            FormatResult fr = runFormat(format, config, dir, keyAssignment, valsPerKey, rowOffset, readKeys);
                             int fi = format.ordinal();
                             result.sizeMB[fi] = fr.sizeMB;
                             result.bPerVal[fi] = fr.bPerVal;
@@ -194,7 +195,6 @@ public class IndexSuiteBenchmark {
             CairoConfiguration config,
             String dir,
             int[] keyAssignment,
-            int keyCount,
             int valsPerKey,
             long rowOffset,
             int[] readKeys
@@ -205,7 +205,7 @@ public class IndexSuiteBenchmark {
         long writeT0 = System.nanoTime();
         switch (format) {
             case LEGACY:
-                createLegacyIndex(config, dir, keyAssignment, keyCount, valsPerKey, rowOffset);
+                createLegacyIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
                 break;
             case DELTA:
                 createDeltaIndex(config, dir, keyAssignment, rowOffset);
@@ -238,7 +238,7 @@ public class IndexSuiteBenchmark {
 
     // ========================= Index creation (write) =========================
 
-    private static void createLegacyIndex(CairoConfiguration config, String dir, int[] keyAssignment, int keyCount, int valsPerKey, long rowOffset) {
+    private static void createLegacyIndex(CairoConfiguration config, String dir, int[] keyAssignment, int valsPerKey, long rowOffset) {
         int blockCapacity = Numbers.ceilPow2(valsPerKey);
         try (Path path = new Path().of(dir)) {
             try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
@@ -355,7 +355,7 @@ public class IndexSuiteBenchmark {
                     MemoryTag.MMAP_DEFAULT,
                     config.getWriterFileOpenOpts()
             )) {
-                BPBitmapIndexWriter.initKeyMemory(mem, valsPerKey);
+                BPBitmapIndexWriter.initKeyMemory(mem, BPBitmapIndexUtils.BLOCK_CAPACITY);
             }
             ff.touch(BPBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
@@ -364,6 +364,9 @@ public class IndexSuiteBenchmark {
                 writer.of(path, "test", COLUMN_NAME_TXN, false);
                 for (int i = 0; i < keyAssignment.length; i++) {
                     writer.add(keyAssignment[i], (long) i + rowOffset);
+                    if ((i + 1) % BP_COMMIT_INTERVAL == 0) {
+                        writer.commit();
+                    }
                 }
             }
         }
@@ -374,29 +377,14 @@ public class IndexSuiteBenchmark {
     private static double measureReadLatency(Format format, CairoConfiguration config, String dir, int[] readKeys) {
         ReadTest test = () -> {
             try (Path path = new Path().of(dir)) {
-                BitmapIndexReader reader;
-                switch (format) {
-                    case LEGACY:
-                        reader = new BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                        break;
-                    case DELTA:
-                        reader = new DeltaBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                        break;
-                    case FOR:
-                        reader = new FORBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                        break;
-                    case LZ4:
-                        reader = new LZ4BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                        break;
-                    case FSST:
-                        reader = new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                        break;
-                    case BP:
-                        reader = new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                        break;
-                    default:
-                        throw new IllegalStateException();
-                }
+                BitmapIndexReader reader = switch (format) {
+                    case LEGACY -> new BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case DELTA -> new DeltaBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case FOR -> new FORBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case LZ4 -> new LZ4BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case FSST -> new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case BP -> new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                };
                 try {
                     return readBatch(reader, readKeys);
                 } finally {
@@ -473,22 +461,14 @@ public class IndexSuiteBenchmark {
     // ========================= Output =========================
 
     private static String formatLabel(Format format) {
-        switch (format) {
-            case LEGACY:
-                return "Legacy";
-            case DELTA:
-                return "Delta";
-            case FOR:
-                return "FOR";
-            case LZ4:
-                return "LZ4 4KB";
-            case FSST:
-                return "FSST";
-            case BP:
-                return "BP";
-            default:
-                return format.name();
-        }
+        return switch (format) {
+            case LEGACY -> "Legacy";
+            case DELTA -> "Delta";
+            case FOR -> "FOR";
+            case LZ4 -> "LZ4 4KB";
+            case FSST -> "FSST";
+            case BP -> "BP";
+        };
     }
 
     private static void printSummaryTables(List<ScenarioResult> allResults) {
@@ -501,7 +481,8 @@ public class IndexSuiteBenchmark {
             System.out.printf(" %10s", formatLabel(f));
         }
         System.out.println();
-        System.out.println("  " + "\u2500".repeat(45 + formats.length * 11));
+        String dashes = "  " + "─".repeat(45 + formats.length * 11);
+        System.out.println(dashes);
 
         for (ScenarioResult r : allResults) {
             System.out.printf("  %-45s",
@@ -519,7 +500,7 @@ public class IndexSuiteBenchmark {
             System.out.printf(" %10s", formatLabel(f));
         }
         System.out.println();
-        System.out.println("  " + "\u2500".repeat(45 + formats.length * 11));
+        System.out.println(dashes);
 
         for (ScenarioResult r : allResults) {
             System.out.printf("  %-45s",
@@ -537,7 +518,7 @@ public class IndexSuiteBenchmark {
             System.out.printf(" %10s", formatLabel(f));
         }
         System.out.println();
-        System.out.println("  " + "\u2500".repeat(45 + formats.length * 11));
+        System.out.println(dashes);
 
         for (ScenarioResult r : allResults) {
             System.out.printf("  %-45s",

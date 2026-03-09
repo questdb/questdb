@@ -9665,10 +9665,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int columnType = metadata.getColumnType(i);
                 ddlMem.putInt(columnType);
 
-                long flags = 0;
-                if (metadata.isIndexed(i)) {
-                    flags |= META_FLAG_BIT_INDEXED;
-                }
+                long flags = encodeIndexTypeFlags(metadata.getIndexType(i));
 
                 if (metadata.isDedupKey(i)) {
                     flags |= META_FLAG_BIT_DEDUP_KEY;

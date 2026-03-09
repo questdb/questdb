@@ -26,11 +26,13 @@ package io.questdb.cairo;
 
 /**
  * Defines the types of column indexes supported by QuestDB.
- * The index type is stored as a 2-bit value in the column metadata flags.
+ * The index type is stored as a 3-bit value in the column metadata flags,
+ * split across bits 0-1 (lower) and bit 4 (upper) to avoid collision with
+ * the symbol cache (bit 2) and dedup key (bit 3) flags.
  */
 public final class IndexType {
     /**
-     * Mask for extracting the index type from metadata flags (bits 0-2).
+     * Mask for extracting the 3-bit index type value (after decoding from split layout).
      */
     public static final int INDEX_TYPE_MASK = 0x07;
     /**

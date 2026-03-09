@@ -496,6 +496,11 @@ public class FORBitmapIndexWriter implements IndexWriter {
     }
 
     public void sync(boolean async) {
+        // Flush pending values from in-memory buffer to mmap'd files before syncing,
+        // otherwise readers won't see buffered values.
+        if (currentKey >= 0 && pendingValues.size() > 0) {
+            flushPendingBlock();
+        }
         keyMem.sync(async);
         valueMem.sync(async);
     }

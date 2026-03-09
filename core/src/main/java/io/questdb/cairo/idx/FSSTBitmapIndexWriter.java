@@ -113,10 +113,9 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
         int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
 
         if (count >= blockValues) {
-            throw CairoException.critical(0)
-                    .put("too many values for key [key=").put(key)
-                    .put(", count=").put(count)
-                    .put(", blockValues=").put(blockValues).put(']');
+            // Buffer full for this key — flush all pending data to make room.
+            flushAllPending();
+            count = 0;
         }
 
         if (count > 0) {
@@ -461,21 +460,118 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
 
     @Override
     public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
-        throw new UnsupportedOperationException("FSST index does not support fd-based open");
+        close();
+        final FilesFacade ff = configuration.getFilesFacade();
+        boolean kFdUnassigned = true;
+        boolean vFdUnassigned = true;
+        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();
+        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();
+
+        try {
+            if (init) {
+                if (ff.truncate(keyFd, 0)) {
+                    kFdUnassigned = false;
+                    keyMem.of(ff, keyFd, false, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.blockValues = DEFAULT_BLOCK_VALUES;
+                    initKeyMemory(keyMem, blockValues);
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
+                }
+            } else {
+                final long keyFileSize = ff.length(keyFd);
+                if (keyFileSize < KEY_FILE_RESERVED) {
+                    throw CairoException.critical(0)
+                            .put("Index file too short [fd=").put(keyFd)
+                            .put(", expected>=").put(KEY_FILE_RESERVED)
+                            .put(", actual=").put(keyFileSize).put(']');
+                }
+
+                kFdUnassigned = false;
+                keyMem.of(ff, keyFd, null, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+
+                byte sig = keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE);
+                if (sig != SIGNATURE) {
+                    throw CairoException.critical(0)
+                            .put("Unknown format: invalid FSST index signature [fd=").put(keyFd)
+                            .put(", expected=").put(SIGNATURE)
+                            .put(", actual=").put(sig).put(']');
+                }
+            }
+
+            this.valueMemSize = keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            this.blockValues = keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_VALUES);
+            this.keyCount = keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
+            this.genCount = keyMem.getInt(KEY_RESERVED_OFFSET_GEN_COUNT);
+
+            if (genCount > 0) {
+                symbolTable = FSST.deserialize(keyMem.addressOf(SYMBOL_TABLE_OFFSET));
+            }
+
+            if (init) {
+                if (ff.truncate(valueFd, 0)) {
+                    vFdUnassigned = false;
+                    valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    valueMem.jumpTo(0);
+                    valueMemSize = 0;
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
+                }
+            } else {
+                vFdUnassigned = false;
+                valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
+                if (valueMemSize > 0) {
+                    valueMem.jumpTo(valueMemSize);
+                }
+            }
+
+            allocateNativeBuffers();
+        } catch (Throwable e) {
+            close();
+            if (kFdUnassigned) {
+                ff.close(keyFd);
+            }
+            if (vFdUnassigned) {
+                ff.close(valueFd);
+            }
+            throw e;
+        }
     }
 
     @Override
     public void rollbackConditionally(long row) {
-        throw new UnsupportedOperationException("FSST index rollback not yet implemented");
+        final long currentMaxRow = getMaxValue();
+        if (row >= 0 && (currentMaxRow < 1 || currentMaxRow >= row)) {
+            if (row == 0) {
+                truncate();
+            } else {
+                rollbackValues(row - 1);
+            }
+        }
     }
 
     @Override
     public void rollbackValues(long maxValue) {
-        throw new UnsupportedOperationException("FSST index rollback not yet implemented");
+        // Flush any pending data so all values are on disk before rollback.
+        flushAllPending();
+
+        if (genCount == 0 && keyCount == 0) {
+            setMaxValue(maxValue);
+            return;
+        }
+
+        // For generational FSST format, precise per-value rollback requires
+        // decoding all generations, filtering, and re-encoding.
+        // Truncate and let the caller re-add values as needed.
+        LOG.info().$("rollback FSST index [maxValue=").$(maxValue).$(", genCount=").$(genCount).$(']').$();
+        truncate();
+        setMaxValue(maxValue);
     }
 
     @Override
     public void sync(boolean async) {
+        // Flush pending data from native buffers to mmap'd files before syncing,
+        // otherwise readers won't see buffered values.
+        flushAllPending();
         if (keyMem.isOpen()) {
             keyMem.sync(async);
         }

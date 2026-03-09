@@ -127,10 +127,9 @@ public class LZ4BitmapIndexWriter implements IndexWriter {
         int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
 
         if (count >= blockValues) {
-            throw CairoException.critical(0)
-                    .put("too many values for key [key=").put(key)
-                    .put(", count=").put(count)
-                    .put(", blockValues=").put(blockValues).put(']');
+            // Buffer full for this key — flush all pending data to make room.
+            flushAllPending();
+            count = 0;
         }
 
         // Validate ordering
@@ -354,17 +353,106 @@ public class LZ4BitmapIndexWriter implements IndexWriter {
 
     @Override
     public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
-        throw new UnsupportedOperationException("LZ4 index does not support fd-based open");
+        close();
+        final FilesFacade ff = configuration.getFilesFacade();
+        boolean kFdUnassigned = true;
+        boolean vFdUnassigned = true;
+        final long keyAppendPageSize = configuration.getDataIndexKeyAppendPageSize();
+        final long valueAppendPageSize = configuration.getDataIndexValueAppendPageSize();
+
+        try {
+            if (init) {
+                if (ff.truncate(keyFd, 0)) {
+                    kFdUnassigned = false;
+                    keyMem.of(ff, keyFd, false, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    this.blockValues = DEFAULT_BLOCK_VALUES;
+                    this.keysPerPage = LZ4BitmapIndexUtils.computeKeysPerPage(blockValues);
+                    initKeyMemory(keyMem, blockValues, keysPerPage);
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
+                }
+            } else {
+                final long keyFileSize = ff.length(keyFd);
+                if (keyFileSize < KEY_FILE_RESERVED) {
+                    throw CairoException.critical(0)
+                            .put("Index file too short [fd=").put(keyFd)
+                            .put(", expected>=").put(KEY_FILE_RESERVED)
+                            .put(", actual=").put(keyFileSize).put(']');
+                }
+                kFdUnassigned = false;
+                keyMem.of(ff, keyFd, null, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+
+                byte sig = keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE);
+                if (sig != SIGNATURE) {
+                    throw CairoException.critical(0)
+                            .put("Unknown format: invalid LZ4 index signature [fd=").put(keyFd)
+                            .put(", expected=").put(SIGNATURE)
+                            .put(", actual=").put(sig).put(']');
+                }
+            }
+
+            this.valueMemSize = keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            this.blockValues = keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_VALUES);
+            this.keyCount = keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
+            this.keysPerPage = keyMem.getInt(KEY_RESERVED_OFFSET_KEYS_PER_PAGE);
+
+            if (init) {
+                if (ff.truncate(valueFd, 0)) {
+                    vFdUnassigned = false;
+                    valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
+                    valueMem.jumpTo(0);
+                    valueMemSize = 0;
+                } else {
+                    throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(valueFd).put(']');
+                }
+            } else {
+                vFdUnassigned = false;
+                valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
+                if (valueMemSize > 0) {
+                    valueMem.jumpTo(valueMemSize);
+                }
+            }
+
+            allocateNativeBuffers();
+        } catch (Throwable e) {
+            close();
+            if (kFdUnassigned) {
+                ff.close(keyFd);
+            }
+            if (vFdUnassigned) {
+                ff.close(valueFd);
+            }
+            throw e;
+        }
     }
 
     @Override
     public void rollbackConditionally(long row) {
-        throw new UnsupportedOperationException("LZ4 index rollback not yet implemented");
+        final long currentMaxRow = getMaxValue();
+        if (row >= 0 && (currentMaxRow < 1 || currentMaxRow >= row)) {
+            if (row == 0) {
+                truncate();
+            } else {
+                rollbackValues(row - 1);
+            }
+        }
     }
 
     @Override
     public void rollbackValues(long maxValue) {
-        throw new UnsupportedOperationException("LZ4 index rollback not yet implemented");
+        flushAllPending();
+
+        if (keyCount == 0) {
+            setMaxValue(maxValue);
+            return;
+        }
+
+        // For page-compressed LZ4 format, precise per-value rollback requires
+        // decompressing all pages, filtering, and re-compressing.
+        // Truncate and let the caller re-add values as needed.
+        LOG.info().$("rollback LZ4 index [maxValue=").$(maxValue).$(']').$();
+        truncate();
+        setMaxValue(maxValue);
     }
 
     @Override
@@ -374,6 +462,9 @@ public class LZ4BitmapIndexWriter implements IndexWriter {
 
     @Override
     public void sync(boolean async) {
+        // Flush pending data from native buffers to mmap'd files before syncing,
+        // otherwise readers won't see buffered values.
+        flushAllPending();
         if (keyMem.isOpen()) {
             keyMem.sync(async);
         }

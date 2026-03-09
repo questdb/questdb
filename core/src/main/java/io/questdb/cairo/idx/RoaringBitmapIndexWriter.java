@@ -652,12 +652,25 @@ public class RoaringBitmapIndexWriter implements IndexWriter {
     }
 
     public void sync(boolean async) {
+        // Flush pending data from in-memory buffers to mmap'd files before syncing,
+        // otherwise readers won't see buffered values.
+        finalizeAllPending();
         keyMem.sync(async);
         valueMem.sync(async);
     }
 
     public void commit() {
+        finalizeAllPending();
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            keyMem.sync(commitMode == CommitMode.ASYNC);
+            valueMem.sync(commitMode == CommitMode.ASYNC);
+        }
+    }
+
+    private void finalizeAllPending() {
         long globalMaxValue = -1;
+        boolean needsUpdate = false;
 
         // Finalize all current chunks and write directories
         for (int i = 0, n = keyStates.size(); i < n; i++) {
@@ -668,17 +681,23 @@ public class RoaringBitmapIndexWriter implements IndexWriter {
                     finalizeCurrentChunk(state);
                     state.currentChunkId = -1;
                     state.currentCardinality = 0;
+                    needsUpdate = true;
                 }
                 // Write chunk directory if there are chunks to write
                 // Note: we keep chunkInfos accumulated so directory always contains all chunks
                 if (state.chunkInfos.size() > state.committedChunkCount) {
                     writeChunkDirectory(i, state);
+                    needsUpdate = true;
                 }
                 // Track global max
                 if (state.maxValue > globalMaxValue) {
                     globalMaxValue = state.maxValue;
                 }
             }
+        }
+
+        if (!needsUpdate && keyCount == keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT)) {
+            return;
         }
 
         // Update global metadata atomically (single fence operation)
@@ -694,11 +713,6 @@ public class RoaringBitmapIndexWriter implements IndexWriter {
 
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
-
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
-            sync(commitMode == CommitMode.ASYNC);
-        }
     }
 
     public void truncate() {
