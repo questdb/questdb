@@ -112,10 +112,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         TimeFrameCursor slaveCursor = null;
         try {
-            TimeFrameCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            Record filterRecord = baseTimeFrameCursor.getRecordB();
-            slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
-            slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
+            slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            Record filterRecord = slaveCursor.getRecordB();
+            slaveRecordFilter.init(slaveCursor, executionContext);
+            slaveCursor = selectedTimeFrameCursor == null ? slaveCursor : selectedTimeFrameCursor.of(slaveCursor);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {

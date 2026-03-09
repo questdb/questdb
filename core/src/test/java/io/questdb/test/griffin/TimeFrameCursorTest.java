@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
@@ -46,11 +47,76 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class TimeFrameCursorTest extends AbstractCairoTest {
+
+    @Test
+    public void testConcurrentStateRetryAfterFailedPartitionOpen() throws Exception {
+        FailureFileFacade failureFf = new FailureFileFacade(TestFilesFacadeImpl.INSTANCE);
+        assertMemoryLeak(failureFf, () -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                    " FROM long_sequence(49)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress
+                        ? factory.getBaseFactory() : factory;
+                ConcurrentTimeFrameState sharedState = new ConcurrentTimeFrameState();
+                ConcurrentTimeFrameCursor cursor = baseFactory.newTimeFrameCursor();
+                Assert.assertNotNull(cursor);
+                try {
+                    TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                            sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC
+                    );
+                    RecordMetadata metadata = baseFactory.getMetadata();
+                    sharedState.of(
+                            pageFrameCursor,
+                            metadata,
+                            pageFrameCursor.getColumnIndexes(),
+                            pageFrameCursor.isExternal()
+                    );
+                    cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
+
+                    // Partition 0: open successfully.
+                    sharedState.ensurePartitionOpened(0);
+                    Assert.assertTrue(sharedState.getPartitionTotalRows(0) > 0);
+
+                    // Partition 1: arm failure so the next file op fails.
+                    failureFf.setToFailAfter(1);
+                    try {
+                        sharedState.ensurePartitionOpened(1);
+                        Assert.fail("Expected CairoException");
+                    } catch (CairoException expected) {
+                        // Partition open failed as expected.
+                    }
+
+                    // Partition 1: retry should succeed.
+                    sharedState.ensurePartitionOpened(1);
+                    Assert.assertTrue(sharedState.getPartitionTotalRows(1) > 0);
+
+                    // Verify cursor navigates and opens all partitions correctly.
+                    Assert.assertTrue(cursor.next());
+                    Assert.assertTrue(cursor.open() > 0);
+                    Assert.assertTrue(cursor.next());
+                    Assert.assertTrue(cursor.open() > 0);
+                    Assert.assertTrue(cursor.next());
+                    Assert.assertTrue(cursor.open() > 0);
+                    Assert.assertFalse(cursor.next());
+                } finally {
+                    Misc.free(cursor);
+                    Misc.free(sharedState);
+                }
+            }
+            execute("DROP TABLE x");
+        });
+    }
 
     @Test
     public void testEmptyTable() throws Exception {

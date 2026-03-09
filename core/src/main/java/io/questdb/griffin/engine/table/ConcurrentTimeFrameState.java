@@ -130,6 +130,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
                 partitionCumulativeRows.setQuick(partitionIndex, cumulativeRows);
             } else {
                 cumulativeRows.reopen();
+                cumulativeRows.clear();
             }
 
             frameCursor.toPartition(partitionIndex);
@@ -160,10 +161,12 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     }
 
     public DirectLongList getPartitionCumulativeRows(int index) {
+        assert partitionOpened.get(index) != 0 : "partition not opened: " + index;
         return partitionCumulativeRows.getQuick(index);
     }
 
     public int getPartitionPageFrameCount(int index) {
+        assert partitionOpened.get(index) != 0 : "partition not opened: " + index;
         return partitionPageFrameCount[index];
     }
 
@@ -172,6 +175,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     }
 
     public long getPartitionTotalRows(int index) {
+        assert partitionOpened.get(index) != 0 : "partition not opened: " + index;
         return partitionTotalRows[index];
     }
 
