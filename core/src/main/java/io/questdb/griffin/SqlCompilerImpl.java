@@ -71,6 +71,7 @@ import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -938,7 +939,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
                         final int columnNamePosition = lexer.lastTokenPosition();
-                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(unquote(tok));
                         if (columnIndex != -1) {
                             // peek at the type token to capture its position for error reporting
                             expectToken(lexer, "column type");
@@ -975,9 +976,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
                 }
             } else {
-                int index = tableMetadata.getColumnIndexQuiet(tok);
+                CharSequence unquotedTok = unquote(tok);
+                int index = tableMetadata.getColumnIndexQuiet(unquotedTok);
                 if (index != -1) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(unquotedTok).put("' already exists");
                 }
             }
 
@@ -1365,6 +1367,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                             .put("no partitions matched WHERE clause");
                                 }
                             }
+                            // Check for WITH clause for CONVERT TO PARQUET
+                            CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                            if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
+                                parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                                nextTok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (nextTok != null && !isSemicolon(nextTok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+                            }
                             compiledQuery.ofAlter(this.alterOperationBuilder.build());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
@@ -1461,6 +1472,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                if (action == PartitionAction.CONVERT_TO_PARQUET && isWithKeyword(tok)) {
+                    parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && !isSemicolon(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token after WITH clause");
+                    }
+                    break;
+                }
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
@@ -1785,7 +1804,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
                 tok = expectToken(lexer, "column name");
-                final CharSequence columnName = GenericLexer.immutableOf(tok);
+                final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                 final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                 if (columnIndex == -1) {
                     throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
@@ -2164,7 +2183,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (isColumnKeyword(tok)) {
                     final int columnNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "column name");
-                    final CharSequence columnName = GenericLexer.immutableOf(tok);
+                    final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                     final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                     if (columnIndex == -1) {
                         throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
@@ -4644,6 +4663,74 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
         }
+    }
+
+    // TODO: We may need a better approach to let users specify which columns should have bloom filters
+    //  when converting partitions to Parquet. The current WITH clause approach only works for explicit
+    //  ALTER TABLE ... CONVERT PARTITION ... TO PARQUET statements. When automatic partition conversion
+    //  to Parquet is supported in the future, we will need a different mechanism (e.g., table-level
+    //  configuration or metadata) to specify bloom filter columns and FPP.
+    private void parseConvertToParquetWithClause(
+            AlterOperationBuilder alterOperationBuilder,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence bloomFilterColumns = null;
+        double fpp = Double.NaN;
+
+        CharSequence tok = expectToken(lexer, "'('");
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+        }
+
+        while (true) {
+            tok = expectToken(lexer, "bloom_filter_columns or fpp");
+
+            if (isBloomFilterColumnsKeyword(tok)) {
+                if (bloomFilterColumns != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate bloom_filter_columns option");
+                }
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = expectToken(lexer, "column names");
+                int bloomFilterColumnsPosition = lexer.lastTokenPosition();
+                bloomFilterColumns = unquote(tok);
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
+            } else if (isFppKeyword(tok)) {
+                if (!Double.isNaN(fpp)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate fpp option");
+                }
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = GenericLexer.unquote(expectToken(lexer, "fpp value"));
+                try {
+                    fpp = Numbers.parseDouble(tok);
+                    if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "fpp must be between 0 and 1 (exclusive)");
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid fpp value");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_columns or fpp expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.getPosition(), "')' expected");
+            }
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+            }
+        }
+
+        alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
     }
 
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {

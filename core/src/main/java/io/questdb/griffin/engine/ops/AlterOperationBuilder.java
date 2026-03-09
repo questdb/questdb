@@ -332,4 +332,9 @@ public class AlterOperationBuilder implements Mutable {
     protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
         return new AlterOperation(extraInfo, extraStrInfo);
     }
+
+    public void setParquetConversionOptions(@Nullable CharSequence bloomFilterColumns, double fpp) {
+        extraStrInfo.add(bloomFilterColumns);
+        extraInfo.add(Double.doubleToLongBits(fpp));
+    }
 }

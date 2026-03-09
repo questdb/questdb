@@ -112,6 +112,11 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     }
 
     @Override
+    public int getSampleByFlags() {
+        return SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
+    }
+
+    @Override
     public int getValueIndex() {
         return valueIndex;
     }

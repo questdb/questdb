@@ -49,8 +49,6 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
     public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
-    protected static final int PARTITION_SQUASH_COUNTER_BIT_OFFSET = 44;
-    protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
@@ -58,6 +56,8 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_PARQUET_FILE_SIZE_OFFSET = 3;
+    protected static final int PARTITION_SQUASH_COUNTER_BIT_OFFSET = 44;
+    protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
     // | reserved | read-only | parquet format | parquet generated | squash counter | partition size |
@@ -432,6 +432,15 @@ public class TxReader implements Closeable, Mutable {
 
     public long getVersion() {
         return version;
+    }
+
+    public boolean hasParquetPartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionParquetByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void initPartitionBy(int timestampType, int partitionBy) {

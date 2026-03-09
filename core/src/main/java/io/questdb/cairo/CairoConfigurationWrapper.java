@@ -677,6 +677,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getParquetExportBloomFilterFpp() {
+        return getDelegate().getParquetExportBloomFilterFpp();
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return getDelegate().getParquetExportCompressionCodec();
     }
@@ -709,6 +714,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParquetExportVersion() {
         return getDelegate().getParquetExportVersion();
+    }
+
+    @Override
+    public double getPartitionEncoderParquetBloomFilterFpp() {
+        return getDelegate().getPartitionEncoderParquetBloomFilterFpp();
     }
 
     @Override
@@ -1357,6 +1367,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterMadviseMode() {
+        return getDelegate().getWalWriterMadviseMode();
+    }
+
+    @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
     }
@@ -1534,6 +1549,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelReadParquetEnabled() {
         return getDelegate().isSqlParallelReadParquetEnabled();
+    }
+
+    @Override
+    public boolean isSqlParquetRowGroupPruningEnabled() {
+        return getDelegate().isSqlParquetRowGroupPruningEnabled();
     }
 
     @Override
