@@ -1339,7 +1339,7 @@ public class AggregateTest extends AbstractCairoTest {
         String[] aggregateFunctions = {"min"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.BYTE, "0:INT", "0:INT"),
-                new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
                 new TypeVal(ColumnType.SHORT, "0:INT", "0:INT"),
                 new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
