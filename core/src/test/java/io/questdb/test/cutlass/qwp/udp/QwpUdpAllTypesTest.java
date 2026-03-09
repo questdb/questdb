@@ -41,6 +41,7 @@ import io.questdb.network.Net;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,6 +53,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.*;
@@ -597,6 +599,22 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     public void testStress100KRows() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(STRESS_CONF, engine)) {
+                // Drain concurrently with sending to prevent kernel UDP buffer overflow
+                AtomicBoolean stop = new AtomicBoolean(false);
+                Thread drainThread = new Thread(() -> {
+                    try {
+                        while (!stop.get()) {
+                            receiver.runSerially();
+                            Os.pause();
+                        }
+                        // final drain pass
+                        receiver.runSerially();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                drainThread.start();
+
                 try (QwpUdpSender sender = newSender(8000)) {
                     for (int i = 0; i < 100_000; i++) {
                         sender.table("t_stress100k")
@@ -607,7 +625,24 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     }
                     sender.flush();
                 }
-                drainReceiver(receiver, 60);
+
+                // Poll until all rows are visible via SQL
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                while (System.nanoTime() < deadline) {
+                    drainWalQueue();
+                    try {
+                        assertSql(
+                                "count\n100000\n",
+                                "SELECT count() FROM t_stress100k"
+                        );
+                        break;
+                    } catch (AssertionError | Exception e) {
+                        Os.sleep(100);
+                    }
+                }
+
+                stop.set(true);
+                drainThread.join(10_000);
             }
 
             drainWalQueue();
