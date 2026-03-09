@@ -2747,7 +2747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         rewriteAndSwapMetadata(metadata);
 
-        boolean commited = false;
+        boolean committed = false;
         try {
             // remove column objects
             freeColumnMemory(index);
@@ -2765,7 +2765,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // remove column files
             removeColumnFiles(index, columnName, type, isIndexed);
             clearTodoAndCommitMetaStructureVersion();
-            commited = true;
+            committed = true;
 
             finishColumnPurge();
 
@@ -2778,7 +2778,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             throwDistressException(th);
         } finally {
-            if (commited && securityContext != null) {
+            if (committed && securityContext != null) {
                 ddlListener.onColumnDropped(tableToken, columnName);
             }
         }
@@ -2842,7 +2842,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
-        boolean commited = false;
+        boolean committed = false;
         String newColumnName = null;
         try {
             try {
@@ -2858,7 +2858,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } catch (CairoException e) {
                 throwDistressException(e);
             }
-            commited = true;
+            committed = true;
 
             // remove _todo as last step, after the commit.
             // if anything fails before the commit, meta file will be reverted
@@ -2881,7 +2881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 handleHousekeepingException(e);
             }
         } finally {
-            if (commited && securityContext != null) {
+            if (committed && securityContext != null) {
                 ddlListener.onColumnRenamed(tableToken, columnName, newColumnName);
             }
         }
