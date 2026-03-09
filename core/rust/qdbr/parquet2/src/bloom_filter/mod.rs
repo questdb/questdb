@@ -4,7 +4,7 @@ mod read;
 mod split_block;
 
 pub use hash::{hash_byte, hash_native};
-pub use read::read;
+pub use read::{read, read_from_slice};
 pub use split_block::{insert, is_in_set};
 
 #[cfg(test)]

@@ -4,6 +4,8 @@
 //! interface so row-group decode can stream values directly into
 //! `ColumnChunkBuffers`.
 
+#![allow(clippy::manual_is_multiple_of)]
+
 use std::fmt::Debug;
 
 use num_traits::{AsPrimitive, WrappingAdd};
