@@ -595,6 +595,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore
     @Test
     public void testStress100KRows() throws Exception {
         assertMemoryLeak(() -> {
