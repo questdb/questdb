@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.Files;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Path;
@@ -195,6 +196,68 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                         "SELECT * FROM read_parquet('x.parquet')"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testSymbolCompressionOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            // Per-column ZSTD on symbol column with enough distinct symbols to trigger auto-scaling
+            execute("CREATE TABLE x (" +
+                    "a_symbol SYMBOL PARQUET COMPRESSION ZSTD," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            // Baseline: same data, no per-column compression
+            execute("CREATE TABLE y (a_symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " rnd_symbol(10_000, 10, 40, 0)," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(100_000)");
+
+            execute("INSERT INTO y SELECT a_symbol, ts FROM x");
+
+            // Verify parquetEncodingConfig survives symbol auto-scaling
+            try (TableReader reader = engine.getReader("x")) {
+                int config = reader.getMetadata().getColumnMetadata(0).getParquetEncodingConfig();
+                Assert.assertNotEquals(
+                        "parquetEncodingConfig should survive symbol auto-scaling (was 0x" + Integer.toHexString(config) + ")",
+                        0, config);
+            }
+
+            // Encode both tables to parquet and compare file sizes
+            long compressedSize;
+            long uncompressedSize;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                compressedSize = Files.length(path.$());
+            }
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("y")
+            ) {
+                path.of(root).concat("y.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                uncompressedSize = Files.length(path.$());
+            }
+
+            LOG.info().$("per-column ZSTD: ").$(compressedSize)
+                    .$(", uncompressed: ").$(uncompressedSize).$();
+            Assert.assertTrue(
+                    "per-column ZSTD (" + compressedSize + ") should be smaller than uncompressed (" + uncompressedSize + ")",
+                    compressedSize < uncompressedSize
+            );
         });
     }
 
