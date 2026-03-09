@@ -477,7 +477,7 @@ mod tests {
         col_type: ColumnType,
         value_size: usize,
         name: &'static str,
-    ) -> (Vec<u8>, Column<'static>) {
+    ) -> (Vec<u8>, Column) {
         let mut buff = vec![0u8; row_count * value_size];
         for i in 0..row_count {
             let value = i as u8;

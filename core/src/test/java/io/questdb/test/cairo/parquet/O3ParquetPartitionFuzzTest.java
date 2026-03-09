@@ -46,7 +46,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
-
     @Test
     public void testParquetWriteFuzz() throws Exception {
         executeWithPool(0, this::testFuzz0);

@@ -65,22 +65,24 @@ public class O3ParquetMergeStrategy {
      * Computes the merge strategy with default small row group threshold and no row group size limit.
      * Allocates temporary buffers internally. For zero-GC usage, prefer the overload that
      * accepts pre-allocated {@code rgO3Ranges} and {@code gapO3Ranges} lists.
+     *
+     * @return the number of actions written into actionsBuf
      */
-    public static void computeMergeActions(
+    public static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,
             long srcOooLo,
             long srcOooHi,
-            ObjList<MergeAction> actions
+            ObjList<MergeAction> actionsBuf
     ) {
-        computeMergeActions(
+        return computeMergeActions(
                 rowGroupBounds,
                 sortedTimestampsAddr,
                 srcOooLo,
                 srcOooHi,
                 DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
                 Integer.MAX_VALUE,
-                actions,
+                actionsBuf,
                 new LongList(),
                 new LongList()
         );
@@ -90,23 +92,25 @@ public class O3ParquetMergeStrategy {
      * Computes the merge strategy with custom small row group threshold and no row group size limit.
      * Allocates temporary buffers internally. For zero-GC usage, prefer the overload that
      * accepts pre-allocated {@code rgO3Ranges} and {@code gapO3Ranges} lists.
+     *
+     * @return the number of actions written into actionsBuf
      */
-    public static void computeMergeActions(
+    public static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,
             long srcOooLo,
             long srcOooHi,
             int smallRowGroupThreshold,
-            ObjList<MergeAction> actions
+            ObjList<MergeAction> actionsBuf
     ) {
-        computeMergeActions(
+        return computeMergeActions(
                 rowGroupBounds,
                 sortedTimestampsAddr,
                 srcOooLo,
                 srcOooHi,
                 smallRowGroupThreshold,
                 Integer.MAX_VALUE,
-                actions,
+                actionsBuf,
                 new LongList(),
                 new LongList()
         );
@@ -135,18 +139,20 @@ public class O3ParquetMergeStrategy {
      * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
      *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
      *                               to disable splitting.
-     * @param actions                Output list to receive computed merge actions (reused across calls).
+     * @param actionsBuf             Pre-allocated buffer to receive computed merge actions (reused across calls).
+     *                               Objects in the buffer beyond the returned count are stale and must not be read.
      * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
      * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
+     * @return the number of actions written into actionsBuf
      */
-    public static void computeMergeActions(
+    public static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,
             long srcOooLo,
             long srcOooHi,
             int smallRowGroupThreshold,
             int maxRowGroupSize,
-            ObjList<MergeAction> actions,
+            ObjList<MergeAction> actionsBuf,
             LongList rgO3Ranges,
             LongList gapO3Ranges
     ) {
@@ -156,10 +162,9 @@ public class O3ParquetMergeStrategy {
         if (rowGroupCount == 0) {
             // No existing row groups - all O3 data becomes new row groups
             if (srcOooLo <= srcOooHi) {
-                actionCount = addCopyO3Actions(actions, actionCount, srcOooLo, srcOooHi, maxRowGroupSize, smallRowGroupThreshold);
+                actionCount = addCopyO3Actions(actionsBuf, actionCount, srcOooLo, srcOooHi, maxRowGroupSize, smallRowGroupThreshold);
             }
-            setActionsSize(actions, actionCount);
-            return;
+            return actionCount;
         }
 
         // Track O3 data assigned to each row group as interleaved (lo, hi) pairs,
@@ -269,24 +274,24 @@ public class O3ParquetMergeStrategy {
         for (int rg = 0; rg < rowGroupCount; rg++) {
             // First, emit any COPY_O3 for gap before this row group
             if (getRangeLo(gapO3Ranges, rg) >= 0) {
-                actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rg), getRangeHi(gapO3Ranges, rg), maxRowGroupSize, smallRowGroupThreshold);
+                actionCount = addCopyO3Actions(actionsBuf, actionCount, getRangeLo(gapO3Ranges, rg), getRangeHi(gapO3Ranges, rg), maxRowGroupSize, smallRowGroupThreshold);
             }
 
             // Then, emit action for this row group
             long rgRowCount = getRowGroupRowCount(rowGroupBounds, rg);
             if (getRangeLo(rgO3Ranges, rg) >= 0) {
-                nextAction(actions, actionCount++).setMerge(rg, 0, rgRowCount - 1, getRangeLo(rgO3Ranges, rg), getRangeHi(rgO3Ranges, rg));
+                nextAction(actionsBuf, actionCount++).setMerge(rg, 0, rgRowCount - 1, getRangeLo(rgO3Ranges, rg), getRangeHi(rgO3Ranges, rg));
             } else {
-                nextAction(actions, actionCount++).setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
+                nextAction(actionsBuf, actionCount++).setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
             }
         }
 
         // Finally, emit any COPY_O3 for gap after last row group
         if (getRangeLo(gapO3Ranges, rowGroupCount) >= 0) {
-            actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rowGroupCount), getRangeHi(gapO3Ranges, rowGroupCount), maxRowGroupSize, smallRowGroupThreshold);
+            actionCount = addCopyO3Actions(actionsBuf, actionCount, getRangeLo(gapO3Ranges, rowGroupCount), getRangeHi(gapO3Ranges, rowGroupCount), maxRowGroupSize, smallRowGroupThreshold);
         }
 
-        setActionsSize(actions, actionCount);
+        return actionCount;
     }
 
     /**
@@ -297,25 +302,25 @@ public class O3ParquetMergeStrategy {
      *
      * @return the updated actionCount
      */
-    private static int addCopyO3Actions(ObjList<MergeAction> actions, int actionCount, long o3Lo, long o3Hi, int maxRowGroupSize, int smallRowGroupThreshold) {
+    private static int addCopyO3Actions(ObjList<MergeAction> actionsBuf, int actionCount, long o3Lo, long o3Hi, int maxRowGroupSize, int smallRowGroupThreshold) {
         assert maxRowGroupSize > 0 : "maxRowGroupSize must be > 0";
         long cursor = o3Lo;
         while (cursor <= o3Hi) {
             long remaining = o3Hi - cursor + 1;
             if (remaining <= maxRowGroupSize) {
                 // Last (or only) chunk: emit whatever remains
-                nextAction(actions, actionCount++).setCopyO3(cursor, o3Hi);
+                nextAction(actionsBuf, actionCount++).setCopyO3(cursor, o3Hi);
                 break;
             }
             long afterChunk = remaining - maxRowGroupSize;
             if (afterChunk < smallRowGroupThreshold && afterChunk + maxRowGroupSize <= maxRowGroupSize * 3L / 2) {
                 // Remainder after this chunk would be below the small row group
                 // threshold. Absorb it to avoid producing an undersized row group.
-                nextAction(actions, actionCount++).setCopyO3(cursor, o3Hi);
+                nextAction(actionsBuf, actionCount++).setCopyO3(cursor, o3Hi);
                 break;
             }
             long chunkEnd = cursor + maxRowGroupSize - 1;
-            nextAction(actions, actionCount++).setCopyO3(cursor, chunkEnd);
+            nextAction(actionsBuf, actionCount++).setCopyO3(cursor, chunkEnd);
             cursor = chunkEnd + 1;
         }
         return actionCount;
@@ -331,25 +336,18 @@ public class O3ParquetMergeStrategy {
 
     /**
      * Returns an existing or newly created MergeAction at the given index.
-     * Reuses objects from a previous call to avoid GC pressure.
+     * The buffer only grows, never shrinks — callers use the returned action
+     * count to know which entries are valid.
      */
-    private static MergeAction nextAction(ObjList<MergeAction> actions, int index) {
-        if (index < actions.size()) {
-            MergeAction existing = actions.getQuick(index);
+    private static MergeAction nextAction(ObjList<MergeAction> actionsBuf, int index) {
+        if (index < actionsBuf.size()) {
+            MergeAction existing = actionsBuf.getQuick(index);
             existing.clear();
             return existing;
         }
         MergeAction action = new MergeAction();
-        actions.add(action);
+        actionsBuf.add(action);
         return action;
-    }
-
-    /**
-     * Truncates the actions list to the given size without nulling out
-     * the excess elements, so they can be reused on the next call.
-     */
-    private static void setActionsSize(ObjList<MergeAction> actions, int size) {
-        actions.setPos(size);
     }
 
     private static void setRangeHi(LongList ranges, int index, long value) {

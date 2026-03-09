@@ -46,39 +46,38 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 1: min=400, max=500, rowCount=10000
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 400, 500, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data in gap
             long sortedTimestampsAddr = allocateSortedTimestamps(300);
             try {
                 // With threshold=4096, rg0 (5000 rows) is NOT small -> COPY_O3
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 0,
                         4096,
-                        actions
+                        actionsBuf
                 );
 
-                Assert.assertEquals(3, actions.size());
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(0).type);
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(2).type);
+                Assert.assertEquals(3, n);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(2).type);
 
                 // With threshold=6000, rg0 (5000 rows) IS small -> MERGE
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 0,
                         6000,
-                        actions
+                        actionsBuf
                 );
 
-                Assert.assertEquals(2, actions.size());
-                Assert.assertEquals(ActionType.MERGE, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).rowGroupIndex);
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(1).type);
+                Assert.assertEquals(2, n);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(1).type);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 1);
             }
@@ -88,7 +87,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     @Test
     public void testMaxRowGroupSizeSplitting() throws Exception {
         assertMemoryLeak(() -> {
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
             LongList rowGroupBounds = new LongList();
             LongList rgO3Ranges = new LongList();
             LongList gapO3Ranges = new LongList();
@@ -97,14 +96,14 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // 10 O3 rows with maxRowGroupSize=10 -> fits in 1 chunk
             long addr = allocateSortedTimestamps(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, 9,
-                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                        0, 10, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(1, actions.size());
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).o3Lo);
-                Assert.assertEquals(9, actions.get(0).o3Hi);
+                Assert.assertEquals(1, n);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(9, actionsBuf.get(0).o3Hi);
             } finally {
                 freeSortedTimestamps(addr, 10);
             }
@@ -116,20 +115,19 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             addr = allocateSortedTimestamps(ts11);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, 10,
-                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                        0, 10, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(2, actions.size());
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
-                Assert.assertEquals(10, actions.get(0).o3Hi - actions.get(0).o3Lo + 1);
-                Assert.assertEquals(1, actions.get(1).o3Hi - actions.get(1).o3Lo + 1);
+                Assert.assertEquals(2, n);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(0).type);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(10, actionsBuf.get(0).o3Hi - actionsBuf.get(0).o3Lo + 1);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Hi - actionsBuf.get(1).o3Lo + 1);
                 // Contiguous
-                Assert.assertEquals(0, actions.get(0).o3Lo);
-                Assert.assertEquals(actions.get(0).o3Hi + 1, actions.get(1).o3Lo);
-                Assert.assertEquals(10, actions.get(1).o3Hi);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(actionsBuf.get(0).o3Hi + 1, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(10, actionsBuf.get(1).o3Hi);
             } finally {
                 freeSortedTimestamps(addr, 11);
             }
@@ -141,15 +139,14 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             addr = allocateSortedTimestamps(ts30);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, 29,
-                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                        0, 10, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(3, actions.size());
+                Assert.assertEquals(3, n);
                 for (int i = 0; i < 3; i++) {
-                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
-                    Assert.assertEquals(10, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                    Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(i).type);
+                    Assert.assertEquals(10, actionsBuf.get(i).o3Hi - actionsBuf.get(i).o3Lo + 1);
                 }
             } finally {
                 freeSortedTimestamps(addr, 30);
@@ -163,20 +160,19 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             addr = allocateSortedTimestamps(ts37);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, 36,
-                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                        0, 10, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(4, actions.size());
+                Assert.assertEquals(4, n);
                 // First 3 chunks are exactly maxRowGroupSize
                 for (int i = 0; i < 3; i++) {
-                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
-                    Assert.assertEquals(10, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                    Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(i).type);
+                    Assert.assertEquals(10, actionsBuf.get(i).o3Hi - actionsBuf.get(i).o3Lo + 1);
                 }
                 // Last chunk is the remainder
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(3).type);
-                Assert.assertEquals(7, actions.get(3).o3Hi - actions.get(3).o3Lo + 1);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(3).type);
+                Assert.assertEquals(7, actionsBuf.get(3).o3Hi - actionsBuf.get(3).o3Lo + 1);
             } finally {
                 freeSortedTimestamps(addr, 37);
             }
@@ -184,15 +180,14 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // --- Case 5: single row -> 1 chunk of 1 row ---
             addr = allocateSortedTimestamps(42);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, 0,
-                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                        0, 10, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(1, actions.size());
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).o3Lo);
-                Assert.assertEquals(0, actions.get(0).o3Hi);
+                Assert.assertEquals(1, n);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Hi);
             } finally {
                 freeSortedTimestamps(addr, 1);
             }
@@ -208,21 +203,20 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             addr = allocateSortedTimestamps(tsGap);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, 24,
-                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                        0, 10, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
                 // Expected: COPY_ROW_GROUP_SLICE(rg0), COPY_O3(10), COPY_O3(10), COPY_O3(5), COPY_ROW_GROUP_SLICE(rg1)
-                Assert.assertEquals(5, actions.size());
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(0).type);
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(2).type);
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(3).type);
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(4).type);
-                Assert.assertEquals(10, actions.get(1).o3Hi - actions.get(1).o3Lo + 1);
-                Assert.assertEquals(10, actions.get(2).o3Hi - actions.get(2).o3Lo + 1);
-                Assert.assertEquals(5, actions.get(3).o3Hi - actions.get(3).o3Lo + 1);
+                Assert.assertEquals(5, n);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(2).type);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(3).type);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(4).type);
+                Assert.assertEquals(10, actionsBuf.get(1).o3Hi - actionsBuf.get(1).o3Lo + 1);
+                Assert.assertEquals(10, actionsBuf.get(2).o3Hi - actionsBuf.get(2).o3Lo + 1);
+                Assert.assertEquals(5, actionsBuf.get(3).o3Hi - actionsBuf.get(3).o3Lo + 1);
             } finally {
                 freeSortedTimestamps(addr, 25);
             }
@@ -239,19 +233,18 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             addr = allocateSortedTimestamps(tsLarge);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, totalRows - 1,
-                        smallRgThreshold, maxRgSize, actions, rgO3Ranges, gapO3Ranges
+                        smallRgThreshold, maxRgSize, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(10, actions.size());
+                Assert.assertEquals(10, n);
                 for (int i = 0; i < 9; i++) {
-                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
-                    Assert.assertEquals(maxRgSize, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                    Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(i).type);
+                    Assert.assertEquals(maxRgSize, actionsBuf.get(i).o3Hi - actionsBuf.get(i).o3Lo + 1);
                 }
                 // Last chunk absorbed the 10K remainder: 100K + 10K = 110K
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(9).type);
-                Assert.assertEquals(110_000, actions.get(9).o3Hi - actions.get(9).o3Lo + 1);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(9).type);
+                Assert.assertEquals(110_000, actionsBuf.get(9).o3Hi - actionsBuf.get(9).o3Lo + 1);
             } finally {
                 freeSortedTimestamps(addr, totalRows);
             }
@@ -265,19 +258,18 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             addr = allocateSortedTimestamps(tsLarge2);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, totalRows - 1,
-                        smallRgThreshold, maxRgSize, actions, rgO3Ranges, gapO3Ranges
+                        smallRgThreshold, maxRgSize, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
-                Assert.assertEquals(11, actions.size());
+                Assert.assertEquals(11, n);
                 for (int i = 0; i < 10; i++) {
-                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
-                    Assert.assertEquals(maxRgSize, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                    Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(i).type);
+                    Assert.assertEquals(maxRgSize, actionsBuf.get(i).o3Hi - actionsBuf.get(i).o3Lo + 1);
                 }
                 // Last chunk is 70K, above threshold, not absorbed
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(10).type);
-                Assert.assertEquals(70_000, actions.get(10).o3Hi - actions.get(10).o3Lo + 1);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(10).type);
+                Assert.assertEquals(70_000, actionsBuf.get(10).o3Hi - actionsBuf.get(10).o3Lo + 1);
             } finally {
                 freeSortedTimestamps(addr, totalRows);
             }
@@ -287,7 +279,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     @Test
     public void testMaxRowGroupSizeSplittingFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
             LongList rowGroupBounds = new LongList();
             LongList rgO3Ranges = new LongList();
             LongList gapO3Ranges = new LongList();
@@ -304,17 +296,16 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             }
             long addr = allocateSortedTimestamps(ts);
             try {
-                actions.clear();
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds, addr, 0, totalRows - 1,
-                        smallRgThreshold, maxRgSize, actions, rgO3Ranges, gapO3Ranges
+                        smallRgThreshold, maxRgSize, actionsBuf, rgO3Ranges, gapO3Ranges
                 );
 
                 // Verify total row count matches
                 long totalEmitted = 0;
                 int nonExactCount = 0;
-                for (int i = 0; i < actions.size(); i++) {
-                    MergeAction a = actions.get(i);
+                for (int i = 0; i < n; i++) {
+                    MergeAction a = actionsBuf.get(i);
                     Assert.assertEquals(ActionType.COPY_O3, a.type);
                     long chunkSize = a.o3Hi - a.o3Lo + 1;
                     totalEmitted += chunkSize;
@@ -323,7 +314,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                         nonExactCount++;
                     }
 
-                    if (actions.size() > 1) {
+                    if (n > 1) {
                         // Multiple chunks: each must be > threshold/4 and <= 1.5x
                         Assert.assertTrue(
                                 "chunk " + i + " size " + chunkSize + " < " + smallRgThreshold
@@ -383,16 +374,16 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 2: min=700, max=800, rowCount=10000 (large)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 700, 800, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data: [150] overlaps rg0, [300] in gap, [450] overlaps rg1, [600] in gap, [750] overlaps rg2
             long sortedTimestampsAddr = allocateSortedTimestamps(150, 300, 450, 600, 750);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 4,
-                        actions
+                        actionsBuf
                 );
 
                 // Expected:
@@ -401,30 +392,30 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 // MERGE(rg1, o3[2])
                 // COPY_O3(o3[3]) - gap between rg1 and rg2
                 // MERGE(rg2, o3[4])
-                Assert.assertEquals(5, actions.size());
+                Assert.assertEquals(5, n);
 
-                Assert.assertEquals(ActionType.MERGE, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).rowGroupIndex);
-                Assert.assertEquals(0, actions.get(0).o3Lo);
-                Assert.assertEquals(0, actions.get(0).o3Hi);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Hi);
 
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
-                Assert.assertEquals(1, actions.get(1).o3Lo);
-                Assert.assertEquals(1, actions.get(1).o3Hi);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Hi);
 
-                Assert.assertEquals(ActionType.MERGE, actions.get(2).type);
-                Assert.assertEquals(1, actions.get(2).rowGroupIndex);
-                Assert.assertEquals(2, actions.get(2).o3Lo);
-                Assert.assertEquals(2, actions.get(2).o3Hi);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(2).type);
+                Assert.assertEquals(1, actionsBuf.get(2).rowGroupIndex);
+                Assert.assertEquals(2, actionsBuf.get(2).o3Lo);
+                Assert.assertEquals(2, actionsBuf.get(2).o3Hi);
 
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(3).type);
-                Assert.assertEquals(3, actions.get(3).o3Lo);
-                Assert.assertEquals(3, actions.get(3).o3Hi);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(3).type);
+                Assert.assertEquals(3, actionsBuf.get(3).o3Lo);
+                Assert.assertEquals(3, actionsBuf.get(3).o3Hi);
 
-                Assert.assertEquals(ActionType.MERGE, actions.get(4).type);
-                Assert.assertEquals(2, actions.get(4).rowGroupIndex);
-                Assert.assertEquals(4, actions.get(4).o3Lo);
-                Assert.assertEquals(4, actions.get(4).o3Hi);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(4).type);
+                Assert.assertEquals(2, actionsBuf.get(4).rowGroupIndex);
+                Assert.assertEquals(4, actionsBuf.get(4).o3Lo);
+                Assert.assertEquals(4, actionsBuf.get(4).o3Hi);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 5);
             }
@@ -435,20 +426,20 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     public void testNoRowGroups() throws Exception {
         assertMemoryLeak(() -> {
             LongList rowGroupBounds = new LongList();
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [100, 200, 300]
             long sortedTimestampsAddr = allocateSortedTimestamps(100, 200, 300);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
-                Assert.assertEquals(1, actions.size());
-                MergeAction action = actions.get(0);
+                Assert.assertEquals(1, n);
+                MergeAction action = actionsBuf.get(0);
                 Assert.assertEquals(ActionType.COPY_O3, action.type);
                 Assert.assertEquals(0, action.o3Lo);
                 Assert.assertEquals(2, action.o3Hi);
@@ -465,27 +456,27 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 0: min=100, max=200, rowCount=10000 (large)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [500, 600, 700] - all after rg0
             long sortedTimestampsAddr = allocateSortedTimestamps(500, 600, 700);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
                 // Should produce: COPY_ROW_GROUP_SLICE(rg0), COPY_O3
-                Assert.assertEquals(2, actions.size());
+                Assert.assertEquals(2, n);
 
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
 
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
-                Assert.assertEquals(0, actions.get(1).o3Lo);
-                Assert.assertEquals(2, actions.get(1).o3Hi);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(0, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(2, actionsBuf.get(1).o3Hi);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 3);
             }
@@ -499,27 +490,27 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 0: min=500, max=600, rowCount=10000 (large)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 500, 600, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [100, 200, 300] - all before rg0
             long sortedTimestampsAddr = allocateSortedTimestamps(100, 200, 300);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
                 // Should produce: COPY_O3, COPY_ROW_GROUP_SLICE(rg0)
-                Assert.assertEquals(2, actions.size());
+                Assert.assertEquals(2, n);
 
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).o3Lo);
-                Assert.assertEquals(2, actions.get(0).o3Hi);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(2, actionsBuf.get(0).o3Hi);
 
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(1).type);
-                Assert.assertEquals(0, actions.get(1).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(1).type);
+                Assert.assertEquals(0, actionsBuf.get(1).rowGroupIndex);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 3);
             }
@@ -535,30 +526,30 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 1: min=400, max=500, rowCount=10000 (large)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 400, 500, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [250, 300, 350] - in gap between row groups
             long sortedTimestampsAddr = allocateSortedTimestamps(250, 300, 350);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
                 // Should produce: COPY_ROW_GROUP_SLICE(rg0), COPY_O3, COPY_ROW_GROUP_SLICE(rg1)
-                Assert.assertEquals(3, actions.size());
+                Assert.assertEquals(3, n);
 
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
 
-                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
-                Assert.assertEquals(0, actions.get(1).o3Lo);
-                Assert.assertEquals(2, actions.get(1).o3Hi);
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(0, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(2, actionsBuf.get(1).o3Hi);
 
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(2).type);
-                Assert.assertEquals(1, actions.get(2).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(2).type);
+                Assert.assertEquals(1, actionsBuf.get(2).rowGroupIndex);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 3);
             }
@@ -574,28 +565,28 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 1: min=400, max=500, rowCount=100 (small, < 4096)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 400, 500, 100);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [250, 300, 350] - in gap, rg1 is small
             long sortedTimestampsAddr = allocateSortedTimestamps(250, 300, 350);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
                 // Gap O3 should be merged into small rg1
-                Assert.assertEquals(2, actions.size());
+                Assert.assertEquals(2, n);
 
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
 
-                Assert.assertEquals(ActionType.MERGE, actions.get(1).type);
-                Assert.assertEquals(1, actions.get(1).rowGroupIndex);
-                Assert.assertEquals(0, actions.get(1).o3Lo);
-                Assert.assertEquals(2, actions.get(1).o3Hi);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(1).type);
+                Assert.assertEquals(1, actionsBuf.get(1).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(2, actionsBuf.get(1).o3Hi);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 3);
             }
@@ -611,28 +602,28 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 1: min=400, max=500, rowCount=10000 (large)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 400, 500, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [250, 300, 350] - in gap, but rg0 is small
             long sortedTimestampsAddr = allocateSortedTimestamps(250, 300, 350);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
                 // Gap O3 should be merged into small rg0
-                Assert.assertEquals(2, actions.size());
+                Assert.assertEquals(2, n);
 
-                Assert.assertEquals(ActionType.MERGE, actions.get(0).type);
-                Assert.assertEquals(0, actions.get(0).rowGroupIndex);
-                Assert.assertEquals(0, actions.get(0).o3Lo);
-                Assert.assertEquals(2, actions.get(0).o3Hi);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(2, actionsBuf.get(0).o3Hi);
 
-                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(1).type);
-                Assert.assertEquals(1, actions.get(1).rowGroupIndex);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(1).type);
+                Assert.assertEquals(1, actionsBuf.get(1).rowGroupIndex);
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 3);
             }
@@ -665,35 +656,35 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, i * 100L, i * 100L + 99, 100);
             }
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // Single O3 row at timestamp 550, within RG5's range [500..599]
             long sortedTimestampsAddr = allocateSortedTimestamps(550);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 0,
                         0,
-                        actions
+                        actionsBuf
                 );
 
                 // Expected: 5 COPY (RG0-4) + 1 MERGE (RG5) + 4 COPY (RG6-9) = 10 actions
-                Assert.assertEquals(10, actions.size());
+                Assert.assertEquals(10, n);
 
                 for (int i = 0; i < 5; i++) {
-                    Assert.assertEquals("action " + i, ActionType.COPY_ROW_GROUP_SLICE, actions.get(i).type);
-                    Assert.assertEquals("action " + i + " rgIndex", i, actions.get(i).rowGroupIndex);
+                    Assert.assertEquals("action " + i, ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(i).type);
+                    Assert.assertEquals("action " + i + " rgIndex", i, actionsBuf.get(i).rowGroupIndex);
                 }
 
-                Assert.assertEquals(ActionType.MERGE, actions.get(5).type);
-                Assert.assertEquals(5, actions.get(5).rowGroupIndex);
-                Assert.assertEquals(0, actions.get(5).o3Lo);
-                Assert.assertEquals(0, actions.get(5).o3Hi);
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(5).type);
+                Assert.assertEquals(5, actionsBuf.get(5).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(5).o3Lo);
+                Assert.assertEquals(0, actionsBuf.get(5).o3Hi);
 
                 for (int i = 6; i < 10; i++) {
-                    Assert.assertEquals("action " + i, ActionType.COPY_ROW_GROUP_SLICE, actions.get(i).type);
-                    Assert.assertEquals("action " + i + " rgIndex", i, actions.get(i).rowGroupIndex);
+                    Assert.assertEquals("action " + i, ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(i).type);
+                    Assert.assertEquals("action " + i + " rgIndex", i, actionsBuf.get(i).rowGroupIndex);
                 }
             } finally {
                 freeSortedTimestamps(sortedTimestampsAddr, 1);
@@ -708,20 +699,20 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Row group 0: min=100, max=500, rowCount=10000 (large)
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 500, 10_000);
 
-            ObjList<MergeAction> actions = new ObjList<>();
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
 
             // O3 data with timestamps [150, 250, 350] - all within [100, 500]
             long sortedTimestampsAddr = allocateSortedTimestamps(150, 250, 350);
             try {
-                O3ParquetMergeStrategy.computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
-                        actions
+                        actionsBuf
                 );
 
-                Assert.assertEquals(1, actions.size());
-                MergeAction action = actions.get(0);
+                Assert.assertEquals(1, n);
+                MergeAction action = actionsBuf.get(0);
                 Assert.assertEquals(ActionType.MERGE, action.type);
                 Assert.assertEquals(0, action.rowGroupIndex);
                 Assert.assertEquals(0, action.rgLo);

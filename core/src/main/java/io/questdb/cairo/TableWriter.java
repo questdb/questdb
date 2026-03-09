@@ -78,7 +78,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -194,6 +193,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
+    private final DirectIntList bloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_TABLE_WRITER, true);
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -238,7 +238,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final boolean parallelIndexerEnabled;
     private final DirectIntList parquetColumnIdsAndTypes;
     private final PartitionDecoder parquetDecoder = new PartitionDecoder();
-    private final RowGroupStatBuffers parquetStatBuffers;
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
@@ -433,6 +432,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            this.metadata.setTxReader(txWriter);
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
@@ -458,7 +458,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
-            this.parquetStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
             this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
 
             if (metadata.isWalEnabled()) {
@@ -971,6 +970,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(denseSymbolMapWriters);
 
+            if (isParquet) {
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, true);
+                }
+            }
+
             LOG.info().$("partition attached [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
 
@@ -1386,7 +1391,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
 
         assert metadata.getTimestampIndex() > -1;
@@ -1501,7 +1506,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long columnAddr = mapRONoCache(ff, symColumnFile, LOG, columnSize, memoryTag);
                             ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
-
                             // root symbol files use separate txn
                             final long symbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(columnIndex);
 
@@ -1611,16 +1615,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean rawArrayEncoding = config.isPartitionEncoderParquetRawArrayEncoding();
                 final int parquetVersion = config.getPartitionEncoderParquetVersion();
 
-                PartitionEncoder.encodeWithOptions(
-                        partitionDescriptor,
-                        other,
-                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                        statisticsEnabled,
-                        rawArrayEncoding,
-                        rowGroupSize,
-                        dataPageSize,
-                        parquetVersion
-                );
+                long bloomFilterColumnIndexesPtr = 0;
+                int bloomFilterColumnCount = 0;
+                double fpp = Double.isNaN(bloomFilterFpp) ? config.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
+
+                try {
+                    if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                        bloomFilterIndexes.reopen();
+                        parseBloomFilterColumnIndexes(bloomFilterColumns, bloomFilterIndexes);
+                        bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
+                        bloomFilterColumnCount = (int) bloomFilterIndexes.size();
+                    }
+
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            other,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion,
+                            bloomFilterColumnIndexesPtr,
+                            bloomFilterColumnCount,
+                            fpp
+                    );
+                } finally {
+                    Misc.free(bloomFilterIndexes);
+                }
                 parquetFileLength = ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -1657,6 +1679,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+        }
 
         if (lastPartitionConverted) {
             closeActivePartition(false);
@@ -1849,6 +1875,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
 
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+        }
+
         if (lastPartitionConverted) {
             closeActivePartition(false);
         }
@@ -2018,6 +2048,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
                 txWriter.commit(denseSymbolMapWriters);
+
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
                 // return at the end of the method after removing partition directory
             } else {
                 // rollback detached copy
@@ -2729,6 +2763,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, false);
+        }
 
         LOG.info().$("removed all partitions (soft truncated) [name=").$(tableToken).I$();
     }
@@ -4182,6 +4220,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
         processPartitionRemoveCandidates();
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+        }
     }
 
     private void configureAppendPosition() {
@@ -5310,7 +5352,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
         Misc.free(parquetDecoder);
-        Misc.free(parquetStatBuffers);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
@@ -7173,6 +7214,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void parseBloomFilterColumnIndexes(CharSequence bloomFilterColumns, DirectIntList indexes) {
+        int start = 0;
+        int len = bloomFilterColumns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || bloomFilterColumns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(bloomFilterColumns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(bloomFilterColumns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart < nameEnd) {
+                    CharSequence columnName = bloomFilterColumns.subSequence(nameStart, nameEnd);
+                    int metadataIndex = metadata.getColumnIndexQuiet(columnName);
+                    if (metadataIndex >= 0 && metadata.getColumnType(metadataIndex) > 0) {
+                        int descriptorIndex = 0;
+                        for (int j = 0; j < metadataIndex; j++) {
+                            if (metadata.getColumnType(j) > 0) {
+                                descriptorIndex++;
+                            }
+                        }
+                        boolean isDuplicate = false;
+                        for (long k = 0, sz = indexes.size(); k < sz; k++) {
+                            if (indexes.get(k) == descriptorIndex) {
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+                        if (!isDuplicate) {
+                            indexes.add(descriptorIndex);
+                        }
+                    } else {
+                        throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName);
+                    }
+                }
+                start = i + 1;
+            }
+        }
+    }
+
     private void performRecovery() {
         rollbackIndexes();
         rollbackSymbolTables(false);
@@ -8989,11 +9072,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int timestampIndex = metadata.getTimestampIndex();
             final int parquetTsIndex = findParquetColumnIndex(parquetDecoder.metadata(), timestampIndex);
             assert parquetTsIndex > -1;
-            parquetColumnIdsAndTypes.clear();
-            parquetColumnIdsAndTypes.add(parquetTsIndex);
-            parquetColumnIdsAndTypes.add(timestampType);
-            parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
-            return parquetStatBuffers.getMinValueLong(0);
+            assert parquetDecoder.metadata().getRowGroupCount() > 0;
+            return parquetDecoder.rowGroupMinTimestamp(0, parquetTsIndex);
         } finally {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -9098,16 +9178,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int timestampIndex = metadata.getTimestampIndex();
             final int parquetTsIndex = findParquetColumnIndex(parquetDecoder.metadata(), timestampIndex);
             assert parquetTsIndex > -1;
-            parquetColumnIdsAndTypes.clear();
-            parquetColumnIdsAndTypes.add(parquetTsIndex);
-            parquetColumnIdsAndTypes.add(timestampType);
-            parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
-            attachMinTimestamp = parquetStatBuffers.getMinValueLong(0);
             final int rowGroupCount = parquetDecoder.metadata().getRowGroupCount();
             assert rowGroupCount > 0;
-            parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, rowGroupCount - 1);
-            attachMaxTimestamp = parquetStatBuffers.getMaxValueLong(0);
-
+            attachMinTimestamp = parquetDecoder.rowGroupMinTimestamp(0, parquetTsIndex);
+            attachMaxTimestamp = parquetDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, parquetTsIndex);
             return parquetDecoder.metadata().getRowCount();
         } finally {
             if (parquetAddr != 0) {

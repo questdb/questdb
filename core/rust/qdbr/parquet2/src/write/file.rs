@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
 use parquet_format_safe::{RowGroup, SortingColumn};
@@ -336,6 +338,7 @@ impl<W: Write> FileWriter<W> {
             metadata: None,
         }
     }
+
     /// Writes the header of the file.
     ///
     /// This is automatically called by [`Self::write`] if not called following [`Self::new`].
@@ -357,7 +360,11 @@ impl<W: Write> FileWriter<W> {
     /// Writes a row group to the file.
     ///
     /// This call is IO-bounded
-    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
+    pub fn write<E>(
+        &mut self,
+        row_group: RowGroupIter<'_, E>,
+        bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
+    ) -> std::result::Result<(), E>
     where
         E: std::error::Error + From<Error>,
     {
@@ -365,6 +372,20 @@ impl<W: Write> FileWriter<W> {
             self.start()?;
         }
         let ordinal = self.row_groups.len();
+        let expected_cols = self.schema.columns().len();
+        debug_assert!(
+            bloom_hashes.is_empty() || bloom_hashes.len() == expected_cols,
+            "bloom_hashes length mismatch: expected {}, got {}",
+            expected_cols,
+            bloom_hashes.len()
+        );
+        let default_bloom: Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
+        let bloom_hashes = if bloom_hashes.is_empty() {
+            default_bloom = vec![None; expected_cols];
+            &default_bloom
+        } else {
+            bloom_hashes
+        };
         let (group, specs, size) = write_row_group(
             &mut self.writer,
             self.offset,
@@ -372,6 +393,8 @@ impl<W: Write> FileWriter<W> {
             row_group,
             &self.sorting_columns,
             ordinal,
+            self.options.bloom_filter_fpp,
+            bloom_hashes,
         )?;
         self.offset += size;
         self.row_groups.push(group);
@@ -480,6 +503,7 @@ pub struct ParquetFile<W: Write> {
     is_insert: Vec<bool>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Mode {
     Write,
     Update(ThriftFileMetaData, Option<FooterCache>),
@@ -589,7 +613,11 @@ impl<W: Write> ParquetFile<W> {
         }
     }
 
-    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
+    pub fn write<E>(
+        &mut self,
+        row_group: RowGroupIter<'_, E>,
+        bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
+    ) -> std::result::Result<(), E>
     where
         E: std::error::Error + From<Error>,
     {
@@ -597,7 +625,7 @@ impl<W: Write> ParquetFile<W> {
             self.start()?;
         }
         let ordinal = self.row_groups.len();
-        self.add_row_group(row_group, ordinal)?;
+        self.add_row_group(row_group, ordinal, bloom_hashes)?;
         self.is_insert.push(false);
         Ok(())
     }
@@ -606,10 +634,25 @@ impl<W: Write> ParquetFile<W> {
         &mut self,
         row_group: RowGroupIter<E>,
         ordinal: usize,
+        bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
     ) -> std::result::Result<(), E>
     where
         E: std::error::Error + From<Error>,
     {
+        let expected_cols = self.schema.columns().len();
+        debug_assert!(
+            bloom_hashes.is_empty() || bloom_hashes.len() == expected_cols,
+            "bloom_hashes length mismatch: expected {}, got {}",
+            expected_cols,
+            bloom_hashes.len()
+        );
+        let default_bloom: Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
+        let bloom_hashes = if bloom_hashes.is_empty() {
+            default_bloom = vec![None; expected_cols];
+            &default_bloom
+        } else {
+            bloom_hashes
+        };
         let (group, specs, size) = write_row_group(
             &mut self.writer,
             self.offset,
@@ -617,6 +660,8 @@ impl<W: Write> ParquetFile<W> {
             row_group,
             &self.sorting_columns,
             ordinal,
+            self.options.bloom_filter_fpp,
+            bloom_hashes,
         )?;
 
         self.offset += size;
@@ -629,6 +674,7 @@ impl<W: Write> ParquetFile<W> {
         &mut self,
         row_group: RowGroupIter<'_, E>,
         ordinal: Option<i16>,
+        bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
     ) -> std::result::Result<(), E>
     where
         E: std::error::Error + From<Error>,
@@ -649,7 +695,7 @@ impl<W: Write> ParquetFile<W> {
                 } else {
                     metadata.row_groups.len() + self.row_groups.len()
                 };
-                self.add_row_group(row_group, ordinal)?;
+                self.add_row_group(row_group, ordinal, bloom_hashes)?;
                 self.is_insert.push(false);
                 Ok(())
             }
@@ -664,13 +710,14 @@ impl<W: Write> ParquetFile<W> {
         &mut self,
         row_group: RowGroupIter<'_, E>,
         position: i16,
+        bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
     ) -> std::result::Result<(), E>
     where
         E: std::error::Error + From<Error>,
     {
         match &self.mode {
             Mode::Update(_, _) => {
-                self.add_row_group(row_group, position as usize)?;
+                self.add_row_group(row_group, position as usize, bloom_hashes)?;
                 self.is_insert.push(true);
                 Ok(())
             }
@@ -679,6 +726,17 @@ impl<W: Write> ParquetFile<W> {
             )
             .into()),
         }
+    }
+
+    pub fn append<E>(
+        &mut self,
+        row_group: RowGroupIter<'_, E>,
+        bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
+    ) -> std::result::Result<(), E>
+    where
+        E: std::error::Error + From<Error>,
+    {
+        self.replace(row_group, None, bloom_hashes)
     }
 
     /// Ensures the PAR1 file header has been written.

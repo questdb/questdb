@@ -183,6 +183,7 @@ stages:
     dependsOn:
       - CheckChanges
       - SelfHostedRunTestsCoverageBranches
+      - JavaAndRustLint
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"
@@ -209,13 +210,6 @@ stages:
           - download: current
             artifact: rust-llvm-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
-            displayName: "Ensure Rust is installed"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - template: templates/install-llvm.yml
-            parameters:
-              shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-
           - task: Cache@2
             continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -248,45 +242,31 @@ stages:
 
           - bash: |
               set -eux
-              export PATH=$LLVM_TOOLS_PATH:$PATH
-              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
-
-              # Merge partial profdata files from all jobs into the complete report
-              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
-
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary"
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
-              if [ -z "$ORIG_PATH" ]; then
-                echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
+              ls -al "$COVERAGE_DIR"
+
+              # Concatenate all LCOV files: per-job coverage from Maven test runs
+              # and cargo test coverage from the lint job.
+              # Each coverage job generates LCOV against its own libquestdbr.so,
+              # avoiding counter hash mismatches across independently compiled binaries.
+              > questdbr.lcov.dat
+              for LCOV_FILE in "$COVERAGE_DIR"/*.lcov; do
+                [ -f "$LCOV_FILE" ] || continue
+                cat "$LCOV_FILE" >> questdbr.lcov.dat
+                echo "Appended $(basename "$LCOV_FILE") ($(wc -l < "$LCOV_FILE") lines)"
+              done
+
+              if [ ! -s questdbr.lcov.dat ]; then
+                echo "##vso[task.logissue type=error]No LCOV files found in artifact"
                 exit 1
               fi
-              PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
-              echo "Objects args: $OBJECTS"
 
-              # Export the merged coverage report to LCOV format
-              llvm-cov export \
-              --format=lcov \
-              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-              $OBJECTS \
-              --instr-profile=questdbr.profdata \
-              > questdbr.lcov.dat
-
-              # Generate HTML report for local inspection
-              llvm-cov show \
-                --format=html \
-                --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-                $PATH_EQUIV_ARGS \
-                $OBJECTS \
-                --instr-profile=questdbr.profdata \
-                --output-dir $(Build.SourcesDirectory)/rust-coverage
-
-              # Merge LCOV coverage results from multiple objects into a single report
+              # Normalize CI-specific paths and merge duplicate entries
               python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
 
               # Convert LCOV coverage results to Cobertura XML format
               python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
-            displayName: "Merge partial Rust reports"
+            displayName: "Merge Rust coverage reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
           - task: PublishBuildArtifacts@1

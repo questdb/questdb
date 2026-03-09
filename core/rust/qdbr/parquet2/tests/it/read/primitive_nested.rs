@@ -18,7 +18,7 @@ fn read_buffer<T: NativeType>(values: &[u8]) -> impl Iterator<Item = T> + '_ {
             Ok(v) => v,
             Err(_) => panic!(),
         };
-        T::from_le_bytes(chunk)
+        T::from_bytes(chunk)
     })
 }
 

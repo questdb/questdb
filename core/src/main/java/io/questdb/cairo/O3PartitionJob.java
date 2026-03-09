@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -58,6 +57,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
 
+import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.O3OpenColumnJob.*;
@@ -67,6 +67,9 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
+            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
 
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
@@ -103,17 +106,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
-        try (
-                PartitionDecoder partitionDecoder = new PartitionDecoder();
-                RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-                DirectIntList parquetColumns = new DirectIntList(2L * tableWriterMetadata.getColumnCount(), MemoryTag.NATIVE_O3)
-        ) {
+        final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
+        ctx.clear();
+        final PartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
+        final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
+        final DirectIntList parquetColumns = ctx.getParquetColumns();
+        final RowGroupStatBuffers rowGroupStatBuffers = ctx.getRowGroupStatBuffers();
+        final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
+        final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
+        try {
             long parquetAddr = 0;
-            try (
-                    RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-                    PartitionUpdater partitionUpdater = new PartitionUpdater();
-                    PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
-            ) {
+            try {
                 parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 partitionDecoder.of(
                         parquetAddr,
@@ -182,6 +185,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
+                final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
 
                 // Decide whether to rewrite the file or update in-place.
                 // A single-row-group file always triggers a rewrite: any O3 merge
@@ -246,7 +250,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             statisticsEnabled,
                             rawArrayEncoding,
                             rowGroupSize,
-                            dataPageSize
+                            dataPageSize,
+                            bloomFilterFpp
                     );
 
                     if (hasSchemaChange) {
@@ -298,7 +303,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // parquet file schema, which may differ after ADD/DROP COLUMN.
                 final int timestampParquetIdx = tableToParquetIdx[timestampIndex];
                 assert timestampParquetIdx >= 0 : "timestamp column missing from parquet file";
-                final LongList rowGroupBounds = new LongList(rowGroupCount * O3ParquetMergeStrategy.ROW_GROUP_ENTRY_SIZE);
+                final LongList rowGroupBounds = ctx.getRowGroupBounds();
                 parquetColumns.clear();
                 parquetColumns.add(timestampParquetIdx);
                 parquetColumns.add(timestampColumnType);
@@ -312,19 +317,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 // Compute merge actions (scratch lists are reused across calls within the same partition)
-                final ObjList<O3ParquetMergeStrategy.MergeAction> mergeActions = new ObjList<>();
-                final LongList rgO3Ranges = new LongList();
-                final LongList gapO3Ranges = new LongList();
-                O3ParquetMergeStrategy.computeMergeActions(
+                final ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf = ctx.getActionsBuf();
+                final int actionCount = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         srcOooLo,
                         srcOooHi,
                         rowGroupSize / 4,
                         rowGroupSize,
-                        mergeActions,
-                        rgO3Ranges,
-                        gapO3Ranges
+                        actionsBuf,
+                        ctx.getRgO3Ranges(),
+                        ctx.getGapO3Ranges()
                 );
 
                 // Execute merge actions.
@@ -337,11 +340,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Layout per column: [primaryAddr, primarySize, secondaryAddr, secondarySize].
                 // Buffers grow as needed and are freed after all actions complete.
                 final int colCount = tableWriterMetadata.getColumnCount();
-                final long[] mergeDstBufs = new long[colCount * 4];
-                final PartitionDescriptor chunkDescriptor = new PartitionDescriptor();
+                final LongList mergeDstBufs = ctx.getMergeDstBufs(colCount);
+                final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
                 int metadataPosition = 0;
                 try {
-                    for (int i = 0, n = mergeActions.size(); i < n; i++) {
+                    for (int i = 0; i < actionCount; i++) {
                         if (metadataPosition > Short.MAX_VALUE) {
                             throw CairoException.critical(0)
                                     .put("too many output row groups in parquet O3 merge [count=")
@@ -350,7 +353,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     .put((int) Short.MAX_VALUE)
                                     .put(']');
                         }
-                        final O3ParquetMergeStrategy.MergeAction action = mergeActions.getQuick(i);
+                        final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE: {
                                 final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
@@ -451,12 +454,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
                 } finally {
-                    chunkDescriptor.close();
+                    chunkDescriptor.clear();
                     for (int bufIdx = 0; bufIdx < colCount; bufIdx++) {
                         int bi4 = bufIdx * 4;
                         for (int slot = 0; slot < 4; slot += 2) {
-                            if (mergeDstBufs[bi4 + slot] != 0) {
-                                Unsafe.free(mergeDstBufs[bi4 + slot], mergeDstBufs[bi4 + slot + 1], MemoryTag.NATIVE_O3);
+                            if (mergeDstBufs.getQuick(bi4 + slot) != 0) {
+                                Unsafe.free(mergeDstBufs.getQuick(bi4 + slot), mergeDstBufs.getQuick(bi4 + slot + 1), MemoryTag.NATIVE_O3);
                             }
                         }
                     }
@@ -1987,7 +1990,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dedupColSinkAddr,
             int maxRowGroupSize,
             int metadataPosition,
-            long[] mergeDstBufs,
+            LongList mergeDstBufs,
             int[] tableToParquetIdx
     ) {
         // Build the decode list: only columns present in the parquet file.
@@ -2192,23 +2195,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // Aux buffer: bounded by maxChunkSize across all merges.
                     long neededAuxSize = ctd.getAuxVectorSize(maxChunkSize);
-                    if (neededAuxSize > mergeDstBufs[bi4 + 3]) {
-                        if (mergeDstBufs[bi4 + 2] != 0) {
-                            Unsafe.free(mergeDstBufs[bi4 + 2], mergeDstBufs[bi4 + 3], MemoryTag.NATIVE_O3);
+                    if (neededAuxSize > mergeDstBufs.getQuick(bi4 + 3)) {
+                        if (mergeDstBufs.getQuick(bi4 + 2) != 0) {
+                            Unsafe.free(mergeDstBufs.getQuick(bi4 + 2), mergeDstBufs.getQuick(bi4 + 3), MemoryTag.NATIVE_O3);
                         }
-                        mergeDstBufs[bi4 + 2] = Unsafe.malloc(neededAuxSize, MemoryTag.NATIVE_O3);
-                        mergeDstBufs[bi4 + 3] = neededAuxSize;
+                        mergeDstBufs.setQuick(bi4 + 2, Unsafe.malloc(neededAuxSize, MemoryTag.NATIVE_O3));
+                        mergeDstBufs.setQuick(bi4 + 3, neededAuxSize);
                     }
 
                     // Data buffer: overestimate varies per merge, grow if needed.
                     long neededDataSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
                             + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupSize - 1);
-                    if (neededDataSize > mergeDstBufs[bi4 + 1]) {
-                        if (mergeDstBufs[bi4] != 0) {
-                            Unsafe.free(mergeDstBufs[bi4], mergeDstBufs[bi4 + 1], MemoryTag.NATIVE_O3);
+                    if (neededDataSize > mergeDstBufs.getQuick(bi4 + 1)) {
+                        if (mergeDstBufs.getQuick(bi4) != 0) {
+                            Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
                         }
-                        mergeDstBufs[bi4] = Unsafe.malloc(neededDataSize, MemoryTag.NATIVE_O3);
-                        mergeDstBufs[bi4 + 1] = neededDataSize;
+                        mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededDataSize, MemoryTag.NATIVE_O3));
+                        mergeDstBufs.setQuick(bi4 + 1, neededDataSize);
                     }
                 } else {
                     long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
@@ -2225,12 +2228,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // Fixed-size buffer: bounded by maxChunkSize across all merges.
                     long neededFixSize = maxChunkSize * ColumnType.sizeOf(columnType);
-                    if (neededFixSize > mergeDstBufs[bi4 + 1]) {
-                        if (mergeDstBufs[bi4] != 0) {
-                            Unsafe.free(mergeDstBufs[bi4], mergeDstBufs[bi4 + 1], MemoryTag.NATIVE_O3);
+                    if (neededFixSize > mergeDstBufs.getQuick(bi4 + 1)) {
+                        if (mergeDstBufs.getQuick(bi4) != 0) {
+                            Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
                         }
-                        mergeDstBufs[bi4] = Unsafe.malloc(neededFixSize, MemoryTag.NATIVE_O3);
-                        mergeDstBufs[bi4 + 1] = neededFixSize;
+                        mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededFixSize, MemoryTag.NATIVE_O3));
+                        mergeDstBufs.setQuick(bi4 + 1, neededFixSize);
                     }
                 }
             }
@@ -2264,10 +2267,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final long srcOooFixAddr = oooColumns.getQuick(columnOffset + 1).addressOf(0);
                         final long srcOooVarAddr = oooColumns.getQuick(columnOffset).addressOf(0);
 
-                        long dstDataAddr = mergeDstBufs[bi4];
-                        long dstDataSize = mergeDstBufs[bi4 + 1];
-                        long dstAuxAddr = mergeDstBufs[bi4 + 2];
-                        long dstAuxSize = mergeDstBufs[bi4 + 3];
+                        long dstDataAddr = mergeDstBufs.getQuick(bi4);
+                        long dstDataSize = mergeDstBufs.getQuick(bi4 + 1);
+                        long dstAuxAddr = mergeDstBufs.getQuick(bi4 + 2);
+                        long dstAuxSize = mergeDstBufs.getQuick(bi4 + 3);
 
                         // Note: dstDataSize/dstAuxSize are buffer capacities, not exact used sizes.
                         // The Rust encoder bounds all access by chunkRowCount, not by buffer size:
@@ -2300,8 +2303,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     } else {
                         final long srcOooFixAddr = oooColumns.getQuick(columnOffset).addressOf(0);
-                        long dstFixAddr = mergeDstBufs[bi4];
-                        long dstFixSize = mergeDstBufs[bi4 + 1];
+                        long dstFixAddr = mergeDstBufs.getQuick(bi4);
+                        long dstFixSize = mergeDstBufs.getQuick(bi4 + 1);
 
                         // Note: dstFixSize is the buffer capacity, not exact used size.
                         // The Rust encoder slices data to [0..chunkRowCount] elements, ignoring extra capacity.
