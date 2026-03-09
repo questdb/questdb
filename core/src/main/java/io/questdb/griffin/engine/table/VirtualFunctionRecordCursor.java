@@ -35,6 +35,7 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
+import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -130,7 +131,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (result && memoizerCount > 0) {
             memoizeFunctions(recordA);
         }
-        if (result && debugRowCount < 80 && functions.size() >= 2 && functions.getQuick(0) instanceof ColumnFunction) {
+        if (FillRangeRecordCursorFactory.INSTRUMENT_LOG && result && debugRowCount < 80 && functions.size() >= 2 && functions.getQuick(0) instanceof ColumnFunction) {
             debugRowCount++;
             long f0val = Long.MIN_VALUE;
             long f1val = Long.MIN_VALUE;

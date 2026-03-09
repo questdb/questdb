@@ -26,16 +26,22 @@ package io.questdb.griffin.engine.functions.date;
 
 
 /**
- * Floors timestamps with modulo relative to a timestamp from 1970-01-01, as
- * well as an offset from the epoch start.
+ * Floors timestamps with timezone-aware alignment but returns UTC results.
  * <p>
- * Fused variant of timestamp_floor() and to_timezone() functions meant
- * to be used in SAMPLE BY to parallel GROUP BY SQL rewrite.
+ * For each input UTC timestamp:
+ * 1. Convert to local time using the timezone offset at that UTC moment
+ * 2. Floor to the stride boundary in local time
+ * 3. Convert back to UTC using the SAME offset (from step 1)
  * <p>
- * When timezone is specified, the returned timestamps are in local time.
+ * This produces unambiguous UTC bucket keys even across DST transitions,
+ * unlike {@link TimestampFloorFromOffsetFunctionFactory} which returns local time
+ * and loses information during DST fall-back (clock-back) transitions.
+ * <p>
+ * When no timezone is specified, this function behaves identically to
+ * {@link TimestampFloorFromOffsetFunctionFactory}.
  */
-public class TimestampFloorFromOffsetFunctionFactory extends AbstractTimestampFloorFromOffsetFunctionFactory {
-    private static final String NAME = TimestampFloorFunctionFactory.NAME;
+public class TimestampFloorFromOffsetUtcFunctionFactory extends AbstractTimestampFloorFromOffsetFunctionFactory {
+    public static final String NAME = "timestamp_floor_utc";
 
     @Override
     public String getSignature() {
@@ -49,6 +55,6 @@ public class TimestampFloorFromOffsetFunctionFactory extends AbstractTimestampFl
 
     @Override
     boolean isReturnUtc() {
-        return false;
+        return true;
     }
 }

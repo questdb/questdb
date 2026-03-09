@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
+import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDefaultTransactionReadOnlyCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
@@ -54,8 +55,9 @@ import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStrin
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
-import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+
+
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -137,7 +139,7 @@ public class SqlOptimiser implements Mutable {
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
-    private static final int SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE = 4;
+
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
@@ -7638,10 +7640,6 @@ public class SqlOptimiser implements Mutable {
 
                 int wrapAction = SAMPLE_BY_REWRITE_NO_WRAP;
 
-                if (sampleByTimezoneName != null && !isUTC(sampleByTimezoneName.token)) {
-                    wrapAction |= SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE;
-                }
-
                 // this may or may not be our guy, but may not be, depending on fill settings
 
                 // plan of action:
@@ -7822,7 +7820,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 final ExpressionNode tsFloorFunc = expressionNodePool.next();
-                tsFloorFunc.token = TimestampFloorFunctionFactory.NAME;
+                tsFloorFunc.token = TimestampFloorFromOffsetUtcFunctionFactory.NAME;
                 tsFloorFunc.type = FUNCTION;
                 tsFloorFunc.paramCount = 5;
 
@@ -7909,32 +7907,6 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 QueryModel orderByModel = nested;
-                CharSequence orderByTimestamp = timestamp.token;
-                // Inject an intermediate model with to_utc() function in place of the timestamp.
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0) {
-                    model = wrapWithSelectModel(model, model.getBottomUpColumns().size());
-                    model.setSelectModelType(SELECT_MODEL_CHOOSE);
-                    orderByModel = model.getNestedModel();
-                    orderByTimestamp = timestampAlias;
-
-                    final QueryColumn qc = model.getBottomUpColumns().getQuick(timestampPos);
-                    if (timestampAlias == null || qc.getAst().type != LITERAL && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)) {
-                        throw SqlException.$(qc.getAst().position, "unexpected non-timestamp column at position ").put(timestampPos);
-                    }
-
-                    final ExpressionNode toUtcFunc = expressionNodePool.next();
-                    toUtcFunc.token = ToUTCTimestampFunctionFactory.NAME;
-                    toUtcFunc.type = FUNCTION;
-                    toUtcFunc.paramCount = 2;
-                    final ExpressionNode toUtcParam = expressionNodePool.next();
-                    toUtcParam.token = timestampAlias;
-                    toUtcParam.position = timestamp.position;
-                    toUtcParam.paramCount = 0;
-                    toUtcParam.type = LITERAL;
-                    toUtcFunc.lhs = toUtcParam;
-                    toUtcFunc.rhs = sampleByTimezoneName;
-                    qc.of(timestampAlias, toUtcFunc);
-                }
 
                 if (nested.getOrderBy().size() == 0) {
                     // There is no explicit ORDER BY, so we need to add one.
@@ -7943,7 +7915,7 @@ public class SqlOptimiser implements Mutable {
                     orderBy.type = LITERAL;
                     orderByModel.getOrderBy().add(orderBy);
                     orderByModel.getOrderByDirection().add(0);
-                    orderByModel.setTimestamp(nextLiteral(orderByTimestamp));
+                    orderByModel.setTimestamp(nextLiteral(timestamp.token));
                 }
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && needRemoveColumns > 0) {
@@ -7965,15 +7937,10 @@ public class SqlOptimiser implements Mutable {
                     orderByModel = model.getNestedModel();
                 }
 
-                // We need to move explicit ORDER BY upper level in two cases:
-                // 1. If there is to_utc() conversion due to time zone, we need to place the ORDER BY
-                //    at the to_utc() level as to_utc() may change the order of rows.
-                // 2. If we removed functions with timestamp column as an argument, they could be
-                //    used in the ORDER BY clause, so we need to move it at the level where
-                //    the functions are restored.
-                final boolean orderByMoveRequired = (wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0
-                        || (wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0;
-                if (orderByMoveRequired && nested.getOrderBy().size() > 0) {
+                // If we removed functions with timestamp column as an argument, they could be
+                // used in the ORDER BY clause, so we need to move it at the level where
+                // the functions are restored.
+                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && nested.getOrderBy().size() > 0) {
                     final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
                     final IntList orderByDirection = nested.getOrderByDirection();
                     for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -10696,9 +10663,13 @@ public class SqlOptimiser implements Mutable {
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteDistinct(rewrittenModel);
 
-            LOG.info().$("optimise :: (1) before `rewriteSampleBy`: ").$(rewrittenModel).$();
+            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
+                LOG.info().$("optimise :: (1) before `rewriteSampleBy`: ").$(rewrittenModel).$();
+            }
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
-            LOG.info().$("optimise :: (2) after `rewriteSampleBy`: ").$(rewrittenModel).$();
+            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
+                LOG.info().$("optimise :: (2) after `rewriteSampleBy`: ").$(rewrittenModel).$();
+            }
 
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
@@ -10708,9 +10679,13 @@ public class SqlOptimiser implements Mutable {
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
 
-            LOG.info().$("optimise :: (3) before `rewriteSelectClause`: ").$(rewrittenModel).$();
+            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
+                LOG.info().$("optimise :: (3) before `rewriteSelectClause`: ").$(rewrittenModel).$();
+            }
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            LOG.info().$("optimise :: (4) after `rewriteSelectClause`: ").$(rewrittenModel).$();
+            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
+                LOG.info().$("optimise :: (4) after `rewriteSelectClause`: ").$(rewrittenModel).$();
+            }
 
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);

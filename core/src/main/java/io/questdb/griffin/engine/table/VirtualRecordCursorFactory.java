@@ -37,6 +37,7 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -119,20 +120,22 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        LOG.info().$("VirtualRecord over ").$(base.getClass().getSimpleName())
-                .$(" base cols=").$(base.getMetadata().getColumnCount())
-                .$();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Function f = functions.getQuick(i);
-            if (f instanceof ColumnFunction cf) {
-                LOG.info().$("  function[").$(i)
-                        .$("]: ColumnFunction colIdx=").$(cf.getColumnIndex())
-                        .$(" class=").$(f.getClass().getSimpleName())
-                        .$();
-            } else {
-                LOG.info().$("  function[").$(i)
-                        .$("]: ").$(f.getClass().getSimpleName())
-                        .$();
+        if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
+            LOG.info().$("VirtualRecord over ").$(base.getClass().getSimpleName())
+                    .$(" base cols=").$(base.getMetadata().getColumnCount())
+                    .$();
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                Function f = functions.getQuick(i);
+                if (f instanceof ColumnFunction cf) {
+                    LOG.info().$("  function[").$(i)
+                            .$("]: ColumnFunction colIdx=").$(cf.getColumnIndex())
+                            .$(" class=").$(f.getClass().getSimpleName())
+                            .$();
+                } else {
+                    LOG.info().$("  function[").$(i)
+                            .$("]: ").$(f.getClass().getSimpleName())
+                            .$();
+                }
             }
         }
 

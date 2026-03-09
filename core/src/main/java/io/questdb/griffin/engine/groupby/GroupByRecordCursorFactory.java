@@ -90,6 +90,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    public static ObjList<Function> getKeyFunctions(ObjList<Function> recordFunctions) {
+        ObjList<Function> keyFuncs = null;
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            Function f = recordFunctions.get(i);
+            if (!(f instanceof GroupByFunction)) {
+                if (keyFuncs == null) {
+                    keyFuncs = new ObjList<>();
+                }
+                keyFuncs.add(f);
+            }
+        }
+        return keyFuncs;
+    }
+
     public static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
         ObjList<String> keyFuncs = null;
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {

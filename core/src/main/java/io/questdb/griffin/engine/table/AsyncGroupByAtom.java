@@ -296,6 +296,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     }
 
     // thread-unsafe
+    public ObjList<Function> getOwnerKeyFunctions() {
+        return ownerKeyFunctions;
+    }
+
+    // thread-unsafe
     public DirectLongLongSortedList getOwnerLongTopKList() {
         return ownerLongTopKList;
     }
