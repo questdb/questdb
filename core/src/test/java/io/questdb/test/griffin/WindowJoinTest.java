@@ -4714,6 +4714,217 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDynamicWindowBothBoundsDynamic() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertPlanNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            " RANGE BETWEEN price::long seconds PRECEDING AND price::long seconds FOLLOWING " +
+                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts;",
+                    "Async Window Join workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            "  window hi: dynamic\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowBoundFallsBackFromFastPath() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            // With symbol ON key but dynamic bound, should use General path not Fast path.
+            assertPlanNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            "ON (t.sym = p.sym) " +
+                            " RANGE BETWEEN price::long seconds PRECEDING AND 1 minute FOLLOWING " +
+                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts, t.sym;",
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    Async Window Join workers: 1\n" +
+                            "      vectorized: false\n" +
+                            "      window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            "      window hi: 60000000 following\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowBoundWithTimeUnit() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            // Dynamic bound with time unit in the plan.
+            assertPlanNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            " RANGE BETWEEN t.price::long minutes PRECEDING AND 1 minute FOLLOWING " +
+                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts;",
+                    "Async Window Join workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            "  window hi: 60000000 following\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowBoundWithoutTimeUnit() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            // Dynamic bound without time unit (raw microseconds).
+            assertPlanNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            " RANGE BETWEEN t.price::long PRECEDING AND 60_000_000 FOLLOWING " +
+                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts;",
+                    "Async Window Join workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            "  window hi: 60000000 following\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowConstantLoAndDynamicHi() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertPlanNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            " RANGE BETWEEN 1 minute PRECEDING AND t.price::long seconds FOLLOWING " +
+                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts;",
+                    "Async Window Join workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  window lo: 60000000 preceding" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            "  window hi: dynamic\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowDynamicLoAndConstantHi() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertPlanNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            " RANGE BETWEEN price::long seconds PRECEDING AND 1 minute FOLLOWING " +
+                            (includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts;",
+                    "Async Window Join workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
+                            "  window hi: 60000000 following\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowFailsOnNonIntegerBound() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            " RANGE BETWEEN 'invalid' PRECEDING AND 1 minute FOLLOWING;",
+                    108,
+                    "integer expression expected"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowFailsOnSlaveColumnInBound() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            "ON (t.sym = p.sym) " +
+                            " RANGE BETWEEN p.price::long PRECEDING AND 1 minute FOLLOWING;",
+                    127,
+                    "RANGE BETWEEN expression must not reference right table columns"
+            );
+        });
+    }
+
     private void assertSkipToAndCalculateSize(String select, int size) throws Exception {
         assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from (" + select + ")", null, false, true);
         RecordCursor.Counter counter = new RecordCursor.Counter();

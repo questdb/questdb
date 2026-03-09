@@ -10387,6 +10387,22 @@ public class SqlOptimiser implements Mutable {
                 }
                 context.setHi(hi);
                 context.setLo(lo);
+
+                if (context.isDynamicLo() || context.isDynamicHi()) {
+                    final QueryModel masterModel = model.getJoinModels().get(0);
+                    if (context.isDynamicLo()) {
+                        ExpressionNode loExpr = context.getLoExpr();
+                        loExpr = rewriteWindowJoinBoundLiteral(loExpr, masterModel, windowJoinModel);
+                        context.setLoExpr(loExpr, context.getLoExprPos());
+                        resolveWindowJoinBoundColumns(loExpr, masterModel, windowJoinModel);
+                    }
+                    if (context.isDynamicHi()) {
+                        ExpressionNode hiExpr = context.getHiExpr();
+                        hiExpr = rewriteWindowJoinBoundLiteral(hiExpr, masterModel, windowJoinModel);
+                        context.setHiExpr(hiExpr, context.getHiExprPos());
+                        resolveWindowJoinBoundColumns(hiExpr, masterModel, windowJoinModel);
+                    }
+                }
             }
         }
 
@@ -10509,7 +10525,15 @@ public class SqlOptimiser implements Mutable {
      */
     static long tryEvalNonNegativeLongConstant(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
-            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            final Function func;
+            try {
+                func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            } catch (SqlException e) {
+                // Expression references columns that don't exist in empty metadata.
+                // Treat as non-constant (dynamic) and let the code generator
+                // compile it against the actual master metadata.
+                return -1;
+            }
             if (!func.isConstant()) {
                 Misc.free(func);
                 return -1;
@@ -11010,6 +11034,78 @@ public class SqlOptimiser implements Mutable {
             }
             return node;
         }
+    }
+
+    /**
+     * Resolves column prefixes in WINDOW JOIN RANGE BETWEEN bound expressions.
+     * Strips the master table prefix and rejects the slave table prefix with an error.
+     */
+    private void resolveWindowJoinBoundColumns(
+            ExpressionNode node,
+            QueryModel masterModel,
+            QueryModel slaveModel
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+
+        sqlNodeStack.clear();
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case FUNCTION:
+                    case OPERATION:
+                    case SET_OPERATION:
+                        if (node.paramCount < 3) {
+                            node.lhs = rewriteWindowJoinBoundLiteral(node.lhs, masterModel, slaveModel);
+                            node.rhs = rewriteWindowJoinBoundLiteral(node.rhs, masterModel, slaveModel);
+                        } else {
+                            for (int i = 0, n = node.paramCount; i < n; i++) {
+                                node.args.setQuick(i, rewriteWindowJoinBoundLiteral(node.args.getQuick(i), masterModel, slaveModel));
+                            }
+                        }
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                        continue;
+                    default:
+                        node = null;
+                        continue;
+                }
+            }
+            node = sqlNodeStack.poll();
+        }
+    }
+
+    private ExpressionNode rewriteWindowJoinBoundLiteral(
+            ExpressionNode node,
+            QueryModel masterModel,
+            QueryModel slaveModel
+    ) throws SqlException {
+        if (node == null || node.type != LITERAL) {
+            return node;
+        }
+        final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+        if (dot == -1) {
+            return node;
+        }
+        final CharSequence prefix = node.token.subSequence(0, dot);
+        if (matchesModelAlias(prefix, slaveModel)) {
+            throw SqlException.$(node.position, "RANGE BETWEEN expression must not reference right table columns");
+        }
+        if (matchesModelAlias(prefix, masterModel)) {
+            return nextLiteral(node.token.subSequence(dot + 1, node.token.length()), node.position);
+        }
+        return node;
+    }
+
+    private static boolean matchesModelAlias(CharSequence prefix, QueryModel model) {
+        if (model.getAlias() != null && Chars.equalsIgnoreCase(model.getAlias().token, prefix)) {
+            return true;
+        }
+        return model.getTableName() != null && Chars.equalsIgnoreCase(model.getTableName(), prefix);
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {

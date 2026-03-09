@@ -199,7 +199,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = vectorized;
+            this.vectorized = vectorized && ownerWindowLoFunc == null && ownerWindowHiFunc == null;
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
