@@ -170,6 +170,14 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - bash: find . -name '*.profraw' -delete
+    displayName: "Clean stale profraw files"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
