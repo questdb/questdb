@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -46,7 +46,7 @@ public class FloorFloatFunctionFactory implements FunctionFactory {
         return new FloorFunction(args.getQuick(0));
     }
 
-    private static class FloorFunction extends FloatFunction implements UnaryFunction {
+    private static class FloorFunction extends FloatFunction implements ArithmeticUnaryFunction {
         private final Function function;
 
         public FloorFunction(Function function) {

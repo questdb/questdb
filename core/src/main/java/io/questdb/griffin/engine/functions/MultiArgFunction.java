@@ -43,6 +43,16 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default int getComplexity() {
+        final ObjList<Function> args = args();
+        int total = 0;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            total = Function.addComplexity(total, args.getQuick(i).getComplexity());
+        }
+        return total;
+    }
+
+    @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         Function.init(args(), symbolTableSource, executionContext, null);
     }

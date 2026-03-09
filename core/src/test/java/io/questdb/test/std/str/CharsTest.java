@@ -384,6 +384,44 @@ public class CharsTest {
     }
 
     @Test
+    public void testGreaterThanAndLessThan() {
+        Assert.assertFalse(Chars.greaterThan(null, "a"));
+        Assert.assertFalse(Chars.greaterThan("a", null));
+        Assert.assertFalse(Chars.greaterThan(null, null));
+        Assert.assertFalse(Chars.lessThan(null, "a"));
+        Assert.assertFalse(Chars.lessThan("a", null));
+        Assert.assertFalse(Chars.lessThan(null, null));
+
+        // equality
+        Assert.assertFalse(Chars.greaterThan("abc", "abc"));
+        Assert.assertFalse(Chars.lessThan("abc", "abc"));
+
+        // basic ordering
+        Assert.assertTrue(Chars.greaterThan("b", "a"));
+        Assert.assertFalse(Chars.greaterThan("a", "b"));
+        Assert.assertTrue(Chars.lessThan("a", "b"));
+        Assert.assertFalse(Chars.lessThan("b", "a"));
+
+        Assert.assertFalse(Chars.greaterThan("ab", "abc"));
+        Assert.assertTrue(Chars.greaterThan("abc", "ab"));
+        Assert.assertTrue(Chars.lessThan("ab", "abc"));
+        Assert.assertFalse(Chars.lessThan("abc", "ab"));
+
+        Assert.assertFalse(Chars.greaterThan("", "a"));
+        Assert.assertTrue(Chars.greaterThan("a", ""));
+        Assert.assertTrue(Chars.lessThan("", "a"));
+        Assert.assertFalse(Chars.lessThan("a", ""));
+        Assert.assertFalse(Chars.greaterThan("", ""));
+        Assert.assertFalse(Chars.lessThan("", ""));
+
+        Assert.assertTrue(Chars.greaterThan("a\uD834\uDD1E", "a"));
+        Assert.assertTrue(Chars.lessThan("a", "a\uD834\uDD1E"));
+
+        Assert.assertTrue(Chars.greaterThan("\uD834\uDD1E", "z"));
+        Assert.assertTrue(Chars.lessThan("z", "\uD834\uDD1E"));
+    }
+
+    @Test
     public void testIPv4ToString() {
         Assert.assertEquals("255.255.255.255", TestUtils.ipv4ToString(0xffffffff));
         Assert.assertEquals("0.0.0.25", TestUtils.ipv4ToString(25));

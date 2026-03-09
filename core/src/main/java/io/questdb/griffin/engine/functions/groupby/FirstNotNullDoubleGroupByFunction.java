@@ -38,23 +38,34 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Double.BYTES;
+            long offset = 0;
             for (; ptr < hi; ptr += Double.BYTES) {
                 double value = Unsafe.getUnsafe().getDouble(ptr);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putDouble(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putDouble(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        double val = arg.getDouble(record);
+        if (!Numbers.isNull(val)) {
+            if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDouble(valueIndex + 1, val);
+            }
         }
     }
 
@@ -66,11 +77,11 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcVal = srcValue.getDouble(valueIndex + 1);
-        if (Numbers.isFinite(srcVal)) {
+        if (!Numbers.isNull(srcVal)) {
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Numbers.isNull(destValue.getDouble(valueIndex + 1))) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putDouble(valueIndex + 1, srcVal);
             }

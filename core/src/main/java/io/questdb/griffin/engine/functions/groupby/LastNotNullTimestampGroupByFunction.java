@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFunction {
@@ -36,9 +37,32 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
     }
 
     @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
+        if (count > 0) {
+            long hi = ptr + (count - 1) * (long) Long.BYTES;
+            long offset = count - 1;
+            for (; hi >= ptr; hi -= Long.BYTES) {
+                long value = Unsafe.getUnsafe().getLong(hi);
+                if (value != Numbers.LONG_NULL) {
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putLong(valueIndex + 1, value);
+                    }
+                    break;
+                }
+                offset--;
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getTimestamp(record) != Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

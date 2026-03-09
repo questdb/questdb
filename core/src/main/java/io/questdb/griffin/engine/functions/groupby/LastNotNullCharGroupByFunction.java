@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -38,15 +39,22 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long hi = ptr + (count - 1) * 2L;
+            long offset = count - 1;
             for (; hi >= ptr; hi -= 2L) {
                 char value = Unsafe.getUnsafe().getChar(hi);
                 if (value != CharConstant.ZERO.getChar(null)) {
-                    mapValue.putChar(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putChar(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset--;
             }
         }
     }
@@ -54,7 +62,9 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getChar(record) != CharConstant.ZERO.getChar(null)) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null) || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

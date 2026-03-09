@@ -443,6 +443,11 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -4997,6 +5002,11 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 }) {
 
                     AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -5803,6 +5813,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -5974,6 +5989,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6121,6 +6141,11 @@ public class IODispatcherTest extends AbstractTest {
                                 sink.put("\r\n");
                             }
                         };
+                    }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
                     }
                 };
 
@@ -6808,6 +6833,11 @@ public class IODispatcherTest extends AbstractTest {
 
                                 @Override
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
+                                    return processor;
+                                }
+
+                                @Override
+                                public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
                                     return processor;
                                 }
                             }) {

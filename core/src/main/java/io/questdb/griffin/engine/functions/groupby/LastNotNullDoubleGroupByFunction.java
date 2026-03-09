@@ -38,23 +38,32 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long hi = ptr + (count - 1) * 8L;
+            long offset = count - 1;
             for (; hi >= ptr; hi -= 8L) {
                 double value = Unsafe.getUnsafe().getDouble(hi);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putDouble(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putDouble(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset--;
             }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isFinite(arg.getDouble(record))) {
-            computeFirst(mapValue, record, rowId);
+        if (!Numbers.isNull(arg.getDouble(record))) {
+            if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

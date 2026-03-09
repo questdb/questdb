@@ -98,8 +98,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
+    private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
+    private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
+    private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
@@ -118,8 +121,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
+        parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
+        parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         // default set to micro
@@ -289,7 +294,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
+        return queryFutureUpdateListener;
     }
 
     @Override
@@ -353,8 +358,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParquetRowGroupPruningEnabled() {
+        return parquetRowGroupPruningEnabled;
+    }
+
+    @Override
     public boolean isParallelTopKEnabled() {
         return parallelTopKEnabled;
+    }
+
+    @Override
+    public boolean isParallelHorizonJoinEnabled() {
+        return parallelHorizonJoinEnabled;
     }
 
     @Override
@@ -471,6 +486,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.clockUseNow = true;
     }
 
+    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
+        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
+    }
+
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;
@@ -487,8 +506,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+        this.parquetRowGroupPruningEnabled = parquetRowGroupPruningEnabled;
+    }
+
+    @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
         this.parallelTopKEnabled = parallelTopKEnabled;
+    }
+
+    @Override
+    public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
+        this.parallelHorizonJoinEnabled = parallelHorizonJoinEnabled;
     }
 
     @Override

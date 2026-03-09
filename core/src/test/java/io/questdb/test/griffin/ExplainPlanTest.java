@@ -405,7 +405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango", commonPart1 + "arr1[1:1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango", commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango", commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango", commonPart1 + "ARRAY[a,a]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango", commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango", commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
@@ -701,6 +701,66 @@ public class ExplainPlanTest extends AbstractCairoTest {
                   functions: [memoize(rnd_float()::double)]
                     long_sequence count: 1
                 """));
+    }
+
+    @Test
+    public void testConstantReassociationBindVariable() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where d + $1 + 4 > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+$0::double+4
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsAddition() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where d + 1 + 4 > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
+        assertPlan(
+                "create table tab (l long, ts timestamp);",
+                "select * from tab where l & 3 & 5 > 0",
+                """
+                        Async Filter workers: 1
+                          filter: 0<l&1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsCommutativePattern() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where 4 + (d + 1) > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
     }
 
     @Test
@@ -1895,6 +1955,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
                 SelectedRecord
                     Async JIT Group By workers: 1
+                      vectorized: false
                       values: [last(timestamp),last(price)]
                       filter: symbol='BTC-USD'
                         PageFrame
@@ -3093,6 +3154,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed11() throws Exception {
         assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
                   filter: null
                     PageFrame
@@ -3105,6 +3167,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed12() throws Exception {
         assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42", """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
                   filter: 42<i
                     PageFrame
@@ -3130,6 +3193,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan("create table a (i int, d double)", "select min(d), max(d*d) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [min(d),max(d*d)]
                   filter: null
                     PageFrame
@@ -3142,6 +3206,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(d+1) from a", """
                 Async Group By workers: 1
+                  vectorized: false
                   values: [max(d+1)]
                   filter: null
                     PageFrame
@@ -3165,6 +3230,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan("create table a (i int, d double)", "select first(10), last(d), avg(10), min(10), max(10) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [first(10),last(d),avg(10),min(10),max(10)]
                   filter: null
                     PageFrame
@@ -3177,6 +3243,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(i) from a where i < 10", """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [max(i)]
                   filter: i<10
                     PageFrame
@@ -4883,6 +4950,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoArgMixedConstAndRuntimeExprInJoin() throws Exception {
+        // When constWhereClause mixes compile-time false with a runtime expression,
+        // the optimizer keeps the compile-time false in constWhereClause and the
+        // code generator folds it to Empty table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP)");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()",
+                    """
+                            SelectedRecord
+                                Empty table
+                            """);
+        });
+    }
+
+    @Test
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
@@ -5619,6 +5702,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x+10)]
                       filter: null
                         PageFrame
@@ -5628,6 +5712,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10+x)]
                       filter: null
                         PageFrame
@@ -5848,6 +5933,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x*10)]
                       filter: null
                         PageFrame
@@ -5857,6 +5943,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10*x)]
                       filter: null
                         PageFrame
@@ -5873,6 +5960,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10.0) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x*10.0)]
                       filter: null
                         PageFrame
@@ -5882,6 +5970,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10.0*x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10.0*x)]
                       filter: null
                         PageFrame
@@ -6021,6 +6110,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x-10)]
                       filter: null
                         PageFrame
@@ -6030,6 +6120,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10-x)]
                       filter: null
                         PageFrame
@@ -6150,6 +6241,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct constant
             expected = """
                     Async Group By workers: 1
+                      vectorized: false
                       values: [count_distinct(10)]
                       filter: null
                         PageFrame
@@ -7541,6 +7633,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectCountDistinct7() throws Exception {
         String expected = """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [count_distinct(s)]
                   filter: s='foobar'
                     PageFrame
@@ -7555,6 +7648,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectCountDistinct8() throws Exception {
         String expected = """
                 Async Group By workers: 1
+                  vectorized: false
                   values: [count_distinct(s),first(s)]
                   filter: null
                     PageFrame
@@ -8530,7 +8624,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     PageFrame
                         Row forward scan
                         Interval forward scan on: tab
-                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
+                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
                 """);
     }
 
@@ -8542,7 +8636,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     PageFrame
                         Row forward scan
                         Interval forward scan on: tab
-                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
+                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
                 """);
     }
 
@@ -8610,7 +8704,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 PageFrame
                     Row forward scan
                     Interval forward scan on: tab
-                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
+                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
                 """);
     }
 
@@ -8620,7 +8714,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 PageFrame
                     Row backward scan
                     Interval backward scan on: tab
-                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T04:00:00.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T04:00:00.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T04:00:00.999999Z")]
+                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
                 """);
     }
 
@@ -8834,7 +8928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter22() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1 + 1 ", """
                 Async JIT Filter workers: 1
-                  filter: d=1024.1+1
+                  filter: d=1025.1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9094,7 +9188,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
                 Async Filter workers: 1
-                  filter: l=12::short
+                  filter: l=12
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9105,7 +9199,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter10() throws Exception {
         assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
                 Async Filter workers: 1
-                  filter: s=1::short
+                  filter: s=1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9127,7 +9221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter12() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
                 Async Filter workers: 1
-                  filter: l=1024::long
+                  filter: l=1024L
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9220,7 +9314,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
                 Async Filter workers: 1
-                  filter: l=12::byte
+                  filter: l=12
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9287,7 +9381,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
                 Async Filter workers: 1
-                  filter: b=1::byte
+                  filter: b=1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab

@@ -303,6 +303,37 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterQuotedColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  \"MY_SYM\" symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select \"MY_SYM\", last(price) as price, ts from base_price sample by 1h");
+
+            execute("INSERT INTO base_price VALUES ('gbpusd', 1.310, '2024-09-10T12:05')");
+            drainQueues();
+
+            execute("ALTER MATERIALIZED VIEW price_1h ALTER COLUMN \"MY_SYM\" ADD INDEX");
+            drainQueues();
+
+            try (TableReader reader = getReader("price_1h")) {
+                int colIndex = reader.getMetadata().getColumnIndex("MY_SYM");
+                Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
+            }
+
+            execute("ALTER MATERIALIZED VIEW price_1h ALTER COLUMN \"MY_SYM\" DROP INDEX");
+            drainQueues();
+
+            try (TableReader reader = getReader("price_1h")) {
+                int colIndex = reader.getMetadata().getColumnIndex("MY_SYM");
+                Assert.assertFalse(reader.getMetadata().isColumnIndexed(colIndex));
+            }
+        });
+    }
+
+    @Test
     public void testAlterRefreshLimit() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1868,7 +1899,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // revalidate the view
-            execute("refresh materialized view price_1h full;)");
+            execute("refresh materialized view price_1h full");
             drainQueues();
             assertQueryNoLeakCheck(
                     """
@@ -2182,36 +2213,36 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     replaceExpectedTimestamp("""
                             sym\tprice\tts
-                            sym30\t30.0\t2022-02-23T12:00:00.000000Z
-                            sym27\t27.0\t2022-02-23T13:00:00.000000Z
-                            sym28\t28.0\t2022-02-23T13:00:00.000000Z
-                            sym29\t29.0\t2022-02-23T13:00:00.000000Z
-                            sym25\t25.0\t2022-02-23T14:00:00.000000Z
-                            sym26\t26.0\t2022-02-23T14:00:00.000000Z
-                            sym22\t22.0\t2022-02-23T15:00:00.000000Z
-                            sym23\t23.0\t2022-02-23T15:00:00.000000Z
-                            sym24\t24.0\t2022-02-23T15:00:00.000000Z
-                            sym20\t20.0\t2022-02-23T16:00:00.000000Z
-                            sym21\t21.0\t2022-02-23T16:00:00.000000Z
-                            sym17\t17.0\t2022-02-23T17:00:00.000000Z
-                            sym18\t18.0\t2022-02-23T17:00:00.000000Z
-                            sym19\t19.0\t2022-02-23T17:00:00.000000Z
-                            sym14\t14.0\t2022-02-23T18:00:00.000000Z
-                            sym15\t15.0\t2022-02-23T18:00:00.000000Z
-                            sym16\t16.0\t2022-02-23T18:00:00.000000Z
-                            sym12\t12.0\t2022-02-23T19:00:00.000000Z
-                            sym13\t13.0\t2022-02-23T19:00:00.000000Z
-                            sym10\t10.0\t2022-02-23T20:00:00.000000Z
-                            sym11\t11.0\t2022-02-23T20:00:00.000000Z
-                            sym9\t9.0\t2022-02-23T20:00:00.000000Z
-                            sym7\t7.0\t2022-02-23T21:00:00.000000Z
-                            sym8\t8.0\t2022-02-23T21:00:00.000000Z
-                            sym4\t4.0\t2022-02-23T22:00:00.000000Z
-                            sym5\t5.0\t2022-02-23T22:00:00.000000Z
-                            sym6\t6.0\t2022-02-23T22:00:00.000000Z
-                            sym2\t2.0\t2022-02-23T23:00:00.000000Z
-                            sym3\t3.0\t2022-02-23T23:00:00.000000Z
                             sym1\t1.0\t2022-02-24T00:00:00.000000Z
+                            sym2\t2.0\t2022-02-24T02:00:00.000000Z
+                            sym3\t3.0\t2022-02-24T04:00:00.000000Z
+                            sym4\t4.0\t2022-02-24T06:00:00.000000Z
+                            sym5\t5.0\t2022-02-24T08:00:00.000000Z
+                            sym6\t6.0\t2022-02-24T10:00:00.000000Z
+                            sym7\t7.0\t2022-02-24T12:00:00.000000Z
+                            sym8\t8.0\t2022-02-24T14:00:00.000000Z
+                            sym9\t9.0\t2022-02-24T16:00:00.000000Z
+                            sym10\t10.0\t2022-02-24T18:00:00.000000Z
+                            sym11\t11.0\t2022-02-24T20:00:00.000000Z
+                            sym12\t12.0\t2022-02-24T22:00:00.000000Z
+                            sym13\t13.0\t2022-02-25T00:00:00.000000Z
+                            sym14\t14.0\t2022-02-25T02:00:00.000000Z
+                            sym15\t15.0\t2022-02-25T04:00:00.000000Z
+                            sym16\t16.0\t2022-02-25T06:00:00.000000Z
+                            sym17\t17.0\t2022-02-25T08:00:00.000000Z
+                            sym18\t18.0\t2022-02-25T10:00:00.000000Z
+                            sym19\t19.0\t2022-02-25T12:00:00.000000Z
+                            sym20\t20.0\t2022-02-25T14:00:00.000000Z
+                            sym21\t21.0\t2022-02-25T16:00:00.000000Z
+                            sym22\t22.0\t2022-02-25T18:00:00.000000Z
+                            sym23\t23.0\t2022-02-25T20:00:00.000000Z
+                            sym24\t24.0\t2022-02-25T22:00:00.000000Z
+                            sym25\t25.0\t2022-02-26T00:00:00.000000Z
+                            sym26\t26.0\t2022-02-26T02:00:00.000000Z
+                            sym27\t27.0\t2022-02-26T04:00:00.000000Z
+                            sym28\t28.0\t2022-02-26T06:00:00.000000Z
+                            sym29\t29.0\t2022-02-26T08:00:00.000000Z
+                            sym30\t30.0\t2022-02-26T10:00:00.000000Z
                             """),
                     "price_1h order by ts, sym",
                     "ts",
@@ -4796,7 +4827,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\t[-1]: unexpected filter error
+                            price_1h\tbase_price\tinvalid\t[-1]: unexpected reduce error
                             """,
                     "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
                     null,
@@ -5413,7 +5444,7 @@ public class MatViewTest extends AbstractCairoTest {
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
                             price_1d\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
                             price_1d_2\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
-                            price_1h\timmediate\tbase_price\tinvalid\t[-1]: unexpected filter error
+                            price_1h\timmediate\tbase_price\tinvalid\t[-1]: unexpected reduce error
                             price_1w\timmediate\tprice_1d\tinvalid\tbase materialized view is invalidated
                             """,
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SequencerMetadataService implements MetadataServiceStub {
     private final SequencerMetadata metadata;
@@ -85,7 +86,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         return false;
     }
 

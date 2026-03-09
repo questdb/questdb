@@ -612,6 +612,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
         return (low - 1) << shl;
     }
 
+    long[] resetCapacityInternal(int longCapacity) {
+        checkCapacity(longCapacity);
+        return data;
+    }
+
     private int scrollUp(int high, long value) {
         do {
             if (high > 0) {

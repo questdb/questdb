@@ -72,7 +72,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             boolean supportsRandomAccess,
             boolean singleRowFactory
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
@@ -146,7 +146,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         if (framingSupported) {
-            return new ConcurrentTimeFrameCursor(configuration, getMetadata());
+            return new ConcurrentTimeFrameCursorImpl(configuration, getMetadata());
         }
         return null;
     }
@@ -202,29 +202,31 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected PageFrameCursor initBwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     @Override

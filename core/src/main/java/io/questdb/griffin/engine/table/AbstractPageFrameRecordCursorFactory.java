@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -65,14 +64,12 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     /**
      * Constructs a new page frame record cursor factory.
      *
-     * @param configuration               the Cairo configuration
      * @param metadata                    the record metadata
      * @param partitionFrameCursorFactory the partition frame cursor factory
      * @param columnIndexes               the column indexes
      * @param columnSizeShifts            the column size shifts
      */
     public AbstractPageFrameRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull IntList columnIndexes,
@@ -131,17 +128,19 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        1 // used for single-threaded exec plans
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
+                        1 // used for single-threaded exec plans,
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
             }
         }
-        return pageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return pageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
     }
 
     /**

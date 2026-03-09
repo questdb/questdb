@@ -29,10 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -76,6 +78,33 @@ public class PartitionDecoder implements QuietCloseable {
 
     public static native void destroyDecodeContext(long decodeContextPtr);
 
+    /**
+     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
+     * <p>
+     * Filter list format: 3 longs per filter
+     * - Long 0: encoded(column_index, count, op) - lower 32 bits: column_index, next 24 bits: count, upper 8 bits: op
+     * - Long 1: values_ptr
+     * - Long 2: column_type
+     *
+     * @param rowGroupIndex the row group index to check
+     * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
+     * @param filterBufEnd  exclusive end address of the filter values buffer, used for native bounds checking
+     * @return true if the row group can be safely skipped
+     */
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
+        assert ptr != 0;
+        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
+        return canSkipRowGroup(
+                ptr,
+                rowGroupIndex,
+                fileAddr,
+                fileSize,
+                filters.getAddress(),
+                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
+                filterBufEnd
+        );
+    }
+
     @Override
     public void close() {
         destroy();
@@ -107,6 +136,64 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    public void decodeRowGroupWithRowFilter(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            DirectLongList filteredRows
+    ) {
+        assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+        decodeRowGroupWithRowFilter(
+                ptr,
+                decodeContextPtr,
+                rowGroupBuffers.ptr(),
+                columnOffset,
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi,
+                filteredRows.getAddress(),
+                filteredRows.size()
+        );
+    }
+
+    public void decodeRowGroupWithRowFilterFillNulls(
+            RowGroupBuffers rowGroupBuffers,
+            int columnOffset,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi, // high row index within the row group, exclusive
+            DirectLongList filteredRows
+    ) {
+        assert ptr != 0;
+        if (decodeContextPtr == 0) {
+            // lazy init
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+        decodeRowGroupWithRowFilterFillNulls(
+                ptr,
+                decodeContextPtr,
+                rowGroupBuffers.ptr(),
+                columnOffset,
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi,
+                filteredRows.getAddress(),
+                filteredRows.size()
+        );
+    }
+
     /**
      * Searches for the row group holding the given timestamp.
      * Scan direction is always {@link Vect#BIN_SEARCH_SCAN_DOWN}.
@@ -131,6 +218,8 @@ public class PartitionDecoder implements QuietCloseable {
         assert ptr != 0;
         return findRowGroupByTimestamp( // throws CairoException on error
                 ptr,
+                fileAddr,
+                fileSize,
                 timestamp,
                 rowLo,
                 rowHi,
@@ -211,6 +300,26 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        assert ptr != 0;
+        return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    private static native boolean canSkipRowGroup(
+            long decoderPtr,
+            int rowGroupIndex,
+            long filePtr,
+            long fileSize,
+            long filtersPtr,
+            int filterCount,
+            long filterBufEnd
+    ) throws CairoException;
+
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -238,15 +347,45 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi
     ) throws CairoException;
 
+    private static native void decodeRowGroupWithRowFilter(
+            long decoderPtr,
+            long decodeContextPtr,
+            long rowGroupBuffersPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
+    ) throws CairoException;
+
+    private static native void decodeRowGroupWithRowFilterFillNulls(
+            long decoderPtr,
+            long decodeContextPtr,
+            long rowGroupBuffersPtr,
+            int columnOffset,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi,
+            long filteredRowsPtr,
+            long filteredRowsSize
+    ) throws CairoException;
+
     private static native void destroy(long impl);
 
     private static native long findRowGroupByTimestamp(
             long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            long timestamp,
             long rowLo,
             long rowHi,
-            long timestamp,
             int timestampIndex
-    );
+    ) throws CairoException;
 
     private static native long readRowGroupStats(
             long decoderPtr,
@@ -259,6 +398,22 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long rowCountOffset();
 
     private static native long rowGroupCountOffset();
+
+    private static native long rowGroupMaxTimestamp(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int timestampColumnIndex
+    ) throws CairoException;
+
+    private static native long rowGroupMinTimestamp(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int timestampColumnIndex
+    ) throws CairoException;
 
     private static native long rowGroupSizesPtrOffset();
 

@@ -335,8 +335,18 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+        return Files.mmapNoCache(fd, len, offset, flags, memoryTag);
+    }
+
+    @Override
     public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+    }
+
+    @Override
+    public long mremapNoCache(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+        return Files.mremapNoCache(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
     @Override

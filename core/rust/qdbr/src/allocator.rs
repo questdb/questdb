@@ -118,6 +118,25 @@ pub struct MemTracking {
     _non_rss_mem_used: AtomicUsize,
 }
 
+impl Default for MemTracking {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemTracking {
+    pub fn new() -> Self {
+        Self {
+            rss_mem_used: AtomicUsize::new(0),
+            rss_mem_limit: AtomicUsize::new(0),
+            malloc_count: AtomicUsize::new(0),
+            realloc_count: AtomicUsize::new(0),
+            free_count: AtomicUsize::new(0),
+            _non_rss_mem_used: AtomicUsize::new(0),
+        }
+    }
+}
+
 /// Custom allocator that fails once a memory limit watermark is reached.
 /// It also tracks memory usage for a specific memory tag.
 /// See `Unsafe.java` for the Java side of this.
@@ -148,6 +167,14 @@ const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
 #[cfg(not(test))]
 impl QdbAllocator {
+    pub fn new(
+        mem_tracking: *const MemTracking,
+        tagged_used: *const AtomicUsize,
+        memory_tag: i32,
+    ) -> Self {
+        Self { mem_tracking, tagged_used, memory_tag }
+    }
+
     fn rss_mem_used(&self) -> &AtomicUsize {
         unsafe { &(*self.mem_tracking).rss_mem_used }
     }
@@ -325,24 +352,17 @@ unsafe impl Allocator for QdbAllocator {
 
 pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 
-pub trait AcVecSetLen {
-    unsafe fn set_len(&mut self, new_len: usize);
-}
-
-impl<T> AcVecSetLen for AcVec<T> {
-    #[inline]
-    unsafe fn set_len(&mut self, new_len: usize) {
-        // alloc_checked::vec::Vec is a single-field struct wrapping alloc::vec::Vec
-        // The memory layout is compatible, so we can safely transmute the pointer
-        let inner_ptr = self as *mut Self as *mut Vec<T, QdbAllocator>;
-        (*inner_ptr).set_len(new_len);
-    }
-}
-
 #[cfg(test)]
 pub struct TestAllocatorState {
     mem_tracking: Arc<MemTracking>,
     tagged_used: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+impl Default for TestAllocatorState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

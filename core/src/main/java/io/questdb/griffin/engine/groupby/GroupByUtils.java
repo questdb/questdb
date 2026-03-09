@@ -238,7 +238,13 @@ public class GroupByUtils {
                                     throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
-                                } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
+                                } else if (
+                                        !SqlKeywords.isNullKeyword(fillNode.token) &&
+                                                !SqlKeywords.isPrevKeyword(fillNode.token) &&
+                                                !SqlKeywords.isLinearKeyword(fillNode.token) &&
+                                                !SqlKeywords.isNoneKeyword(fillNode.token) &&
+                                                (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0
+                                ) {
                                     throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');

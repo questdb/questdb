@@ -38,23 +38,34 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Long.BYTES;
+            long offset = 0;
             for (; ptr < hi; ptr += Long.BYTES) {
                 long value = Unsafe.getUnsafe().getLong(ptr);
                 if (value != Numbers.LONG_NULL) {
-                    mapValue.putDate(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putDate(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+        long val = arg.getDate(record);
+        if (val != Numbers.LONG_NULL) {
+            if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDate(valueIndex + 1, val);
+            }
         }
     }
 
@@ -72,7 +83,7 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDate(valueIndex + 1, srcVal);
         }

@@ -37,15 +37,22 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long hi = ptr + (count - 1) * 4L;
+            long offset = count - 1;
             for (; hi >= ptr; hi -= 4L) {
                 int value = Unsafe.getUnsafe().getInt(hi);
                 if (value != Numbers.INT_NULL) {
-                    mapValue.putInt(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putInt(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset--;
             }
         }
     }
@@ -53,7 +60,9 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getInt(record) != Numbers.INT_NULL) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

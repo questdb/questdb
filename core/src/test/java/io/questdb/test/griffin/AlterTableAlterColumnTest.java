@@ -182,11 +182,124 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertFailure("alter table z alter column y add index", 12, "table does not exist [table=z]");
     }
 
+    @Test
+    public void testQuotedColumnNameAddDropIndex() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" ADD INDEX");
+                    try (TableReader reader = getReader("test_quoted")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MY_COL");
+                        Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
+                    }
+
+                    // single-quoted column name should also work
+                    execute("ALTER TABLE test_quoted ALTER COLUMN 'MY_COL' DROP INDEX");
+                    try (TableReader reader = getReader("test_quoted")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MY_COL");
+                        Assert.assertFalse(reader.getMetadata().isColumnIndexed(colIndex));
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testQuotedColumnNameAlterType() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" LONG, ts TIMESTAMP) TIMESTAMP (ts) PARTITION BY DAY");
+                    execute("INSERT INTO test_quoted VALUES (123456789, '2021-01-01T00:00:00.000000Z')");
+
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" TYPE TIMESTAMP_NS");
+
+                    assertQueryNoLeakCheck(
+                            """
+                                    MY_COL\tts
+                                    1970-01-01T00:00:00.123456789Z\t2021-01-01T00:00:00.000000Z
+                                    """,
+                            "SELECT * FROM test_quoted",
+                            "ts",
+                            true,
+                            true
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testQuotedColumnNameCacheNocache() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL NOCACHE, ts TIMESTAMP) TIMESTAMP (ts)");
+
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" CACHE");
+                    engine.releaseAllReaders();
+                    try (TableReader reader = getReader("test_quoted")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MY_COL");
+                        Assert.assertTrue(reader.getSymbolMapReader(colIndex).isCached());
+                    }
+
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" NOCACHE");
+                    engine.releaseAllReaders();
+                    try (TableReader reader = getReader("test_quoted")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MY_COL");
+                        Assert.assertFalse(reader.getSymbolMapReader(colIndex).isCached());
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testQuotedColumnNameNonExistent() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("CREATE TABLE test_quoted (col SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    assertExceptionNoLeakCheck(
+                            "ALTER TABLE test_quoted ALTER COLUMN \"nonexistent\" ADD INDEX",
+                            37,
+                            "column 'nonexistent' does not exist"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testQuotedColumnNameSpecialCharacters() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // space in column name
+                    execute("CREATE TABLE test_space (\"my col\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("ALTER TABLE test_space ALTER COLUMN \"my col\" ADD INDEX");
+                    try (TableReader reader = getReader("test_space")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("my col");
+                        Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
+                    }
+
+                    // SQL keyword as column name
+                    execute("CREATE TABLE test_keyword (\"select\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("ALTER TABLE test_keyword ALTER COLUMN \"select\" ADD INDEX");
+                    try (TableReader reader = getReader("test_keyword")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("select");
+                        Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
+                    }
+
+                    // mixed case column name
+                    execute("CREATE TABLE test_mixed (\"MyColumn\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("ALTER TABLE test_mixed ALTER COLUMN \"MyColumn\" ADD INDEX");
+                    try (TableReader reader = getReader("test_mixed")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MyColumn");
+                        Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
+                    }
+                }
+        );
+    }
+
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                select(sql);
+                select(sql).close();
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);

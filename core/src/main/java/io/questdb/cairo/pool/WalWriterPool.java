@@ -24,14 +24,17 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.Telemetry;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -66,7 +69,9 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 engine.getTableSequencerAPI(),
                 engine.getDdlListener(tableToken),
                 engine.getWalDirectoryPolicy(),
-                engine.getRecentWriteTracker()
+                engine.getWalLocker(),
+                engine.getRecentWriteTracker(),
+                engine.getTelemetryWal()
         );
     }
 
@@ -85,9 +90,20 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 TableSequencerAPI tableSequencerAPI,
                 DdlListener ddlListener,
                 WalDirectoryPolicy walDirectoryPolicy,
-                RecentWriteTracker recentWriteTracker
+                WalLocker walLocker,
+                RecentWriteTracker recentWriteTracker,
+                Telemetry<TelemetryWalTask> telemetryWal
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, recentWriteTracker);
+            super(
+                    pool.getConfiguration(),
+                    tableToken,
+                    tableSequencerAPI,
+                    ddlListener,
+                    walDirectoryPolicy,
+                    walLocker,
+                    recentWriteTracker,
+                    telemetryWal
+            );
             this.pool = pool;
             this.rootEntry = rootEntry;
             this.entry = entry;

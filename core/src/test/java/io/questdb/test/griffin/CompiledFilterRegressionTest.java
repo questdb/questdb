@@ -222,6 +222,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnFloatComparisonWithNulls() throws Exception {
+        // Regression test for ARM64 NaN condition code handling.
+        // ARM64 fcmp with NaN sets NZCV=0011. Ordered less-than must use MI (not LT),
+        // and ordered less-or-equal must use LS (not LE), otherwise NaN compares as true.
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf("0.5", "-0.5")
+                .withBooleanOperator()
+                .withAnyOf("f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf("0.3");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
     public void testColumnFloatConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -235,6 +256,59 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withComparisonOperator()
                 .withAnyOf("-42.5", "0.0", "0.000", "42.5");
         assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testColumnFloatEpsilonWithNulls() throws Exception {
+        // Regression test for ARM64 epsilon comparison NaN handling.
+        // Float equality uses epsilon comparison internally. ARM64 must use
+        // GT (ordered, false for NaN) not HI (unsigned, true for NaN).
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("f32", "f64")
+                .withAnyOf(" = ", " != ", " <> ")
+                .withAnyOf("0.5", "-0.5", "0.0")
+                .withBooleanOperator()
+                .withAnyOf("f32", "f64")
+                .withAnyOf(" = ", " != ")
+                .withAnyOf("null");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testColumnFloatNegativeConstant() throws Exception {
+        // Regression test for is_float() misclassifying negative floats.
+        // Previously is_float() used numeric_limits<float>::min() (smallest positive
+        // normal) as lower bound, causing all negative floats to be promoted to f64.
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("f32")
+                .withComparisonOperator()
+                .withAnyOf("-0.5", "-1.0", "-100.0", "-3.4028235E38");
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testColumnFloatSharedConstant() throws Exception {
+        // Regression test for constant cache type mismatch on ARM64.
+        // When f32 and f64 columns compare against the same constant value (e.g. 0.0),
+        // the ConstantCache shares an entry. The cached Vec register may have wrong
+        // element size (S vs D), requiring fcvt conversion.
+        final String query = "x where f32 > 0.0 and f64 > 0.0 and f32 < 0.5 and f64 < 0.5";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
     }
 
     @Test

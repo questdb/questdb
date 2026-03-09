@@ -69,6 +69,10 @@ public interface TableStructure {
         return null;
     }
 
+    default boolean hasParquetPartitions() {
+        return false;
+    }
+
     default void init(TableToken tableToken) {
     }
 

@@ -45,9 +45,13 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr));
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, startRowId);
+                mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr));
+            }
         }
     }
 
@@ -59,7 +63,9 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override

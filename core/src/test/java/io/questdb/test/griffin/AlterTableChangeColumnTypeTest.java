@@ -1003,14 +1003,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         execute("alter table x alter column a type double", sqlExecutionContext);
         drainWalQueue();
-        assertSql("a\n-7.1788016931764132E18\n", "select a from x");
+        assertSql("a\n-7.178801693176413E18\n", "select a from x");
 
         execute("alter table x alter column a type int", sqlExecutionContext);
         drainWalQueue();
         assertSql("""
                 cast\ta
                 null\tnull
-                """, "select cast(-7.1788016931764132E18 as int), a from x");
+                """, "select cast(-7.178801693176413E18 as int), a from x");
     }
 
     @Test

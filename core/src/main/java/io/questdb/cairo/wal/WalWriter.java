@@ -25,6 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Metrics;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -97,6 +99,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -114,6 +117,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
+    private final int columnsMadviseMode;
     private final DdlListener ddlListener;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
@@ -129,10 +133,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final BoolList symbolMapNullFlagsChanged = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
+    private final boolean walTelemetryEnabled;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
@@ -163,14 +169,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy,
-            RecentWriteTracker recentWriteTracker
+            WalLocker walLocker,
+            RecentWriteTracker recentWriteTracker,
+            Telemetry<TelemetryWalTask> telemetryWal
     ) {
-        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy);
+        super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
+        this.columnsMadviseMode = configuration.getWalWriterMadviseMode();
         this.ddlListener = ddlListener;
         this.recentWriteTracker = recentWriteTracker;
+        this.telemetryWal = telemetryWal;
         this.metrics = configuration.getMetrics();
+        this.walTelemetryEnabled = !configuration.getTelemetryConfiguration().getDisableCompletely();
 
         try {
             lockWal();
@@ -882,14 +893,32 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LogRecord logLine = LOG.info();
+                if (walTelemetryEnabled) {
+                    final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
+                    final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;
+                    TelemetryWalTask.store(
+                            telemetryWal,
+                            TelemetryEvent.WAL_TXN_COMMITTED,
+                            tableToken.getTableId(),
+                            walId,
+                            seqTxn,
+                            txnRowCount,
+                            txnRowCount,
+                            0L,
+                            minTs,
+                            maxTs
+                    );
+                }
+                final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
+                // Reduce logging when telemetry is enabled; all the information is saved in sys.telemetry_wal
+                LogRecord logLine = hasReplaceRange || !walTelemetryEnabled ? LOG.info() : LOG.debug();
                 try {
                     logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                             .$(", segTxn=").$(lastSegmentTxn)
                             .$(", seqTxn=").$(seqTxn)
                             .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
                             .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
-                    if (replaceRangeHiTs > replaceRangeLowTs) {
+                    if (hasReplaceRange) {
                         logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
                     }
                 } finally {
@@ -1145,7 +1174,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             freeSymbolMapReaders();
             freeColumns(truncate);
 
-            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
+            if (minSegmentLocked > -1) {
+                notifySegmentClosure(lastSegmentTxn, minSegmentLocked);
+                minSegmentLocked = -1;
+            }
 
             try {
                 releaseWalLock();
@@ -1153,6 +1185,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 Misc.free(path);
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
+            // must happen after the WAL lock is released
+            notifyWalClosure();
             columnVersionReader = Misc.free(columnVersionReader);
         }
     }
@@ -1279,7 +1313,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     -1,
                     MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
-                    Files.POSIX_MADV_RANDOM
+                    columnsMadviseMode
             );
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
@@ -1294,7 +1328,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         getDataAppendPageSize(),
                         MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
-                        Files.POSIX_MADV_RANDOM
+                        columnsMadviseMode
                 );
             }
         } finally {
@@ -1303,10 +1337,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
-        final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
-        final long oldSegmentLockFd = segmentLockFd;
-        segmentLockFd = -1;
         final long oldLastSegmentTxn = lastSegmentTxn;
         try {
             totalSegmentsRowCount += Math.max(0, segmentRowCount);
@@ -1356,8 +1387,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
-            if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+            int oldMinSegmentLocked = minSegmentLocked;
+            if (moveMinSegmentLock(newSegmentId)) {
+                notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
             }
             path.trimTo(pathSize);
         }
@@ -1503,8 +1535,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            final long oldSegmentLockFd = segmentLockFd;
-            segmentLockFd = -1;
             try {
                 createSegmentDir(newSegmentId);
                 path.trimTo(pathSize);
@@ -1594,7 +1624,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
+                int oldMinSegmentLocked = minSegmentLocked;
+                if (moveMinSegmentLock(newSegmentId)) {
+                    notifySegmentClosure(oldLastSegmentTxn, oldMinSegmentLocked);
+                }
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;

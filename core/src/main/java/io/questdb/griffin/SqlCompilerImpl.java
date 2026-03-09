@@ -74,6 +74,7 @@ import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -113,6 +114,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
@@ -391,6 +393,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         isSingleQueryMode = true;
 
         compileInner(executionContext, sqlText, true);
+
+        // Verify all input was consumed — reject trailing content.
+        // Skip in validation-only mode: handlers may return early without consuming all tokens.
+        if (!executionContext.isValidationOnly()) {
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+        }
+
         return compiledQuery;
     }
 
@@ -453,7 +465,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
-                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    // We've to move lexer because some query handlers don't consume all tokens
                     // some code in postCompile might need full text of current query
                     try {
                         batchCallback.postCompile(this, compiledQuery, sqlText);
@@ -754,15 +766,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private int addColumnWithType(
-            AlterOperationBuilder addColumn,
+            @Nullable AlterOperationBuilder addColumn,
             CharSequence columnName,
             int columnNamePosition
     ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
-
-        int columnType = SqlUtil.toPersistedType(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
+
+        int columnType = SqlUtil.toPersistedType(tok, typePosition);
 
         int dim = SqlUtil.parseArrayDimensionality(lexer, columnType, typePosition);
         if (dim > 0) {
@@ -777,6 +789,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         if (columnType == ColumnType.DECIMAL) {
             columnType = SqlParser.parseDecimalColumnType(lexer);
+        } else if (columnType == ColumnType.GEOHASH) {
+            columnType = SqlParser.parseGeoHashColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -786,32 +800,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
         } else {
             lexer.unparseLast();
-        }
-
-        if (columnType == ColumnType.GEOHASH) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || tok.charAt(0) != '(') {
-                throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
-            }
-
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && tok.charAt(0) != ')') {
-                int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || tok.charAt(0) != ')') {
-                    if (tok != null) {
-                        throw SqlException.position(lexer.lastTokenPosition())
-                                .put("invalid GEOHASH type literal, expected ')'")
-                                .put(" found='").put(tok.charAt(0)).put("'");
-                    }
-                    throw SqlException.position(lexer.getPosition())
-                            .put("invalid GEOHASH type literal, expected ')'");
-                }
-                columnType = ColumnType.getGeoHashTypeWithBits(geoHashBits);
-            } else {
-                throw SqlException.position(lexer.lastTokenPosition())
-                        .put("missing GEOHASH precision");
-            }
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -901,16 +889,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             indexType = IndexType.NONE;
         }
 
-        addColumn.addColumnToList(
-                columnName,
-                columnNamePosition,
-                columnType,
-                Numbers.ceilPow2(symbolCapacity),
-                cache,
-                indexType,
-                Numbers.ceilPow2(indexValueBlockCapacity),
-                false
-        );
+        if (addColumn != null) {
+            addColumn.addColumnToList(
+                    columnName,
+                    columnNamePosition,
+                    columnType,
+                    Numbers.ceilPow2(symbolCapacity),
+                    cache,
+                    indexType,
+                    Numbers.ceilPow2(indexValueBlockCapacity),
+                    false
+            );
+        }
         lexer.unparseLast();
         return columnType;
     }
@@ -952,23 +942,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
-                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        final int columnNamePosition = lexer.lastTokenPosition();
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(unquote(tok));
                         if (columnIndex != -1) {
-                            tok = expectToken(lexer, "column type");
-                            final int columnType = ColumnType.typeOf(tok);
-                            if (columnType == -1) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "unrecognized column type: ").put(tok);
-                            }
+                            // peek at the type token to capture its position for error reporting
+                            expectToken(lexer, "column type");
+                            final int typePosition = lexer.lastTokenPosition();
+                            lexer.unparseLast();
+                            // parse and validate the full column definition without adding to the operation
+                            CharSequence existingColumnName = tableMetadata.getColumnName(columnIndex);
+                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition);
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {
                                 throw SqlException
-                                        .$(lexer.lastTokenPosition(), "column already exists with a different column type [current type=")
+                                        .$(typePosition, "column already exists with a different column type [current type=")
                                         .put(ColumnType.nameOf(existingType))
                                         .put(", requested type=")
                                         .put(ColumnType.nameOf(columnType))
                                         .put(']');
                             }
-                            break;
+                            // addColumnWithType called lexer.unparseLast(), so fetch the delimiter
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
+                                break;
+                            }
+                            semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
+                            if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                            }
+                            continue;
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "unexpected token '").put(tok)
@@ -978,9 +980,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
                 }
             } else {
-                int index = tableMetadata.getColumnIndexQuiet(tok);
+                CharSequence unquotedTok = unquote(tok);
+                int index = tableMetadata.getColumnIndexQuiet(unquotedTok);
                 if (index != -1) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(unquotedTok).put("' already exists");
                 }
             }
 
@@ -1059,11 +1062,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        final AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
-                tableNamePosition,
-                tableToken,
-                tableMetadata.getTableId()
-        );
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
+
         final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
             throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
@@ -1094,7 +1098,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
 
-        changeColumn.addColumnToList(
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
+        }
+
+        alterOperationBuilder.ofSymbolCapacityChange(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        alterOperationBuilder.addColumnToList(
                 columnName,
                 columnNamePosition,
                 ColumnType.SYMBOL,
@@ -1105,12 +1119,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 false // ignored
         );
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
-        }
-
-        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1363,6 +1371,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                             .put("no partitions matched WHERE clause");
                                 }
                             }
+                            // Check for WITH clause for CONVERT TO PARQUET
+                            CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                            if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
+                                parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                                nextTok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (nextTok != null && !isSemicolon(nextTok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+                            }
                             compiledQuery.ofAlter(this.alterOperationBuilder.build());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
@@ -1459,6 +1476,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
+                if (action == PartitionAction.CONVERT_TO_PARQUET && isWithKeyword(tok)) {
+                    parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && !isSemicolon(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token after WITH clause");
+                    }
+                    break;
+                }
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
@@ -1777,7 +1802,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
                 tok = expectToken(lexer, "column name");
-                final CharSequence columnName = GenericLexer.immutableOf(tok);
+                final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                 final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                 if (columnIndex == -1) {
                     throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
@@ -1881,6 +1906,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
                         // SET REFRESH LIMIT
+                        securityContext.authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
@@ -1891,6 +1917,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         compiledQuery.ofAlter(setRefreshLimit.build());
                     } else if (isImmediateKeyword(tok) || isManualKeyword(tok) || isEveryKeyword(tok) || isPeriodKeyword(tok)) {
                         // SET REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] ...
+                        securityContext.authorizeAlterMatViewSetRefreshType(matViewToken);
                         int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
                         int every = 0;
                         char everyUnit = 0;
@@ -2050,7 +2077,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'immediate' or 'manual' or 'period' or 'every' or 'limit' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' or 'start' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
@@ -2161,7 +2188,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (isColumnKeyword(tok)) {
                     final int columnNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "column name");
-                    final CharSequence columnName = GenericLexer.immutableOf(tok);
+                    final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                     final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                     if (columnIndex == -1) {
                         throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
@@ -2263,6 +2290,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isSetKeyword(tok)) {
                 tok = expectToken(lexer, "'param', 'ttl' or 'type'");
                 if (isParamKeyword(tok)) {
+                    securityContext.authorizeAlterTableSetParam(tableToken);
                     final int paramNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "param name");
                     final CharSequence paramName = GenericLexer.immutableOf(tok);
@@ -2371,7 +2399,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
-    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // BEGIN [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofBegin();
     }
 
@@ -2424,7 +2457,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // COMMIT [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofCommit();
     }
 
@@ -3137,6 +3175,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // PG compatibility no-op: RESET ALL, CLOSE ALL, UNLISTEN *, DISCARD ALL — consume exactly one argument.
+    private void compileNoOp(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        expectToken(lexer, "argument");
+        compiledQuery.ofSet();
+    }
+
     private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = expectToken(lexer, "'materialized'");
         if (!isMaterializedKeyword(tok)) {
@@ -3292,11 +3336,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // ROLLBACK [TRANSACTION] — consume the optional keyword
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isTransactionKeyword(tok)) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofRollback();
     }
 
-    private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
+    private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // SET [SESSION | LOCAL] name { = | TO } value [, value]*
+        // PG compatibility no-op — validate syntax, then discard.
+        CharSequence tok = expectToken(lexer, "parameter name");
+
+        // skip optional SESSION / LOCAL prefix
+        if (Chars.equalsLowerCaseAscii("session", tok) || Chars.equalsLowerCaseAscii("local", tok)) {
+            expectToken(lexer, "parameter name");
+        }
+
+        tok = expectToken(lexer, "'=' or 'TO'");
+        if (Chars.equals(tok, '=') || isToKeyword(tok)) {
+            // Standard form: validate value [, value]*
+            do {
+                expectToken(lexer, "value");
+            } while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok) && Chars.equals(tok, ','));
+        } else {
+            // Non-standard form (e.g., SET TIME ZONE 'UTC'): consume remaining tokens
+            //noinspection StatementWithEmptyBody
+            while ((tok = SqlUtil.fetchNext(lexer)) != null && !isSemicolon(tok)) {
+            }
+        }
+
+        if (tok != null) {
+            lexer.unparseLast();
+        }
         compiledQuery.ofSet();
     }
 
@@ -4013,14 +4087,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp.getBatchO3MaxLag(),
                                     createTableOp.getCopyDataProgressReporter()
                             );
-                        } catch (CairoException e) {
-                            e.position(position);
-                            LogRecord record = LOG.error()
-                                    .$("could not create table as select [message=").$safe(e.getFlyweightMessage());
-                            if (!e.isCancellation()) {
-                                record.$(", errno=").$(e.getErrno());
+                        } catch (Throwable e) {
+                            if (e instanceof CairoException ce) {
+                                ce.position(position);
+                                LogRecord record = LOG.error()
+                                        .$("could not create table as select [message=").$safe(ce.getFlyweightMessage());
+                                if (!ce.isCancellation()) {
+                                    record.$(", errno=").$(ce.getErrno());
+                                }
+                                record.I$();
+                            } else {
+                                LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
+                                        ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
                             }
-                            record.I$();
                             engine.dropTableOrViewOrMatView(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
@@ -4595,6 +4674,74 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // TODO: We may need a better approach to let users specify which columns should have bloom filters
+    //  when converting partitions to Parquet. The current WITH clause approach only works for explicit
+    //  ALTER TABLE ... CONVERT PARTITION ... TO PARQUET statements. When automatic partition conversion
+    //  to Parquet is supported in the future, we will need a different mechanism (e.g., table-level
+    //  configuration or metadata) to specify bloom filter columns and FPP.
+    private void parseConvertToParquetWithClause(
+            AlterOperationBuilder alterOperationBuilder,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence bloomFilterColumns = null;
+        double fpp = Double.NaN;
+
+        CharSequence tok = expectToken(lexer, "'('");
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+        }
+
+        while (true) {
+            tok = expectToken(lexer, "bloom_filter_columns or fpp");
+
+            if (isBloomFilterColumnsKeyword(tok)) {
+                if (bloomFilterColumns != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate bloom_filter_columns option");
+                }
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = expectToken(lexer, "column names");
+                int bloomFilterColumnsPosition = lexer.lastTokenPosition();
+                bloomFilterColumns = unquote(tok);
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
+            } else if (isFppKeyword(tok)) {
+                if (!Double.isNaN(fpp)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate fpp option");
+                }
+                tok = expectToken(lexer, "'='");
+                if (!Chars.equals(tok, '=')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
+                }
+                tok = GenericLexer.unquote(expectToken(lexer, "fpp value"));
+                try {
+                    fpp = Numbers.parseDouble(tok);
+                    if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "fpp must be between 0 and 1 (exclusive)");
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid fpp value");
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_columns or fpp expected");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.getPosition(), "')' expected");
+            }
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+            }
+        }
+
+        alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
+    }
+
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectToken(lexer, "'wal'");
         if (!isWalKeyword(tok)) {
@@ -4763,6 +4910,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
     }
 
+    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(),
+                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
+        );
+    }
+
     protected void compileCreate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         int rollbackPosition = lexer.lastTokenPosition();
         CharSequence tok = expectToken(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
@@ -4810,12 +4963,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String viewSql = parser.parseViewSql(lexer, this);
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
-    }
-
-    protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(),
-                "incremental backup is supported in QuestDB enterprise version only, please use SNAPSHOT backup"
-        );
     }
 
     protected void compileDropExt(
@@ -4887,20 +5034,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected void registerKeywordBasedExecutors() {
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
-        final KeywordBasedExecutor compileSet = this::compileSet;
+        final KeywordBasedExecutor compileNoOp = this::compileNoOp;
 
         keywordBasedExecutors.put("truncate", this::compileTruncate);
         keywordBasedExecutors.put("alter", this::compileAlter);
         keywordBasedExecutors.put("create", this::compileCreate);
         keywordBasedExecutors.put("reindex", this::compileReindex);
-        keywordBasedExecutors.put("set", compileSet);
+        keywordBasedExecutors.put("set", this::compileSet);
         keywordBasedExecutors.put("begin", this::compileBegin);
         keywordBasedExecutors.put("commit", this::compileCommit);
         keywordBasedExecutors.put("rollback", this::compileRollback);
-        keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("close", compileSet); // no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  // no-op
-        keywordBasedExecutors.put("reset", compileSet);  // no-op
+        keywordBasedExecutors.put("discard", compileNoOp);
+        keywordBasedExecutors.put("close", compileNoOp);
+        keywordBasedExecutors.put("unlisten", compileNoOp);
+        keywordBasedExecutors.put("reset", compileNoOp);
         keywordBasedExecutors.put("drop", this::compileDrop);
         keywordBasedExecutors.put("vacuum", this::compileVacuum);
         keywordBasedExecutors.put("checkpoint", this::compileCheckpoint);

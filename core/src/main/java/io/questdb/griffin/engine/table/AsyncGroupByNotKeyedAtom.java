@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -53,18 +54,20 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    private final ObjList<Function> bindVarFunctions;
-    private final MemoryCARW bindVarMemory;
-    private final CompiledFilter compiledFilter;
+    // Sentinel for batch-ineligible functions.
+    static final int BATCH_NOT_ELIGIBLE = Integer.MIN_VALUE;
+    // Sentinel for batch-eligible no-arg functions (e.g. count(*)).
+    static final int BATCH_NO_ARG = -1;
+    private final int[] batchColumnIndexes;
+    private final AsyncFilterContext filterCtx;
+    private final boolean hasNonBatchFunctions;
     private final GroupByAllocator ownerAllocator;
-    private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
+    private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final SimpleMapValue ownerMapValue;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
@@ -75,41 +78,61 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            int @NotNull [] batchColumnIndexes,
             int valueCount,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
-        final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
-            this.compiledFilter = compiledFilter;
-            this.bindVarMemory = bindVarMemory;
-            this.bindVarFunctions = bindVarFunctions;
-            this.ownerFilter = ownerFilter;
-            this.perWorkerFilters = perWorkerFilters;
+            this.ownerGroupByFunctions = ownerGroupByFunctions;
+            this.batchColumnIndexes = batchColumnIndexes;
+            boolean hasNonBatch = false;
+            for (int idx : batchColumnIndexes) {
+                if (idx == BATCH_NOT_ELIGIBLE) {
+                    hasNonBatch = true;
+                    break;
+                }
+            }
+            this.hasNonBatchFunctions = hasNonBatch;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+
+            this.filterCtx = new AsyncFilterContext(
+                    configuration,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    ownerFilter,
+                    filterUsedColumnIndexes,
+                    perWorkerFilters,
+                    workerCount,
+                    workerCount,
+                    1,
+                    1
+            );
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerFunctionUpdaters = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
             }
-            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
             ownerMapValue = new SimpleMapValue(valueCount);
-            perWorkerMapValues = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            perWorkerMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
             }
 
@@ -117,8 +140,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerAllocators = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerAllocators = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
                     perWorkerAllocators.extendAndSet(i, workerAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
@@ -150,15 +173,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
+        filterCtx.clear();
     }
 
     @Override
     public void close() {
-        Misc.free(compiledFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerFilter);
-        Misc.freeObjList(perWorkerFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         Misc.free(ownerMapValue);
@@ -168,25 +187,15 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.free(filterCtx);
     }
 
-    public ObjList<Function> getBindVarFunctions() {
-        return bindVarFunctions;
+    public int[] getBatchColumnIndexes() {
+        return batchColumnIndexes;
     }
 
-    public MemoryCARW getBindVarMemory() {
-        return bindVarMemory;
-    }
-
-    public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
-    }
-
-    public Function getFilter(int slotId) {
-        if (slotId == -1 || perWorkerFilters == null) {
-            return ownerFilter;
-        }
-        return perWorkerFilters.getQuick(slotId);
+    public AsyncFilterContext getFilterContext() {
+        return filterCtx;
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
@@ -194,6 +203,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             return ownerFunctionUpdater;
         }
         return perWorkerFunctionUpdaters.getQuick(slotId);
+    }
+
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     public SimpleMapValue getMapValue(int slotId) {
@@ -213,21 +229,13 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerMapValues;
     }
 
+    public boolean hasNonBatchFunctions() {
+        return hasNonBatchFunctions;
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        if (ownerFilter != null) {
-            ownerFilter.init(symbolTableSource, executionContext);
-        }
-
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        filterCtx.initFilters(symbolTableSource, executionContext);
 
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
@@ -239,11 +247,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
-        }
-
-        if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 
@@ -279,7 +282,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(ownerFilter);
+        filterCtx.toPlan(sink);
     }
 
     public void toTop() {

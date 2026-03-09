@@ -1,7 +1,10 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet_write::file::{ChunkedWriter, ParquetWriter, DEFAULT_ROW_GROUP_SIZE};
+use crate::parquet_write::file::{
+    ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::ops::Sub;
@@ -11,7 +14,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -32,6 +35,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
+    bloom_filter_fpp: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
@@ -69,6 +73,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             compression_options,
             row_group_size,
             data_page_size,
+            bloom_filter_fpp,
         )
     };
 
@@ -93,7 +98,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        return;
     }
 
     let _ = unsafe { Box::from_raw(updater) };
@@ -106,7 +111,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateFileMetadata");
+        return err.into_cairo_exception().throw(&mut env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -139,10 +146,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let orig_row_group_id = row_group_id;
     let row_group_id = Some(row_group_id);
 
-    assert!(
-        !parquet_updater.is_null(),
-        "parquet_updater pointer is null"
-    );
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
@@ -202,6 +210,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -236,8 +247,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         } else {
             None
         };
-
         let version = version_from_i32(version)?;
+
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition.columns.len(),
+        )?;
 
         let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
@@ -262,6 +278,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_filter_fpp)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")
@@ -275,7 +293,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     table_name_ptr,
                     table_name_size as usize,
                 ))
-                .expect("invalid table name utf8")
+                .unwrap_or("!!invalid table name utf8!!")
             };
             err.add_context(format!(
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
@@ -302,7 +320,14 @@ fn create_partition_descriptor(
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
     const COL_DATA_ENTRY_SIZE: usize = 9;
-    assert_eq!(col_data_len % COL_DATA_ENTRY_SIZE, 0);
+    if !col_data_len.is_multiple_of(COL_DATA_ENTRY_SIZE) {
+        return Err(fmt_err!(
+            Layout,
+            "col_data_len {} is not a multiple of {}",
+            col_data_len,
+            COL_DATA_ENTRY_SIZE
+        ));
+    }
 
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
@@ -364,6 +389,28 @@ fn create_partition_descriptor(
 
     let partition = Partition { table, columns };
     Ok(partition)
+}
+
+fn build_bloom_filter_set(
+    indexes_ptr: *const jint,
+    count: jint,
+    max_columns: usize,
+) -> ParquetResult<HashSet<usize>> {
+    if indexes_ptr.is_null() || count <= 0 {
+        return Ok(HashSet::new());
+    }
+    let indexes = unsafe { slice::from_raw_parts(indexes_ptr, count as usize) };
+    let mut out = HashSet::with_capacity(indexes.len());
+    for &i in indexes {
+        if i < 0 || (i as usize) >= max_columns {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid bloom filter column index: {i}"
+            ));
+        }
+        out.insert(i as usize);
+    }
+    Ok(out)
 }
 
 fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
@@ -458,6 +505,9 @@ pub struct StreamingParquetWriter {
     pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
+    // Cumulative count of rows that have been fully written to row groups.
+    // Used by Java to determine when partition memory can be safely released.
+    rows_written_to_row_groups: usize,
     // Keep RowGroupBuffers alive while partitions reference their data.
     // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
     // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
@@ -481,6 +531,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
 ) -> *mut StreamingParquetWriter {
     let create = || -> ParquetResult<StreamingParquetWriter> {
         let partition_template = create_partition_template(
@@ -525,9 +578,21 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let allocator = unsafe { &*allocator_ptr };
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
         let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
+        // Reserve 16 bytes for header: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         let buffer_writer = unsafe {
-            BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 8)
+            BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 16)
         };
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition_template.columns.len(),
+        )?;
+        let bloom_fpp = if bloom_filter_fpp > 0.0 && bloom_filter_fpp < 1.0 {
+            bloom_filter_fpp
+        } else {
+            DEFAULT_BLOOM_FILTER_FPP
+        };
+
         let parquet_writer = ParquetWriter::new(buffer_writer)
             .with_version(version_from_i32(version)?)
             .with_compression(compression_options)
@@ -535,7 +600,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_raw_array_encoding(raw_array_encoding != 0)
             .with_row_group_size(row_group_size_opt)
             .with_data_page_size(data_page_size_opt)
-            .with_sorting_columns(sorting_columns.clone());
+            .with_sorting_columns(sorting_columns.clone())
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_fpp);
         let chunked_writer = parquet_writer.chunked(parquet_schema, encodings)?;
 
         let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
@@ -549,6 +616,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             pending_partitions: Vec::new(),
             first_partition_start: 0,
             accumulated_rows: 0,
+            rows_written_to_row_groups: 0,
             pending_row_group_buffers: Vec::new(),
         })
     };
@@ -609,8 +677,11 @@ fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResu
             encoder.current_buffer.set_len(0);
         }
         write_pending_row_group(encoder)?;
-        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+        let data_len = (encoder.current_buffer.len() - 16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        encoder.current_buffer[8..16]
+            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     } else {
         Ok(std::ptr::null())
@@ -655,6 +726,10 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         first_start,
         last_partition_end,
     )?;
+
+    // Track rows written to row groups (always row_group_size for intermediate flushes)
+    encoder.rows_written_to_row_groups += row_group_size;
+
     let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
 
     if last_partition_end >= last_partition_rows {
@@ -717,13 +792,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 encoder.first_partition_start,
                 last_partition_end,
             )?;
+
+            // Track remaining rows written in the final row group
+            encoder.rows_written_to_row_groups += encoder.accumulated_rows;
         }
 
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
-        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+        let data_len = (encoder.current_buffer.len() - 16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        encoder.current_buffer[8..16]
+            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     };
 

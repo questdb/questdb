@@ -24,7 +24,7 @@ pub enum HybridEncoded<'a> {
 enum State<'a> {
     None,
     Bitpacked(bitpacked::Decoder<'a, u32>),
-    Rle(std::iter::Take<std::iter::Repeat<u32>>),
+    Rle(std::iter::RepeatN<u32>),
     // Add a special branch for a single value to
     // adhere to the strong law of small numbers.
     Single(Option<u32>),
@@ -56,7 +56,7 @@ fn read_next<'a>(decoder: &mut Decoder<'a>, remaining: usize) -> Result<State<'a
             if additional == 1 {
                 State::Single(Some(value))
             } else {
-                State::Rle(std::iter::repeat(value).take(additional))
+                State::Rle(std::iter::repeat_n(value, additional))
             }
         }
         None => State::None,
@@ -80,6 +80,7 @@ impl<'a> HybridRleDecoder<'a> {
 impl<'a> Iterator for HybridRleDecoder<'a> {
     type Item = Result<u32, Error>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.remaining == 0 {
             return None;

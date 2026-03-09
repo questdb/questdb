@@ -1606,21 +1606,22 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Sort light
                               keys: [x, max, dateadd]
-                                VirtualRecord
-                                  functions: [x,max,dateadd('s',max::int,dateadd)]
-                                    GroupBy vectorized: false
-                                      keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [x,max,dateadd('s',max::int,dateadd)]
+                                        GroupBy vectorized: false
+                                          keys: [x,dateadd,x1]
+                                          values: [max(y)]
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: t2.y=t1.y
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t2
+                                                        Frame forward scan on: t1
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
                             """
             );
 
@@ -2751,21 +2752,22 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Sort light
                               keys: [x, max, dateadd]
-                                VirtualRecord
-                                  functions: [x,max,dateadd('s',max::int,dateadd)]
-                                    GroupBy vectorized: false
-                                      keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [x,max,dateadd('s',max::int,dateadd)]
+                                        GroupBy vectorized: false
+                                          keys: [x,dateadd,x1]
+                                          values: [max(y)]
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: t2.y=t1.y
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t2
+                                                        Frame forward scan on: t1
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
                             """
             );
 
@@ -2937,6 +2939,307 @@ public class GroupByTest extends AbstractCairoTest {
                         FROM x_sample
                         GROUP BY url"""
         );
+    }
+
+    @Test
+    public void testNonKeyedVectorizedAllBatchEligible() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-01T12:00:00.000000Z'),
+                            (30, '2024-01-02T00:00:00.000000Z'),
+                            (40, '2024-01-02T12:00:00.000000Z'),
+                            (50, '2024-01-03T00:00:00.000000Z')"""
+            );
+
+            String query = "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [sum(v),min(v),max(v),count(*),avg(v),first(v),last(v)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tavg\tfirst\tlast
+                            150\t10\t50\t5\t30.0\t10\t50
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t(ts) VALUES
+                            ('2024-01-01T00:00:00.000000Z'),
+                            ('2024-01-02T00:00:00.000000Z')"""
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tavg\tfirst\tlast\tfirst_not_null\tlast_not_null
+                            null\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull
+                            """,
+                    "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v), first_not_null(v), last_not_null(v) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-02T00:00:00.000000Z')"""
+            );
+            // Add a new column — older partitions will have column tops.
+            execute("ALTER TABLE t ADD COLUMN v2 INT");
+            execute("""
+                    INSERT INTO t VALUES
+                    (30, '2024-01-03T00:00:00.000000Z', 100),
+                    (40, '2024-01-04T00:00:00.000000Z', 200)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tfirst\tlast\tsum1\tfirst_not_null\tlast_not_null
+                            100\t10\t40\t4\t10\t40\t300\t100\t200
+                            """,
+                    "SELECT sum(v), min(v), max(v), count(*), first(v), last(v), sum(v2), first_not_null(v2), last_not_null(v2) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tavg\tfirst\tlast
+                            null\tnull\tnull\t0\tnull\tnull\tnull
+                            """,
+                    "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedFirstLastNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (null, '2024-01-01T00:00:00.000000Z'),
+                            (10, '2024-01-01T12:00:00.000000Z'),
+                            (20, '2024-01-02T00:00:00.000000Z'),
+                            (null, '2024-01-02T12:00:00.000000Z'),
+                            (30, '2024-01-03T00:00:00.000000Z'),
+                            (null, '2024-01-03T12:00:00.000000Z')"""
+            );
+
+            String query = "SELECT first(v), last(v), first_not_null(v), last_not_null(v) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [first(v),last(v),first_not_null(v),last_not_null(v)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast\tfirst_not_null\tlast_not_null
+                            null\tnull\t10\t30
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedHybridPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-01T12:00:00.000000Z'),
+                            (30, '2024-01-02T00:00:00.000000Z')"""
+            );
+
+            // first(v) is batch-eligible, last(v + 1) is not (expression arg, not decomposable).
+            String query = "SELECT first(v), last(v + 1) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [first(v),last(v+1)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast
+                            10\t31
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedMultipleTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE t (
+                                vi INT, vl LONG, vd DOUBLE, vf FLOAT, vs SHORT,
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY"""
+            );
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (1, 100, 1.5, 1.5, 10, '2024-01-01T00:00:00.000000Z'),
+                            (2, 200, 2.5, 2.5, 20, '2024-01-02T00:00:00.000000Z'),
+                            (3, 300, 3.5, 3.5, 30, '2024-01-03T00:00:00.000000Z')"""
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tsum1\tsum2\tsum3\tsum4\tmin\tmax\tfirst\tlast
+                            6\t600\t7.5\t7.5\t60\t1\t3\t1\t3
+                            """,
+                    "SELECT sum(vi), sum(vl), sum(vd), sum(vf), sum(vs), min(vi), max(vi), first(vi), last(vi) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedNotEligible() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-02T00:00:00.000000Z')"""
+            );
+
+            // All functions use expression args, so none are batch-eligible.
+            String query = "SELECT first(v * 2), last(v + 1) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [first(v*2),last(v+1)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast
+                            20\t21
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-01T12:00:00.000000Z'),
+                            (30, '2024-01-02T00:00:00.000000Z'),
+                            (40, '2024-01-02T12:00:00.000000Z')"""
+            );
+
+            // Filter disables the vectorized path.
+            String query = "SELECT sum(v), count(*), first(v) FROM t WHERE v > 15";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [sum(v),count(*),first(v)]
+                              filter: 15<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tcount\tfirst
+                            90\t3\t20
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
     }
 
     @Test

@@ -872,12 +872,45 @@ public class WindowJoinTimeFrameHelperTest {
         }
 
         @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            currentFrame = frameIndex;
+            loadEstimate(frameIndex);
+            FrameData data = frames.get(frameIndex);
+            timeFrame.ofOpen(data.actualLo, data.actualHi, 0, data.timestamps.length);
+            ((MockRecord) record).position(frameIndex, (int) rowIndex);
+        }
+
+        @Override
         public void recordAtRowIndex(Record record, long rowIndex) {
             int frameIndex = currentFrame >= 0 ? currentFrame : timeFrame.getFrameIndex();
             ((MockRecord) record).position(frameIndex, (int) rowIndex);
         }
 
         @Override
+        public void seekEstimate(long timestamp) {
+            if (frames.isEmpty()) {
+                timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+                return;
+            }
+            int lo = 0, hi = frames.size() - 1, result = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                if (frames.get(mid).estimateHi <= timestamp) {
+                    result = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            if (result >= 0) {
+                currentFrame = result;
+                loadEstimate(result);
+            } else {
+                currentFrame = -1;
+                timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+            }
+        }
+
         public void toTop() {
             timeFrame.clear();
             currentFrame = -1;

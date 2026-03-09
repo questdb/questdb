@@ -53,6 +53,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public Function getFilter() {
+        return filter;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);
         try {
@@ -67,6 +72,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public void halfClose() {
+        Misc.free(cursor);
     }
 
     @Override

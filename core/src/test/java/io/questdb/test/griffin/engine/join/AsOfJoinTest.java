@@ -825,6 +825,61 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with keyed ASOF and multiple slave partitions.
+        // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) timestamp(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) timestamp(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-03T12:00:00.000000Z', 'A', 10),
+                                ('2024-01-03T18:00:00.000000Z', 'B', 20),
+                                ('2024-01-03T23:00:00.000000Z', 'C', 30)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 'A', 100.0),
+                                ('2024-01-02T06:00:00.000000Z', 'B', 200.0),
+                                ('2024-01-03T06:00:00.000000Z', 'C', 300.0)
+                            """
+            );
+
+            // Each trade matches the latest price <= its timestamp with matching key.
+            // Trade A (day3 12:00) → price 100.0 (day1 06:00, sym A)
+            // Trade B (day3 18:00) → price 200.0 (day2 06:00, sym B)
+            // Trade C (day3 23:00) → price 300.0 (day3 06:00, sym C)
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tqty\tprice
+                            A\t10\t100.0
+                            B\t20\t200.0
+                            C\t30\t300.0
+                            """,
+                    "SELECT t.sym, t.qty, p.price FROM trades t ASOF JOIN prices p ON (t.sym = p.sym)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testAsOfJoinLinearSearchHint() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table orders as (\n" +

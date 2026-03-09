@@ -32,6 +32,6 @@ public final class JitUtil {
     }
 
     public static boolean isJitSupported() {
-        return Os.arch == Os.ARCH_X86_64;
+        return Os.arch == Os.ARCH_X86_64 || Os.arch == Os.ARCH_AARCH64;
     }
 }

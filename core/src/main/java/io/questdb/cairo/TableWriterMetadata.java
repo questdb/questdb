@@ -43,6 +43,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int tableId;
     private TableToken tableToken;
     private int ttlHoursOrMonths;
+    private TxReader txReader;
     private boolean walEnabled;
 
     public TableWriterMetadata(TableToken tableToken) {
@@ -123,6 +124,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean hasParquetPartitions() {
+        return txReader != null && txReader.hasParquetPartitions();
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -185,6 +191,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
+    }
+
+    public void setTxReader(TxReader txReader) {
+        this.txReader = txReader;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {

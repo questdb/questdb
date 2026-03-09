@@ -146,6 +146,11 @@ public interface CairoConfiguration {
 
     boolean getCairoSqlLegacyOperatorPrecedence();
 
+    @NotNull
+    default CheckpointListener getCheckpointListener() {
+        return DefaultCheckpointListener.INSTANCE;
+    }
+
     /**
      * Enable/disable full rebuild of bitmap indexes for symbol columns in partitions
      */
@@ -437,6 +442,10 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    long getParquetExportBatchSize();
+
+    double getParquetExportBloomFilterFpp();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
@@ -450,6 +459,8 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    double getPartitionEncoderParquetBloomFilterFpp();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -571,6 +582,25 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlHorizonJoinMaxOffsets();
+
+    /**
+     * When the number of intervals exceeds this threshold during bracket expansion,
+     * intervals are merged to prevent unbounded memory growth.
+     */
+    int getSqlIntervalIncrementalMergeThreshold();
+
+    /**
+     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
+     */
+    int getSqlIntervalMaxBracketDepth();
+
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets.
+     */
+    int getSqlIntervalMaxIntervalsAfterMerge();
+
     int getSqlJitBindVarsMemoryMaxPages();
 
     int getSqlJitBindVarsMemoryPageSize();
@@ -616,9 +646,9 @@ public interface CairoConfiguration {
 
     double getSqlParallelFilterPreTouchThreshold();
 
-    int getSqlParallelWorkStealingThreshold();
-
     long getSqlParallelWorkStealingSpinTimeout();
+
+    int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
 
@@ -631,6 +661,8 @@ public interface CairoConfiguration {
     int getSqlSmallPageFrameMaxRows();
 
     int getSqlSmallPageFrameMinRows();
+
+    int getSqlSortKeyMaterializationThreshold();
 
     int getSqlSortKeyMaxPages();
 
@@ -662,23 +694,6 @@ public interface CairoConfiguration {
 
     int getSqlWindowTreeKeyPageSize();
 
-    /**
-     * When the number of intervals exceeds this threshold during bracket expansion,
-     * intervals are merged to prevent unbounded memory growth.
-     */
-    int getSqlIntervalIncrementalMergeThreshold();
-
-    /**
-     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
-     */
-    int getSqlIntervalMaxBracketDepth();
-
-    /**
-     * Maximum number of intervals allowed after bracket expansion and merging.
-     * This limit prevents memory exhaustion from large non-adjacent interval sets.
-     */
-    int getSqlIntervalMaxIntervalsAfterMerge();
-
     int getStrFunctionMaxBufferLength();
 
     long getSymbolTableMaxAllocationPageSize();
@@ -709,6 +724,8 @@ public interface CairoConfiguration {
     TextConfiguration getTextConfiguration();
 
     int getTxnScoreboardEntryCount();
+
+    int getUnorderedPageFrameReduceQueueCapacity();
 
     int getVectorAggregateQueueCapacity();
 
@@ -762,6 +779,8 @@ public interface CairoConfiguration {
     long getWalSegmentRolloverSize();
 
     int getWalTxnNotificationQueueCapacity();
+
+    int getWalWriterMadviseMode();
 
     int getWalWriterPoolMaxSegments();
 
@@ -841,11 +860,15 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelGroupByEnabled();
 
+    boolean isSqlParallelHorizonJoinEnabled();
+
     boolean isSqlParallelReadParquetEnabled();
 
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();
 

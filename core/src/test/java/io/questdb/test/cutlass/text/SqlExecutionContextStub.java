@@ -225,7 +225,17 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public boolean isParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isParallelTopKEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelHorizonJoinEnabled() {
         return false;
     }
 
@@ -327,7 +337,15 @@ public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutio
     }
 
     @Override
+    public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+    }
+
+    @Override
     public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+    }
+
+    @Override
+    public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
     }
 
     @Override

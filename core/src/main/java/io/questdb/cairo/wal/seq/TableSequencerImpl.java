@@ -194,6 +194,10 @@ public class TableSequencerImpl implements TableSequencer {
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
+    public int getCurrentWalId() {
+        return (int) walIdGenerator.getCurrentId();
+    }
+
     @Override
     public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         checkDropped();

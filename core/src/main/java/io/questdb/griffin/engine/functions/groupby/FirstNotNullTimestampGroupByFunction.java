@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByFunction {
@@ -36,9 +37,34 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
     }
 
     @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Long.BYTES;
+            long offset = 0;
+            for (; ptr < hi; ptr += Long.BYTES) {
+                long value = Unsafe.getUnsafe().getLong(ptr);
+                if (value != Numbers.LONG_NULL) {
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putLong(valueIndex + 1, value);
+                    }
+                    break;
+                }
+                offset++;
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+        long val = arg.getTimestamp(record);
+        if (val != Numbers.LONG_NULL) {
+            if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong(valueIndex + 1, val);
+            }
         }
     }
 
@@ -56,7 +82,7 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

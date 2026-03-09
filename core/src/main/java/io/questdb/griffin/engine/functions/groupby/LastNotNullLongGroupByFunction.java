@@ -38,15 +38,22 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long hi = ptr + (count - 1) * 8L;
+            long offset = count - 1;
             for (; hi >= ptr; hi -= 8L) {
                 long value = Unsafe.getUnsafe().getLong(hi);
                 if (value != Numbers.LONG_NULL) {
-                    mapValue.putLong(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putLong(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset--;
             }
         }
     }
@@ -54,7 +61,9 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getLong(record) != Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 
