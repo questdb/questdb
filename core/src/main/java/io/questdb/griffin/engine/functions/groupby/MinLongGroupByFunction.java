@@ -45,9 +45,15 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.minLong(ptr, count));
+            final long batchMin = Vect.minLong(ptr, count);
+            if (batchMin != Numbers.LONG_NULL) {
+                final long existing = mapValue.getLong(valueIndex);
+                if (batchMin < existing || existing == Numbers.LONG_NULL) {
+                    mapValue.putLong(valueIndex, batchMin);
+                }
+            }
         }
     }
 
