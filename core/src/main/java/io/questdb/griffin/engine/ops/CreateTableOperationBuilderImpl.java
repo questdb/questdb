@@ -401,20 +401,23 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (encoding < 0 && compression < 0) {
             return;
         }
-        sink.putAscii(" parquet");
+        sink.putAscii(" parquet(");
         if (encoding >= 0) {
-            sink.putAscii(" encoding ");
             sink.put(ParquetEncoding.getEncodingName(encoding));
+        } else {
+            sink.putAscii("default");
         }
         if (compression >= 0) {
-            sink.putAscii(" compression ");
+            sink.putAscii(", ");
             sink.put(ParquetCompression.getCompressionName(compression));
             int level = model.getParquetCompressionLevel();
             if (level > 0) {
-                sink.putAscii(' ');
+                sink.putAscii('(');
                 sink.put(level);
+                sink.putAscii(')');
             }
         }
+        sink.putAscii(')');
     }
 
     private static boolean isIPv4Cast(int from, int to) {

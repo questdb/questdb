@@ -102,9 +102,9 @@ public class PartitionEncoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             inputRoot = root;
             execute("CREATE TABLE x (" +
-                    "a_varchar VARCHAR PARQUET ENCODING RLE_DICTIONARY," +
-                    " a_long LONG PARQUET ENCODING RLE_DICTIONARY," +
-                    " a_int INT PARQUET ENCODING RLE_DICTIONARY," +
+                    "a_varchar VARCHAR PARQUET(RLE_DICTIONARY)," +
+                    " a_long LONG PARQUET(RLE_DICTIONARY)," +
+                    " a_int INT PARQUET(RLE_DICTIONARY)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
@@ -136,9 +136,9 @@ public class PartitionEncoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             inputRoot = root;
             execute("CREATE TABLE x (" +
-                    "a_long LONG PARQUET ENCODING DELTA_BINARY_PACKED," +
-                    " a_date DATE PARQUET ENCODING DELTA_BINARY_PACKED," +
-                    " a_ts TIMESTAMP PARQUET ENCODING DELTA_BINARY_PACKED," +
+                    "a_long LONG PARQUET(DELTA_BINARY_PACKED)," +
+                    " a_date DATE PARQUET(DELTA_BINARY_PACKED)," +
+                    " a_ts TIMESTAMP PARQUET(DELTA_BINARY_PACKED)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
@@ -170,9 +170,9 @@ public class PartitionEncoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             inputRoot = root;
             execute("CREATE TABLE x (" +
-                    "a_string STRING PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY," +
-                    " a_varchar VARCHAR PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY," +
-                    " a_bin BINARY PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY," +
+                    "a_string STRING PARQUET(DELTA_LENGTH_BYTE_ARRAY)," +
+                    " a_varchar VARCHAR PARQUET(DELTA_LENGTH_BYTE_ARRAY)," +
+                    " a_bin BINARY PARQUET(DELTA_LENGTH_BYTE_ARRAY)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
@@ -205,7 +205,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             inputRoot = root;
             // Per-column ZSTD on symbol column with enough distinct symbols to trigger auto-scaling
             execute("CREATE TABLE x (" +
-                    "a_symbol SYMBOL PARQUET COMPRESSION ZSTD," +
+                    "a_symbol SYMBOL PARQUET(default, ZSTD)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
@@ -266,14 +266,14 @@ public class PartitionEncoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             inputRoot = root;
             execute("CREATE TABLE x (" +
-                    "a_date DATE PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                    "a_date DATE PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                     " a_symbol SYMBOL," +
-                    " a_string STRING PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY COMPRESSION GZIP 5," +
-                    " a_long LONG PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION SNAPPY," +
-                    " a_varchar VARCHAR PARQUET ENCODING RLE_DICTIONARY COMPRESSION ZSTD," +
+                    " a_string STRING PARQUET(DELTA_LENGTH_BYTE_ARRAY, GZIP(5))," +
+                    " a_long LONG PARQUET(DELTA_BINARY_PACKED, SNAPPY)," +
+                    " a_varchar VARCHAR PARQUET(RLE_DICTIONARY, ZSTD)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
-            execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET ENCODING RLE_DICTIONARY COMPRESSION LZ4_RAW");
+            execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET(RLE_DICTIONARY, LZ4_RAW)");
 
             execute("INSERT INTO x SELECT" +
                     " CASE WHEN x % 2 = 0 THEN rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0) ELSE NULL END," +
@@ -306,13 +306,13 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             inputRoot = root;
             execute("CREATE TABLE x (" +
                     "a_symbol SYMBOL," +
-                    " a_varchar VARCHAR PARQUET ENCODING RLE_DICTIONARY," +
-                    " a_double DOUBLE PARQUET ENCODING RLE_DICTIONARY," +
-                    " a_long LONG PARQUET ENCODING RLE_DICTIONARY," +
-                    " an_int INT PARQUET ENCODING RLE_DICTIONARY," +
+                    " a_varchar VARCHAR PARQUET(RLE_DICTIONARY)," +
+                    " a_double DOUBLE PARQUET(RLE_DICTIONARY)," +
+                    " a_long LONG PARQUET(RLE_DICTIONARY)," +
+                    " an_int INT PARQUET(RLE_DICTIONARY)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
-            execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET ENCODING RLE_DICTIONARY");
+            execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET(RLE_DICTIONARY)");
 
             execute("INSERT INTO x SELECT" +
                     " rnd_symbol('a', 'b', 'c', NULL)," +

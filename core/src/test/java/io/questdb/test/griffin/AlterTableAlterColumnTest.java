@@ -182,7 +182,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             execute(
                     "CREATE TABLE y (" +
                             "a INT," +
-                            " b DOUBLE PARQUET COMPRESSION ZSTD 3," +
+                            " b DOUBLE PARQUET(default, ZSTD(3))," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
@@ -204,7 +204,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
-                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
@@ -234,7 +234,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
-                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
@@ -256,7 +256,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
-                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED," +
+                            "a INT PARQUET(DELTA_BINARY_PACKED)," +
                             " b DOUBLE," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
@@ -276,18 +276,18 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
-                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
-            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET COMPRESSION");
+            execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(DELTA_BINARY_PACKED)");
 
             try (TableWriter writer = getWriter("y")) {
                 int colIndex = writer.getMetadata().getColumnIndex("a");
                 int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                // Dropping compression only should keep encoding but clear compression
+                // Setting encoding only should keep encoding but clear compression
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 int encoding = TableUtils.getParquetConfigEncoding(config);
                 Assert.assertEquals(4, encoding);
@@ -302,7 +302,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
-                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
@@ -314,7 +314,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertNotEquals(0, config);
             }
 
-            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET ENCODING COMPRESSION");
+            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET");
 
             try (TableWriter writer = getWriter("y")) {
                 int colIndex = writer.getMetadata().getColumnIndex("a");
@@ -327,7 +327,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testDropParquetEncodingInvalidColumnName() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN nonexistent DROP PARQUET ENCODING COMPRESSION",
+                "ALTER TABLE x ALTER COLUMN nonexistent DROP PARQUET",
                 27,
                 "column 'nonexistent' does not exist in table 'x'"
         );
@@ -338,18 +338,18 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
-                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))," +
                             " b DOUBLE," +
                             " t TIMESTAMP" +
                             ") TIMESTAMP(t) PARTITION BY DAY"
             );
 
-            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET ENCODING");
+            execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(default, ZSTD(3))");
 
             try (TableWriter writer = getWriter("y")) {
                 int colIndex = writer.getMetadata().getColumnIndex("a");
                 int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                // Dropping encoding only should clear encoding but keep compression
+                // Setting default encoding with compression should clear encoding but keep compression
                 int encoding = TableUtils.getParquetConfigEncoding(config);
                 Assert.assertEquals(0, encoding);
             }
@@ -361,7 +361,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             inputRoot = root;
             execute("CREATE TABLE x (" +
-                    "val INT PARQUET ENCODING DELTA_BINARY_PACKED," +
+                    "val INT PARQUET(DELTA_BINARY_PACKED)," +
                     " ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
 
@@ -373,7 +373,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             // seal the partition by inserting into the next day
             execute("INSERT INTO x VALUES (42, '2015-01-02T00:00:00.000000Z')");
 
-            execute("ALTER TABLE x ALTER COLUMN val DROP PARQUET ENCODING");
+            execute("ALTER TABLE x ALTER COLUMN val DROP PARQUET");
 
             try (
                     Path path = new Path();
@@ -394,8 +394,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetCompressionLevelTooHigh() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 30",
-                58,
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(30))",
+                55,
                 "ZSTD compression level must be between 1 and 22"
         );
     }
@@ -403,8 +403,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetCompressionLevelTooLow() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 0",
-                58,
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(0))",
+                55,
                 "ZSTD compression level must be between 1 and 22"
         );
     }
@@ -414,7 +414,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 3");
+            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(3))");
 
             try (TableWriter writer = getWriter("x")) {
                 int colIndex = writer.getMetadata().getColumnIndex("d");
@@ -432,7 +432,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION UNCOMPRESSED");
+            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET(default, UNCOMPRESSED)");
 
             try (TableWriter writer = getWriter("x")) {
                 int colIndex = writer.getMetadata().getColumnIndex("d");
@@ -449,7 +449,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING DELTA_BINARY_PACKED");
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED)");
 
             try (TableWriter writer = getWriter("x")) {
                 int colIndex = writer.getMetadata().getColumnIndex("i");
@@ -465,7 +465,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3");
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
 
             try (TableWriter writer = getWriter("x")) {
                 int colIndex = writer.getMetadata().getColumnIndex("i");
@@ -481,8 +481,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetEncodingInvalidForType() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY",
-                50,
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(DELTA_LENGTH_BYTE_ARRAY)",
+                41,
                 "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
         );
     }
@@ -490,8 +490,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetEncodingInvalidName() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET ENCODING INVALID_ENCODING",
-                50,
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(INVALID_ENCODING)",
+                41,
                 "invalid parquet encoding, supported values:"
         );
     }
@@ -513,7 +513,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             // seal the partition by inserting into the next day
             execute("INSERT INTO x2 VALUES (42, '2015-01-02T00:00:00.000000Z')");
 
-            execute("ALTER TABLE x2 ALTER COLUMN val SET PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3");
+            execute("ALTER TABLE x2 ALTER COLUMN val SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
 
             try (
                     Path path = new Path();
@@ -534,8 +534,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetInvalidCompressionName() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION INVALID_CODEC",
-                53,
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, INVALID_CODEC)",
+                50,
                 "invalid parquet compression codec:"
         );
     }
@@ -545,15 +545,15 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET",
                 40,
-                "'encoding' or 'compression' expected"
+                "'(' expected"
         );
     }
 
     @Test
     public void testSetParquetByteStreamSplitRejectedForFloat() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN e SET PARQUET ENCODING BYTE_STREAM_SPLIT",
-                50,
+                "ALTER TABLE x ALTER COLUMN e SET PARQUET(BYTE_STREAM_SPLIT)",
+                41,
                 "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
         );
     }
@@ -561,8 +561,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetByteStreamSplitRejectedForInt() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING BYTE_STREAM_SPLIT",
-                50,
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(BYTE_STREAM_SPLIT)",
+                41,
                 "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
         );
     }
@@ -572,7 +572,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            execute("ALTER TABLE x ALTER COLUMN f SET PARQUET ENCODING DELTA_BINARY_PACKED");
+            execute("ALTER TABLE x ALTER COLUMN f SET PARQUET(DELTA_BINARY_PACKED)");
 
             try (TableWriter writer = getWriter("x")) {
                 int colIndex = writer.getMetadata().getColumnIndex("f");
@@ -586,8 +586,8 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testSetParquetPlainRejectedForSymbol() throws Exception {
         assertFailure(
-                "ALTER TABLE x ALTER COLUMN sym SET PARQUET ENCODING PLAIN",
-                52,
+                "ALTER TABLE x ALTER COLUMN sym SET PARQUET(PLAIN)",
+                43,
                 "encoding 'PLAIN' is not valid for column type"
         );
     }
