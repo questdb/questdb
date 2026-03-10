@@ -249,7 +249,8 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                 offset += decodeResult.bytesRead;
 
                 DirectUtf8String entry = dictionaryUtf8.getQuick(i);
-                entry.of(dataAddress + offset, dataAddress + offset + stringLen);
+                long strLo = dataAddress + offset;
+                entry.of(strLo, strLo + stringLen, Utf8s.isAscii(strLo, stringLen));
                 offset += stringLen;
             }
         }
