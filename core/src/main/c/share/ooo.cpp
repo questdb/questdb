@@ -64,51 +64,6 @@ struct long_3x {
     }
 };
 
-struct long_4x {
-    uint64_t l1;
-    uint64_t l2;
-    uint64_t l3;
-    uint64_t l4;
-
-    bool operator<(const long_4x &other) const {
-        if (l1 != other.l1) return l1 < other.l1;
-        if (l2 != other.l2) return l2 < other.l2;
-        if (l3 != other.l3) return l3 < other.l3;
-        return l4 < other.l4;
-    }
-
-    bool operator<=(const long_4x &other) const {
-        if (l1 != other.l1) return l1 < other.l1;
-        if (l2 != other.l2) return l2 < other.l2;
-        if (l3 != other.l3) return l3 < other.l3;
-        return l4 <= other.l4;
-    }
-};
-
-struct long_5x {
-    uint64_t l1;
-    uint64_t l2;
-    uint64_t l3;
-    uint64_t l4;
-    uint64_t l5;
-
-    bool operator<(const long_5x &other) const {
-        if (l1 != other.l1) return l1 < other.l1;
-        if (l2 != other.l2) return l2 < other.l2;
-        if (l3 != other.l3) return l3 < other.l3;
-        if (l4 != other.l4) return l4 < other.l4;
-        return l5 < other.l5;
-    }
-
-    bool operator<=(const long_5x &other) const {
-        if (l1 != other.l1) return l1 < other.l1;
-        if (l2 != other.l2) return l2 < other.l2;
-        if (l3 != other.l3) return l3 < other.l3;
-        if (l4 != other.l4) return l4 < other.l4;
-        return l5 <= other.l5;
-    }
-};
-
 inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
                              const uint64_t sizeB, index_t *dest, int64_t minValue, uint16_t sh) {
     MM_PREFETCH_T0(counts);
@@ -1290,33 +1245,93 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 //   2. Unsorted sub-runs go through MSD radix sort on the first uint64_t
 //      word (American Flag Sort, in-place, 8 byte passes from MSB to LSB).
 //   3. Within each radix partition (same first word), std::sort handles
-//      the remaining key words and rowId (stability tiebreaker).
+//      the remaining key words.
 //   4. std::inplace_merge combines sorted runs.
 // ---------------------------------------------------------------------------
 
-// Maps ENTRY_LONGS to the corresponding struct type.
+// Entry structs for encoded sort. The last word in each entry is the rowId,
+// which is excluded from comparisond.
+
+struct encoded_2x {
+    uint64_t k1;
+    uint64_t rowId;
+
+    bool operator<(const encoded_2x &other) const { return k1 < other.k1; }
+    bool operator<=(const encoded_2x &other) const { return k1 <= other.k1; }
+};
+
+struct encoded_3x {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t rowId;
+
+    bool operator<(const encoded_3x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        return k2 < other.k2;
+    }
+    bool operator<=(const encoded_3x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        return k2 <= other.k2;
+    }
+};
+
+struct encoded_4x {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t k3;
+    uint64_t rowId;
+
+    bool operator<(const encoded_4x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        return k3 < other.k3;
+    }
+    bool operator<=(const encoded_4x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        return k3 <= other.k3;
+    }
+};
+
+struct encoded_5x {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t k3;
+    uint64_t k4;
+    uint64_t rowId;
+
+    bool operator<(const encoded_5x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        if (k3 != other.k3) return k3 < other.k3;
+        return k4 < other.k4;
+    }
+    bool operator<=(const encoded_5x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        if (k3 != other.k3) return k3 < other.k3;
+        return k4 <= other.k4;
+    }
+};
+
+// Maps ENTRY_LONGS to the corresponding encoded entry type.
 template<int ENTRY_LONGS> struct entry_traits;
-template<> struct entry_traits<2> { using type = index_t; };
-template<> struct entry_traits<3> { using type = long_3x; };
-template<> struct entry_traits<4> { using type = long_4x; };
-template<> struct entry_traits<5> { using type = long_5x; };
+template<> struct entry_traits<2> { using type = encoded_2x; };
+template<> struct entry_traits<3> { using type = encoded_3x; };
+template<> struct entry_traits<4> { using type = encoded_4x; };
+template<> struct entry_traits<5> { using type = encoded_5x; };
 
 // Returns the first uint64_t word (most significant key word) of an entry.
-inline uint64_t entry_first_word(const index_t &e) { return e.ts; }
-inline uint64_t entry_first_word(const long_3x &e) { return e.l1; }
-inline uint64_t entry_first_word(const long_4x &e) { return e.l1; }
-inline uint64_t entry_first_word(const long_5x &e) { return e.l1; }
+inline uint64_t entry_first_word(const encoded_2x &e) { return e.k1; }
+inline uint64_t entry_first_word(const encoded_3x &e) { return e.k1; }
+inline uint64_t entry_first_word(const encoded_4x &e) { return e.k1; }
+inline uint64_t entry_first_word(const encoded_5x &e) { return e.k1; }
 
-// Comparator that compares all fields including rowId (tiebreaker for
-// stability).
 struct encoded_less {
-    bool operator()(const index_t &a, const index_t &b) const {
-        if (a.ts != b.ts) return a.ts < b.ts;
-        return a.i < b.i;
-    }
-    bool operator()(const long_3x &a, const long_3x &b) const { return a < b; }
-    bool operator()(const long_4x &a, const long_4x &b) const { return a < b; }
-    bool operator()(const long_5x &a, const long_5x &b) const { return a < b; }
+    bool operator()(const encoded_2x &a, const encoded_2x &b) const { return a < b; }
+    bool operator()(const encoded_3x &a, const encoded_3x &b) const { return a < b; }
+    bool operator()(const encoded_4x &a, const encoded_4x &b) const { return a < b; }
+    bool operator()(const encoded_5x &a, const encoded_5x &b) const { return a < b; }
 };
 
 // MSD (Most Significant Digit) radix sort on the first uint64_t word.
@@ -1326,7 +1341,7 @@ struct encoded_less {
 // then cycle-sort elements into their target buckets without a scratch buffer.
 //
 // After fully partitioning by the first word (shift reaches 0), std::sort
-// handles the remaining key words and rowId within each partition.
+// handles the remaining key words within each partition.
 //
 // For partitions smaller than 128 elements, delegates to std::sort directly
 // At this size the overhead of radix
@@ -1384,7 +1399,7 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
                 msd_radix_byte<T>(arr + sum, counts[v], shift - 8);
             } else {
                 // First word fully partitioned; comparison sort handles
-                // the remaining key words and rowId within this partition
+                // the remaining key words within this partition
                 std::sort(arr + sum, arr + sum + counts[v], encoded_less{});
             }
         }
