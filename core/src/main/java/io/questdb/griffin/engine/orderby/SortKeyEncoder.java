@@ -55,6 +55,7 @@ public class SortKeyEncoder implements QuietCloseable {
     private final Decimal128 decimal128Sink;
     private final Decimal256 decimal256Sink;
     private final boolean[] isDesc;
+    private final boolean isSingleColumnFixed8;
     private final boolean[] isSymbol;
     private final int[] offsets;
     private final ObjList<DirectIntList> rankMaps;
@@ -91,6 +92,7 @@ public class SortKeyEncoder implements QuietCloseable {
                 rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
             }
         }
+        this.isSingleColumnFixed8 = n == 1 && !isSymbol[0] && columnByteWidths[0] <= 8;
         this.tempList = hasSymbol ? new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true) : null;
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
@@ -121,62 +123,13 @@ public class SortKeyEncoder implements QuietCloseable {
         Misc.free(tempList);
     }
 
-    public void encode(Record record, long destAddr) {
-        for (int i = 0; i < columnIndices.length; i++) {
-            int colIdx = columnIndices[i];
-            long addr = destAddr + offsets[i];
-            boolean desc = isDesc[i];
-
-            if (isSymbol[i]) {
-                int key = record.getInt(colIdx);
-                DirectIntList rankMap = rankMaps.getQuick(i);
-                int rank = (key < 0) ? 0 : rankMap.get(key);
-                encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
-            } else {
-                switch (columnTypes[i]) {
-                    case ColumnType.BOOLEAN -> encodeBoolean(addr, record.getBool(colIdx), desc);
-                    case ColumnType.BYTE, ColumnType.GEOBYTE -> encodeByte(addr, record.getByte(colIdx), desc);
-                    case ColumnType.DECIMAL8 -> encodeByte(addr, record.getDecimal8(colIdx), desc);
-                    case ColumnType.SHORT, ColumnType.GEOSHORT -> encodeShort(addr, record.getShort(colIdx), desc);
-                    case ColumnType.DECIMAL16 -> encodeShort(addr, record.getDecimal16(colIdx), desc);
-                    case ColumnType.CHAR -> encodeChar(addr, record.getChar(colIdx), desc);
-                    case ColumnType.INT, ColumnType.GEOINT -> encodeInt(addr, record.getInt(colIdx), desc);
-                    case ColumnType.DECIMAL32 -> encodeInt(addr, record.getDecimal32(colIdx), desc);
-                    case ColumnType.IPv4 -> encodeUnsignedInt(addr, record.getIPv4(colIdx), desc);
-                    case ColumnType.LONG -> encodeLong(addr, record.getLong(colIdx), desc);
-                    case ColumnType.GEOLONG -> encodeLong(addr, record.getGeoLong(colIdx), desc);
-                    case ColumnType.DECIMAL64 -> encodeLong(addr, record.getDecimal64(colIdx), desc);
-                    case ColumnType.DATE -> encodeLong(addr, record.getDate(colIdx), desc);
-                    case ColumnType.TIMESTAMP -> encodeLong(addr, record.getTimestamp(colIdx), desc);
-                    case ColumnType.FLOAT -> encodeFloat(addr, record.getFloat(colIdx), desc);
-                    case ColumnType.DOUBLE -> encodeDouble(addr, record.getDouble(colIdx), desc);
-                    case ColumnType.DECIMAL128 -> {
-                        record.getDecimal128(colIdx, decimal128Sink);
-                        encodeLong(addr, decimal128Sink.getHigh(), desc);
-                        encodeUnsignedLong(addr + 8, decimal128Sink.getLow(), desc);
-                    }
-                    case ColumnType.DECIMAL256 -> {
-                        record.getDecimal256(colIdx, decimal256Sink);
-                        encodeLong(addr, decimal256Sink.getHh(), desc);
-                        encodeUnsignedLong(addr + 8, decimal256Sink.getHl(), desc);
-                        encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
-                        encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
-                    }
-                }
-            }
+    public void encode(Record record, long destAddr, long rowId) {
+        if (isSingleColumnFixed8) {
+            encodeFixed8(record, destAddr, rowId);
+            return;
         }
-
-        // Reverse each 8-byte word from big-endian to native byte order.
-        // The encoding writes big-endian bytes (for memcmp ordering), but
-        // the native sort compares uint64_t values.
-        int keyLen = keyType.keyLength();
-        int lastWord = keyLen - 8;
-        for (int w = 0; w < lastWord; w += 8) {
-            long val = Unsafe.getUnsafe().getLong(destAddr + w);
-            Unsafe.getUnsafe().putLong(destAddr + w, Long.reverseBytes(val));
-        }
-        long val = Unsafe.getUnsafe().getLong(destAddr + lastWord);
-        Unsafe.getUnsafe().putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
+        encodeGeneric(record, destAddr);
+        Unsafe.getUnsafe().putLong(destAddr + keyType.rowIdOffset(), rowId);
     }
 
     public SortKeyType init(RecordCursor baseCursor) {
@@ -371,5 +324,112 @@ public class SortKeyEncoder implements QuietCloseable {
                 hi = store - 1;
             }
         }
+    }
+
+    private void encodeFixed8(Record record, long destAddr, long rowId) {
+        int colIdx = columnIndices[0];
+        int colType = columnTypes[0];
+        boolean desc = isDesc[0];
+        int shift = (8 - columnByteWidths[0]) * 8;
+        long key = switch (colType) {
+            case ColumnType.BOOLEAN -> {
+                byte b = record.getBool(colIdx) ? (byte) 1 : (byte) 0;
+                yield (desc ? ~b : b) & 0xFFL;
+            }
+            case ColumnType.BYTE, ColumnType.GEOBYTE -> (record.getByte(colIdx) ^ (desc ? 0x7F : 0x80)) & 0xFFL;
+            case ColumnType.DECIMAL8 -> (record.getDecimal8(colIdx) ^ (desc ? 0x7F : 0x80)) & 0xFFL;
+            case ColumnType.SHORT, ColumnType.GEOSHORT ->
+                    (record.getShort(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
+            case ColumnType.DECIMAL16 -> (record.getDecimal16(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
+            case ColumnType.CHAR -> (desc ? ~record.getChar(colIdx) : record.getChar(colIdx)) & 0xFFFFL;
+            case ColumnType.INT, ColumnType.GEOINT ->
+                    Integer.toUnsignedLong(record.getInt(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
+            case ColumnType.DECIMAL32 ->
+                    Integer.toUnsignedLong(record.getDecimal32(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
+            case ColumnType.IPv4 -> Integer.toUnsignedLong(desc ? ~record.getIPv4(colIdx) : record.getIPv4(colIdx));
+            case ColumnType.FLOAT -> {
+                int bits = Float.floatToRawIntBits(record.getFloat(colIdx));
+                if (desc) {
+                    bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
+                } else {
+                    bits = bits >= 0 ? bits ^ Integer.MIN_VALUE : ~bits;
+                }
+                yield Integer.toUnsignedLong(bits);
+            }
+            case ColumnType.LONG -> record.getLong(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            case ColumnType.GEOLONG -> record.getGeoLong(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            case ColumnType.TIMESTAMP -> record.getTimestamp(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            case ColumnType.DATE -> record.getDate(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            case ColumnType.DECIMAL64 -> record.getDecimal64(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            case ColumnType.DOUBLE -> {
+                long bits = Double.doubleToRawLongBits(record.getDouble(colIdx));
+                if (desc) {
+                    yield bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
+                } else {
+                    yield bits >= 0 ? bits ^ Long.MIN_VALUE : ~bits;
+                }
+            }
+            default -> throw new AssertionError("unexpected FIXED_8 type: " + ColumnType.nameOf(colType));
+        } << shift;
+        Unsafe.getUnsafe().putLong(destAddr, key);
+        Unsafe.getUnsafe().putLong(destAddr + 8, rowId);
+    }
+
+    private void encodeGeneric(Record record, long destAddr) {
+        for (int i = 0; i < columnIndices.length; i++) {
+            int colIdx = columnIndices[i];
+            long addr = destAddr + offsets[i];
+            boolean desc = isDesc[i];
+
+            if (isSymbol[i]) {
+                int key = record.getInt(colIdx);
+                DirectIntList rankMap = rankMaps.getQuick(i);
+                int rank = (key < 0) ? 0 : rankMap.get(key);
+                encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
+            } else {
+                switch (columnTypes[i]) {
+                    case ColumnType.BOOLEAN -> encodeBoolean(addr, record.getBool(colIdx), desc);
+                    case ColumnType.BYTE, ColumnType.GEOBYTE -> encodeByte(addr, record.getByte(colIdx), desc);
+                    case ColumnType.DECIMAL8 -> encodeByte(addr, record.getDecimal8(colIdx), desc);
+                    case ColumnType.SHORT, ColumnType.GEOSHORT -> encodeShort(addr, record.getShort(colIdx), desc);
+                    case ColumnType.DECIMAL16 -> encodeShort(addr, record.getDecimal16(colIdx), desc);
+                    case ColumnType.CHAR -> encodeChar(addr, record.getChar(colIdx), desc);
+                    case ColumnType.INT, ColumnType.GEOINT -> encodeInt(addr, record.getInt(colIdx), desc);
+                    case ColumnType.DECIMAL32 -> encodeInt(addr, record.getDecimal32(colIdx), desc);
+                    case ColumnType.IPv4 -> encodeUnsignedInt(addr, record.getIPv4(colIdx), desc);
+                    case ColumnType.LONG -> encodeLong(addr, record.getLong(colIdx), desc);
+                    case ColumnType.GEOLONG -> encodeLong(addr, record.getGeoLong(colIdx), desc);
+                    case ColumnType.DECIMAL64 -> encodeLong(addr, record.getDecimal64(colIdx), desc);
+                    case ColumnType.DATE -> encodeLong(addr, record.getDate(colIdx), desc);
+                    case ColumnType.TIMESTAMP -> encodeLong(addr, record.getTimestamp(colIdx), desc);
+                    case ColumnType.FLOAT -> encodeFloat(addr, record.getFloat(colIdx), desc);
+                    case ColumnType.DOUBLE -> encodeDouble(addr, record.getDouble(colIdx), desc);
+                    case ColumnType.DECIMAL128 -> {
+                        record.getDecimal128(colIdx, decimal128Sink);
+                        encodeLong(addr, decimal128Sink.getHigh(), desc);
+                        encodeUnsignedLong(addr + 8, decimal128Sink.getLow(), desc);
+                    }
+                    case ColumnType.DECIMAL256 -> {
+                        record.getDecimal256(colIdx, decimal256Sink);
+                        encodeLong(addr, decimal256Sink.getHh(), desc);
+                        encodeUnsignedLong(addr + 8, decimal256Sink.getHl(), desc);
+                        encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
+                        encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
+                    }
+                }
+            }
+        }
+
+        // Reverse each 8-byte word from big-endian to native byte order.
+        // The encoding writes big-endian bytes (for memcmp ordering), but
+        // the native sort compares uint64_t values.
+        int keyLen = keyType.keyLength();
+        int lastWord = keyLen - 8;
+        for (int w = 0; w < lastWord; w += 8) {
+            long val = Unsafe.getUnsafe().getLong(destAddr + w);
+            Unsafe.getUnsafe().putLong(destAddr + w, Long.reverseBytes(val));
+        }
+        long val = Unsafe.getUnsafe().getLong(destAddr + lastWord);
+        Unsafe.getUnsafe().putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
     }
 }

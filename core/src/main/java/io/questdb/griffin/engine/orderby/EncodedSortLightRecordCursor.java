@@ -164,8 +164,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     long addr = entryMem.getAppendAddress();
-                    encoder.encode(baseRecord, addr);
-                    Unsafe.getUnsafe().putLong(addr + rowIdOffset, baseRecord.getRowId());
+                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
                     entryMem.skip(longsPerEntry);
                     count++;
                 }
@@ -174,8 +173,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();
-                    encoder.encode(baseRecord, addr);
-                    Unsafe.getUnsafe().putLong(addr + rowIdOffset, baseRecord.getRowId());
+                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
                     entryMem.skip(longsPerEntry);
                     count++;
                 }
