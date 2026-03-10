@@ -51,16 +51,15 @@ struct long_3x {
     uint64_t l2;
     uint64_t l3;
 
-    bool operator<(const long_3x &other) const {
-        if (l1 != other.l1) return l1 < other.l1;
-        if (l2 != other.l2) return l2 < other.l2;
-        return l3 < other.l3;
-    }
-
     bool operator<=(const long_3x &other) const {
-        if (l1 != other.l1) return l1 < other.l1;
-        if (l2 != other.l2) return l2 < other.l2;
-        return l3 <= other.l3;
+      if (l1 > other.l1) return false;
+      if (l1 == other.l1) {
+        if (l2 > other.l2) return false;
+        if (l2 == other.l2) {
+          if (l3 > other.l3) return false;
+        }
+      }
+      return true;
     }
 };
 
