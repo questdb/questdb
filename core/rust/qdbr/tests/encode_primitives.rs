@@ -129,11 +129,7 @@ impl_verify_simple!(GeoInt, Int32Array);
 
 // IPv4 is stored as UInt32 in Parquet, but QuestDB uses i32 natively
 impl EncodeVerify for IPv4 {
-    fn verify(
-        parquet_bytes: &[u8],
-        expected: &[Option<<Self as PrimitiveType>::T>],
-        ctx: &str,
-    ) {
+    fn verify(parquet_bytes: &[u8], expected: &[Option<<Self as PrimitiveType>::T>], ctx: &str) {
         let batches = read_parquet_batches(parquet_bytes);
         let arr = batches[0]
             .column(0)

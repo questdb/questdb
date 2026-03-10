@@ -210,6 +210,7 @@ where
                         for i in 0..n {
                             let idx = unsafe { *unpack_ptr.add(start + i) };
                             if idx >= dict_len {
+                                #[allow(clippy::redundant_locals)]
                                 let idx = idx; // capture for error message, avoids a `mov` to the stack before the comparison in the loop
                                 self.buffers_offset = offset;
                                 self.inner.error = Some(fmt_err!(
