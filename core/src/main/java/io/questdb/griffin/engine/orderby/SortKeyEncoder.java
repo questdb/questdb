@@ -339,14 +339,16 @@ public class SortKeyEncoder implements QuietCloseable {
                 byte b = record.getBool(colIdx) ? (byte) 1 : (byte) 0;
                 yield (desc ? ~b : b) & 0xFFL;
             }
-            case ColumnType.BYTE, ColumnType.GEOBYTE -> (record.getByte(colIdx) ^ (desc ? 0x7F : 0x80)) & 0xFFL;
+            case ColumnType.BYTE -> (record.getByte(colIdx) ^ (desc ? 0x7F : 0x80)) & 0xFFL;
+            case ColumnType.GEOBYTE -> (record.getGeoByte(colIdx) ^ (desc ? 0x7F : 0x80)) & 0xFFL;
             case ColumnType.DECIMAL8 -> (record.getDecimal8(colIdx) ^ (desc ? 0x7F : 0x80)) & 0xFFL;
-            case ColumnType.SHORT, ColumnType.GEOSHORT ->
-                    (record.getShort(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
+            case ColumnType.SHORT -> (record.getShort(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
+            case ColumnType.GEOSHORT -> (record.getGeoShort(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
             case ColumnType.DECIMAL16 -> (record.getDecimal16(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
             case ColumnType.CHAR -> (desc ? ~record.getChar(colIdx) : record.getChar(colIdx)) & 0xFFFFL;
-            case ColumnType.INT, ColumnType.GEOINT ->
-                    Integer.toUnsignedLong(record.getInt(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
+            case ColumnType.INT -> Integer.toUnsignedLong(record.getInt(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
+            case ColumnType.GEOINT ->
+                    Integer.toUnsignedLong(record.getGeoInt(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.DECIMAL32 ->
                     Integer.toUnsignedLong(record.getDecimal32(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.IPv4 -> Integer.toUnsignedLong(desc ? ~record.getIPv4(colIdx) : record.getIPv4(colIdx));
@@ -392,12 +394,15 @@ public class SortKeyEncoder implements QuietCloseable {
             } else {
                 switch (columnTypes[i]) {
                     case ColumnType.BOOLEAN -> encodeBoolean(addr, record.getBool(colIdx), desc);
-                    case ColumnType.BYTE, ColumnType.GEOBYTE -> encodeByte(addr, record.getByte(colIdx), desc);
+                    case ColumnType.BYTE -> encodeByte(addr, record.getByte(colIdx), desc);
+                    case ColumnType.GEOBYTE -> encodeByte(addr, record.getGeoByte(colIdx), desc);
                     case ColumnType.DECIMAL8 -> encodeByte(addr, record.getDecimal8(colIdx), desc);
-                    case ColumnType.SHORT, ColumnType.GEOSHORT -> encodeShort(addr, record.getShort(colIdx), desc);
+                    case ColumnType.SHORT -> encodeShort(addr, record.getShort(colIdx), desc);
+                    case ColumnType.GEOSHORT -> encodeShort(addr, record.getGeoShort(colIdx), desc);
                     case ColumnType.DECIMAL16 -> encodeShort(addr, record.getDecimal16(colIdx), desc);
                     case ColumnType.CHAR -> encodeChar(addr, record.getChar(colIdx), desc);
-                    case ColumnType.INT, ColumnType.GEOINT -> encodeInt(addr, record.getInt(colIdx), desc);
+                    case ColumnType.INT -> encodeInt(addr, record.getInt(colIdx), desc);
+                    case ColumnType.GEOINT -> encodeInt(addr, record.getGeoInt(colIdx), desc);
                     case ColumnType.DECIMAL32 -> encodeInt(addr, record.getDecimal32(colIdx), desc);
                     case ColumnType.IPv4 -> encodeUnsignedInt(addr, record.getIPv4(colIdx), desc);
                     case ColumnType.LONG -> encodeLong(addr, record.getLong(colIdx), desc);

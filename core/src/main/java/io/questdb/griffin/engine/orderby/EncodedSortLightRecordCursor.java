@@ -35,14 +35,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
+    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
+    private final long maxEntryMemBytes;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -64,6 +67,11 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
+            this.maxEntryMemBytes = Math.min(
+                    configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
+                            + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
+                    MAX_HEAP_SIZE_LIMIT
+            );
         } catch (Throwable th) {
             close();
             throw th;
@@ -153,7 +161,11 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         // Pre-allocate if size is known
         try {
             long estimatedSize = baseCursor.size();
+            long maxEntries = maxEntryMemBytes / entrySize;
             if (estimatedSize > 0) {
+                if (estimatedSize > maxEntries) {
+                    throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
 
@@ -171,6 +183,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             } else {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (count >= maxEntries) {
+                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                    }
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();
                     encoder.encode(baseRecord, addr, baseRecord.getRowId());

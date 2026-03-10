@@ -304,7 +304,7 @@ public class AggregateTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Encode sort light\n" +
                             "  keys: [account_uuid]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [account_uuid]\n" +
@@ -408,7 +408,7 @@ public class AggregateTest extends AbstractCairoTest {
 
             final String plan;
             if (enableParallelGroupBy) {
-                plan = "Sort light\n" +
+                plan = "Encode sort light\n" +
                         "  keys: [org_uuid]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [org_uuid,account_uuid]\n" +

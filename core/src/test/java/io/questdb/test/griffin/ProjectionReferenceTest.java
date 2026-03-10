@@ -972,7 +972,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         """,
                 """
                         QUERY PLAN
-                        Sort light
+                        Encode sort light
                           keys: [doubled]
                             VirtualRecord
                               functions: [name,memoize(json_extract()),memoize(val*2)]
