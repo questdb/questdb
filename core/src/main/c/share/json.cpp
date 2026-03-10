@@ -561,8 +561,7 @@ static void extract_for_column(
                     }
                     break;
                 }
-                case simdjson::ondemand::json_type::number:
-                case simdjson::ondemand::json_type::boolean: {
+                case simdjson::ondemand::json_type::number: {
                     extracted_value = extract_numeric<jlong>(
                             jr, val,
                             [](int64_t value) -> jlong { return value; },
@@ -589,6 +588,57 @@ static void extract_for_column(
     }
 
     write_result(cr, jr, extracted_value);
+}
+
+// Wrapper around extract_for_column that redirects string column output
+// to a shared byte sink, packing the byte offset and length into the result's
+// value field as (offset << 32) | length. Non-string columns delegate
+// directly to extract_for_column.
+template<typename V>
+static void extract_for_column_bulk(
+        V &val,
+        const column_desc_t &desc,
+        column_result_t &cr,
+        bool json_is_ascii,
+        questdb_byte_sink_t *string_sink
+) {
+    const bool is_string_col = (desc.column_type == qdb_col::VARCHAR || desc.column_type == qdb_col::TIMESTAMP);
+
+    if (!is_string_col || string_sink == nullptr) {
+        extract_for_column(val, desc, cr, json_is_ascii);
+        return;
+    }
+
+    // Ensure the shared sink has room for this column's max value size.
+    auto booked = questdb_byte_sink_book(string_sink, desc.max_size);
+    if (booked == nullptr) [[unlikely]] {
+        cr = {0, static_cast<int32_t>(simdjson::error_code::MEMALLOC), 0, 0, 0};
+        return;
+    }
+
+    const size_t offset = string_sink->ptr - string_sink->lo;
+
+    // Redirect desc.sink to the shared buffer for the duration of extraction.
+    column_desc_t bulk_desc = desc;
+    bulk_desc.sink = string_sink;
+
+    extract_for_column(val, bulk_desc, cr, json_is_ascii);
+
+    // Determine whether extract_for_column actually wrote string data.
+    // VARCHAR writes for every non-null type; TIMESTAMP only for JSON strings.
+    bool wrote_string;
+    if (desc.column_type == qdb_col::VARCHAR) {
+        wrote_string = (cr.error == static_cast<int32_t>(simdjson::error_code::SUCCESS) &&
+                        cr.type != static_cast<int32_t>(simdjson::ondemand::json_type::null));
+    } else {
+        wrote_string = (cr.error == static_cast<int32_t>(simdjson::error_code::SUCCESS) &&
+                        cr.type == static_cast<int32_t>(simdjson::ondemand::json_type::string));
+    }
+
+    if (wrote_string) {
+        const size_t length = (string_sink->ptr - string_sink->lo) - offset;
+        cr.value = (static_cast<int64_t>(offset) << 32) | static_cast<int64_t>(length & 0xFFFFFFFF);
+    }
 }
 
 extern "C" {
@@ -884,44 +934,8 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerDouble(
             });
 }
 
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_json_SimdJsonParser_queryPointerArrayLength(
-        JNIEnv * /*env*/,
-        jclass /*cl*/,
-        simdjson::ondemand::parser *parser,
-        const char *json_chars,
-        size_t json_len,
-        size_t tail_padding,
-        const char *pointer_chars,
-        size_t pointer_len,
-        json_result *result
-) {
-    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
-    const std::string_view pointer{pointer_chars, pointer_len};
-    auto doc = parser->iterate(json_buf);
-    simdjson_value val;
-    if (pointer.empty()) {
-        val = doc.get_value();
-    } else {
-        val = doc.at_pointer(pointer);
-    }
-    if (!result->from(val)) { return 0; }
-    auto arr = val.get_array();
-    if (!result->set_error(arr)) { return 0; }
-    auto count = arr.count_elements();
-    if (!result->set_error(count)) { return 0; }
-    const auto count_value = count.value_unsafe();
-    if (count_value > static_cast<size_t>(std::numeric_limits<jint>::max())) {
-        result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-        return 0;
-    }
-    result->error = simdjson::error_code::SUCCESS;
-    return static_cast<jint>(count_value);
-}
-
-// Returns array length. Sets result->type to the type of the first non-null
-// element (or NULL if all elements are null). Single parse replaces the
-// separate queryPointerArrayLength + per-element type-detection loop.
+// Returns array length and the type of the first non-null element
+// (or NULL if all elements are null) in a single parse.
 JNIEXPORT jint JNICALL
 Java_io_questdb_std_json_SimdJsonParser_queryArrayInfo(
         JNIEnv * /*env*/,
@@ -965,8 +979,12 @@ Java_io_questdb_std_json_SimdJsonParser_queryArrayInfo(
     return static_cast<jint>(count_value);
 }
 
+// Parses the JSON document once and extracts all array elements in a single
+// forward pass, writing results into a pre-sized results[element_count * column_count]
+// matrix. String data (VARCHAR/TIMESTAMP) goes into the shared string_sink with
+// packed (offset << 32 | length) stored in each column_result_t::value.
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_SimdJsonParser_extractArrayElement(
+Java_io_questdb_std_json_SimdJsonParser_extractAllArrayElements(
         JNIEnv * /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser *parser,
@@ -974,74 +992,76 @@ Java_io_questdb_std_json_SimdJsonParser_extractArrayElement(
         size_t json_len,
         size_t tail_padding,
         jboolean json_is_ascii,
-        jint element_index,
         jboolean is_object_array,
         column_desc_t *descs,
         column_result_t *results,
-        jint column_count
+        jint column_count,
+        jint element_count,
+        questdb_byte_sink_t *string_sink
 ) {
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
 
     auto doc = parser->iterate(json_buf);
     if (doc.error()) {
         auto err = static_cast<int32_t>(doc.error());
-        for (jint i = 0; i < column_count; i++) {
+        const jint total = element_count * column_count;
+        for (jint i = 0; i < total; i++) {
             results[i] = {0, err, 0, 0, 0};
         }
         return;
     }
 
-    // Navigate to /elementIndex
-    char pointer_buf[24];
-    auto pointer_len = snprintf(pointer_buf, sizeof(pointer_buf), "/%d", element_index);
-    auto element = doc.at_pointer({pointer_buf, static_cast<size_t>(pointer_len)});
-
-    if (element.error()) {
-        auto err = static_cast<int32_t>(element.error());
-        for (jint i = 0; i < column_count; i++) {
+    auto arr = doc.get_array();
+    if (arr.error()) {
+        auto err = static_cast<int32_t>(arr.error());
+        const jint total = element_count * column_count;
+        for (jint i = 0; i < total; i++) {
             results[i] = {0, err, 0, 0, 0};
         }
         return;
     }
 
-    if (is_object_array) {
-        // Initialize all columns as "not found"
-        for (jint i = 0; i < column_count; i++) {
-            results[i] = {0, static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD), 0, 0, 0};
-        }
+    jint elem_idx = 0;
+    for (auto element : arr.value_unsafe()) {
+        if (elem_idx >= element_count) break;
+        column_result_t *row = &results[elem_idx * column_count];
 
-        auto obj = element.get_object();
-        if (obj.error()) {
-            // Element is null, not an object, or otherwise invalid.
-            // All columns keep their NO_SUCH_FIELD default, matching the
-            // behavior of at_pointer("/N/field") on non-object elements.
-            return;
-        }
+        if (is_object_array) {
+            // Initialize all columns as "not found"
+            for (jint j = 0; j < column_count; j++) {
+                row[j] = {0, static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD), 0, 0, 0};
+            }
 
-        jint found_count = 0;
-        for (auto field: obj.value_unsafe()) {
-            if (found_count >= column_count) break;
+            auto obj = element.get_object();
+            if (!obj.error()) {
+                jint found_count = 0;
+                for (auto field: obj.value_unsafe()) {
+                    if (found_count >= column_count) break;
 
-            auto key_res = field.unescaped_key();
-            if (key_res.error()) continue;
-            auto key = key_res.value_unsafe();
+                    auto key_res = field.unescaped_key();
+                    if (key_res.error()) continue;
+                    auto key = key_res.value_unsafe();
 
-            for (jint i = 0; i < column_count; i++) {
-                if (results[i].error != static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD)) {
-                    continue; // Already extracted
-                }
-                if (key.length() == static_cast<size_t>(descs[i].field_name_len) &&
-                    std::memcmp(key.data(), descs[i].field_name, key.length()) == 0) {
-                    auto val = field.value();
-                    extract_for_column(val, descs[i], results[i], json_is_ascii);
-                    found_count++;
-                    break;
+                    for (jint j = 0; j < column_count; j++) {
+                        if (row[j].error != static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD)) {
+                            continue;
+                        }
+                        if (key.length() == static_cast<size_t>(descs[j].field_name_len) &&
+                            std::memcmp(key.data(), descs[j].field_name, key.length()) == 0) {
+                            auto val = field.value();
+                            extract_for_column_bulk(val, descs[j], row[j], json_is_ascii, string_sink);
+                            found_count++;
+                            break;
+                        }
+                    }
                 }
             }
+        } else {
+            // Scalar array: extract element directly for the single column
+            extract_for_column_bulk(element, descs[0], row[0], json_is_ascii, string_sink);
         }
-    } else {
-        // Scalar array: extract element directly for the single column
-        extract_for_column(element, descs[0], results[0], json_is_ascii);
+
+        elem_idx++;
     }
 }
 

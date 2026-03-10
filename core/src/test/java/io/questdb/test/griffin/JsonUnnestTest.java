@@ -1350,10 +1350,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[10, null, 30]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "10\n"
-                            + "null\n"
-                            + "30\n",
+                    """
+                            val
+                            10
+                            null
+                            30
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
@@ -1366,10 +1368,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[null, null, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "null\n"
-                            + "null\n"
-                            + "null\n",
+                    """
+                            val
+                            null
+                            null
+                            null
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
@@ -1382,9 +1386,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"not_a_number\", 42]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "null\n"
-                            + "42\n",
+                    """
+                            val
+                            null
+                            42
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
@@ -1398,10 +1404,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.9, 2.0, 3.1]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1\n"
-                            + "2\n"
-                            + "3\n",
+                    """
+                            val
+                            1
+                            2
+                            3
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
@@ -1415,11 +1423,13 @@ public class JsonUnnestTest extends AbstractCairoTest {
             // INT_MIN (-2147483648) is Numbers.INT_NULL sentinel, so it reads as null
             execute("INSERT INTO t VALUES ('[-1, -2147483647, 2147483647, 0]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "-1\n"
-                            + "-2147483647\n"
-                            + "2147483647\n"
-                            + "0\n",
+                    """
+                            val
+                            -1
+                            -2147483647
+                            2147483647
+                            0
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
@@ -1434,10 +1444,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"v\":null}, {\"v\":30}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "10\n"
-                            + "null\n"
-                            + "30\n",
+                    """
+                            v
+                            10
+                            null
+                            30
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
                     (String) null
             );
@@ -1450,10 +1462,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"other\":99}, {\"v\":30}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "10\n"
-                            + "null\n"
-                            + "30\n",
+                    """
+                            v
+                            10
+                            null
+                            30
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
                     (String) null
             );
@@ -1468,10 +1482,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[100, null, 300]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "100\n"
-                            + "null\n"
-                            + "300\n",
+                    """
+                            val
+                            100
+                            null
+                            300
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
                     (String) null
             );
@@ -1485,10 +1501,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             // LONG_MIN (-9223372036854775808) is Numbers.LONG_NULL sentinel, so it reads as null
             execute("INSERT INTO t VALUES ('[9223372036854775807, -9223372036854775807, 0]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "9223372036854775807\n"
-                            + "-9223372036854775807\n"
-                            + "0\n",
+                    """
+                            val
+                            9223372036854775807
+                            -9223372036854775807
+                            0
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
                     (String) null
             );
@@ -1501,9 +1519,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"hello\", 42]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "null\n"
-                            + "42\n",
+                    """
+                            val
+                            null
+                            42
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
                     (String) null
             );
@@ -1516,9 +1536,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[null, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "null\n"
-                            + "null\n",
+                    """
+                            val
+                            null
+                            null
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
                     (String) null
             );
@@ -1533,9 +1555,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":100}, {\"v\":null}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "100\n"
-                            + "null\n",
+                    """
+                            v
+                            100
+                            null
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v LONG)) u",
                     (String) null
             );
@@ -1551,10 +1575,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[10, null, 30]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "10\n"
-                            + "0\n"
-                            + "30\n",
+                    """
+                            val
+                            10
+                            0
+                            30
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
                     (String) null
             );
@@ -1568,9 +1594,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"text\", 5]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "0\n"
-                            + "5\n",
+                    """
+                            val
+                            0
+                            5
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
                     (String) null
             );
@@ -1583,10 +1611,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[-1, 32767, -32768]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "-1\n"
-                            + "32767\n"
-                            + "-32768\n",
+                    """
+                            val
+                            -1
+                            32767
+                            -32768
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
                     (String) null
             );
@@ -1601,9 +1631,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"v\":null}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "10\n"
-                            + "0\n",
+                    """
+                            v
+                            10
+                            0
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v SHORT)) u",
                     (String) null
             );
@@ -1618,10 +1650,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1.5, null, 3.5]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.5\n"
-                            + "null\n"
-                            + "3.5\n",
+                    """
+                            val
+                            1.5
+                            null
+                            3.5
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
                     (String) null
             );
@@ -1634,9 +1668,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[null, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "null\n"
-                            + "null\n",
+                    """
+                            val
+                            null
+                            null
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
                     (String) null
             );
@@ -1649,9 +1685,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"abc\", 2.5]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "null\n"
-                            + "2.5\n",
+                    """
+                            val
+                            null
+                            2.5
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
                     (String) null
             );
@@ -1664,10 +1702,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[0.0, -0.0, 1.7976931348623157E308]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "0.0\n"
-                            + "-0.0\n"
-                            + "1.7976931348623157E308\n",
+                    """
+                            val
+                            0.0
+                            -0.0
+                            1.7976931348623157E308
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
                     (String) null
             );
@@ -1682,10 +1722,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":1.5}, {\"v\":null}, {\"v\":3.5}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "1.5\n"
-                            + "null\n"
-                            + "3.5\n",
+                    """
+                            v
+                            1.5
+                            null
+                            3.5
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v DOUBLE)) u",
                     (String) null
             );
@@ -1698,10 +1740,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":1.5}, {\"x\":99}, {\"v\":3.5}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "1.5\n"
-                            + "null\n"
-                            + "3.5\n",
+                    """
+                            v
+                            1.5
+                            null
+                            3.5
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v DOUBLE)) u",
                     (String) null
             );
@@ -1717,10 +1761,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[true, null, false]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "true\n"
-                            + "false\n"
-                            + "false\n",
+                    """
+                            val
+                            true
+                            false
+                            false
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
                     (String) null
             );
@@ -1733,9 +1779,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[null, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "false\n"
-                            + "false\n",
+                    """
+                            val
+                            false
+                            false
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
                     (String) null
             );
@@ -1749,10 +1797,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1, \"yes\", true]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "false\n"
-                            + "false\n"
-                            + "true\n",
+                    """
+                            val
+                            false
+                            false
+                            true
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
                     (String) null
             );
@@ -1767,10 +1817,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":true}, {\"v\":null}, {\"v\":false}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "true\n"
-                            + "false\n"
-                            + "false\n",
+                    """
+                            v
+                            true
+                            false
+                            false
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v BOOLEAN)) u",
                     (String) null
             );
@@ -1785,10 +1837,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"hello\", null, \"world\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "hello\n"
-                            + "\n"
-                            + "world\n",
+                    """
+                            val
+                            hello
+                            
+                            world
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );
@@ -1801,10 +1855,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[null, null, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "\n"
-                            + "\n"
-                            + "\n",
+                    """
+                            val
+                            
+                            
+                            
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );
@@ -1817,10 +1873,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"hello\", \"\", \"world\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "hello\n"
-                            + "\n"
-                            + "world\n",
+                    """
+                            val
+                            hello
+                            
+                            world
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );
@@ -1834,10 +1892,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[42, true, \"text\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "42\n"
-                            + "true\n"
-                            + "text\n",
+                    """
+                            val
+                            42
+                            true
+                            text
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );
@@ -1850,10 +1910,13 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"line1\\nline2\", \"tab\\there\", \"quote\\\"inside\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "line1\nline2\n"
-                            + "tab\there\n"
-                            + "quote\"inside\n",
+                    """
+                            val
+                            line1
+                            line2
+                            tab\there
+                            quote"inside
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );
@@ -1868,10 +1931,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":\"hello\"}, {\"v\":null}, {\"v\":\"world\"}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "hello\n"
-                            + "\n"
-                            + "world\n",
+                    """
+                            v
+                            hello
+                            
+                            world
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v VARCHAR)) u",
                     (String) null
             );
@@ -1884,10 +1949,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":\"hello\"}, {\"other\":\"x\"}, {\"v\":\"world\"}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "hello\n"
-                            + "\n"
-                            + "world\n",
+                    """
+                            v
+                            hello
+                            
+                            world
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v VARCHAR)) u",
                     (String) null
             );
@@ -1902,10 +1969,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"2024-01-01T00:00:00.000000Z\", null, \"2024-01-03T00:00:00.000000Z\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "2024-01-01T00:00:00.000000Z\n"
-                            + "\n"
-                            + "2024-01-03T00:00:00.000000Z\n",
+                    """
+                            val
+                            2024-01-01T00:00:00.000000Z
+                            
+                            2024-01-03T00:00:00.000000Z
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
                     (String) null
             );
@@ -1918,9 +1987,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[null, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "\n"
-                            + "\n",
+                    """
+                            val
+                            
+                            
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
                     (String) null
             );
@@ -1933,9 +2004,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"not-a-timestamp\", \"2024-01-01T00:00:00.000000Z\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "\n"
-                            + "2024-01-01T00:00:00.000000Z\n",
+                    """
+                            val
+                            
+                            2024-01-01T00:00:00.000000Z
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
                     (String) null
             );
@@ -1949,9 +2022,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[1704067200000000, 0]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "2024-01-01T00:00:00.000000Z\n"
-                            + "1970-01-01T00:00:00.000000Z\n",
+                    """
+                            val
+                            2024-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
                     (String) null
             );
@@ -1964,10 +2039,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"2024-06-15T12:30:00.000000Z\", 1704067200000000, null]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "2024-06-15T12:30:00.000000Z\n"
-                            + "2024-01-01T00:00:00.000000Z\n"
-                            + "\n",
+                    """
+                            val
+                            2024-06-15T12:30:00.000000Z
+                            2024-01-01T00:00:00.000000Z
+                            
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
                     (String) null
             );
@@ -1981,9 +2058,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[true, \"2024-01-01T00:00:00.000000Z\"]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "\n"
-                            + "2024-01-01T00:00:00.000000Z\n",
+                    """
+                            val
+                            
+                            2024-01-01T00:00:00.000000Z
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
                     (String) null
             );
@@ -1998,9 +2077,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"ts\":\"2024-01-01T00:00:00.000000Z\"}, {\"ts\":null}]')");
             assertQueryNoLeakCheck(
-                    "ts\n"
-                            + "2024-01-01T00:00:00.000000Z\n"
-                            + "\n",
+                    """
+                            ts
+                            2024-01-01T00:00:00.000000Z
+                            
+                            """,
                     "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
                     (String) null
             );
@@ -2013,9 +2094,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"ts\":\"2024-01-01T00:00:00.000000Z\"}, {\"other\":1}]')");
             assertQueryNoLeakCheck(
-                    "ts\n"
-                            + "2024-01-01T00:00:00.000000Z\n"
-                            + "\n",
+                    """
+                            ts
+                            2024-01-01T00:00:00.000000Z
+                            
+                            """,
                     "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
                     (String) null
             );
@@ -2034,10 +2117,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     "{\"i\":3, \"l\":300, \"d\":3.5, \"b\":false, \"s\":\"world\", \"ts\":\"2024-06-15T00:00:00.000000Z\"}" +
                     "]')");
             assertQueryNoLeakCheck(
-                    "i\tl\td\tb\ts\tts\n"
-                            + "1\t100\t1.5\ttrue\thello\t2024-01-01T00:00:00.000000Z\n"
-                            + "null\tnull\tnull\tfalse\t\t\n"
-                            + "3\t300\t3.5\tfalse\tworld\t2024-06-15T00:00:00.000000Z\n",
+                    """
+                            i\tl\td\tb\ts\tts
+                            1\t100\t1.5\ttrue\thello\t2024-01-01T00:00:00.000000Z
+                            null\tnull\tnull\tfalse\t\t
+                            3\t300\t3.5\tfalse\tworld\t2024-06-15T00:00:00.000000Z
+                            """,
                     "SELECT u.i, u.l, u.d, u.b, u.s, u.ts FROM t, UNNEST(t.payload" +
                             " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP)) u",
                     (String) null
@@ -2052,8 +2137,10 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"x\":1, \"y\":2}]')");
             assertQueryNoLeakCheck(
-                    "i\td\ts\n"
-                            + "null\tnull\t\n",
+                    """
+                            i\td\ts
+                            null\tnull\t
+                            """,
                     "SELECT u.i, u.d, u.s FROM t, UNNEST(t.payload" +
                             " COLUMNS(i INT, d DOUBLE, s VARCHAR)) u",
                     (String) null
@@ -2068,10 +2155,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"i\":1, \"d\":1.5}, null, {\"i\":3, \"d\":3.5}]')");
             assertQueryNoLeakCheck(
-                    "i\td\n"
-                            + "1\t1.5\n"
-                            + "null\tnull\n"
-                            + "3\t3.5\n",
+                    """
+                            i\td
+                            1\t1.5
+                            null\tnull
+                            3\t3.5
+                            """,
                     "SELECT u.i, u.d FROM t, UNNEST(t.payload COLUMNS(i INT, d DOUBLE)) u",
                     (String) null
             );
@@ -2113,8 +2202,10 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[42]')");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "42\n",
+                    """
+                            val
+                            42
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
@@ -2127,8 +2218,10 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[{\"v\":42}]')");
             assertQueryNoLeakCheck(
-                    "v\n"
-                            + "42\n",
+                    """
+                            v
+                            42
+                            """,
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
                     (String) null
             );
@@ -2146,10 +2239,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     "(2, NULL)," +
                     "(3, '[{\"v\":30}]')");
             assertQueryNoLeakCheck(
-                    "id\tv\n"
-                            + "1\t10\n"
-                            + "1\t20\n"
-                            + "3\t30\n",
+                    """
+                            id\tv
+                            1\t10
+                            1\t20
+                            3\t30
+                            """,
                     "SELECT t.id, u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
                     (String) null
             );
@@ -2164,10 +2259,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             execute("INSERT INTO t VALUES ('[\"ab\", null, \"hello\"]')");
             assertQueryNoLeakCheck(
-                    "val\tlen\n"
-                            + "ab\t2\n"
-                            + "\t0\n"
-                            + "hello\t5\n",
+                    """
+                            val\tlen
+                            ab\t2
+                            \t0
+                            hello\t5
+                            """,
                     "SELECT u.val, length(u.val) len FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );

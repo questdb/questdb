@@ -52,37 +52,42 @@ public class SimdJsonParser implements QuietCloseable {
     }
 
     /**
-     * Extract all columns from a single array element in one document parse.
-     * For object arrays, iterates object fields matching against column descriptors.
-     * For scalar arrays, extracts the element directly.
+     * Parse the JSON document once and extract all array elements in a single
+     * forward pass. Results are written into a pre-sized
+     * {@code results[elementCount * columnCount]} matrix. String data
+     * (VARCHAR/TIMESTAMP) is appended to the shared string sink, with packed
+     * {@code (offset << 32) | length} stored in each result's value field.
      *
      * @param json           padded JSON document
-     * @param elementIndex   index of the array element to extract
      * @param isObjectArray  true if elements are objects, false for scalar arrays
-     * @param descsPtr       pointer to native column_desc_t array (32 bytes per column)
-     * @param resultsPtr     pointer to native column_result_t array (24 bytes per column)
+     * @param descsPtr       pointer to native column_desc_t array
+     * @param resultsPtr     pointer to native column_result_t matrix (elementCount * columnCount entries)
      * @param columnCount    number of columns
+     * @param elementCount   number of array elements to extract
+     * @param stringSinkPtr  pointer to native questdb_byte_sink_t for all string data
      */
-    public void extractArrayElement(
+    public void extractAllArrayElements(
             DirectUtf8Sequence json,
-            int elementIndex,
             boolean isObjectArray,
             long descsPtr,
             long resultsPtr,
-            int columnCount
+            int columnCount,
+            int elementCount,
+            long stringSinkPtr
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        extractArrayElement(
+        extractAllArrayElements(
                 impl,
                 json.ptr(),
                 json.size(),
                 json.tailPadding(),
                 json.isAscii(),
-                elementIndex,
                 isObjectArray,
                 descsPtr,
                 resultsPtr,
-                columnCount
+                columnCount,
+                elementCount,
+                stringSinkPtr
         );
     }
 
@@ -109,23 +114,6 @@ public class SimdJsonParser implements QuietCloseable {
                 json.ptr(),
                 json.size(),
                 json.tailPadding(),
-                result.ptr()
-        );
-    }
-
-    public int queryPointerArrayLength(
-            DirectUtf8Sequence json,
-            DirectUtf8Sequence pointer,
-            SimdJsonResult result
-    ) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerArrayLength(
-                impl,
-                json.ptr(),
-                json.size(),
-                json.tailPadding(),
-                pointer.ptr(),
-                pointer.size(),
                 result.ptr()
         );
     }
@@ -287,17 +275,18 @@ public class SimdJsonParser implements QuietCloseable {
 
     private static native void destroy(long impl);
 
-    private static native void extractArrayElement(
+    private static native void extractAllArrayElements(
             long impl,
             long jsonPtr,
             long jsonLen,
             long jsonTailPadding,
             boolean jsonIsAscii,
-            int elementIndex,
             boolean isObjectArray,
             long descsPtr,
             long resultsPtr,
-            int columnCount
+            int columnCount,
+            int elementCount,
+            long stringSinkPtr
     );
 
     private native static int getSimdJsonPadding();
@@ -307,16 +296,6 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonPtr,
             long jsonLen,
             long jsonTailPadding,
-            long resultPtr
-    );
-
-    private static native int queryPointerArrayLength(
-            long impl,
-            long jsonPtr,
-            long jsonLen,
-            long jsonTailPadding,
-            long pointerPtr,
-            long pointerLen,
             long resultPtr
     );
 
