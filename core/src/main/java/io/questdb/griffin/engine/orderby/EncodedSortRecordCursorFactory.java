@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -34,29 +35,25 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
-/**
- * Factory for {@link EncodedSortLightRecordCursor} that sorts multiple columns
- * by encoding them into a fixed-size byte-comparable key and sorting with
- * radix/quicksort. This replaces the red-black tree approach for cases where
- * all sort columns can be encoded into 8, 16, 24, or 32 bytes.
- */
-public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final EncodedSortLightRecordCursor cursor;
+    private final EncodedSortRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
 
-    public EncodedSortLightRecordCursorFactory(
+    public EncodedSortRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
+            RecordSink recordSink,
             ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
         this.base = base;
-        this.cursor = new EncodedSortLightRecordCursor(
+        this.cursor = new EncodedSortRecordCursor(
                 configuration,
                 metadata,
-                sortColumnFilter
+                sortColumnFilter,
+                recordSink
         );
         this.sortColumnFilter = sortColumnFilter;
     }
@@ -90,7 +87,7 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Sort light (encoded)");
+        sink.type("Sort (encoded)");
         SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }
