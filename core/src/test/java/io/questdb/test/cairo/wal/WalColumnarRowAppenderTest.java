@@ -38,6 +38,7 @@ import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
@@ -1062,6 +1063,86 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutBooleanToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_bool_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            Boolean[] values = {true, false, null, true};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putBooleanToStringColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            true
+                            false
+
+                            true
+                            """,
+                    "SELECT value FROM test_bool_str ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutBooleanToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_bool_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            Boolean[] values = {false, true, null, false};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putBooleanToVarcharColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            false
+                            true
+
+                            false
+                            """,
+                    "SELECT value FROM test_bool_vc ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testPutDecimalColumn_Decimal256ToDecimal64() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(18, 2);
@@ -1220,6 +1301,126 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                                 -99.9900
                                 """,
                         "SELECT value FROM test_dec_rescale ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutDecimalToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            // Decimal64 wire format: scale byte + big-endian values
+            // Values: 1.50 (unscaled=150, scale=2), -3.75 (unscaled=-375, scale=2), null
+            byte scale = 2;
+            long[] unscaledValues = {150, -375};
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + 1 + unscaledValues.length * 8; // bitmap + scale + values
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 2);
+
+                Unsafe.getUnsafe().putByte(dataAddress + bitmapSize, scale);
+
+                long valuesAddr = dataAddress + bitmapSize + 1;
+                for (int i = 0; i < unscaledValues.length; i++) {
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, Long.reverseBytes(unscaledValues[i]));
+                }
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL64, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putDecimalToStringColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                1.50
+                                -3.75
+
+                                """,
+                        "SELECT value FROM test_dec_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutDecimalToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            byte scale = 2;
+            long[] unscaledValues = {250, -100};
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + 1 + unscaledValues.length * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 1);
+
+                Unsafe.getUnsafe().putByte(dataAddress + bitmapSize, scale);
+
+                long valuesAddr = dataAddress + bitmapSize + 1;
+                for (int i = 0; i < unscaledValues.length; i++) {
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, Long.reverseBytes(unscaledValues[i]));
+                }
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL64, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putDecimalToVarcharColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                2.50
+
+                                -1.00
+                                """,
+                        "SELECT value FROM test_dec_vc ORDER BY ts"
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
@@ -2801,6 +3002,275 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFixedOtherToStringColumn_Uuid() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_uuid_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            // UUID: 550e8400-e29b-41d4-a716-446655440000
+            long uuidLo = 0xa716446655440000L;
+            long uuidHi = 0x550e8400e29b41d4L;
+
+            int dataLength = rowCount * 16;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // Row 0: the UUID
+                Unsafe.getUnsafe().putLong(dataAddress, uuidLo);
+                Unsafe.getUnsafe().putLong(dataAddress + 8, uuidHi);
+                // Row 1: another UUID
+                Unsafe.getUnsafe().putLong(dataAddress + 16, 0x123456789abcdef0L);
+                Unsafe.getUnsafe().putLong(dataAddress + 24, 0xfedcba9876543210L);
+                // Row 2: yet another
+                Unsafe.getUnsafe().putLong(dataAddress + 32, 1L);
+                Unsafe.getUnsafe().putLong(dataAddress + 40, 2L);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_UUID, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedOtherToStringColumn(0, cursor, rowCount, QwpConstants.TYPE_UUID);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                550e8400-e29b-41d4-a716-446655440000
+                                fedcba98-7654-3210-1234-56789abcdef0
+                                00000000-0000-0002-0000-000000000001
+                                """,
+                        "SELECT value FROM test_uuid_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedOtherToVarcharColumn_Uuid() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_uuid_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 2;
+            long uuidLo = 0xa716446655440000L;
+            long uuidHi = 0x550e8400e29b41d4L;
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + 1 * 16; // 1 non-null UUID
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 1);
+
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize, uuidLo);
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize + 8, uuidHi);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_UUID, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedOtherToVarcharColumn(0, cursor, rowCount, QwpConstants.TYPE_UUID);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                550e8400-e29b-41d4-a716-446655440000
+
+                                """,
+                        "SELECT value FROM test_uuid_vc ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            long[] values = {42, -100, 0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToStringColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                42
+                                -100
+                                0
+                                """,
+                        "SELECT value FROM test_long_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long_sym", PartitionBy.HOUR)
+                    .col("value", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            long[] values = {1, 2, 1, 3};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToSymbolColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                1
+                                2
+                                1
+                                3
+                                """,
+                        "SELECT value FROM test_long_sym ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + 2 * 8; // 2 non-null values
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 1);
+
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize, 999);
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize + 8, -42);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToVarcharColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                999
+
+                                -42
+                                """,
+                        "SELECT value FROM test_long_vc ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testPutFloatToDecimalColumn_NoNulls() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(10, 2);
@@ -2950,6 +3420,423 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                                 2.25
                                 """,
                         "SELECT value FROM test_float_dec_nulls ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFloatToNumericColumn_DoubleToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dbl_int", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            double[] values = {42.0, -100.0, 0.0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToNumericColumn(0, cursor, rowCount, ColumnType.INT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                42
+                                -100
+                                0
+                                """,
+                        "SELECT value FROM test_dbl_int ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFloatToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dbl_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            double[] values = {1.5, -3.14, 0.0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToStringColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                1.5
+                                -3.14
+                                0.0
+                                """,
+                        "SELECT value FROM test_dbl_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFloatToSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dbl_sym", PartitionBy.HOUR)
+                    .col("value", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            double[] values = {1.5, 2.5, 1.5};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToSymbolColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                1.5
+                                2.5
+                                1.5
+                                """,
+                        "SELECT value FROM test_dbl_sym ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFloatToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dbl_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + 2 * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 1);
+
+                Unsafe.getUnsafe().putDouble(dataAddress + bitmapSize, 3.14);
+                Unsafe.getUnsafe().putDouble(dataAddress + bitmapSize + 8, -0.5);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToVarcharColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                3.14
+
+                                -0.5
+                                """,
+                        "SELECT value FROM test_dbl_vc ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutGeoHashToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_geo_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 2;
+            // GeoHash with 5-bit precision → binary string output
+            int precision = 5;
+            int valueSizeBytes = (precision + 7) / 8; // ceil(5/8) = 1
+
+            // Build wire data: varint(precision) + packed values (1 byte each)
+            int precVarintLen = QwpVarint.encodedLength(precision);
+            int dataLength = precVarintLen + rowCount * 8; // values stored as longs
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long addr = QwpVarint.encode(dataAddress, precision);
+                // 5-bit values stored in 1-byte slots, but cursor uses valueSizeBytes
+                Unsafe.getUnsafe().putByte(addr, (byte) 0b10110); // row 0 → "10110"
+                Unsafe.getUnsafe().putByte(addr + valueSizeBytes, (byte) 0b11111); // row 1 → "11111"
+
+                QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putGeoHashToStringColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                10110
+                                11111
+                                """,
+                        "SELECT value FROM test_geo_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutGeoHashToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_geo_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 2;
+            int precision = 5; // 5-bit precision
+            int valueSizeBytes = (precision + 7) / 8; // 1
+
+            int precVarintLen = QwpVarint.encodedLength(precision);
+            int dataLength = precVarintLen + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long addr = QwpVarint.encode(dataAddress, precision);
+                Unsafe.getUnsafe().putByte(addr, (byte) 0b00001); // "00001"
+                Unsafe.getUnsafe().putByte(addr + valueSizeBytes, (byte) 0b00000); // "00000"
+
+                QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putGeoHashToVarcharColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                00001
+                                00000
+                                """,
+                        "SELECT value FROM test_geo_vc ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutIntegerToNumericColumn_LongToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long_dbl", PartitionBy.HOUR)
+                    .col("value", ColumnType.DOUBLE)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            long[] values = {42, -100, 0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putIntegerToNumericColumn(0, cursor, rowCount, ColumnType.DOUBLE);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                42.0
+                                -100.0
+                                0.0
+                                """,
+                        "SELECT value FROM test_long_dbl ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutIntegerToNumericColumn_LongToShort() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long_short", PartitionBy.HOUR)
+                    .col("value", ColumnType.SHORT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + 2 * 8; // 2 non-null values
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 1);
+
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize, 100);
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize + 8, -200);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putIntegerToNumericColumn(0, cursor, rowCount, ColumnType.SHORT);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                100
+                                0
+                                -200
+                                """,
+                        "SELECT value FROM test_long_short ORDER BY ts"
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
@@ -3190,6 +4077,322 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutStringToBooleanColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_bool", PartitionBy.HOUR)
+                    .col("value", ColumnType.BOOLEAN)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            String[] values = {"true", "false", "1", "0", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToBooleanColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            true
+                            false
+                            true
+                            false
+                            false
+                            """,
+                    "SELECT value FROM test_str_bool ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToGeoHashColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getGeoHashTypeWithBits(25); // 5 chars
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_geo", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"sp052", "u33d8", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToGeoHashColumn(0, wireFormat.cursor, rowCount, columnType);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            sp052
+                            u33d8
+
+                            """,
+                    "SELECT value FROM test_str_geo ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToLong256Column() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_l256", PartitionBy.HOUR)
+                    .col("value", ColumnType.LONG256)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"0x01", "0xff", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToLong256Column(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            0x01
+                            0xff
+
+                            """,
+                    "SELECT value FROM test_str_l256 ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToNumericColumn_Int() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_int", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"42", "-100", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToNumericColumn(0, wireFormat.cursor, rowCount, ColumnType.INT);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            42
+                            -100
+                            null
+                            """,
+                    "SELECT value FROM test_str_int ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToNumericColumn_Long() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_long", PartitionBy.HOUR)
+                    .col("value", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"1000000000", "-1", "0"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToNumericColumn(0, wireFormat.cursor, rowCount, ColumnType.LONG);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            1000000000
+                            -1
+                            0
+                            """,
+                    "SELECT value FROM test_str_long ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_sym", PartitionBy.HOUR)
+                    .col("value", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            String[] values = {"alpha", "beta", null, "alpha"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToSymbolColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            alpha
+                            beta
+
+                            alpha
+                            """,
+                    "SELECT value FROM test_str_sym ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_ts", PartitionBy.HOUR)
+                    .col("value", ColumnType.TIMESTAMP)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"2021-09-06T13:12:01.000000Z", "2023-01-01T00:00:00.000000Z", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToTimestampColumn(0, wireFormat.cursor, rowCount, ColumnType.TIMESTAMP);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            2021-09-06T13:12:01.000000Z
+                            2023-01-01T00:00:00.000000Z
+
+                            """,
+                    "SELECT value FROM test_str_ts ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToUuidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_uuid", PartitionBy.HOUR)
+                    .col("value", ColumnType.UUID)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"550e8400-e29b-41d4-a716-446655440000", null, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToUuidColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            550e8400-e29b-41d4-a716-446655440000
+
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                            """,
+                    "SELECT value FROM test_str_uuid ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testPutSymbolColumn_ExistingSymbols() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_symbol_existing", PartitionBy.HOUR)
@@ -3398,6 +4601,84 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutSymbolToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_sym_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"hello", null, "world"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putSymbolToStringColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            hello
+
+                            world
+                            """,
+                    "SELECT value FROM test_sym_str ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutSymbolToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_sym_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"abc", "def", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putSymbolToVarcharColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            abc
+                            def
+
+                            """,
+                    "SELECT value FROM test_sym_vc ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testPutTimestampColumn_MultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_ts_multi", PartitionBy.HOUR)
@@ -3564,6 +4845,113 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(valuesAddr, (long) rowCount * 4, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutTimestampToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_ts_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            // Timestamps in microseconds
+            long[] tsValues = {1_630_933_921_000_000L, 0L, 1_672_531_200_000_000L};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, tsValues[i]);
+                }
+
+                QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_TIMESTAMP, false, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putTimestampToStringColumn(0, cursor, rowCount, QwpConstants.TYPE_TIMESTAMP);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                2021-09-06T13:12:01.000Z
+                                1970-01-01T00:00:00.000Z
+                                2023-01-01T00:00:00.000Z
+                                """,
+                        "SELECT value FROM test_ts_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutTimestampToVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_ts_vc", PartitionBy.HOUR)
+                    .col("value", ColumnType.VARCHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            long[] tsValues = {1_630_933_921_000_000L, 0L};
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + tsValues.length * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 2);
+
+                for (int i = 0; i < tsValues.length; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + bitmapSize + (long) i * 8, tsValues[i]);
+                }
+
+                QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_TIMESTAMP, true, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putTimestampToVarcharColumn(0, cursor, rowCount, QwpConstants.TYPE_TIMESTAMP);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                2021-09-06T13:12:01.000Z
+                                1970-01-01T00:00:00.000Z
+
+                                """,
+                        "SELECT value FROM test_ts_vc ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
