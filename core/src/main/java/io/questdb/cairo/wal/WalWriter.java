@@ -1958,7 +1958,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
@@ -2203,7 +2203,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
                 String columnName = metadata.getColumnName(columnIndex);
@@ -2231,7 +2231,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         markColumnRemoved(index, type);
-                        path.trimTo(pathSize);
+
+                        try {
+                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName).I$();
                     } else {
@@ -2282,11 +2287,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        if (securityContext != null) {
-                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
+                        try {
+                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
+                        } finally {
+                            path.trimTo(pathSize);
                         }
-
-                        path.trimTo(pathSize);
                         LOG.info().$("renamed column in WAL [path=")
                                 .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName)

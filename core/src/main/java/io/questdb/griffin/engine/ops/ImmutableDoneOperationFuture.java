@@ -22,24 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.griffin.engine.ops;
 
-import io.questdb.std.str.Path;
+import io.questdb.cairo.sql.OperationFuture;
 
-public interface WalDirectoryPolicy {
-    void initDirectory(Path dirPath);
+public class ImmutableDoneOperationFuture extends DoneOperationFuture {
+    public static final ImmutableDoneOperationFuture INSTANCE = new ImmutableDoneOperationFuture();
 
-    default void initSequencerPart(Path seqDirPath, long partId) {
+    private ImmutableDoneOperationFuture() {
     }
 
-    boolean isInUse(Path path);
-
-    @SuppressWarnings("SameReturnValue")
-    default boolean isSeqPartInUse(Path seqDirPath, long partId) {
-        return false;
+    @Override
+    public long getAffectedRowsCount() {
+        return -1L;
     }
 
-    void rollbackDirectory(Path path);
-
-    boolean truncateFilesOnClose();
+    @Override
+    public OperationFuture of(long affectedRowsCount) {
+        throw new UnsupportedOperationException("this class is immutable");
+    }
 }
