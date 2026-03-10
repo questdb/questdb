@@ -45,10 +45,16 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.sumShort(ptr, count));
-            mapValue.putLong(valueIndex + 1, count);
+            final long batchSum = Vect.sumShort(ptr, count);
+            final long existing = mapValue.getLong(valueIndex);
+            if (existing == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, batchSum);
+            } else {
+                mapValue.putLong(valueIndex, existing + batchSum);
+            }
+            mapValue.addLong(valueIndex + 1, count);
         }
     }
 
