@@ -3851,13 +3851,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "a INT," +
-                        " b DOUBLE parquet compression zstd 3," +
+                        " b DOUBLE parquet(default, zstd(3))," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
-                        "b DOUBLE PARQUET COMPRESSION ZSTD 3, " +
+                        "b DOUBLE PARQUET(default, ZSTD(3)), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -3868,11 +3868,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetCompressionBrotliLevelTooHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a DOUBLE PARQUET COMPRESSION BROTLI 12, " +
+                        "a DOUBLE PARQUET(default, BROTLI(12)), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                52,
+                49,
                 "Brotli compression level must be between 0 and 11"
         );
     }
@@ -3882,13 +3882,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "a INT," +
-                        " b DOUBLE parquet compression gzip 9," +
+                        " b DOUBLE parquet(default, gzip(9))," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
-                        "b DOUBLE PARQUET COMPRESSION GZIP 9, " +
+                        "b DOUBLE PARQUET(default, GZIP(9)), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -3899,11 +3899,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetCompressionLevelTooHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a DOUBLE PARQUET COMPRESSION ZSTD 30, " +
+                        "a DOUBLE PARQUET(default, ZSTD(30)), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                50,
+                47,
                 "ZSTD compression level must be between 1 and 22"
         );
     }
@@ -3912,11 +3912,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetCompressionLevelTooLow() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a DOUBLE PARQUET COMPRESSION ZSTD 0, " +
+                        "a DOUBLE PARQUET(default, ZSTD(0)), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                50,
+                47,
                 "ZSTD compression level must be between 1 and 22"
         );
     }
@@ -3926,13 +3926,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "a INT," +
-                        " b DOUBLE parquet compression lz4_raw," +
+                        " b DOUBLE parquet(default, lz4_raw)," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
-                        "b DOUBLE PARQUET COMPRESSION LZ4_RAW, " +
+                        "b DOUBLE PARQUET(default, LZ4_RAW), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -3944,13 +3944,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertCreateTable(
                 "create atomic table x (" +
                         "a INT," +
-                        " b DOUBLE parquet compression uncompressed," +
+                        " b DOUBLE parquet(default, uncompressed)," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
                         "a INT, " +
-                        "b DOUBLE PARQUET COMPRESSION UNCOMPRESSED, " +
+                        "b DOUBLE PARQUET(default, UNCOMPRESSED), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -3961,12 +3961,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetCompressionWithSymbol() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "sym SYMBOL capacity 128 cache parquet compression snappy," +
+                        "sym SYMBOL capacity 128 cache parquet(default, snappy)," +
                         " ts TIMESTAMP)" +
                         " timestamp(ts)" +
                         " partition by DAY",
                 "create table x (" +
-                        "sym SYMBOL PARQUET COMPRESSION SNAPPY, " +
+                        "sym SYMBOL PARQUET(default, SNAPPY), " +
                         "ts TIMESTAMP) " +
                         "timestamp(ts) " +
                         "partition by DAY"
@@ -3977,12 +3977,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetCompressionWithSymbolCapacityCache() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "sym SYMBOL capacity 64 cache parquet compression snappy," +
+                        "sym SYMBOL capacity 64 cache parquet(default, snappy)," +
                         " ts TIMESTAMP)" +
                         " timestamp(ts)" +
                         " partition by DAY",
                 "create table x (" +
-                        "sym SYMBOL CAPACITY 64 CACHE PARQUET COMPRESSION SNAPPY, " +
+                        "sym SYMBOL CAPACITY 64 CACHE PARQUET(default, SNAPPY), " +
                         "ts TIMESTAMP) " +
                         "timestamp(ts) " +
                         "partition by DAY"
@@ -3993,12 +3993,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetCompressionWithSymbolIndex() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "sym SYMBOL capacity 128 cache index capacity 256 parquet compression snappy," +
+                        "sym SYMBOL capacity 128 cache index capacity 256 parquet(default, snappy)," +
                         " ts TIMESTAMP)" +
                         " timestamp(ts)" +
                         " partition by DAY",
                 "create table x (" +
-                        "sym SYMBOL INDEX PARQUET COMPRESSION SNAPPY, " +
+                        "sym SYMBOL INDEX PARQUET(default, SNAPPY), " +
                         "ts TIMESTAMP) " +
                         "timestamp(ts) " +
                         "partition by DAY"
@@ -4009,13 +4009,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetEncoding() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "a INT parquet encoding delta_binary_packed," +
+                        "a INT parquet(delta_binary_packed)," +
                         " b DOUBLE," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
-                        "a INT PARQUET ENCODING DELTA_BINARY_PACKED, " +
+                        "a INT PARQUET(DELTA_BINARY_PACKED), " +
                         "b DOUBLE, " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
@@ -4027,13 +4027,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetEncodingAndCompression() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "a INT parquet encoding delta_binary_packed compression zstd 3," +
+                        "a INT parquet(delta_binary_packed, zstd(3))," +
                         " b DOUBLE," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
-                        "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3, " +
+                        "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), " +
                         "b DOUBLE, " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
@@ -4045,12 +4045,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetEncodingDeltaBinaryPacked() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "a LONG parquet encoding delta_binary_packed," +
+                        "a LONG parquet(delta_binary_packed)," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
-                        "a LONG PARQUET ENCODING DELTA_BINARY_PACKED, " +
+                        "a LONG PARQUET(DELTA_BINARY_PACKED), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -4061,12 +4061,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetEncodingDeltaLengthByteArray() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "a STRING parquet encoding delta_length_byte_array," +
+                        "a STRING parquet(delta_length_byte_array)," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
-                        "a STRING PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY, " +
+                        "a STRING PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -4077,11 +4077,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetEncodingInvalidForType() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY, " +
+                        "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                39,
+                30,
                 "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
         );
     }
@@ -4090,11 +4090,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetEncodingInvalidName() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a DOUBLE PARQUET ENCODING INVALID_ENCODING, " +
+                        "a DOUBLE PARQUET(INVALID_ENCODING), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                42,
+                33,
                 "invalid parquet encoding, supported values:"
         );
     }
@@ -4103,11 +4103,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetInvalidCompressionName() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a DOUBLE PARQUET COMPRESSION INVALID_CODEC, " +
+                        "a DOUBLE PARQUET(default, INVALID_CODEC), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                45,
+                42,
                 "invalid parquet compression codec:"
         );
     }
@@ -4116,11 +4116,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetByteStreamSplitRejected() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT PARQUET ENCODING BYTE_STREAM_SPLIT, " +
+                        "a INT PARQUET(BYTE_STREAM_SPLIT), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                39,
+                30,
                 "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
         );
     }
@@ -4129,11 +4129,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetPlainRejectedForVarchar() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a VARCHAR PARQUET ENCODING PLAIN, " +
+                        "a VARCHAR PARQUET(PLAIN), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                43,
+                34,
                 "encoding 'PLAIN' is not valid for column type"
         );
     }
@@ -4142,11 +4142,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetDeltaLengthByteArrayRejectedForInt() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY, " +
+                        "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
-                39,
+                30,
                 "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
         );
     }
@@ -4155,16 +4155,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetMultipleColumns() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "a INT parquet encoding delta_binary_packed compression zstd 3," +
-                        " b DOUBLE parquet encoding plain," +
-                        " d VARCHAR parquet compression lz4_raw," +
+                        "a INT parquet(delta_binary_packed, zstd(3))," +
+                        " b DOUBLE parquet(plain)," +
+                        " d VARCHAR parquet(default, lz4_raw)," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
-                        "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3, " +
-                        "b DOUBLE PARQUET ENCODING PLAIN, " +
-                        "d VARCHAR PARQUET COMPRESSION LZ4_RAW, " +
+                        "a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), " +
+                        "b DOUBLE PARQUET(PLAIN), " +
+                        "d VARCHAR PARQUET(default, LZ4_RAW), " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
@@ -4175,14 +4175,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetWithSymbol() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
-                        "a INT parquet encoding delta_binary_packed," +
+                        "a INT parquet(delta_binary_packed)," +
                         " s SYMBOL capacity 128 cache," +
                         " b DOUBLE," +
                         " t TIMESTAMP)" +
                         " timestamp(t)" +
                         " partition by DAY",
                 "create table x (" +
-                        "a INT PARQUET ENCODING DELTA_BINARY_PACKED, " +
+                        "a INT PARQUET(DELTA_BINARY_PACKED), " +
                         "s SYMBOL, " +
                         "b DOUBLE, " +
                         "t TIMESTAMP) " +

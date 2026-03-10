@@ -1498,34 +1498,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        // Syntax: ALTER TABLE t ALTER COLUMN c DROP PARQUET ENCODING COMPRESSION
-        // or:     ALTER TABLE t ALTER COLUMN c DROP PARQUET ENCODING
-        // or:     ALTER TABLE t ALTER COLUMN c DROP PARQUET COMPRESSION
-        CharSequence tok = expectToken(lexer, "'encoding' or 'compression'");
-        boolean dropEncoding = false;
-        boolean dropCompression = false;
-
-        if (isEncodingKeyword(tok)) {
-            dropEncoding = true;
-            tok = SqlUtil.fetchNext(lexer);
-        }
-
-        if (tok != null && isCompressionKeyword(tok)) {
-            dropCompression = true;
-            tok = SqlUtil.fetchNext(lexer);
-        }
-
-        if (!dropEncoding && !dropCompression) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'encoding' or 'compression' expected");
-        }
-
+        // Syntax: ALTER TABLE t ALTER COLUMN c DROP PARQUET
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
         }
 
-        // Pass config=0 and drop flags to the operation;
-        // TableWriter resolves the partial drop using current metadata
-        int dropFlags = (dropEncoding ? 1 : 0) | (dropCompression ? 2 : 0);
+        // Drop both encoding and compression
+        int dropFlags = 3;
         alterOperationBuilder.ofDropParquetEncoding(
                 tableNamePosition,
                 tableToken,
@@ -1649,30 +1629,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET ENCODING enc COMPRESSION codec [level]
+        // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET(encoding [, compression[(level)]])
         int encoding = ParquetEncoding.ENCODING_DEFAULT;
         int compression = -1;
         int level = 0;
-        boolean isEncodingSet = false;
 
-        CharSequence tok = expectToken(lexer, "'encoding' or 'compression'");
-
-        if (isEncodingKeyword(tok)) {
-            tok = expectToken(lexer, "encoding name");
-            int encodingPos = lexer.lastTokenPosition();
-            encoding = ParquetEncoding.getEncoding(tok);
-            if (encoding < 0) {
-                throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
-            }
-            isEncodingSet = true;
-            int columnType = tableMetadata.getColumnType(columnIndex);
-            if (!ParquetEncoding.isValidForColumnType(encoding, columnType)) {
-                throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType));
-            }
-            tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = expectToken(lexer, "'('");
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
         }
 
-        if (tok != null && isCompressionKeyword(tok)) {
+        tok = expectToken(lexer, "encoding name");
+        int encodingPos = lexer.lastTokenPosition();
+        encoding = ParquetEncoding.getEncoding(tok);
+        if (encoding < 0) {
+            throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
+        }
+        int columnType = tableMetadata.getColumnType(columnIndex);
+        if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, columnType)) {
+            throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType));
+        }
+
+        tok = expectToken(lexer, "',' or ')'");
+        if (Chars.equals(tok, ',')) {
             tok = expectToken(lexer, "compression codec name");
             int codecPos = lexer.lastTokenPosition();
             compression = ParquetCompression.getCompressionCodec(tok);
@@ -1680,22 +1659,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(codecPos, "invalid parquet compression codec: ").put(tok);
             }
             tok = SqlUtil.fetchNext(lexer);
-            if (tok != null) {
+            if (tok != null && Chars.equals(tok, '(')) {
+                tok = expectToken(lexer, "compression level");
+                int levelPos = lexer.lastTokenPosition();
                 try {
-                    int levelPos = lexer.lastTokenPosition();
                     level = Numbers.parseInt(tok);
                     ParquetCompression.validateCompressionLevel(compression, level, levelPos);
-                    tok = SqlUtil.fetchNext(lexer);
-                } catch (NumericException ignore) {
-                    // not a level number, continue
+                } catch (NumericException e) {
+                    throw SqlException.$(levelPos, "compression level must be a number");
                 }
+                tok = expectToken(lexer, "')'");
+                if (!Chars.equals(tok, ')')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+                }
+                tok = SqlUtil.fetchNext(lexer);
             }
         }
 
-        if (!isEncodingSet && compression < 0) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'encoding' or 'compression' expected");
+        if (tok == null || !Chars.equals(tok, ')')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
         }
 
+        tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
         }

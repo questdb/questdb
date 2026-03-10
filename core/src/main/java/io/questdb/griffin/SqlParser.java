@@ -2030,23 +2030,22 @@ public class SqlParser {
     }
 
     private CharSequence parseCreateTableParquetProperties(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
-        CharSequence tok = tok(lexer, "'encoding', 'compression', ',' or ')'");
+        // Syntax: PARQUET(encoding [, compression[(level)]])
+        expectTok(lexer, '(');
 
-        if (isEncodingKeyword(tok)) {
-            tok = tok(lexer, "encoding name");
-            int encodingPos = lexer.lastTokenPosition();
-            int encoding = ParquetEncoding.getEncoding(tok);
-            if (encoding < 0) {
-                throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
-            }
-            if (!ParquetEncoding.isValidForColumnType(encoding, model.getColumnType())) {
-                throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(model.getColumnType()));
-            }
-            model.setParquetEncoding(encoding);
-            tok = tok(lexer, "'compression', ',' or ')'");
+        CharSequence tok = tok(lexer, "encoding name");
+        int encodingPos = lexer.lastTokenPosition();
+        int encoding = ParquetEncoding.getEncoding(tok);
+        if (encoding < 0) {
+            throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
         }
+        if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, model.getColumnType())) {
+            throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(model.getColumnType()));
+        }
+        model.setParquetEncoding(encoding);
 
-        if (isCompressionKeyword(tok)) {
+        tok = tok(lexer, "',' or ')'");
+        if (Chars.equals(tok, ',')) {
             tok = tok(lexer, "compression codec name");
             int codecPos = lexer.lastTokenPosition();
             int codec = ParquetCompression.getCompressionCodec(tok);
@@ -2054,26 +2053,25 @@ public class SqlParser {
                 throw SqlException.$(codecPos, "invalid parquet compression codec: ").put(tok);
             }
             model.setParquetCompression(codec);
-            tok = optTok(lexer);
-            if (tok != null) {
+
+            tok = tok(lexer, "'(' or ')'");
+            if (Chars.equals(tok, '(')) {
+                tok = tok(lexer, "compression level");
+                int levelPos = lexer.lastTokenPosition();
                 try {
-                    int levelPos = lexer.lastTokenPosition();
                     int level = Numbers.parseInt(tok);
                     ParquetCompression.validateCompressionLevel(codec, level, levelPos);
                     model.setParquetCompressionLevel(level);
-                    tok = null;
-                } catch (NumericException ignore) {
-                    // not a number, push back
-                    lexer.unparseLast();
-                    tok = null;
+                } catch (NumericException e) {
+                    throw SqlException.$(levelPos, "compression level must be a number");
                 }
-            }
-            if (tok == null) {
+                expectTok(lexer, ')');
                 tok = tok(lexer, "',' or ')'");
             }
         }
 
-        return tok;
+        expectTok(lexer, tok, ")");
+        return tok(lexer, "',' or ')'");
     }
 
     private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {

@@ -830,7 +830,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testParquetEncodingConfig() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, temp DOUBLE PARQUET ENCODING plain COMPRESSION zstd 3, status INT PARQUET ENCODING delta_binary_packed) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t (ts TIMESTAMP, temp DOUBLE PARQUET(plain, zstd(3)), status INT PARQUET(delta_binary_packed)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -841,7 +841,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=status, position=2, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, parquetEncoding=delta_binary_packed, parquetCompression=Default, writerIndex=2]
                     """);
 
-            execute("ALTER TABLE t ALTER COLUMN status SET PARQUET ENCODING delta_binary_packed COMPRESSION lz4_raw");
+            execute("ALTER TABLE t ALTER COLUMN status SET PARQUET(delta_binary_packed, lz4_raw)");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -852,7 +852,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=status, position=2, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, parquetEncoding=delta_binary_packed, parquetCompression=lz4_raw, writerIndex=2]
                     """);
 
-            execute("ALTER TABLE t ALTER COLUMN temp DROP PARQUET ENCODING COMPRESSION");
+            execute("ALTER TABLE t ALTER COLUMN temp DROP PARQUET");
             drainWalQueue();
 
             assertCairoMetadata("""

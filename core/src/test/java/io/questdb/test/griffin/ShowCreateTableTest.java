@@ -268,12 +268,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     @Test
     public void testParquetCompression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET COMPRESSION ZSTD 3) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET(default, ZSTD(3))) TIMESTAMP(ts) PARTITION BY DAY");
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
-                            \td DOUBLE PARQUET COMPRESSION zstd 3
+                            \td DOUBLE PARQUET(default, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE foo");
@@ -283,12 +283,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     @Test
     public void testParquetCompressionWithSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, s SYMBOL PARQUET COMPRESSION ZSTD) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE foo (ts TIMESTAMP, s SYMBOL PARQUET(default, ZSTD)) TIMESTAMP(ts) PARTITION BY DAY");
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
-                            \ts SYMBOL PARQUET COMPRESSION zstd
+                            \ts SYMBOL PARQUET(default, zstd)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE foo");
@@ -298,12 +298,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     @Test
     public void testParquetCompressionUncompressed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET COMPRESSION UNCOMPRESSED) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET(default, UNCOMPRESSED)) TIMESTAMP(ts) PARTITION BY DAY");
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
-                            \td DOUBLE PARQUET COMPRESSION uncompressed
+                            \td DOUBLE PARQUET(default, uncompressed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE foo");
@@ -313,12 +313,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     @Test
     public void testParquetEncoding() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET ENCODING DELTA_BINARY_PACKED) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED)) TIMESTAMP(ts) PARTITION BY DAY");
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
-                            \ta INT PARQUET ENCODING delta_binary_packed
+                            \ta INT PARQUET(delta_binary_packed)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE foo");
@@ -328,12 +328,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     @Test
     public void testParquetEncodingAndCompression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))) TIMESTAMP(ts) PARTITION BY DAY");
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
                             \tts TIMESTAMP,
-                            \ta INT PARQUET ENCODING delta_binary_packed COMPRESSION zstd 3
+                            \ta INT PARQUET(delta_binary_packed, zstd(3))
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE foo");

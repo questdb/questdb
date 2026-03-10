@@ -260,16 +260,19 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 int encoding = TableUtils.getParquetConfigEncoding(parquetConfig);
                 int compression = TableUtils.getParquetConfigCompression(parquetConfig);
                 int level = TableUtils.getParquetConfigCompressionLevel(parquetConfig);
-                sink.putAscii(" PARQUET");
+                sink.putAscii(" PARQUET(");
                 if (encoding > 0) {
-                    sink.putAscii(" ENCODING ").put(ParquetEncoding.getEncodingName(encoding));
+                    sink.put(ParquetEncoding.getEncodingName(encoding));
+                } else {
+                    sink.putAscii("default");
                 }
                 if (compression > 0) {
-                    sink.putAscii(" COMPRESSION ").put(ParquetCompression.getCompressionName(compression - 1));
+                    sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
                     if (level > 0) {
-                        sink.putAscii(' ').put(level);
+                        sink.putAscii('(').put(level).putAscii(')');
                     }
                 }
+                sink.putAscii(')');
             }
         }
 

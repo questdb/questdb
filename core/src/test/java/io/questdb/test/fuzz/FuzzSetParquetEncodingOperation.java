@@ -61,17 +61,20 @@ public class FuzzSetParquetEncodingOperation implements FuzzTransactionOperation
             context.with(AllowAllSecurityContext.INSTANCE);
             StringBuilder sb = new StringBuilder();
             sb.append("ALTER TABLE ").append(wApi.getTableToken().getTableName())
-                    .append(" ALTER COLUMN ").append(columnName).append(" SET PARQUET");
+                    .append(" ALTER COLUMN ").append(columnName).append(" SET PARQUET(");
 
             if (encoding > 0) {
-                sb.append(" ENCODING ").append(ParquetEncoding.getEncodingName(encoding));
+                sb.append(ParquetEncoding.getEncodingName(encoding));
+            } else {
+                sb.append("default");
             }
             if (compression >= 0) {
-                sb.append(" COMPRESSION ").append(ParquetCompression.getCompressionName(compression));
+                sb.append(", ").append(ParquetCompression.getCompressionName(compression));
                 if (compressionLevel > 0) {
-                    sb.append(' ').append(compressionLevel);
+                    sb.append('(').append(compressionLevel).append(')');
                 }
             }
+            sb.append(')');
 
             String sql = sb.toString();
 

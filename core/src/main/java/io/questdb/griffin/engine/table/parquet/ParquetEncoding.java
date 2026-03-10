@@ -87,12 +87,14 @@ public class ParquetEncoding {
 
     static {
         Os.init();
+        nameToEncodingMap.put("default", ENCODING_DEFAULT);
         nameToEncodingMap.put("plain", ENCODING_PLAIN);
         nameToEncodingMap.put("rle_dictionary", ENCODING_RLE_DICTIONARY);
         nameToEncodingMap.put("delta_length_byte_array", ENCODING_DELTA_LENGTH_BYTE_ARRAY);
         nameToEncodingMap.put("delta_binary_packed", ENCODING_DELTA_BINARY_PACKED);
         nameToEncodingMap.put("byte_stream_split", ENCODING_BYTE_STREAM_SPLIT);
 
+        encodingToNameMap.put(ENCODING_DEFAULT, "default");
         encodingToNameMap.put(ENCODING_PLAIN, "plain");
         encodingToNameMap.put(ENCODING_RLE_DICTIONARY, "rle_dictionary");
         encodingToNameMap.put(ENCODING_DELTA_LENGTH_BYTE_ARRAY, "delta_length_byte_array");
