@@ -74,16 +74,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
+
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
-    private final static Log LOG = LogFactory.getLog(AlterOperation.class);
+    private static final Log LOG = LogFactory.getLog(AlterOperation.class);
+    private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
-    protected final LongList extraInfo;
-    private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
+    private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
-    protected short command;
     private CharSequenceList activeExtraStrInfo;
+    private short command;
     private MemoryFCRImpl deserializeMem;
     private boolean keepMatViewsValid;
 
@@ -543,6 +544,19 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
+    private void applyTtl(MetadataService svc) {
+        final int ttlHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMetaTtl(ttlHoursOrMonths);
+            if (svc instanceof TableWriter) {
+                ((TableWriter) svc).enforceTtl();
+            }
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void changeColumnType(MetadataService svc) {
         if (activeExtraStrInfo.size() != 1) {
             throw CairoException.nonCritical().put("invalid change column type alter statement");
@@ -585,75 +599,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
-    private boolean enableDeduplication(MetadataService svc) {
-        assert extraInfo.size() > 0;
-        return svc.enableDeduplicationWithUpsertKeys(extraInfo);
-    }
-
-    private void setMatViewRefresh(MetadataService svc) {
-        final int refreshType = (int) extraInfo.get(0);
-        final int timerInterval = (int) extraInfo.get(1);
-        final char timerUnit = (char) extraInfo.get(2);
-        final long timerStartUs = extraInfo.get(3);
-        final int periodLength = (int) extraInfo.get(4);
-        final char periodLengthUnit = (char) extraInfo.get(5);
-        final int periodDelay = (int) extraInfo.get(6);
-        final char periodDelayUnit = (char) extraInfo.get(7);
-        final CharSequence timerTimeZone = activeExtraStrInfo.getStrA(0);
-
-        svc.setMatViewRefresh(
-                refreshType,
-                timerInterval,
-                timerUnit,
-                timerStartUs,
-                timerTimeZone,
-                periodLength,
-                periodLengthUnit,
-                periodDelay,
-                periodDelayUnit
-        );
-    }
-
-    private void setMatViewRefreshLimit(MetadataService svc) {
-        final int limitHoursOrMonths = (int) extraInfo.get(0);
-        try {
-            svc.setMatViewRefreshLimit(limitHoursOrMonths);
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
-    private void setMatViewRefreshTimer(MetadataService svc) {
-        final long startUs = extraInfo.get(0);
-        final int interval = (int) extraInfo.get(1);
-        final char unit = (char) extraInfo.get(2);
-        try {
-            svc.setMatViewRefreshTimer(startUs, interval, unit);
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
-    private void squashPartitions(MetadataService svc) {
-        svc.squashPartitions();
-    }
-
-    private void applyTtl(MetadataService svc) {
-        final int ttlHoursOrMonths = (int) extraInfo.get(0);
-        try {
-            svc.setMetaTtl(ttlHoursOrMonths);
-            if (svc instanceof TableWriter) {
-                ((TableWriter) svc).enforceTtl();
-            }
-        } catch (CairoException e) {
-            e.position(tableNamePosition);
-            throw e;
-        }
-    }
-
-    protected void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
+    private void doApply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
         switch (command) {
             case ADD_COLUMN:
                 applyAddColumn(svc);
@@ -749,8 +695,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
+    private boolean enableDeduplication(MetadataService svc) {
+        assert extraInfo.size() > 0;
+        return svc.enableDeduplicationWithUpsertKeys(extraInfo);
     }
 
     private CairoEngine getCairoEngine() {
@@ -760,6 +707,60 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void removeColumn(MetadataService svc, CharSequence columnName) {
         svc.removeColumn(columnName, securityContext);
+    }
+
+    private void setMatViewRefresh(MetadataService svc) {
+        final int refreshType = (int) extraInfo.get(0);
+        final int timerInterval = (int) extraInfo.get(1);
+        final char timerUnit = (char) extraInfo.get(2);
+        final long timerStartUs = extraInfo.get(3);
+        final int periodLength = (int) extraInfo.get(4);
+        final char periodLengthUnit = (char) extraInfo.get(5);
+        final int periodDelay = (int) extraInfo.get(6);
+        final char periodDelayUnit = (char) extraInfo.get(7);
+        final CharSequence timerTimeZone = activeExtraStrInfo.getStrA(0);
+
+        svc.setMatViewRefresh(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStartUs,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+    }
+
+    private void setMatViewRefreshLimit(MetadataService svc) {
+        final int limitHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMatViewRefreshLimit(limitHoursOrMonths);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    private void setMatViewRefreshTimer(MetadataService svc) {
+        final long startUs = extraInfo.get(0);
+        final int interval = (int) extraInfo.get(1);
+        final char unit = (char) extraInfo.get(2);
+        try {
+            svc.setMatViewRefreshTimer(startUs, interval, unit);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
+    private void squashPartitions(MetadataService svc) {
+        svc.squashPartitions();
+    }
+
+    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     private interface CharSequenceList extends Mutable {
