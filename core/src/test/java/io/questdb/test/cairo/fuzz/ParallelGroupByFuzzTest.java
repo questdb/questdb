@@ -1046,7 +1046,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, array_sum",
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [ts, array_sum]
                                             Async Group By workers: 4
                                               keys: [ts,array_sum]
