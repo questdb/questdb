@@ -1511,7 +1511,6 @@ public final class TestUtils {
                 filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
-            engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
         }
     }
