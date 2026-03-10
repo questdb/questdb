@@ -416,9 +416,7 @@ public final class Vect {
 
     public static native void sort3LongAscInPlace(long address, long count);
 
-    public static native void sort4LongAscInPlace(long address, long count);
-
-    public static native void sort5LongAscInPlace(long address, long count);
+    public static native void sortEncodedEntries(long addr, long count, int keyLongs);
 
     public static native long sortArrayColumn(
             long mergedTimestampsAddr,

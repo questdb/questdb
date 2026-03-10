@@ -51,15 +51,16 @@ struct long_3x {
     uint64_t l2;
     uint64_t l3;
 
+    bool operator<(const long_3x &other) const {
+        if (l1 != other.l1) return l1 < other.l1;
+        if (l2 != other.l2) return l2 < other.l2;
+        return l3 < other.l3;
+    }
+
     bool operator<=(const long_3x &other) const {
-        if (l1 > other.l1) return false;
-        if (l1 == other.l1) {
-            if (l2 > other.l2) return false;
-            if (l2 == other.l2) {
-                if (l3 > other.l3) return false;
-            }
-        }
-        return true;
+        if (l1 != other.l1) return l1 < other.l1;
+        if (l2 != other.l2) return l2 < other.l2;
+        return l3 <= other.l3;
     }
 };
 
@@ -68,6 +69,13 @@ struct long_4x {
     uint64_t l2;
     uint64_t l3;
     uint64_t l4;
+
+    bool operator<(const long_4x &other) const {
+        if (l1 != other.l1) return l1 < other.l1;
+        if (l2 != other.l2) return l2 < other.l2;
+        if (l3 != other.l3) return l3 < other.l3;
+        return l4 < other.l4;
+    }
 
     bool operator<=(const long_4x &other) const {
         if (l1 != other.l1) return l1 < other.l1;
@@ -83,6 +91,14 @@ struct long_5x {
     uint64_t l3;
     uint64_t l4;
     uint64_t l5;
+
+    bool operator<(const long_5x &other) const {
+        if (l1 != other.l1) return l1 < other.l1;
+        if (l2 != other.l2) return l2 < other.l2;
+        if (l3 != other.l3) return l3 < other.l3;
+        if (l4 != other.l4) return l4 < other.l4;
+        return l5 < other.l5;
+    }
 
     bool operator<=(const long_5x &other) const {
         if (l1 != other.l1) return l1 < other.l1;
@@ -1260,14 +1276,257 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
-JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_sort4LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
-    quick_sort_long_index_asc_in_place<long_4x>(reinterpret_cast<long_4x *>(pLong), 0, count - 1);
+
+} // extern "C"
+
+// ---------------------------------------------------------------------------
+// Encoded sort: adaptive vergesort + MSD radix + comparison sort
+//
+// Template parameter:
+//   ENTRY_LONGS - total uint64_t words per entry (key words + 1 rowId word)
+//
+// For all key sizes (FIXED_8/16/24/32):
+//   1. vergesort detects natural ascending/descending runs in O(n).
+//   2. Unsorted sub-runs go through MSD radix sort on the first uint64_t
+//      word (American Flag Sort, in-place, 8 byte passes from MSB to LSB).
+//   3. Within each radix partition (same first word), std::sort handles
+//      the remaining key words and rowId (stability tiebreaker).
+//   4. std::inplace_merge combines sorted runs — no scratch buffer needed.
+// ---------------------------------------------------------------------------
+
+// Maps ENTRY_LONGS to the corresponding struct type.
+template<int ENTRY_LONGS> struct entry_traits;
+template<> struct entry_traits<2> { using type = index_t; };
+template<> struct entry_traits<3> { using type = long_3x; };
+template<> struct entry_traits<4> { using type = long_4x; };
+template<> struct entry_traits<5> { using type = long_5x; };
+
+// Returns the first uint64_t word (most significant key word) of an entry.
+inline uint64_t entry_first_word(const index_t &e) { return e.ts; }
+inline uint64_t entry_first_word(const long_3x &e) { return e.l1; }
+inline uint64_t entry_first_word(const long_4x &e) { return e.l1; }
+inline uint64_t entry_first_word(const long_5x &e) { return e.l1; }
+
+// Comparator that compares all fields including rowId (tiebreaker for
+// stability). index_t::operator< only compares ts, which is insufficient
+// for encoded sort where equal keys must be ordered by rowId.
+struct encoded_less {
+    bool operator()(const index_t &a, const index_t &b) const {
+        if (a.ts != b.ts) return a.ts < b.ts;
+        return a.i < b.i;
+    }
+    bool operator()(const long_3x &a, const long_3x &b) const { return a < b; }
+    bool operator()(const long_4x &a, const long_4x &b) const { return a < b; }
+    bool operator()(const long_5x &a, const long_5x &b) const { return a < b; }
+};
+
+// MSD (Most Significant Digit) radix sort on the first uint64_t word.
+//
+// Processes one byte at a time from MSB (shift=56) to LSB (shift=0) using
+// in-place American Flag Sort: count byte values, compute bucket offsets,
+// then cycle-sort elements into their target buckets without a scratch buffer.
+//
+// After fully partitioning by the first word (shift reaches 0), std::sort
+// handles the remaining key words and rowId within each partition.
+//
+// For partitions smaller than 128 elements, delegates to std::sort directly
+// (matches DuckDB's StdSortThreshold). At this size the overhead of radix
+// decomposition (256-entry count array + prefix sum + cycle sort) exceeds
+// what comparison sort costs in L1 cache.
+template<typename T>
+void msd_radix_byte(T *arr, int64_t count, int shift) {
+    if (count < 128) {
+        std::sort(arr, arr + count, encoded_less{});
+        return;
+    }
+
+    // Count occurrences of each byte value at the current position
+    int64_t counts[256] = {};
+    for (int64_t i = 0; i < count; i++) {
+        counts[(entry_first_word(arr[i]) >> shift) & 0xFF]++;
+    }
+
+    // Compute bucket start offsets (prefix sum) and end positions
+    int64_t offsets[256];
+    int64_t ends[256];
+    int64_t sum = 0;
+    for (int v = 0; v < 256; v++) {
+        offsets[v] = sum;
+        sum += counts[v];
+        ends[v] = sum;
+    }
+
+    // In-place cycle sort: for each bucket, follow swap cycles until
+    // every element lands in its target bucket. Each element participates
+    // in at most one cycle, so total work is O(n).
+    for (int v = 0; v < 256; v++) {
+        while (offsets[v] < ends[v]) {
+            auto bv = static_cast<uint8_t>(
+                    (entry_first_word(arr[offsets[v]]) >> shift) & 0xFF);
+            if (bv == v) {
+                offsets[v]++;
+                continue;
+            }
+            T elem = arr[offsets[v]];
+            do {
+                std::swap(elem, arr[offsets[bv]++]);
+                bv = static_cast<uint8_t>(
+                        (entry_first_word(elem) >> shift) & 0xFF);
+            } while (bv != v);
+            arr[offsets[v]++] = elem;
+        }
+    }
+
+    // Recurse into each non-trivial bucket
+    sum = 0;
+    for (int v = 0; v < 256; v++) {
+        if (counts[v] > 1) {
+            if (shift > 0) {
+                msd_radix_byte<T>(arr + sum, counts[v], shift - 8);
+            } else {
+                // First word fully partitioned; comparison sort handles
+                // the remaining key words and rowId within this partition
+                std::sort(arr + sum, arr + sum + counts[v], encoded_less{});
+            }
+        }
+        sum += counts[v];
+    }
 }
 
+// ska_sort_entries: MSD radix sort on the first word with comparison fallback.
+// Entry point that starts processing from the most significant byte (shift=56).
+template<typename T>
+void ska_sort_entries(T *arr, int64_t count) {
+    msd_radix_byte<T>(arr, count, 56);
+}
+
+// vergesort_entries: DuckDB-style adaptive sort.
+//
+// 1. For small arrays (< 128), delegates directly to ska_sort.
+// 2. Scans for natural ascending/descending runs. Runs longer than
+//    unstable_limit (= count / log2(count)) are kept as-is; the gaps
+//    between them are sorted with ska_sort.
+// 3. Merges all sorted runs pairwise using std::inplace_merge.
+//
+// This approach is O(n) for already-sorted data, and O(n log n) for
+// random data with radix sort providing O(n * 8) sub-run sorting.
+template<typename T>
+void vergesort_entries(T *arr, int64_t count) {
+    if (count < 128) {
+        ska_sort_entries<T>(arr, count);
+        return;
+    }
+
+    // unstable_limit: minimum run length to be considered "significant".
+    // Shorter runs are accumulated and sorted with ska_sort.
+    int lg = 63 - __builtin_clzll(count);
+    if (lg < 1) lg = 1;
+    int64_t unstable_limit = count / lg;
+
+    // Run boundaries: bounds[0..numBounds-1] where run i spans
+    // [bounds[i], bounds[i+1]). bounds[numBounds-1] = count.
+    // Max runs = 2 * lg + 4 (each significant run adds at most 2 boundaries).
+    constexpr int MAX_BOUNDS = 256;
+    int64_t bounds[MAX_BOUNDS];
+    int numBounds = 0;
+
+    int64_t begin_unstable = 0;
+    bool has_unstable = false;
+    int64_t pos = 0;
+
+    while (pos < count) {
+        int64_t runStart = pos;
+        int64_t runEnd = pos + 1;
+
+        if (runEnd < count) {
+            encoded_less cmp;
+            if (cmp(arr[runEnd], arr[runStart])) {
+                // Strictly descending run
+                while (runEnd < count && cmp(arr[runEnd], arr[runEnd - 1])) runEnd++;
+                std::reverse(arr + runStart, arr + runEnd);
+            } else {
+                // Non-descending (ascending) run
+                while (runEnd < count && !cmp(arr[runEnd], arr[runEnd - 1])) runEnd++;
+            }
+        }
+
+        if (runEnd - runStart >= unstable_limit) {
+            // Sort accumulated unstable region before this run
+            if (has_unstable && runStart > begin_unstable) {
+                ska_sort_entries<T>(
+                        arr + begin_unstable, runStart - begin_unstable);
+                if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = begin_unstable;
+            }
+            if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = runStart;
+            begin_unstable = runEnd;
+            has_unstable = false;
+        } else {
+            if (!has_unstable) {
+                begin_unstable = runStart;
+                has_unstable = true;
+            }
+        }
+
+        pos = runEnd;
+    }
+
+    // Sort remaining unstable region
+    if (has_unstable || begin_unstable < count) {
+        if (begin_unstable < count) {
+            ska_sort_entries<T>(
+                    arr + begin_unstable, count - begin_unstable);
+        }
+        if (numBounds == 0 || bounds[numBounds - 1] != begin_unstable) {
+            bounds[numBounds++] = begin_unstable;
+        }
+    }
+    bounds[numBounds++] = count;
+
+    if (numBounds <= 2) return; // 0 or 1 run, already sorted
+
+    // Merge runs pairwise using std::inplace_merge.
+    // Each pass halves the number of runs: O(log k) passes, O(n) work each.
+    while (numBounds > 2) {
+        int newNum = 0;
+        for (int b = 0; b + 2 < numBounds; b += 2) {
+            std::inplace_merge(
+                    arr + bounds[b],
+                    arr + bounds[b + 1],
+                    arr + bounds[b + 2],
+                    encoded_less{});
+            bounds[newNum++] = bounds[b];
+        }
+        // Odd run carries over unmerged
+        if ((numBounds - 1) % 2 == 1) {
+            bounds[newNum++] = bounds[numBounds - 2];
+        }
+        bounds[newNum++] = count;
+        numBounds = newNum;
+    }
+}
+
+template<int ENTRY_LONGS>
+void sort_encoded_impl(uint8_t *addr, int64_t count) {
+    if (count <= 1) return;
+
+    using T = typename entry_traits<ENTRY_LONGS>::type;
+    vergesort_entries<T>(reinterpret_cast<T *>(addr), count);
+}
+
+extern "C" {
+
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_sort5LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
-    quick_sort_long_index_asc_in_place<long_5x>(reinterpret_cast<long_5x *>(pLong), 0, count - 1);
+Java_io_questdb_std_Vect_sortEncodedEntries(JNIEnv *env, jclass cl,
+                                             jlong addr, jlong count,
+                                             jint keyLongs) {
+    auto *base = reinterpret_cast<uint8_t *>(addr);
+
+    switch (keyLongs) {
+        case 1: sort_encoded_impl<2>(base, count); break;
+        case 2: sort_encoded_impl<3>(base, count); break;
+        case 3: sort_encoded_impl<4>(base, count); break;
+        case 4: sort_encoded_impl<5>(base, count); break;
+    }
 }
 
 JNIEXPORT void JNICALL

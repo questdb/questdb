@@ -115,15 +115,4 @@ public final class SortKeyEncoding {
         }
     }
 
-    /**
-     * Writes a NULL sentinel for a fixed-width column.
-     * NULLS FIRST (ASC): all 0x00 → sorts before any real value.
-     * NULLS LAST (ASC): all 0xFF → sorts after any real value.
-     * For DESC columns, flipBytes() is applied after this, which inverts the
-     * semantics correctly.
-     */
-    public static void encodeNull(long addr, int byteWidth, boolean isNullsLast) {
-        byte fill = isNullsLast ? (byte) 0xFF : (byte) 0x00;
-        Unsafe.getUnsafe().setMemory(addr, byteWidth, fill);
-    }
 }

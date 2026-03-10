@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
@@ -54,8 +55,9 @@ public class SortKeyEncoder implements QuietCloseable {
     private final boolean[] isDesc;
     private final boolean[] isSymbol;
     private final int[] offsets;
+    private final ObjList<DirectIntList> rankMaps;
     private SortKeyType keyType;
-    private ObjList<DirectIntList> rankMaps;
+    private int padBytes;
 
     public SortKeyEncoder(RecordMetadata metadata, IntList sortColumnFilter) {
         int n = sortColumnFilter.size();
@@ -66,6 +68,7 @@ public class SortKeyEncoder implements QuietCloseable {
         this.offsets = new int[n];
         this.columnByteWidths = new int[n];
         boolean hasDecimal256 = false;
+        this.rankMaps = new ObjList<>(n);
 
         for (int i = 0; i < n; i++) {
             int encoded = sortColumnFilter.getQuick(i);
@@ -74,12 +77,13 @@ public class SortKeyEncoder implements QuietCloseable {
             columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
             isSymbol[i] = ColumnType.isSymbol(columnTypes[i]);
             hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
-            // Pre-compute byte width for non-symbol columns (symbol width depends on runtime symbol count)
             if (!isSymbol[i]) {
                 columnByteWidths[i] = columnByteWidth(columnTypes[i], metadata, columnIndices[i]);
+                rankMaps.add(null);
+            } else {
+                rankMaps.add(new DirectIntList(1, MemoryTag.NATIVE_DEFAULT, true));
             }
         }
-
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
     }
 
@@ -104,12 +108,10 @@ public class SortKeyEncoder implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.freeObjList(rankMaps);
+        Misc.freeObjListAndKeepObjects(rankMaps);
     }
 
     public SortKeyType configure(RecordCursor baseCursor) {
-        Misc.freeObjList(rankMaps);
-        rankMaps = new ObjList<>(columnIndices.length);
         int totalBytes = 0;
 
         for (int i = 0; i < columnIndices.length; i++) {
@@ -118,7 +120,7 @@ public class SortKeyEncoder implements QuietCloseable {
             if (isSymbol[i]) {
                 StaticSymbolTable symbolTable = getStaticSymbolTable(baseCursor.getSymbolTable(columnIndices[i]));
                 int symbolCount = symbolTable.getSymbolCount();
-                rankMaps.add(buildRankMap(symbolTable, symbolCount));
+                buildRankMap(rankMaps.getQuick(i), symbolTable, symbolCount);
 
                 if (symbolCount <= 0xFF) {
                     columnByteWidths[i] = 1;
@@ -127,13 +129,12 @@ public class SortKeyEncoder implements QuietCloseable {
                 } else {
                     columnByteWidths[i] = 4;
                 }
-            } else {
-                rankMaps.add(null);
             }
             totalBytes += columnByteWidths[i];
         }
 
         keyType = SortKeyType.fromKeyLength(totalBytes);
+        padBytes = keyType.keyLength() - totalBytes;
         return keyType;
     }
 
@@ -146,7 +147,7 @@ public class SortKeyEncoder implements QuietCloseable {
             if (isSymbol[i]) {
                 int key = record.getInt(colIdx);
                 DirectIntList rankMap = rankMaps.getQuick(i);
-                int rank = rankMap.get(key + 1);
+                int rank = (key == SymbolTable.VALUE_IS_NULL) ? 0 : rankMap.get(key);
                 SortKeyEncoding.encodeUnsignedRank(addr, rank, width);
             } else {
                 switch (columnTypes[i]) {
@@ -187,9 +188,8 @@ public class SortKeyEncoder implements QuietCloseable {
             }
         }
         // zero-pad the remaining key bytes up to keyType.keyLength()
-        int actualKeyBytes = offsets[columnIndices.length - 1] + columnByteWidths[columnIndices.length - 1];
-        int padBytes = keyType.keyLength() - actualKeyBytes;
         if (padBytes > 0) {
+            int actualKeyBytes = keyType.keyLength() - padBytes;
             Unsafe.getUnsafe().setMemory(destAddr + actualKeyBytes, padBytes, (byte) 0);
         }
 
@@ -204,73 +204,33 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
-    private static DirectIntList buildRankMap(StaticSymbolTable symbolTable, int symbolCount) {
-        int totalEntries = symbolCount + 1; // +1 for NULL
-        DirectIntList rankMap = new DirectIntList(totalEntries, MemoryTag.NATIVE_DEFAULT);
-        rankMap.setCapacity(totalEntries);
-        rankMap.setPos(totalEntries);
-
-        int[] sortedKeys = new int[symbolCount];
+    private static void buildRankMap(DirectIntList rankMap, StaticSymbolTable symbolTable, int symbolCount) {
+        rankMap.setCapacity(symbolCount);
+        rankMap.setPos(symbolCount);
         for (int k = 0; k < symbolCount; k++) {
-            sortedKeys[k] = k;
+            rankMap.set(k, k);
         }
-        // insertion sort by symbol value (symbol count is typically small)
-        for (int i = 1; i < symbolCount; i++) {
-            int keyI = sortedKeys[i];
-            CharSequence valI = symbolTable.valueOf(keyI);
-            int j = i - 1;
-            while (j >= 0) {
-                CharSequence valJ = symbolTable.valueOf(sortedKeys[j]);
-                if (compare(valJ, valI) <= 0) {
-                    break;
-                }
-                sortedKeys[j + 1] = sortedKeys[j];
-                j--;
+        quickSortRankMap(rankMap, symbolTable, 0, symbolCount - 1);
+        for (int i = 0; i < symbolCount; i++) {
+            if (rankMap.get(i) < 0) {
+                continue;
             }
-            sortedKeys[j + 1] = keyI;
-        }
-
-        // NULL gets rank 0 (NULLS FIRST), sorted symbols get ranks 1..symbolCount
-        rankMap.set(0, 0);
-        for (int rank = 0; rank < symbolCount; rank++) {
-            int key = sortedKeys[rank];
-            rankMap.set(key + 1, rank + 1);
-        }
-
-        return rankMap;
-    }
-
-    private static int compare(CharSequence a, CharSequence b) {
-        if (a == null && b == null) {
-            return 0;
-        }
-        if (a == null) {
-            return -1;
-        }
-        if (b == null) {
-            return 1;
-        }
-        int len = Math.min(a.length(), b.length());
-        for (int i = 0; i < len; i++) {
-            int cmp = Character.compare(a.charAt(i), b.charAt(i));
-            if (cmp != 0) {
-                return cmp;
+            int curr = i;
+            int val = rankMap.get(i);
+            while (val != i) {
+                int nextVal = rankMap.get(val);
+                rankMap.set(val, -(curr + 1));
+                curr = val;
+                val = nextVal;
             }
+            rankMap.set(i, -(curr + 1));
         }
-        return Integer.compare(a.length(), b.length());
+        for (int i = 0; i < symbolCount; i++) {
+            rankMap.set(i, -rankMap.get(i));
+        }
     }
 
-    private static StaticSymbolTable getStaticSymbolTable(SymbolTable symbolTable) {
-        if (symbolTable instanceof StaticSymbolTable) {
-            return (StaticSymbolTable) symbolTable;
-        }
-        if (symbolTable instanceof SymbolFunction) {
-            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
-        }
-        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
-    }
-
-    static int columnByteWidth(int columnType, RecordMetadata metadata, int columnIndex) {
+    private static int columnByteWidth(int columnType, RecordMetadata metadata, int columnIndex) {
         return switch (columnType) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
             case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
@@ -287,5 +247,41 @@ public class SortKeyEncoder implements QuietCloseable {
             }
             default -> -1;
         };
+    }
+
+    private static StaticSymbolTable getStaticSymbolTable(SymbolTable symbolTable) {
+        if (symbolTable instanceof StaticSymbolTable) {
+            return (StaticSymbolTable) symbolTable;
+        }
+        if (symbolTable instanceof SymbolFunction) {
+            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
+        }
+        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
+    }
+
+    private static void quickSortRankMap(DirectIntList rankMap, StaticSymbolTable symbolTable, int lo, int hi) {
+        if (lo >= hi) {
+            return;
+        }
+        int mid = lo + (hi - lo) / 2;
+        int pivotKey = rankMap.get(mid);
+        CharSequence pivotVal = symbolTable.valueOf(pivotKey);
+        rankMap.set(mid, rankMap.get(hi));
+        rankMap.set(hi, pivotKey);
+
+        int store = lo;
+        for (int i = lo; i < hi; i++) {
+            if (Chars.compare(symbolTable.valueOf(rankMap.get(i)), pivotVal) < 0) {
+                int tmp = rankMap.get(store);
+                rankMap.set(store, rankMap.get(i));
+                rankMap.set(i, tmp);
+                store++;
+            }
+        }
+        rankMap.set(hi, rankMap.get(store));
+        rankMap.set(store, pivotKey);
+
+        quickSortRankMap(rankMap, symbolTable, lo, store - 1);
+        quickSortRankMap(rankMap, symbolTable, store + 1, hi);
     }
 }
