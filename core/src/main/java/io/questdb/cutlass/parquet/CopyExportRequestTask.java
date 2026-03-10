@@ -560,9 +560,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = meta.getColumnType(i);
-                // GenericRecordMetadata (hybrid/cursor paths) returns i;
                 // table metadata returns the physical writer column index.
-                final int writerIdx = meta.getWriterIndex(i);
+                int writerIdx = meta.getWriterIndex(i);
+                if (writerIdx < 0) {
+                    // GenericRecordMetadata (hybrid/cursor paths) returns -1, use i instead
+                    writerIdx = i;
+                }
 
                 // A SYMBOL column needs symbol-table metadata when it is a
                 // real table column.  In the hybrid path (baseColumnMap != null)

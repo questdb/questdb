@@ -1054,6 +1054,7 @@ fn create_partition_template(
     };
     let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 2) };
     let mut columns = vec![];
+    let mut max_id: i32 = 0;
 
     for col_idx in 0..col_count {
         let raw_idx = col_idx * 2;
@@ -1081,7 +1082,37 @@ fn create_partition_template(
             timestamp_descending == 0,
         )?;
 
+        if col_id < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column '{}' (index {}) has invalid field_id {}",
+                col_name,
+                col_idx,
+                col_id
+            ));
+        }
+
+        if col_id > max_id {
+            max_id = col_id;
+        }
+
         columns.push(column);
+    }
+
+    // Check for duplicate field_ids (ids are dense non-negative).
+    let mut seen = vec![false; (max_id + 1) as usize];
+    for (i, c) in columns.iter().enumerate() {
+        let id = c.id as usize;
+        if seen[id] {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "duplicate field_id {} at column '{}' (index {})",
+                c.id,
+                c.name,
+                i
+            ));
+        }
+        seen[id] = true;
     }
 
     Ok(Partition { table: String::new(), columns })
