@@ -124,11 +124,7 @@ public class JsonUnnestFuzzTest extends AbstractCairoTest {
                 execute("DROP TABLE IF EXISTS t");
                 execute("CREATE TABLE t (payload VARCHAR)");
 
-                StringBuilder bigVal = new StringBuilder();
-                for (int i = 0; i < JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE + 100; i++) {
-                    bigVal.append('x');
-                }
-                String json = "[{\"s\":\"" + bigVal + "\"}]";
+                String json = "[{\"s\":\"" + "x".repeat(JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE + 100) + "\"}]";
                 execute("INSERT INTO t VALUES ('" + json + "')");
 
                 try {

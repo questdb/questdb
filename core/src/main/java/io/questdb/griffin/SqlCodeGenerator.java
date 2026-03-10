@@ -8628,20 +8628,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean hasOrdinality = unnestModel.isUnnestOrdinality();
         final boolean isStandalone = unnestModel.isStandaloneUnnest();
         final int exprCount = unnestExprs.size();
-        final RecordMetadata masterMetadata =
-                masterFactory.getMetadata();
-        final int masterColumnCount =
-                masterMetadata.getColumnCount();
+        final RecordMetadata masterMetadata = masterFactory.getMetadata();
+        final int masterColumnCount = masterMetadata.getColumnCount();
         final CharSequence unnestAlias = unnestModel.getName();
-        final int totalOutputCols =
-                unnestModel.getUnnestOutputColumnCount();
-        final int totalUnnestColumns =
-                totalOutputCols + (hasOrdinality ? 1 : 0);
+        final int totalOutputCols = unnestModel.getUnnestOutputColumnCount();
+        final int totalUnnestColumns = totalOutputCols + (hasOrdinality ? 1 : 0);
 
         // For standalone UNNEST, the base is a synthetic
         // long_sequence(1) whose columns we exclude from output.
-        final int columnSplit =
-                isStandalone ? 0 : masterColumnCount;
+        final int columnSplit = isStandalone ? 0 : masterColumnCount;
 
         // Build JoinRecordMetadata with master columns first so
         // the function parser can resolve table-qualified
@@ -8651,12 +8646,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterColumnCount + totalUnnestColumns
         );
         try {
-            parserMetadata.copyColumnMetadataFrom(
-                    masterAlias, masterMetadata
-            );
+            parserMetadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
 
-            ObjList<Function> functions =
-                    new ObjList<>(exprCount);
+            ObjList<Function> functions = new ObjList<>(exprCount);
             UnnestSource[] sources = new UnnestSource[exprCount];
             try {
                 // Build output metadata separately from the
@@ -8677,8 +8669,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 try {
-                    ObjList<CharSequence> columnNames =
-                            new ObjList<>(totalUnnestColumns);
+                    ObjList<CharSequence> columnNames = new ObjList<>(totalUnnestColumns);
                     int aliasIdx = 0;
 
                     // Compile each UNNEST expression and build
@@ -8713,11 +8704,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     unnestModel
                                             .getUnnestJsonColumnTypes()
                                             .getQuick(i);
-                            sources[i] = new JsonUnnestSource(
-                                    f, jsonColNames, jsonColTypes,
-                                    configuration
-                                            .getJsonUnnestMaxValueSize()
-                            );
+                            sources[i] = new JsonUnnestSource(f, jsonColNames, jsonColTypes, configuration.getJsonUnnestMaxValueSize());
                             for (int j = 0, jn = jsonColNames.size();
                                  j < jn; j++) {
                                 CharSequence colName;

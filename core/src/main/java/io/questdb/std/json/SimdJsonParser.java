@@ -51,6 +51,41 @@ public class SimdJsonParser implements QuietCloseable {
         }
     }
 
+    /**
+     * Extract all columns from a single array element in one document parse.
+     * For object arrays, iterates object fields matching against column descriptors.
+     * For scalar arrays, extracts the element directly.
+     *
+     * @param json           padded JSON document
+     * @param elementIndex   index of the array element to extract
+     * @param isObjectArray  true if elements are objects, false for scalar arrays
+     * @param descsPtr       pointer to native column_desc_t array (32 bytes per column)
+     * @param resultsPtr     pointer to native column_result_t array (24 bytes per column)
+     * @param columnCount    number of columns
+     */
+    public void extractArrayElement(
+            DirectUtf8Sequence json,
+            int elementIndex,
+            boolean isObjectArray,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        extractArrayElement(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                json.isAscii(),
+                elementIndex,
+                isObjectArray,
+                descsPtr,
+                resultsPtr,
+                columnCount
+        );
+    }
+
     @Override
     public void close() {
         if (impl != 0) {
@@ -232,6 +267,19 @@ public class SimdJsonParser implements QuietCloseable {
     private static native long create();
 
     private static native void destroy(long impl);
+
+    private static native void extractArrayElement(
+            long impl,
+            long jsonPtr,
+            long jsonLen,
+            long jsonTailPadding,
+            boolean jsonIsAscii,
+            int elementIndex,
+            boolean isObjectArray,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount
+    );
 
     private native static int getSimdJsonPadding();
 

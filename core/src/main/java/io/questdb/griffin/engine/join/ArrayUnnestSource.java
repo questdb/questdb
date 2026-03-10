@@ -191,7 +191,7 @@ public class ArrayUnnestSource implements UnnestSource {
     @Override
     public int init(Record baseRecord) {
         ArrayView v = function.getArray(baseRecord);
-        if (v == null || v.isNull()) {
+        if (v.isNull()) {
             this.view = null;
             return 0;
         }

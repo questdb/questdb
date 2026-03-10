@@ -45,9 +45,7 @@ public class JsonUnnestConfigTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             StringBuilder bigVal = new StringBuilder();
-            for (int i = 0; i < 5000; i++) {
-                bigVal.append('x');
-            }
+            bigVal.append("x".repeat(5000));
             execute("INSERT INTO t VALUES ('[{\"s\":\"" + bigVal + "\"}]')");
             assertQueryNoLeakCheck(
                     "s\n"

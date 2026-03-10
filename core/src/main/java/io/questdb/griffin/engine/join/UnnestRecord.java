@@ -236,7 +236,7 @@ public class UnnestRecord implements Record {
         }
         int unnestCol = col - split;
         if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return (double) (arrayIndex + 1);
+            return arrayIndex + 1;
         }
         if (unnestCol < unnestColumnCount) {
             int srcIdx = colToSourceIndex[unnestCol];
@@ -539,6 +539,10 @@ public class UnnestRecord implements Record {
             return sources[srcIdx].getVarcharSize(srcCol, arrayIndex);
         }
         return -1;
+    }
+
+    int getSplit() {
+        return split;
     }
 
     void of(Record baseRecord) {

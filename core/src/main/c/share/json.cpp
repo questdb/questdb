@@ -379,6 +379,218 @@ jlong extract_value(
     return 0;
 }
 
+// QuestDB ColumnType tag values (must match ColumnType.java).
+namespace qdb_col {
+    constexpr int32_t BOOLEAN = 1;
+    constexpr int32_t SHORT = 3;
+    constexpr int32_t INT = 5;
+    constexpr int32_t LONG = 6;
+    constexpr int32_t TIMESTAMP = 8;
+    constexpr int32_t DOUBLE = 10;
+    constexpr int32_t VARCHAR = 26;
+}
+
+// Per-column descriptor for batch extraction. Layout must match Java Unsafe access in JsonUnnestSource.
+PACK(struct column_desc_t {
+    const char *field_name;     // 0: pointer to field name bytes
+    int64_t field_name_len;     // 8: length of field name
+    int32_t column_type;        // 16: QuestDB ColumnType tag
+    int32_t max_size;           // 20: max string size (for varchar/timestamp)
+    questdb_byte_sink_t *sink;  // 24: byte sink pointer (for varchar/timestamp; nullptr for others)
+});
+
+static_assert(sizeof(column_desc_t) == 32, "Unexpected size of column_desc_t");
+
+// Per-column extraction result. Layout must match Java Unsafe access in JsonUnnestSource.
+PACK(struct column_result_t {
+    int64_t value;              // 0: extracted value (bits)
+    int32_t error;              // 8: simdjson error code
+    int32_t type;               // 12: json type
+    int32_t number_type;        // 16: number subtype
+    int32_t truncated;          // 20: truncation flag
+});
+
+static_assert(sizeof(column_result_t) == 24, "Unexpected size of column_result_t");
+
+static void write_result(column_result_t &cr, const json_result &jr, int64_t value) {
+    cr.value = value;
+    cr.error = static_cast<int32_t>(jr.error);
+    cr.type = static_cast<int32_t>(jr.type);
+    cr.number_type = static_cast<int32_t>(jr.number_type);
+    cr.truncated = jr.truncated;
+}
+
+// Extract a single column value from a JSON element. Dispatches based on column_type
+// to reuse the same extraction logic as the per-column JNI functions.
+template<typename V>
+static void extract_for_column(
+        V &val,
+        const column_desc_t &desc,
+        column_result_t &cr,
+        bool json_is_ascii
+) {
+    json_result jr;
+    if (!jr.from(val)) {
+        write_result(cr, jr, 0);
+        return;
+    }
+
+    int64_t extracted_value = 0;
+    switch (desc.column_type) {
+        case qdb_col::BOOLEAN: {
+            if (jr.type == simdjson::ondemand::json_type::boolean) {
+                extracted_value = val.get_bool().value_unsafe() ? 1 : 0;
+            }
+            break;
+        }
+        case qdb_col::SHORT: {
+            extracted_value = extract_numeric<jshort>(
+                    jr, val,
+                    [&jr](int64_t value) -> jshort {
+                        auto short_res = static_cast<jshort>(value);
+                        if (value != short_res) [[unlikely]] {
+                            jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jshort>::value;
+                        }
+                        return short_res;
+                    },
+                    [&jr](uint64_t) -> jshort {
+                        jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                        return default_value<jshort>::value;
+                    },
+                    [&jr](double value) -> jshort {
+                        if (value < std::numeric_limits<short>::min() ||
+                            value > std::numeric_limits<short>::max()) [[unlikely]] {
+                            jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jshort>::value;
+                        }
+                        return static_cast<jshort>(value);
+                    });
+            break;
+        }
+        case qdb_col::INT: {
+            extracted_value = extract_numeric<jint>(
+                    jr, val,
+                    [&jr](int64_t value) -> jint {
+                        auto int_res = static_cast<jint>(value);
+                        if (value != int_res) [[unlikely]] {
+                            jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jint>::value;
+                        }
+                        return int_res;
+                    },
+                    [&jr](uint64_t) -> jint {
+                        jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                        return default_value<jint>::value;
+                    },
+                    [&jr](double value) -> jint {
+                        if (value < std::numeric_limits<jint>::min() ||
+                            value > std::numeric_limits<jint>::max()) [[unlikely]] {
+                            jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jint>::value;
+                        }
+                        return static_cast<jint>(value);
+                    });
+            break;
+        }
+        case qdb_col::LONG: {
+            extracted_value = extract_numeric<jlong>(
+                    jr, val,
+                    [](int64_t value) -> jlong { return value; },
+                    [&jr](uint64_t) -> jlong {
+                        jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                        return default_value<jlong>::value;
+                    },
+                    [&jr](double value) -> jlong {
+                        if ((value < static_cast<double>(std::numeric_limits<jlong>::min())) ||
+                            (value > static_cast<double>(std::numeric_limits<jlong>::max()))) [[unlikely]] {
+                            jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jlong>::value;
+                        }
+                        return static_cast<jlong>(value);
+                    });
+            break;
+        }
+        case qdb_col::DOUBLE: {
+            jdouble d = extract_numeric<jdouble>(
+                    jr, val,
+                    [](int64_t value) -> jdouble { return static_cast<jdouble>(value); },
+                    [](uint64_t value) -> jdouble { return static_cast<jdouble>(value); },
+                    [](double value) -> jdouble { return value; });
+            union {
+                jlong l;
+                jdouble d;
+            } u;
+            u.d = d;
+            extracted_value = u.l;
+            break;
+        }
+        case qdb_col::VARCHAR: {
+            if (desc.sink != nullptr) {
+                switch (jr.type) {
+                    case simdjson::ondemand::json_type::string:
+                        jr.truncated = truncated_utf8_copy(
+                                *desc.sink,
+                                static_cast<size_t>(desc.max_size),
+                                val.get_string().value_unsafe(),
+                                json_is_ascii
+                        );
+                        break;
+                    case simdjson::ondemand::json_type::array:
+                    case simdjson::ondemand::json_type::object:
+                    case simdjson::ondemand::json_type::number:
+                    case simdjson::ondemand::json_type::boolean:
+                        extract_raw_json(val, json_is_ascii, desc.sink, desc.max_size, jr);
+                        break;
+                    case simdjson::ondemand::json_type::null:
+                        break;
+                }
+            }
+            break;
+        }
+        case qdb_col::TIMESTAMP: {
+            switch (jr.type) {
+                case simdjson::ondemand::json_type::string: {
+                    if (desc.sink != nullptr) {
+                        jr.truncated = truncated_utf8_copy(
+                                *desc.sink,
+                                static_cast<size_t>(desc.max_size),
+                                val.get_string().value_unsafe(),
+                                true  // timestamps are ASCII
+                        );
+                    }
+                    break;
+                }
+                case simdjson::ondemand::json_type::number:
+                case simdjson::ondemand::json_type::boolean: {
+                    extracted_value = extract_numeric<jlong>(
+                            jr, val,
+                            [](int64_t value) -> jlong { return value; },
+                            [&jr](uint64_t) -> jlong {
+                                jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                return default_value<jlong>::value;
+                            },
+                            [&jr](double value) -> jlong {
+                                if ((value < static_cast<double>(std::numeric_limits<jlong>::min())) ||
+                                    (value > static_cast<double>(std::numeric_limits<jlong>::max()))) [[unlikely]] {
+                                    jr.error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                    return default_value<jlong>::value;
+                                }
+                                return static_cast<jlong>(value);
+                            });
+                    break;
+                }
+                default:
+                    extracted_value = default_value<jlong>::value;
+                    break;
+            }
+            break;
+        }
+    }
+
+    write_result(cr, jr, extracted_value);
+}
+
 extern "C" {
 
 JNIEXPORT jint JNICALL
@@ -705,6 +917,86 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerArrayLength(
     }
     result->error = simdjson::error_code::SUCCESS;
     return static_cast<jint>(count_value);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_json_SimdJsonParser_extractArrayElement(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
+        size_t json_len,
+        size_t tail_padding,
+        jboolean json_is_ascii,
+        jint element_index,
+        jboolean is_object_array,
+        column_desc_t *descs,
+        column_result_t *results,
+        jint column_count
+) {
+    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
+
+    auto doc = parser->iterate(json_buf);
+    if (doc.error()) {
+        auto err = static_cast<int32_t>(doc.error());
+        for (jint i = 0; i < column_count; i++) {
+            results[i] = {0, err, 0, 0, 0};
+        }
+        return;
+    }
+
+    // Navigate to /elementIndex
+    char pointer_buf[24];
+    auto pointer_len = snprintf(pointer_buf, sizeof(pointer_buf), "/%d", element_index);
+    auto element = doc.at_pointer({pointer_buf, static_cast<size_t>(pointer_len)});
+
+    if (element.error()) {
+        auto err = static_cast<int32_t>(element.error());
+        for (jint i = 0; i < column_count; i++) {
+            results[i] = {0, err, 0, 0, 0};
+        }
+        return;
+    }
+
+    if (is_object_array) {
+        // Initialize all columns as "not found"
+        for (jint i = 0; i < column_count; i++) {
+            results[i] = {0, static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD), 0, 0, 0};
+        }
+
+        auto obj = element.get_object();
+        if (obj.error()) {
+            // Element is null, not an object, or otherwise invalid.
+            // All columns keep their NO_SUCH_FIELD default, matching the
+            // behavior of at_pointer("/N/field") on non-object elements.
+            return;
+        }
+
+        jint found_count = 0;
+        for (auto field: obj.value_unsafe()) {
+            if (found_count >= column_count) break;
+
+            auto key_res = field.unescaped_key();
+            if (key_res.error()) continue;
+            auto key = key_res.value_unsafe();
+
+            for (jint i = 0; i < column_count; i++) {
+                if (results[i].error != static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD)) {
+                    continue; // Already extracted
+                }
+                if (key.length() == static_cast<size_t>(descs[i].field_name_len) &&
+                    std::memcmp(key.data(), descs[i].field_name, key.length()) == 0) {
+                    auto val = field.value();
+                    extract_for_column(val, descs[i], results[i], json_is_ascii);
+                    found_count++;
+                    break;
+                }
+            }
+        }
+    } else {
+        // Scalar array: extract element directly for the single column
+        extract_for_column(element, descs[0], results[0], json_is_ascii);
+    }
 }
 
 } // extern "C"

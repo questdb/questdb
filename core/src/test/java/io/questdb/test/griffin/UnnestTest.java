@@ -36,10 +36,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 1.0, 3.0, 2.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\tcnt\n"
-                            + "1.0\t2\n"
-                            + "2.0\t2\n"
-                            + "3.0\t1\n",
+                    """
+                            val\tcnt
+                            1.0\t2
+                            2.0\t2
+                            3.0\t1
+                            """,
                     "SELECT u.val, count() cnt FROM t, UNNEST(t.arr) u(val) "
                             + "GROUP BY u.val ORDER BY u.val"
             );
@@ -53,26 +55,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "avg\n"
-                            + "20.0\n",
+                    """
+                            avg
+                            20.0
+                            """,
                     "SELECT avg(u.val) FROM t, UNNEST(t.arr) u(val)",
                     null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testColumnAliasConflictsWithBase() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT x::LONG id, ARRAY[100.0, 200.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "id\tid1\n"
-                            + "1\t100.0\n"
-                            + "1\t200.0\n",
-                    "SELECT t.id, u.id id1 FROM t, UNNEST(t.arr) u(id)",
-                    (String) null
             );
         });
     }
@@ -85,11 +73,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(2)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t10.0\n"
-                            + "1\t20.0\n"
-                            + "2\t20.0\n"
-                            + "2\t40.0\n",
+                    """
+                            id\tval
+                            1\t10.0
+                            1\t20.0
+                            2\t20.0
+                            2\t40.0
+                            """,
                     "WITH cte AS (SELECT id, arr FROM t) "
                             + "SELECT cte.id, u.val FROM cte, UNNEST(cte.arr) u(val)",
                     (String) null
@@ -104,10 +94,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n",
+                    """
+                            val
+                            1.0
+                            2.0
+                            3.0
+                            """,
                     "WITH cte AS (SELECT u.val FROM t, UNNEST(t.arr) u(val)) "
                             + "SELECT val FROM cte",
                     (String) null
@@ -122,10 +114,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\tord\n"
-                            + "10.0\t1\n"
-                            + "20.0\t2\n"
-                            + "30.0\t3\n",
+                    """
+                            val\tord
+                            10.0\t1
+                            20.0\t2
+                            30.0\t3
+                            """,
                     "WITH cte AS ("
                             + "SELECT u.val, u.ord "
                             + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)"
@@ -143,14 +137,63 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t2 (id LONG, name SYMBOL)");
             execute("INSERT INTO t2 VALUES (1, 'Alice')");
             assertQueryNoLeakCheck(
-                    "id\tval\tname\n"
-                            + "1\t10.0\tAlice\n"
-                            + "1\t20.0\tAlice\n",
+                    """
+                            id\tval\tname
+                            1\t10.0\tAlice
+                            1\t20.0\tAlice
+                            """,
                     "WITH unnested AS ("
                             + "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)"
                             + ") SELECT unnested.id, unnested.val, t2.name "
                             + "FROM unnested JOIN t2 ON t2.id = unnested.id",
                     (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testColumnAliasConflictsWithBase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT x::LONG id, ARRAY[100.0, 200.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1
+                            1\t100.0
+                            1\t200.0
+                            """,
+                    "SELECT t.id, u.id id1 FROM t, UNNEST(t.arr) u(id)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testColumnAliasKeywordQuotedAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0])");
+            assertQueryNoLeakCheck(
+                    """
+                            select
+                            1.0
+                            2.0
+                            """,
+                    "SELECT u.\"select\" FROM t, UNNEST(t.arr) u(\"select\")",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testColumnAliasKeywordRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) u(select)",
+                    33,
+                    "have to be enclosed in double quotes"
             );
         });
     }
@@ -163,9 +206,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "value1\tvalue2\n"
-                            + "1.0\t10.0\n"
-                            + "2.0\t20.0\n",
+                    """
+                            value1\tvalue2
+                            1.0\t10.0
+                            2.0\t20.0
+                            """,
                     "SELECT u.value1, u.value2 FROM t, UNNEST(t.a, t.b) u",
                     (String) null
             );
@@ -180,9 +225,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(2)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "2\t2.0\n"
-                            + "2\t4.0\n",
+                    """
+                            id\tval
+                            2\t2.0
+                            2\t4.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) "
                             + "WHERE t.id = 2 ORDER BY u.val",
                     false
@@ -210,10 +257,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(3)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\ts\n"
-                            + "1\t30.0\n"
-                            + "2\t60.0\n"
-                            + "3\t90.0\n",
+                    """
+                            id\ts
+                            1\t30.0
+                            2\t60.0
+                            3\t90.0
+                            """,
                     "SELECT t.id, sum(u.val) s FROM t, UNNEST(t.arr) u(val) "
                             + "GROUP BY t.id ORDER BY t.id"
             );
@@ -227,10 +276,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0, 5.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "bucket\tcnt\n"
-                            + "0\t2\n"
-                            + "1\t2\n"
-                            + "2\t1\n",
+                    """
+                            bucket\tcnt
+                            0\t2
+                            1\t2
+                            2\t1
+                            """,
                     "SELECT (u.ord - 1) / 2 bucket, count() cnt "
                             + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord) "
                             + "GROUP BY bucket ORDER BY bucket"
@@ -245,9 +296,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 1.0] arr FROM long_sequence(2)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\tcnt\n"
-                            + "1.0\t4\n"
-                            + "2.0\t2\n",
+                    """
+                            val\tcnt
+                            1.0\t4
+                            2.0\t2
+                            """,
                     "SELECT u.val, count() cnt FROM t, UNNEST(t.arr) u(val) "
                             + "GROUP BY u.val ORDER BY u.val"
             );
@@ -263,10 +316,12 @@ public class UnnestTest extends AbstractCairoTest {
             // QuestDB doesn't support HAVING - use WHERE on aggregated subquery
             // instead. Test GROUP BY + count directly
             assertQueryNoLeakCheck(
-                    "val\tcnt\n"
-                            + "1.0\t3\n"
-                            + "2.0\t1\n"
-                            + "3.0\t1\n",
+                    """
+                            val\tcnt
+                            1.0\t3
+                            2.0\t1
+                            3.0\t1
+                            """,
                     "SELECT u.val, count() cnt FROM t, UNNEST(t.arr) u(val) "
                             + "GROUP BY u.val ORDER BY u.val"
             );
@@ -280,8 +335,10 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[5.0, 1.0, 9.0, 3.0, 7.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "mn\tmx\n"
-                            + "1.0\t9.0\n",
+                    """
+                            mn\tmx
+                            1.0\t9.0
+                            """,
                     "SELECT min(u.val) mn, max(u.val) mx FROM t, UNNEST(t.arr) u(val)",
                     null, false, false, true
             );
@@ -294,9 +351,11 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0], NULL)");
             assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "1.0\tnull\n"
-                            + "2.0\tnull\n",
+                    """
+                            x\ty
+                            1.0\tnull
+                            2.0\tnull
+                            """,
                     "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
                     (String) null
             );
@@ -311,10 +370,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "1.0\t10.0\n"
-                            + "2.0\t20.0\n"
-                            + "3.0\tnull\n",
+                    """
+                            x\ty
+                            1.0\t10.0
+                            2.0\t20.0
+                            3.0\tnull
+                            """,
                     "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
                     (String) null
             );
@@ -329,9 +390,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "price\tsize\n"
-                            + "100.0\t10.0\n"
-                            + "200.0\t20.0\n",
+                    """
+                            price\tsize
+                            100.0\t10.0
+                            200.0\t20.0
+                            """,
                     "SELECT u.price, u.size FROM t, UNNEST(t.prices, t.sizes) u(price, size)",
                     (String) null
             );
@@ -363,10 +426,12 @@ public class UnnestTest extends AbstractCairoTest {
                     (4, ARRAY[30.0])
                     """);
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "2\t10.0\n"
-                            + "2\t20.0\n"
-                            + "4\t30.0\n",
+                    """
+                            id\tval
+                            2\t10.0
+                            2\t20.0
+                            4\t30.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -380,8 +445,10 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT rnd_double_array(1, 0, 0, 1000) arr FROM long_sequence(3)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "cnt\n"
-                            + "3000\n",
+                    """
+                            cnt
+                            3000
+                            """,
                     "SELECT count() cnt FROM t, UNNEST(t.arr) u(val)",
                     null, false, false, true
             );
@@ -399,8 +466,10 @@ public class UnnestTest extends AbstractCairoTest {
                     (ARRAY[6.0])
                     """);
             assertQueryNoLeakCheck(
-                    "cnt\n"
-                            + "6\n",
+                    """
+                            cnt
+                            6
+                            """,
                     "SELECT count() cnt FROM t, UNNEST(t.arr)",
                     null, false, false, true
             );
@@ -415,11 +484,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(2)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\n"
-                            + "1\n"
-                            + "1\n"
-                            + "2\n"
-                            + "2\n",
+                    """
+                            id
+                            1
+                            1
+                            2
+                            2
+                            """,
                     "SELECT t.id FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -437,10 +508,12 @@ public class UnnestTest extends AbstractCairoTest {
                     (3, ARRAY[30.0])
                     """);
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t10.0\n"
-                            + "1\t20.0\n"
-                            + "3\t30.0\n",
+                    """
+                            id\tval
+                            1\t10.0
+                            1\t20.0
+                            3\t30.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -458,13 +531,15 @@ public class UnnestTest extends AbstractCairoTest {
                     (3, ARRAY[4.0, 5.0, 6.0])
                     """);
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t1.0\n"
-                            + "2\t2.0\n"
-                            + "2\t3.0\n"
-                            + "3\t4.0\n"
-                            + "3\t5.0\n"
-                            + "3\t6.0\n",
+                    """
+                            id\tval
+                            1\t1.0
+                            2\t2.0
+                            2\t3.0
+                            3\t4.0
+                            3\t5.0
+                            3\t6.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -481,14 +556,36 @@ public class UnnestTest extends AbstractCairoTest {
                     (2, ARRAY[30.0, 40.0, 50.0])
                     """);
             assertQueryNoLeakCheck(
-                    "id\tval\tord\n"
-                            + "1\t10.0\t1\n"
-                            + "1\t20.0\t2\n"
-                            + "2\t30.0\t1\n"
-                            + "2\t40.0\t2\n"
-                            + "2\t50.0\t3\n",
+                    """
+                            id\tval\tord
+                            1\t10.0\t1
+                            1\t20.0\t2
+                            2\t30.0\t1
+                            2\t40.0\t2
+                            2\t50.0\t3
+                            """,
                     "SELECT t.id, u.val, u.ord "
                             + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleUnnestExpressionsMetadata() throws Exception {
+        // Ensures UNNEST column definitions from earlier expressions
+        // don't leak into subsequent parseFunction() calls.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0], ARRAY[10.0, 20.0, 30.0])");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            1.0\t10.0
+                            2.0\t20.0
+                            null\t30.0
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
                     (String) null
             );
         });
@@ -503,11 +600,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + ")");
             // Two separate UNNEST clauses produce a cartesian product
             assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "1.0\t10.0\n"
-                            + "1.0\t20.0\n"
-                            + "2.0\t10.0\n"
-                            + "2.0\t20.0\n",
+                    """
+                            x\ty
+                            1.0\t10.0
+                            1.0\t20.0
+                            2.0\t10.0
+                            2.0\t20.0
+                            """,
                     "SELECT u1.x, u2.y "
                             + "FROM t, UNNEST(t.a) u1(x), UNNEST(t.b) u2(y)",
                     (String) null
@@ -523,6 +622,653 @@ public class UnnestTest extends AbstractCairoTest {
                     "SELECT * FROM t, UNNEST(t.x)",
                     24,
                     "array type expected in UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testNullArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (NULL)");
+            assertQueryNoLeakCheck(
+                    "value\n",
+                    "SELECT value FROM t, UNNEST(t.arr)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByBaseColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (2, ARRAY[20.0]), (1, ARRAY[10.0])");
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10.0
+                            2\t20.0
+                            """,
+                    "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) ORDER BY t.id",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (1, ARRAY[2.0, 1.0]), (2, ARRAY[4.0, 3.0])");
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t1.0
+                            1\t2.0
+                            2\t3.0
+                            2\t4.0
+                            """,
+                    "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) "
+                            + "ORDER BY t.id, u.val",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByOrdinality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val\tord
+                            30.0\t3
+                            20.0\t2
+                            10.0\t1
+                            """,
+                    "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord) "
+                            + "ORDER BY u.ord DESC",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByUnnested() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[30.0, 10.0, 20.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10.0
+                            20.0
+                            30.0
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val ASC",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[5.0, 3.0, 1.0, 4.0, 2.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val LIMIT 3",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testOrdinalityAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[10.0, 20.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val\trow_num
+                            10.0\t1
+                            20.0\t2
+                            """,
+                    "SELECT u.val, u.row_num "
+                            + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, row_num)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testPartialColumnAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0] a, ARRAY[10.0, 20.0] b "
+                    + "FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            x\tvalue2
+                            1.0\t10.0
+                            2.0\t20.0
+                            """,
+                    "SELECT u.x, u.value2 FROM t, UNNEST(t.a, t.b) u(x)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectCountStar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(4)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            count
+                            12
+                            """,
+                    "SELECT count(*) FROM t, UNNEST(t.arr) u(val)",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testSelectMixedBaseAndUnnested() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT x::LONG id, ARRAY[x * 1.0] arr FROM long_sequence(2)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t1.0
+                            2\t2.0
+                            """,
+                    "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectOnlyUnnestedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT x::LONG id, ARRAY[x * 10.0, x * 20.0] arr "
+                    + "FROM long_sequence(2)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10.0
+                            20.0
+                            20.0
+                            40.0
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectStar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            arr\tvalue
+                            [1.0,2.0]\t1.0
+                            [1.0,2.0]\t2.0
+                            """,
+                    "SELECT * FROM t, UNNEST(t.arr)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectStarMultipleArrays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0] a, ARRAY[10.0] b FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb\tvalue1\tvalue2
+                            [1.0]\t[10.0]\t1.0\t10.0
+                            """,
+                    "SELECT * FROM t, UNNEST(t.a, t.b) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectStarWithOrdinality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[5.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            arr\tval\tord
+                            [5.0]\t5.0\t1
+                            """,
+                    "SELECT * FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectUStarAndTStar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT x::LONG id, ARRAY[x * 10.0] arr FROM long_sequence(2)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            id\tarr\tval
+                            1\t[10.0]\t10.0
+                            2\t[20.0]\t20.0
+                            """,
+                    "SELECT t.*, u.val FROM t, UNNEST(t.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSelectWithExpressionOnUnnested() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            doubled
+                            20.0
+                            40.0
+                            60.0
+                            """,
+                    "SELECT u.val * 2 doubled FROM t, UNNEST(t.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSingleArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(1))");
+            assertQueryNoLeakCheck(
+                    """
+                            value
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    "SELECT value FROM t, UNNEST(t.arr)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSingleArrayWithAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1))");
+            assertQueryNoLeakCheck(
+                    """
+                            price
+                            10.0
+                            20.0
+                            30.0
+                            """,
+                    "SELECT u.price FROM t, UNNEST(t.arr) u(price)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSingleElementArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[42.0] arr FROM long_sequence(1))");
+            assertQueryNoLeakCheck(
+                    """
+                            value
+                            42.0
+                            """,
+                    "SELECT value FROM t, UNNEST(t.arr)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testStandalone() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value
+                        1.0
+                        2.0
+                        3.0
+                        """,
+                "SELECT value FROM UNNEST(ARRAY[1.0, 2.0, 3.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneEmpty() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                "value\n",
+                "SELECT value FROM UNNEST(ARRAY[]::DOUBLE[])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneMultipleArrays() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value1\tvalue2
+                        1.0\t10.0
+                        2.0\t20.0
+                        3.0\t30.0
+                        """,
+                "SELECT value1, value2 FROM UNNEST(ARRAY[1.0, 2.0, 3.0], ARRAY[10.0, 20.0, 30.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneMultipleArraysDiffLen() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value1\tvalue2
+                        1.0\t10.0
+                        2.0\t20.0
+                        3.0\tnull
+                        """,
+                "SELECT value1, value2 FROM UNNEST(ARRAY[1.0, 2.0, 3.0], ARRAY[10.0, 20.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneNull() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                "value\n",
+                "SELECT value FROM UNNEST(NULL::DOUBLE[])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneSelectStar() throws Exception {
+        // SELECT * from standalone UNNEST should only show unnested
+        // columns, not the synthetic long_sequence(1) x column.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value
+                        1.0
+                        2.0
+                        3.0
+                        """,
+                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0, 3.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneSelectStarMultipleArrays() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value1\tvalue2
+                        1.0\t10.0
+                        2.0\t20.0
+                        """,
+                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0], ARRAY[10.0, 20.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneSelectStarWithOrdinality() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value\tordinality
+                        1.0\t1
+                        2.0\t2
+                        """,
+                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0]) WITH ORDINALITY",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneSingleElement() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value
+                        42.0
+                        """,
+                "SELECT value FROM UNNEST(ARRAY[42.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneWithGroupBy() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value\tcnt
+                        1.0\t2
+                        2.0\t1
+                        """,
+                "SELECT value, count() cnt FROM UNNEST(ARRAY[1.0, 2.0, 1.0]) "
+                        + "GROUP BY value ORDER BY value"
+        ));
+    }
+
+    @Test
+    public void testStandaloneWithOrdinality() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        val\tord
+                        10.0\t1
+                        20.0\t2
+                        30.0\t3
+                        """,
+                "SELECT val, ord FROM UNNEST(ARRAY[10.0, 20.0, 30.0]) WITH ORDINALITY AS t(val, ord)",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneWithWhere() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        value
+                        8.0
+                        9.0
+                        10.0
+                        """,
+                "SELECT value FROM UNNEST(ARRAY[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]) "
+                        + "WHERE value > 7.0",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testSubqueryContainingUnnest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    "SELECT val FROM (SELECT u.val FROM t, UNNEST(t.arr) u(val))",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSubqueryContainingUnnestWithAggregation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0, 5.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            s
+                            15.0
+                            """,
+                    "SELECT sum(val) s FROM (SELECT u.val FROM t, UNNEST(t.arr) u(val))",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testSubqueryContainingUnnestWithColumnAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0] a, ARRAY[10.0, 20.0] b "
+                    + "FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            1.0\t10.0
+                            2.0\t20.0
+                            """,
+                    "SELECT x, y FROM (SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y))",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSumEquivalenceWithArraySum() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0] arr FROM long_sequence(1)"
+                    + ")");
+            // Verify array_sum and UNNEST SUM produce same result
+            assertQueryNoLeakCheck(
+                    """
+                            s
+                            10.0
+                            """,
+                    "SELECT array_sum(arr) s FROM t"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            s
+                            10.0
+                            """,
+                    "SELECT sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testSumOfUnnested() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            s
+                            10.0
+                            """,
+                    "SELECT sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testTableAliasOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            value
+                            1.0
+                            2.0
+                            """,
+                    "SELECT u.value FROM t, UNNEST(t.arr) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testTableAliasWithAS() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            col1
+                            1.0
+                            2.0
+                            """,
+                    "SELECT u.col1 FROM t, UNNEST(t.arr) AS u(col1)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testTableAliasWithoutAS() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            col1
+                            1.0
+                            2.0
+                            """,
+                    "SELECT u.col1 FROM t, UNNEST(t.arr) u(col1)",
+                    (String) null
             );
         });
     }
@@ -554,579 +1300,6 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullArray() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (NULL)");
-            assertQueryNoLeakCheck(
-                    "value\n",
-                    "SELECT value FROM t, UNNEST(t.arr)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testOrderByBaseColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (2, ARRAY[20.0]), (1, ARRAY[10.0])");
-            assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t10.0\n"
-                            + "2\t20.0\n",
-                    "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) ORDER BY t.id",
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testOrderByMultipleColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[2.0, 1.0]), (2, ARRAY[4.0, 3.0])");
-            assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t1.0\n"
-                            + "1\t2.0\n"
-                            + "2\t3.0\n"
-                            + "2\t4.0\n",
-                    "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) "
-                            + "ORDER BY t.id, u.val",
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testOrderByOrdinality() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\tord\n"
-                            + "30.0\t3\n"
-                            + "20.0\t2\n"
-                            + "10.0\t1\n",
-                    "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord) "
-                            + "ORDER BY u.ord DESC",
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testOrderByUnnested() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[30.0, 10.0, 20.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\n"
-                            + "10.0\n"
-                            + "20.0\n"
-                            + "30.0\n",
-                    "SELECT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val ASC",
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testOrderByWithLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[5.0, 3.0, 1.0, 4.0, 2.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n",
-                    "SELECT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val LIMIT 3",
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testOrdinalityAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[10.0, 20.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\trow_num\n"
-                            + "10.0\t1\n"
-                            + "20.0\t2\n",
-                    "SELECT u.val, u.row_num "
-                            + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, row_num)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testPartialColumnAliases() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0] a, ARRAY[10.0, 20.0] b "
-                    + "FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "x\tvalue2\n"
-                            + "1.0\t10.0\n"
-                            + "2.0\t20.0\n",
-                    "SELECT u.x, u.value2 FROM t, UNNEST(t.a, t.b) u(x)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectCountStar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(4)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "count\n"
-                            + "12\n",
-                    "SELECT count(*) FROM t, UNNEST(t.arr) u(val)",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testSelectMixedBaseAndUnnested() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT x::LONG id, ARRAY[x * 1.0] arr FROM long_sequence(2)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t1.0\n"
-                            + "2\t2.0\n",
-                    "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectOnlyUnnestedColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT x::LONG id, ARRAY[x * 10.0, x * 20.0] arr "
-                    + "FROM long_sequence(2)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\n"
-                            + "10.0\n"
-                            + "20.0\n"
-                            + "20.0\n"
-                            + "40.0\n",
-                    "SELECT u.val FROM t, UNNEST(t.arr) u(val)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectStar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "arr\tvalue\n"
-                            + "[1.0,2.0]\t1.0\n"
-                            + "[1.0,2.0]\t2.0\n",
-                    "SELECT * FROM t, UNNEST(t.arr)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectStarMultipleArrays() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0] a, ARRAY[10.0] b FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "a\tb\tvalue1\tvalue2\n"
-                            + "[1.0]\t[10.0]\t1.0\t10.0\n",
-                    "SELECT * FROM t, UNNEST(t.a, t.b) u",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectStarWithOrdinality() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[5.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "arr\tval\tord\n"
-                            + "[5.0]\t5.0\t1\n",
-                    "SELECT * FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectUStarAndTStar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT x::LONG id, ARRAY[x * 10.0] arr FROM long_sequence(2)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "id\tarr\tval\n"
-                            + "1\t[10.0]\t10.0\n"
-                            + "2\t[20.0]\t20.0\n",
-                    "SELECT t.*, u.val FROM t, UNNEST(t.arr) u(val)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSelectWithExpressionOnUnnested() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "doubled\n"
-                            + "20.0\n"
-                            + "40.0\n"
-                            + "60.0\n",
-                    "SELECT u.val * 2 doubled FROM t, UNNEST(t.arr) u(val)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSingleArray() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(1))");
-            assertQueryNoLeakCheck(
-                    "value\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n",
-                    "SELECT value FROM t, UNNEST(t.arr)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSingleArrayWithAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1))");
-            assertQueryNoLeakCheck(
-                    "price\n"
-                            + "10.0\n"
-                            + "20.0\n"
-                            + "30.0\n",
-                    "SELECT u.price FROM t, UNNEST(t.arr) u(price)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSingleElementArray() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT ARRAY[42.0] arr FROM long_sequence(1))");
-            assertQueryNoLeakCheck(
-                    "value\n"
-                            + "42.0\n",
-                    "SELECT value FROM t, UNNEST(t.arr)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testStandalone() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\n"
-                        + "1.0\n"
-                        + "2.0\n"
-                        + "3.0\n",
-                "SELECT value FROM UNNEST(ARRAY[1.0, 2.0, 3.0])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneEmpty() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\n",
-                "SELECT value FROM UNNEST(ARRAY[]::DOUBLE[])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneMultipleArrays() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value1\tvalue2\n"
-                        + "1.0\t10.0\n"
-                        + "2.0\t20.0\n"
-                        + "3.0\t30.0\n",
-                "SELECT value1, value2 FROM UNNEST(ARRAY[1.0, 2.0, 3.0], ARRAY[10.0, 20.0, 30.0])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneMultipleArraysDiffLen() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value1\tvalue2\n"
-                        + "1.0\t10.0\n"
-                        + "2.0\t20.0\n"
-                        + "3.0\tnull\n",
-                "SELECT value1, value2 FROM UNNEST(ARRAY[1.0, 2.0, 3.0], ARRAY[10.0, 20.0])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneNull() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\n",
-                "SELECT value FROM UNNEST(NULL::DOUBLE[])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneSingleElement() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\n"
-                        + "42.0\n",
-                "SELECT value FROM UNNEST(ARRAY[42.0])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneWithGroupBy() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\tcnt\n"
-                        + "1.0\t2\n"
-                        + "2.0\t1\n",
-                "SELECT value, count() cnt FROM UNNEST(ARRAY[1.0, 2.0, 1.0]) "
-                        + "GROUP BY value ORDER BY value"
-        ));
-    }
-
-    @Test
-    public void testStandaloneWithOrdinality() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "val\tord\n"
-                        + "10.0\t1\n"
-                        + "20.0\t2\n"
-                        + "30.0\t3\n",
-                "SELECT val, ord FROM UNNEST(ARRAY[10.0, 20.0, 30.0]) WITH ORDINALITY AS t(val, ord)",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneWithWhere() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\n"
-                        + "8.0\n"
-                        + "9.0\n"
-                        + "10.0\n",
-                "SELECT value FROM UNNEST(ARRAY[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]) "
-                        + "WHERE value > 7.0",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneSelectStar() throws Exception {
-        // SELECT * from standalone UNNEST should only show unnested
-        // columns, not the synthetic long_sequence(1) x column.
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\n"
-                        + "1.0\n"
-                        + "2.0\n"
-                        + "3.0\n",
-                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0, 3.0])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneSelectStarMultipleArrays() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value1\tvalue2\n"
-                        + "1.0\t10.0\n"
-                        + "2.0\t20.0\n",
-                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0], ARRAY[10.0, 20.0])",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testStandaloneSelectStarWithOrdinality() throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(
-                "value\tordinality\n"
-                        + "1.0\t1\n"
-                        + "2.0\t2\n",
-                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0]) WITH ORDINALITY",
-                (String) null
-        ));
-    }
-
-    @Test
-    public void testSubqueryContainingUnnest() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0, 3.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n",
-                    "SELECT val FROM (SELECT u.val FROM t, UNNEST(t.arr) u(val))",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSubqueryContainingUnnestWithAggregation() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0, 5.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "s\n"
-                            + "15.0\n",
-                    "SELECT sum(val) s FROM (SELECT u.val FROM t, UNNEST(t.arr) u(val))",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testSubqueryContainingUnnestWithColumnAliases() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0] a, ARRAY[10.0, 20.0] b "
-                    + "FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "1.0\t10.0\n"
-                            + "2.0\t20.0\n",
-                    "SELECT x, y FROM (SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y))",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testSumOfUnnested() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "s\n"
-                            + "10.0\n",
-                    "SELECT sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testSumEquivalenceWithArraySum() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0, 3.0, 4.0] arr FROM long_sequence(1)"
-                    + ")");
-            // Verify array_sum and UNNEST SUM produce same result
-            assertQueryNoLeakCheck(
-                    "s\n"
-                            + "10.0\n",
-                    "SELECT array_sum(arr) s FROM t"
-            );
-            assertQueryNoLeakCheck(
-                    "s\n"
-                            + "10.0\n",
-                    "SELECT sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testTableAliasOnly() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "value\n"
-                            + "1.0\n"
-                            + "2.0\n",
-                    "SELECT u.value FROM t, UNNEST(t.arr) u",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testTableAliasWithAS() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "col1\n"
-                            + "1.0\n"
-                            + "2.0\n",
-                    "SELECT u.col1 FROM t, UNNEST(t.arr) AS u(col1)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testTableAliasWithoutAS() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "col1\n"
-                            + "1.0\n"
-                            + "2.0\n",
-                    "SELECT u.col1 FROM t, UNNEST(t.arr) u(col1)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
     public void testUnnest2DArrayEmpty() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (arr DOUBLE[][])");
@@ -1147,9 +1320,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "ARRAY[[1.0, 2.0], [3.0, 4.0]], "
                     + "ARRAY[100.0, 200.0])");
             assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "[1.0,2.0]\t100.0\n"
-                            + "[3.0,4.0]\t200.0\n",
+                    """
+                            x\ty
+                            [1.0,2.0]\t100.0
+                            [3.0,4.0]\t200.0
+                            """,
                     "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
                     (String) null
             );
@@ -1166,10 +1341,12 @@ public class UnnestTest extends AbstractCairoTest {
                     (2, ARRAY[[10.0, 20.0]])
                     """);
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t[1.0,2.0]\n"
-                            + "1\t[3.0,4.0]\n"
-                            + "2\t[10.0,20.0]\n",
+                    """
+                            id\tval
+                            1\t[1.0,2.0]
+                            1\t[3.0,4.0]
+                            2\t[10.0,20.0]
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -1195,9 +1372,11 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (arr DOUBLE[][])");
             execute("INSERT INTO t VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
             assertQueryNoLeakCheck(
-                    "s\n"
-                            + "60.0\n"
-                            + "150.0\n",
+                    """
+                            s
+                            60.0
+                            150.0
+                            """,
                     "SELECT array_sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -1210,9 +1389,11 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (arr DOUBLE[][])");
             execute("INSERT INTO t VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0]])");
             assertQueryNoLeakCheck(
-                    "value\n"
-                            + "[1.0,2.0]\n"
-                            + "[3.0,4.0]\n",
+                    """
+                            value
+                            [1.0,2.0]
+                            [3.0,4.0]
+                            """,
                     "SELECT value FROM t, UNNEST(t.arr)",
                     (String) null
             );
@@ -1225,12 +1406,34 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (arr DOUBLE[][])");
             execute("INSERT INTO t VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])");
             assertQueryNoLeakCheck(
-                    "val\tord\n"
-                            + "[1.0,2.0]\t1\n"
-                            + "[3.0,4.0]\t2\n"
-                            + "[5.0,6.0]\t3\n",
+                    """
+                            val\tord
+                            [1.0,2.0]\t1
+                            [3.0,4.0]\t2
+                            [5.0,6.0]\t3
+                            """,
                     "SELECT u.val, u.ord "
                             + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testUnnest2DChainedToScalar() throws Exception {
+        // Verifies that reading scalar doubles from a 2D array UNNEST
+        // produces correct values (no double-offset).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[][])");
+            execute("INSERT INTO t VALUES (ARRAY[[10.0, 20.0], [30.0, 40.0]])");
+            // First UNNEST: 2D -> 1D slices, second UNNEST: 1D -> scalars
+            assertQueryNoLeakCheck(
+                    """
+                            s
+                            30.0
+                            70.0
+                            """,
+                    "SELECT array_sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
         });
@@ -1244,9 +1447,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "ARRAY[ARRAY[[1.0, 2.0], [3.0, 4.0]], ARRAY[[5.0, 6.0], [7.0, 8.0]]]"
                     + ")");
             assertQueryNoLeakCheck(
-                    "value\n"
-                            + "[[1.0,2.0],[3.0,4.0]]\n"
-                            + "[[5.0,6.0],[7.0,8.0]]\n",
+                    """
+                            value
+                            [[1.0,2.0],[3.0,4.0]]
+                            [[5.0,6.0],[7.0,8.0]]
+                            """,
                     "SELECT value FROM t, UNNEST(t.arr)",
                     (String) null
             );
@@ -1269,8 +1474,10 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT rnd_double_array(1, 0, 0, 100_000) arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "cnt\n"
-                            + "100000\n",
+                    """
+                            cnt
+                            100000
+                            """,
                     "SELECT count() cnt FROM t, UNNEST(t.arr) u(val)",
                     null, false, false, true
             );
@@ -1299,8 +1506,10 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "1.0\t10.0\n",
+                    """
+                            x\ty
+                            1.0\t10.0
+                            """,
                     "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y) "
                             + "WHERE u.y IS NOT NULL",
                     (String) null
@@ -1316,9 +1525,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(5)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "3\t3.0\n"
-                            + "3\t6.0\n",
+                    """
+                            id\tval
+                            3\t3.0
+                            3\t6.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) WHERE t.id = 3",
                     (String) null
             );
@@ -1333,11 +1544,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(3)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "2\t4.0\n"
-                            + "2\t6.0\n"
-                            + "3\t6.0\n"
-                            + "3\t9.0\n",
+                    """
+                            id\tval
+                            2\t4.0
+                            2\t6.0
+                            3\t6.0
+                            3\t9.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) "
                             + "WHERE t.id >= 2 AND u.val > 3.0",
                     (String) null
@@ -1353,10 +1566,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\tord\n"
-                            + "30.0\t3\n"
-                            + "40.0\t4\n"
-                            + "50.0\t5\n",
+                    """
+                            val\tord
+                            30.0\t3
+                            40.0\t4
+                            50.0\t5
+                            """,
                     "SELECT u.val, u.ord "
                             + "FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord) "
                             + "WHERE u.ord > 2",
@@ -1372,11 +1587,27 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 5.0, 2.0, 8.0, 3.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "5.0\n"
-                            + "8.0\n",
+                    """
+                            val
+                            5.0
+                            8.0
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.arr) u(val) WHERE u.val > 4.0",
                     (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testWhereWithInvalidFilterExpression() throws Exception {
+        // Validates that a parse error in post-UNNEST WHERE does not
+        // cause a double-free (compileBooleanFilter vs compileJoinFilter).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) u(val) WHERE u.nonexistent > 0",
+                    44,
+                    "Invalid column"
             );
         });
     }
@@ -1392,9 +1623,11 @@ public class UnnestTest extends AbstractCairoTest {
                     (3, ARRAY[30.0])
                     """);
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t10.0\n"
-                            + "3\t30.0\n",
+                    """
+                            id\tval
+                            1\t10.0
+                            3\t30.0
+                            """,
                     "SELECT t.id, u.val FROM t, UNNEST(t.arr) u(val) "
                             + "WHERE t.id = 1 OR t.id = 3",
                     (String) null
@@ -1409,29 +1642,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "doubled\tplus_one\n"
-                            + "20.0\t11.0\n"
-                            + "40.0\t21.0\n"
-                            + "60.0\t31.0\n",
+                    """
+                            doubled\tplus_one
+                            20.0\t11.0
+                            40.0\t21.0
+                            60.0\t31.0
+                            """,
                     "SELECT u.val * 2 doubled, u.val + 1 plus_one "
-                            + "FROM t, UNNEST(t.arr) u(val)",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testWithCaseExpression() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[5.0, 15.0, 25.0] arr FROM long_sequence(1)"
-                    + ")");
-            assertQueryNoLeakCheck(
-                    "val\tlabel\n"
-                            + "5.0\tlow\n"
-                            + "15.0\thigh\n"
-                            + "25.0\thigh\n",
-                    "SELECT u.val, CASE WHEN u.val > 10 THEN 'high' ELSE 'low' END label "
                             + "FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
@@ -1446,13 +1663,35 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(2)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "1\t1.0\n"
-                            + "1\t2.0\n"
-                            + "2\t2.0\n"
-                            + "2\t4.0\n",
+                    """
+                            id\tval
+                            1\t1.0
+                            1\t2.0
+                            2\t2.0
+                            2\t4.0
+                            """,
                     "WITH cte AS (SELECT id, arr FROM t) "
                             + "SELECT cte.id, u.val FROM cte, UNNEST(cte.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testWithCaseExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS ("
+                    + "SELECT ARRAY[5.0, 15.0, 25.0] arr FROM long_sequence(1)"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    """
+                            val\tlabel
+                            5.0\tlow
+                            15.0\thigh
+                            25.0\thigh
+                            """,
+                    "SELECT u.val, CASE WHEN u.val > 10 THEN 'high' ELSE 'low' END label "
+                            + "FROM t, UNNEST(t.arr) u(val)",
                     (String) null
             );
         });
@@ -1465,10 +1704,12 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 1.0, 2.0, 3.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n",
+                    """
+                            val
+                            1.0
+                            2.0
+                            3.0
+                            """,
                     "SELECT DISTINCT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val"
             );
         });
@@ -1481,9 +1722,11 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 1.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\tcnt\n"
-                            + "1.0\t2\n"
-                            + "2.0\t1\n",
+                    """
+                            val\tcnt
+                            1.0\t2
+                            2.0\t1
+                            """,
                     "SELECT u.val, count() cnt FROM t, UNNEST(t.arr) u(val) GROUP BY u.val ORDER BY u.val"
             );
         });
@@ -1497,9 +1740,11 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t2 (id LONG, name SYMBOL)");
             execute("INSERT INTO t2 VALUES (1, 'Alice')");
             assertQueryNoLeakCheck(
-                    "id\tval\tname\n"
-                            + "1\t10.0\tAlice\n"
-                            + "1\t20.0\tAlice\n",
+                    """
+                            id\tval\tname
+                            1\t10.0\tAlice
+                            1\t20.0\tAlice
+                            """,
                     "SELECT t.id, u.val, t2.name "
                             + "FROM t, UNNEST(t.arr) u(val) "
                             + "JOIN t2 ON t2.id = t.id",
@@ -1513,10 +1758,12 @@ public class UnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[3.0, 1.0, 2.0] arr FROM long_sequence(1))");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n",
+                    """
+                            val
+                            1.0
+                            2.0
+                            3.0
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val",
                     false
             );
@@ -1528,15 +1775,19 @@ public class UnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[10.0, 20.0, 30.0] arr FROM long_sequence(1))");
             assertQueryNoLeakCheck(
-                    "val\tord\n"
-                            + "10.0\t1\n"
-                            + "20.0\t2\n"
-                            + "30.0\t3\n",
+                    """
+                            val\tord
+                            10.0\t1
+                            20.0\t2
+                            30.0\t3
+                            """,
                     "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
                     (String) null
             );
         });
     }
+
+    // ---- Tests for keyword validation in column aliases ----
 
     @Test
     public void testWithOrdinalityMultipleBaseRows() throws Exception {
@@ -1546,13 +1797,15 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(3)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\tord\n"
-                            + "1\t1.0\t1\n"
-                            + "1\t2.0\t2\n"
-                            + "2\t2.0\t1\n"
-                            + "2\t4.0\t2\n"
-                            + "3\t3.0\t1\n"
-                            + "3\t6.0\t2\n",
+                    """
+                            id\tval\tord
+                            1\t1.0\t1
+                            1\t2.0\t2
+                            2\t2.0\t1
+                            2\t4.0\t2
+                            3\t3.0\t1
+                            3\t6.0\t2
+                            """,
                     "SELECT t.id, u.val, u.ord FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
                     (String) null
             );
@@ -1567,11 +1820,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + "FROM long_sequence(3)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "id\tval\n"
-                            + "2\t2.0\n"
-                            + "2\t4.0\n"
-                            + "3\t3.0\n"
-                            + "3\t6.0\n",
+                    """
+                            id\tval
+                            2\t2.0
+                            2\t4.0
+                            3\t3.0
+                            3\t6.0
+                            """,
                     "SELECT sub.id, u.val FROM "
                             + "(SELECT id, arr FROM t WHERE id > 1) sub, "
                             + "UNNEST(sub.arr) u(val)",
@@ -1580,6 +1835,8 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
+    // ---- Test for double-offset fix (chained 2D->scalar) ----
+
     @Test
     public void testWithUnionAll() throws Exception {
         assertMemoryLeak(() -> {
@@ -1587,11 +1844,13 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "10.0\n"
-                            + "20.0\n",
+                    """
+                            val
+                            1.0
+                            2.0
+                            10.0
+                            20.0
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.arr) u(val) "
                             + "UNION ALL "
                             + "SELECT value FROM UNNEST(ARRAY[10.0, 20.0])",
@@ -1599,6 +1858,8 @@ public class UnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- Test for invalid post-UNNEST filter (compileBooleanFilter) ----
 
     @Test
     public void testWithWhereOnBaseColumn() throws Exception {
@@ -1615,100 +1876,19 @@ public class UnnestTest extends AbstractCairoTest {
         });
     }
 
+    // ---- Test for metadata separation (multiple UNNEST expressions) ----
+
     @Test
     public void testWithWhereOnUnnestedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0, 4.0, 5.0] arr FROM long_sequence(1))");
             assertQueryNoLeakCheck(
-                    "val\n"
-                            + "4.0\n"
-                            + "5.0\n",
+                    """
+                            val
+                            4.0
+                            5.0
+                            """,
                     "SELECT u.val FROM t, UNNEST(t.arr) u(val) WHERE u.val > 3.0",
-                    (String) null
-            );
-        });
-    }
-
-    // ---- Tests for keyword validation in column aliases ----
-
-    @Test
-    public void testColumnAliasKeywordRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (arr DOUBLE[])");
-            assertException(
-                    "SELECT * FROM t, UNNEST(t.arr) u(select)",
-                    33,
-                    "have to be enclosed in double quotes"
-            );
-        });
-    }
-
-    @Test
-    public void testColumnAliasKeywordQuotedAllowed() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0])");
-            assertQueryNoLeakCheck(
-                    "select\n"
-                            + "1.0\n"
-                            + "2.0\n",
-                    "SELECT u.\"select\" FROM t, UNNEST(t.arr) u(\"select\")",
-                    (String) null
-            );
-        });
-    }
-
-    // ---- Test for double-offset fix (chained 2D->scalar) ----
-
-    @Test
-    public void testUnnest2DChainedToScalar() throws Exception {
-        // Verifies that reading scalar doubles from a 2D array UNNEST
-        // produces correct values (no double-offset).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (arr DOUBLE[][])");
-            execute("INSERT INTO t VALUES (ARRAY[[10.0, 20.0], [30.0, 40.0]])");
-            // First UNNEST: 2D -> 1D slices, second UNNEST: 1D -> scalars
-            assertQueryNoLeakCheck(
-                    "s\n"
-                            + "30.0\n"
-                            + "70.0\n",
-                    "SELECT array_sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
-                    (String) null
-            );
-        });
-    }
-
-    // ---- Test for invalid post-UNNEST filter (compileBooleanFilter) ----
-
-    @Test
-    public void testWhereWithInvalidFilterExpression() throws Exception {
-        // Validates that a parse error in post-UNNEST WHERE does not
-        // cause a double-free (compileBooleanFilter vs compileJoinFilter).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (arr DOUBLE[])");
-            assertException(
-                    "SELECT * FROM t, UNNEST(t.arr) u(val) WHERE u.nonexistent > 0",
-                    44,
-                    "Invalid column"
-            );
-        });
-    }
-
-    // ---- Test for metadata separation (multiple UNNEST expressions) ----
-
-    @Test
-    public void testMultipleUnnestExpressionsMetadata() throws Exception {
-        // Ensures UNNEST column definitions from earlier expressions
-        // don't leak into subsequent parseFunction() calls.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE[], b DOUBLE[])");
-            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0], ARRAY[10.0, 20.0, 30.0])");
-            assertQueryNoLeakCheck(
-                    "x\ty\n"
-                            + "1.0\t10.0\n"
-                            + "2.0\t20.0\n"
-                            + "null\t30.0\n",
-                    "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
                     (String) null
             );
         });

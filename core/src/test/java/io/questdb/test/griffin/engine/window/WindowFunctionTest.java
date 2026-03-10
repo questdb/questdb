@@ -3734,7 +3734,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab values (4000000::timestamp, 1, 3.0)");   // t=4s, partition 1
             execute("insert into tab values (5000000::timestamp, 2, 20.0)");  // t=5s, partition 2
 
-            // Range of 10 seconds includes all rows in each partition
+            // Range of 10 seconds includes all rows in each partition.
             // Partition 1 at t=1s: NULL -> null
             // Partition 1 at t=2s: NULL + 2 = 2
             // Partition 2 at t=3s: 10 -> 10
@@ -8138,7 +8138,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
 
-            // EXCLUDE CURRENT ROW with ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            // EXCLUDE CURRENT ROW with ROWS BETWEEN 2 PRECEDING AND CURRENT ROW.
             // Row 1: no preceding rows, exclude self -> NaN
             // Row 2: preceding row is 1, exclude self -> 1
             // Row 3: preceding rows are 1,2, exclude self -> 3
@@ -8402,7 +8402,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             execute("insert into t values (3, '2024-01-01T00:00:02.000000Z')");
             execute("insert into t values (4, '2024-01-01T00:00:04.000000Z')");
 
-            // Named window with RANGE frame - 2 second window
+            // Named window with RANGE frame - 2-second window
             // Row 1 (ts=0s, x=1): sum of rows within [0s-2s, 0s] = sum(1) = 1
             // Row 2 (ts=1s, x=2): sum of rows within [1s-2s, 1s] = sum(1,2) = 3
             // Row 3 (ts=2s, x=3): sum of rows within [2s-2s, 2s] = sum(1,2,3) = 6

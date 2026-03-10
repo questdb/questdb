@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -62,9 +62,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         this.sources = sources;
         this.hasOrdinality = hasOrdinality;
         this.columnNames = columnNames;
-        this.cursor = new UnnestRecordCursor(
-                columnSplit, sources, hasOrdinality
-        );
+        this.cursor = new UnnestRecordCursor(columnSplit, sources, hasOrdinality);
     }
 
     @Override
@@ -103,11 +101,6 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return false;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Unnest");
         sink.attr("columns").val(columnNames);
@@ -127,7 +120,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    private static class UnnestRecordCursor implements RecordCursor {
+    private static class UnnestRecordCursor implements NoRandomAccessRecordCursor {
         private final UnnestRecord record;
         private final UnnestSource[] sources;
         private int arrayIndex;
@@ -142,16 +135,11 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
                 boolean hasOrdinality
         ) {
             this.sources = sources;
-            this.record = new UnnestRecord(
-                    columnSplit, sources, hasOrdinality
-            );
+            this.record = new UnnestRecord(columnSplit, sources, hasOrdinality);
         }
 
         @Override
-        public void calculateSize(
-                SqlExecutionCircuitBreaker circuitBreaker,
-                Counter counter
-        ) {
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -168,13 +156,11 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+            if (columnIndex < record.getSplit()) {
+                return baseCursor.getSymbolTable(columnIndex);
+            }
+            return null;
         }
 
         @Override
@@ -204,17 +190,15 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+            if (columnIndex < record.getSplit()) {
+                return baseCursor.newSymbolTable(columnIndex);
+            }
+            return null;
         }
 
         @Override
         public long preComputedStateSize() {
             return 0;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -230,6 +214,17 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
             maxArrayLen = 0;
         }
 
+        private void initSources() {
+            Record baseRecord = baseCursor.getRecord();
+            maxArrayLen = 0;
+            for (int i = 0, n = sources.length; i < n; i++) {
+                int len = sources[i].init(baseRecord);
+                if (len > maxArrayLen) {
+                    maxArrayLen = len;
+                }
+            }
+        }
+
         void of(
                 RecordCursor baseCursor,
                 SqlExecutionCircuitBreaker circuitBreaker
@@ -241,17 +236,6 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
             this.maxArrayLen = 0;
             Record baseRecord = baseCursor.getRecord();
             record.of(baseRecord);
-        }
-
-        private void initSources() {
-            Record baseRecord = baseCursor.getRecord();
-            maxArrayLen = 0;
-            for (int i = 0, n = sources.length; i < n; i++) {
-                int len = sources[i].init(baseRecord);
-                if (len > maxArrayLen) {
-                    maxArrayLen = len;
-                }
-            }
         }
     }
 }
