@@ -677,7 +677,7 @@
                                 <goals>
                                     <goal>test</goal>
                                 </goals>
-                                <phase>test</phase>
+                                <phase>none</phase>
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>

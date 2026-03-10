@@ -278,45 +278,33 @@ steps:
         exit -1
       fi
       llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
-    displayName: "Create partial Rust coverage report in LLVM format"
-    condition: |
-      and(
-        startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-  - task: PublishBuildArtifacts@1
-    displayName: "Upload partial Rust coverage report"
-    condition: |
-      and(
-        startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/$(testset).profdata
-      artifactName: rust-llvm-coverage
-  - bash: |
-      set -eux
+
+      IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
       QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
-      mkdir rust-coverage-binaries
-      mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
-      mv $QUESTDBR_TEST_BIN rust-coverage-binaries/questdbr-test-binary
-    displayName: "Prepare Rust binaries for upload"
+      OBJECTS="--object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so --object $QUESTDBR_TEST_BIN"
+
+      llvm-cov export \
+        --format=lcov \
+        --ignore-filename-regex="$IGNORE_RE" \
+        $OBJECTS \
+        --instr-profile=$(testset).profdata \
+        > $(testset).lcov
+      echo "Generated $(testset).lcov"
+    displayName: "Create partial Rust coverage report (LCOV)"
     condition: |
       and(
-        eq(variables['testset'], 'coverage-griffin-root'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust binaries needed to merge coverage files"
+    displayName: "Upload partial Rust coverage report (LCOV)"
     condition: |
       and(
-        eq(variables['testset'], 'coverage-griffin-root'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
     inputs:
-      pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).lcov
       artifactName: rust-llvm-coverage
