@@ -3436,7 +3436,6 @@ public class PivotTest extends AbstractSqlParserTest {
                               values: [sum(price)]
                                 Async Group By workers: 1
                                   keys: [timestamp,symbol,side]
-                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                   values: [avg(price)]
                                   filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                     PageFrame

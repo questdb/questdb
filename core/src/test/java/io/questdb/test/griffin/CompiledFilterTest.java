@@ -214,6 +214,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         "  keys: [Time desc]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [Time]\n" +
+                        "      keyFunctions: [timestamp_floor_utc('1s',Time)]\n" +
                         "      values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]\n" +
                         "      filter: symbol='''\n" +
                         "        PageFrame\n" +

@@ -412,6 +412,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                                       functions: [UserID,m,SearchPhrase,c]
                                         Async Group By workers: 1
                                           keys: [UserID,m,SearchPhrase]
+                                          keyFunctions: [minute(m)]
                                           values: [count(*)]
                                           filter: null
                                             PageFrame

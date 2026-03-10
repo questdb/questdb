@@ -1328,6 +1328,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       keys: [ts]
                         Async Group By workers: 1
                           keys: [ts,k]
+                          keyFunctions: [timestamp_floor_utc('30s',ts)]
                           values: [avg(v)]
                           filter: null
                             PageFrame
@@ -2691,6 +2692,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (l long, b1 boolean, b2 boolean)", "select b1||b2, min(l) from a group by b1||b2", """
                 Async Group By workers: 1
                   keys: [concat]
+                  keyFunctions: [concat([min,concat])]
                   values: [min(l)]
                   filter: null
                     PageFrame
@@ -2755,6 +2757,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
                 Async JIT Group By workers: 1
                   keys: [hour]
+                  keyFunctions: [hour(hour)]
                   values: [min(d)]
                   filter: 0<d
                     PageFrame
@@ -3230,6 +3233,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a", """
                 Async Group By workers: 1
                   keys: [s]
+                  keyFunctions: [concat([a,s])]
                   values: [avg(l)]
                   filter: null
                     PageFrame
@@ -3243,6 +3247,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a where l > 42", """
                 Async JIT Group By workers: 1
                   keys: [s]
+                  keyFunctions: [concat([a,s])]
                   values: [avg(l)]
                   filter: 42<l
                     PageFrame
@@ -6190,6 +6195,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async Group By workers: 1
                           keys: [substring]
+                          keyFunctions: [substring(substring,1,1)]
                           filter: substring(s,1,1) is not null
                             PageFrame
                                 Row forward scan
@@ -6203,6 +6209,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async Group By workers: 1
                           keys: [substring]
+                          keyFunctions: [substring(substring,1,1)]
                           filter: (s like %abc% and substring(s,1,1) is not null)
                             PageFrame
                                 Row forward scan
@@ -6216,6 +6223,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async Group By workers: 1
                           keys: [substring]
+                          keyFunctions: [substring(substring,1,1)]
                           filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)
                             PageFrame
                                 Row forward scan
@@ -6229,6 +6237,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async JIT Group By workers: 1
                           keys: [column]
+                          keyFunctions: [column+1]
                           filter: (5<x and x+1!=null)
                             PageFrame
                                 Row forward scan
@@ -6242,6 +6251,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async JIT Group By workers: 1
                           keys: [column]
+                          keyFunctions: [column+1]
                           filter: (5<x and x+1!=null)
                             PageFrame
                                 Row forward scan
@@ -6262,6 +6272,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async JIT Group By workers: 1
                           keys: [column]
+                          keyFunctions: [column+1]
                           filter: (5<x and x+1!=null)
                             PageFrame
                                 Row forward scan
@@ -6297,6 +6308,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
                               values: [first(i)]
                               filter: null
                                 PageFrame
@@ -6328,6 +6340,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [a]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts)]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -6336,12 +6349,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"", """
-                    Radix sort light
-                      keys: [a]
-                        VirtualRecord
-                          functions: [a,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -6353,26 +6366,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Radix sort light
                           keys: [column]
-                            VirtualRecord
-                              functions: [a,sum,10*a]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            Async Group By workers: 1
+                              keys: [a,ts,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
                     """);
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
-                    Radix sort light
-                      keys: [a desc]
-                        VirtualRecord
-                          functions: [a,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a desc]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -6381,12 +6391,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
-                    Radix sort light
-                      keys: [a10]
-                        VirtualRecord
-                          functions: [a10,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a10]
                             Async Group By workers: 1
                               keys: [a10,ts]
+                              keyFunctions: [10*a10,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -6398,29 +6408,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,10*a0]
-                                VirtualRecord
-                                  functions: [a0,sum]
-                                    Async Group By workers: 1
-                                      keys: [a0,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            Async Group By workers: 1
+                              keys: [a0,ts,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
+                              values: [sum(b)]
+                              filter: null
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                     """);
 
             assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,to_utc(ts),10*a0]
-                                Async Group By workers: 1
-                                  keys: [a0,ts]
-                                  values: [sum(b)]
-                                  filter: null
+                            Async Group By workers: 1
+                              keys: [a0,ts,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
+                              values: [sum(b)]
+                              filter: null
+                                SelectedRecord
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
@@ -6430,16 +6438,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0, berlin_ts desc]
-                            VirtualRecord
-                              functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
-                                Async Group By workers: 1
-                                  keys: [ts,berlin_ts,a0]
-                                  values: [sum(b)]
-                                  filter: null
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            Async Group By workers: 1
+                              keys: [ts,berlin_ts,a0,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(berlin_ts),10*a0]
+                              values: [sum(b)]
+                              filter: null
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                     """);
         });
     }
@@ -6454,6 +6461,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             SelectedRecord
                                 Async Group By workers: 1
                                   keys: [b,k1,ts]
+                                  keyFunctions: [timestamp_floor_utc('3h',ts)]
                                   values: [sum(a)]
                                   filter: null
                                     PageFrame
@@ -6468,6 +6476,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             SelectedRecord
                                 Async Group By workers: 1
                                   keys: [b,k,ts]
+                                  keyFunctions: [timestamp_floor_utc('3h',ts)]
                                   values: [sum(a)]
                                   filter: null
                                     PageFrame
@@ -6513,12 +6522,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'", """
-                    Sample By
-                      fill: null
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sort
+                          keys: [ts]
+                            Fill Range
+                              stride: '1h'
+                              values: [null]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
 
             // with rewrite
@@ -6531,6 +6548,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               values: [null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
                                   values: [first(i)]
                                   filter: null
                                     PageFrame
@@ -6640,12 +6658,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'", """
-                    Sample By
-                      fill: value
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sort
+                          keys: [ts]
+                            Fill Range
+                              stride: '1h'
+                              values: [1]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
 
             // with rewrite
@@ -6658,6 +6684,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               values: [1]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
                                   values: [first(i)]
                                   filter: null
                                     PageFrame
@@ -6736,10 +6763,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a", """
-                    Radix sort light
-                      keys: [a]
-                        VirtualRecord
-                          functions: [a,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a]
                             GroupBy vectorized: false
                               keys: [a,ts]
                               values: [sum(b)]
@@ -6753,32 +6779,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Frame forward scan on: x
                     """);
 
-            assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a", """
-                    SelectedRecord
-                        Radix sort light
-                          keys: [column]
-                            VirtualRecord
-                              functions: [a,sum,10*a]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    GroupBy vectorized: false
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                    """);
+            assertException("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a", 116, "Ambiguous column [name=a]");
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
-                    Radix sort light
-                      keys: [a desc]
-                        VirtualRecord
-                          functions: [a,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a desc]
                             GroupBy vectorized: false
                               keys: [a,ts]
                               values: [sum(b)]
@@ -6793,10 +6799,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
-                    Radix sort light
-                      keys: [a10]
-                        VirtualRecord
-                          functions: [a10,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a10]
                             GroupBy vectorized: false
                               keys: [a10,ts]
                               values: [sum(b)]
@@ -6814,59 +6819,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,10*a0]
-                                VirtualRecord
-                                  functions: [a0,sum]
-                                    GroupBy vectorized: false
-                                      keys: [a0,ts]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                            GroupBy vectorized: false
+                              keys: [a0,ts,column]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                     """);
 
             assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,to_utc(ts),10*a0]
-                                GroupBy vectorized: false
-                                  keys: [a0,ts]
-                                  values: [sum(b)]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                            GroupBy vectorized: false
+                              keys: [a0,ts,column]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                     """);
 
             assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0, berlin_ts desc]
-                            VirtualRecord
-                              functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
-                                GroupBy vectorized: false
-                                  keys: [ts,berlin_ts,a0]
-                                  values: [sum(b)]
-                                    SelectedRecord
-                                        AsOf Join Fast
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: x
+                            GroupBy vectorized: false
+                              keys: [ts,berlin_ts,a0,column]
+                              values: [sum(b)]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                     """);
         });
     }
@@ -6889,6 +6886,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [l,i,ts]
+                              keyFunctions: [timestamp_floor_utc('1h',first)]
                               values: [first(i)]
                               filter: null
                                 PageFrame
@@ -6916,6 +6914,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [l,i,ts]
+                              keyFunctions: [timestamp_floor_utc('1h',first)]
                               values: [first(i)]
                               filter: null
                                 PageFrame
@@ -7047,6 +7046,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [a]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts)]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7055,12 +7055,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a", """
-                    Radix sort light
-                      keys: [a]
-                        VirtualRecord
-                          functions: [a,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7072,26 +7072,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Radix sort light
                           keys: [column]
-                            VirtualRecord
-                              functions: [a,sum,10*a]
-                                VirtualRecord
-                                  functions: [a,sum]
-                                    Async Group By workers: 1
-                                      keys: [a,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            Async Group By workers: 1
+                              keys: [a,ts,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a]
+                              values: [sum(b)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
                     """);
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
-                    Radix sort light
-                      keys: [a desc]
-                        VirtualRecord
-                          functions: [a,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a desc]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7100,12 +7097,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
-                    Radix sort light
-                      keys: [a10]
-                        VirtualRecord
-                          functions: [a10,sum]
+                    SelectedRecord
+                        Radix sort light
+                          keys: [a10]
                             Async Group By workers: 1
                               keys: [a10,ts]
+                              keyFunctions: [10*a10,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7117,29 +7114,27 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,10*a0]
-                                VirtualRecord
-                                  functions: [a0,sum]
-                                    Async Group By workers: 1
-                                      keys: [a0,ts]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                            Async Group By workers: 1
+                              keys: [a0,ts,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
+                              values: [sum(b)]
+                              filter: null
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                     """);
 
             assertPlanNoLeakCheck("select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
                     SelectedRecord
                         Sort light
                           keys: [column desc, a0]
-                            VirtualRecord
-                              functions: [a0,sum,to_utc(ts),10*a0]
-                                Async Group By workers: 1
-                                  keys: [a0,ts]
-                                  values: [sum(b)]
-                                  filter: null
+                            Async Group By workers: 1
+                              keys: [a0,ts,column]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),10*a0]
+                              values: [sum(b)]
+                              filter: null
+                                SelectedRecord
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: x
@@ -7151,15 +7146,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [column desc, a0, berlin_ts desc]
                             VirtualRecord
                               functions: [ts,to_utc(ts),a0,sum,10*a0]
-                                VirtualRecord
-                                  functions: [to_utc(ts),a0,sum]
-                                    Async Group By workers: 1
-                                      keys: [ts,a0]
-                                      values: [sum(b)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                Async Group By workers: 1
+                                  keys: [ts,a0]
+                                  keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
+                                  values: [sum(b)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                     """);
         });
     }
@@ -7176,6 +7170,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           functions: [a,sum,to_timezone(ts)]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts)]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7190,6 +7185,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           functions: [a,sum,to_timezone(ts)]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts)]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7204,6 +7200,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           functions: [a,sum,to_timezone(ts)]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts)]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -7218,6 +7215,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]
                             Async Group By workers: 1
                               keys: [a,ts]
+                              keyFunctions: [timestamp_floor_utc('2m',ts)]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
