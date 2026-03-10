@@ -32,7 +32,6 @@ use crate::parquet_write::util::{
     ExactSizedIter,
 };
 use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
