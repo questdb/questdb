@@ -2863,6 +2863,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                           keys: [timestamp]
                                             Async JIT Group By workers: 1
                                               keys: [timestamp,symbol,side]
+                                              keyFunctions: [timestamp_floor_utc('100T',timestamp)]
                                               values: [avg(price)]
                                               filter: (symbol in [ADA-USD,ADA-USDT,BTC-USD] and side in [buy,sell])
                                                 PageFrame
@@ -3034,6 +3035,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                       keys: [timestamp]
                                         Async JIT Group By workers: 1
                                           keys: [symbol,side,timestamp]
+                                          keyFunctions: [timestamp_floor_utc('1d',timestamp)]
                                           values: [last(price)]
                                           filter: side in [buy,sell]
                                             PageFrame
@@ -3434,6 +3436,7 @@ public class PivotTest extends AbstractSqlParserTest {
                               values: [sum(price)]
                                 Async Group By workers: 1
                                   keys: [timestamp,symbol,side]
+                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                   values: [avg(price)]
                                   filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                     PageFrame
@@ -3483,6 +3486,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp,symbol,side]
+                                          keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                           values: [avg(price)]
                                           filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                             PageFrame
@@ -3532,6 +3536,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp]
                                     Async Group By workers: 1
                                       keys: [timestamp,symbol,side]
+                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                       values: [avg(price)]
                                       filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                         PageFrame
