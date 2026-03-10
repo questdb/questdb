@@ -1522,8 +1522,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     final int symbolCount = symbolMapWriter.getSymbolCount();
                     final long offset = SymbolMapWriter.keyToOffset(symbolCount);
-                    final long offsetsMemSize = offset - SymbolMapWriter.HEADER_SIZE;
-                    assert offsetsMemSize <= offsetsMem.size();
+                    assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
                     final long valuesMemSize = offsetsMem.getLong(offset);
                     assert valuesMemSize <= valuesMem.size();
 
@@ -1540,8 +1539,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dstFixSize,
                             valuesMem.addressOf(0),
                             valuesMemSize,
+                            // Skip header. Pass element count, not byte size.
                             offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                            offsetsMemSize
+                            symbolCount
                     );
                 } else {
                     partitionDescriptor.addColumn(
@@ -2177,8 +2177,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             final int symbolCount = symbolMapWriter.getSymbolCount();
                             final long offset = SymbolMapWriter.keyToOffset(symbolCount);
-                            final long offsetsMemSize = offset - SymbolMapWriter.HEADER_SIZE;
-                            assert offsetsMemSize <= offsetsMem.size();
+                            assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
                             final long valuesMemSize = offsetsMem.getLong(offset);
                             assert valuesMemSize <= valuesMem.size();
 
@@ -2195,9 +2194,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dstFixSize,
                                     valuesMem.addressOf(0),
                                     valuesMemSize,
-                                    // Skip header
+                                    // Skip header. Pass element count, not byte size.
                                     offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                                    offsetsMemSize
+                                    symbolCount
                             );
                         } else {
                             chunkDescriptor.addColumn(
