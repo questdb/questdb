@@ -1377,7 +1377,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [s, max]
                                 Async Group By workers: 1
                                   keys: [s,max]
@@ -1451,7 +1451,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [x, x1]
                                     VirtualRecord
                                       functions: [x,max,case([1<x,100*x,10*x1]),x1]
@@ -1604,24 +1604,23 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x, max, dateadd]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [x,max,dateadd('s',max::int,dateadd)]
-                                        GroupBy vectorized: false
-                                          keys: [x,dateadd,x1]
-                                          values: [max(y)]
-                                            SelectedRecord
-                                                Hash Join Light
-                                                  condition: t2.y=t1.y
+                                VirtualRecord
+                                  functions: [x,max,dateadd('s',max::int,dateadd)]
+                                    GroupBy vectorized: false
+                                      keys: [x,dateadd,x1]
+                                      values: [max(y)]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: t2.y=t1.y
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                                        Frame forward scan on: t2
                             """
             );
 
@@ -1968,7 +1967,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [s2]
                                 GroupBy vectorized: false
                                   keys: [s2]
@@ -2132,7 +2131,7 @@ public class GroupByTest extends AbstractCairoTest {
                                     GroupBy vectorized: false
                                       keys: [i]
                                       values: [max(ts),avg(j),sum(j::double),first(j::double)]
-                                        Sort
+                                        Encode sort
                                           keys: [i, ts]
                                             SelectedRecord
                                                 Filter filter: data.ts>=cnt.max-80000
@@ -2539,7 +2538,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [a, b, z]
                                     VirtualRecord
                                       functions: [a,sum,z,views,b]
@@ -2682,7 +2681,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [k1, key2]
                                 VirtualRecord
                                   functions: [k1,key2,key2,count]
@@ -2718,7 +2717,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [column, key, key1 desc]
                                 VirtualRecord
                                   functions: [key+1,key,key,count]
@@ -2750,24 +2749,23 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x, max, dateadd]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [x,max,dateadd('s',max::int,dateadd)]
-                                        GroupBy vectorized: false
-                                          keys: [x,dateadd,x1]
-                                          values: [max(y)]
-                                            SelectedRecord
-                                                Hash Join Light
-                                                  condition: t2.y=t1.y
+                                VirtualRecord
+                                  functions: [x,max,dateadd('s',max::int,dateadd)]
+                                    GroupBy vectorized: false
+                                      keys: [x,dateadd,x1]
+                                      values: [max(y)]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: t2.y=t1.y
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                                        Frame forward scan on: t2
                             """
             );
 
@@ -3487,7 +3485,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [hour, sym]
                                 VirtualRecord
                                   functions: [sym,hour,avgBid]
@@ -3556,7 +3554,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [category]
                                 VirtualRecord
                                   functions: [sum,sum1,category]

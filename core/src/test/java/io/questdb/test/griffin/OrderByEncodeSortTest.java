@@ -33,7 +33,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
-// Tests quick and radix sort-based factories
 @RunWith(Parameterized.class)
 public class OrderByEncodeSortTest extends AbstractCairoTest {
     private final SortMode sortMode;
