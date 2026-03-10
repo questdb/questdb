@@ -46,7 +46,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -64,7 +63,6 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
@@ -94,7 +92,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final TxReader txReader;
     private boolean isBackupCheckpoint; // protected with #lock
     private volatile boolean ownsWalPurgeJobRunLock = false;
-    private SimpleWaitingLock walPurgeJobRunLock = null;
 
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
@@ -128,10 +125,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         } finally {
             lock.unlock();
         }
-    }
-
-    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
-        this.walPurgeJobRunLock = walPurgeJobRunLock;
     }
 
     @Override
@@ -226,13 +219,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 // Suspend the WalPurgeJob to prevent WAL _event files from being deleted.
                 // This is needed for both incremental and non-incremental backups because
                 // mat view refresh intervals are loaded from _event files during checkpoint creation.
-                if (walPurgeJobRunLock != null) {
-                    final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
-                    while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                    }
-                    ownsWalPurgeJobRunLock = true;
+                final long timeout = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
+                while (!engine.tryLockWalPurgeJob(timeout, TimeUnit.MICROSECONDS)) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                 }
+                ownsWalPurgeJobRunLock = true;
 
                 TableToken tableToken = null;
 
@@ -480,6 +471,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // Record the seqTxn for this table (may be a base table for mat views)
                                         baseTableSeqTxns.put(tableToken.getTableName(), seqTxn);
 
+                                        if (isIncrementalBackup) {
+                                            BackupSeqPartLock seqPartLock = engine.getBackupSeqPartLock();
+                                            seqPartLock.lock(tableToken, seqTxn);
+                                        }
+
                                         // Fetch sequencer metadata and the last committed sequencer txn.
                                         // The metadata will be dumped to the checkpoint, and lastTxn is stored
                                         // separately to know which sequencer txn the metadata corresponds to.
@@ -550,9 +546,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
+                    engine.getBackupSeqPartLock().clear();
                     // Resume the WalPurgeJob
-                    if (walPurgeJobRunLock != null && ownsWalPurgeJobRunLock && walPurgeJobRunLock.isLocked()) {
-                        walPurgeJobRunLock.unlock();
+                    if (ownsWalPurgeJobRunLock) {
+                        engine.unlockWalPurgeJob();
                         ownsWalPurgeJobRunLock = false;
                     }
                     var log = LOG.error().$("cannot create checkpoint [e=").$(e);
@@ -580,7 +577,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
         } finally {
             if (isIncrementalBackup && ownsWalPurgeJobRunLock) {
-                walPurgeJobRunLock.unlock();
+                engine.unlockWalPurgeJob();
                 ownsWalPurgeJobRunLock = false;
             }
             lock.unlock();
@@ -764,10 +761,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
 
+            // Clear backup seq part locks before resuming WalPurgeJob,
+            // so the purge job never sees stale lock entries.
+            engine.getBackupSeqPartLock().clear();
+
             // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null && ownsWalPurgeJobRunLock && walPurgeJobRunLock.isLocked()) {
+            if (ownsWalPurgeJobRunLock) {
                 try {
-                    walPurgeJobRunLock.unlock();
+                    engine.unlockWalPurgeJob();
                     ownsWalPurgeJobRunLock = false;
                 } catch (IllegalStateException ignore) {
                     // not an error here
