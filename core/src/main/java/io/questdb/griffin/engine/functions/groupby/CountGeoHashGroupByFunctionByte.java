@@ -38,7 +38,7 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long nonNullCount = 0;
             final long hi = ptr + count;
@@ -47,7 +47,7 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
                     nonNullCount++;
                 }
             }
-            mapValue.putLong(valueIndex, nonNullCount);
+            mapValue.addLong(valueIndex, nonNullCount);
         }
     }
 

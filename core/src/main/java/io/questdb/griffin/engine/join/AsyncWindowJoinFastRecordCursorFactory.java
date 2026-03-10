@@ -566,9 +566,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                         final long ptr = slaveData.get(idx, mapIndex + 2);
                         if (ptr != 0) {
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                         } else { // no-arg function, e.g. count()
-                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                         }
                     }
                 }
@@ -761,9 +761,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 // column values are shifted by one slot, hence `rowLo + 1`
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo), 0);
                             } else { // no-arg function, e.g. count()
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                             }
                         }
                     }
@@ -1522,9 +1522,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                             final long ptr = slaveData.get(idx, mapIndex + 2);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                             } else { // no-arg function, e.g. count()
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                             }
                         }
                     }
@@ -1712,9 +1712,9 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                                 if (ptr != 0) {
                                     final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                     // column values are shifted by one slot, hence `rowLo + 1`
-                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo));
+                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * (rowLo + 1), (int) (rowHi - rowLo), 0);
                                 } else { // no-arg function, e.g. count()
-                                    groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                    groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                                 }
                             }
                         }

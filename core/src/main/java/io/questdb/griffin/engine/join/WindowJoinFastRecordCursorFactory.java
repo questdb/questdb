@@ -886,9 +886,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                             // in case of include prevailing column values are shifted by one slot, hence `rowLo + 1`
                             final long efficientRowLo = includePrevailing ? rowLo + 1 : rowLo;
-                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * efficientRowLo, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * efficientRowLo, (int) (rowHi - rowLo), 0);
                         } else { // no-arg function, e.g. count()
-                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                         }
                     }
                 }
