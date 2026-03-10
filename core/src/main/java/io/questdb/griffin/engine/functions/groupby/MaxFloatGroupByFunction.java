@@ -45,7 +45,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Float.BYTES;
             float max = Float.NaN;
@@ -55,7 +55,10 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
                     max = value;
                 }
             }
-            mapValue.putFloat(valueIndex, max);
+            final float existing = mapValue.getFloat(valueIndex);
+            if (max > existing || Numbers.isNull(existing)) {
+                mapValue.putFloat(valueIndex, max);
+            }
         }
     }
 
