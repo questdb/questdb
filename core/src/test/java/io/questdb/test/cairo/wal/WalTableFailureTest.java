@@ -935,6 +935,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         return false;
                     }
                 };
+                dodgyAlterOp.withContext(sqlExecutionContext);
 
                 try {
                     walWriter.apply(dodgyAlterOp, true);
@@ -1116,12 +1117,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             try (WalWriter writer = engine.getWalWriter(tableName)) {
-                writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
-                    @Override
-                    public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
-                    }
-                });
+                UpdateOperation updateOperation = new UpdateOperation(tableName, 1, 22, 1);
+                updateOperation.withContext(sqlExecutionContext);
+                writer.apply(updateOperation);
                 Assert.fail();
             } catch (TableReferenceOutOfDateException ignore) {
             }
