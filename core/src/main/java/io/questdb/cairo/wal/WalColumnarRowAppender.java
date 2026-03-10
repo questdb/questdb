@@ -139,8 +139,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putArrayColumn(int columnIndex, QwpArrayColumnCursor cursor,
-                               int rowCount, int columnType) throws QwpParseException {
+    public void putArrayColumn(
+            int columnIndex,
+            QwpArrayColumnCursor cursor,
+            int rowCount,
+            int columnType
+    ) {
         checkInColumnarWrite();
 
         MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
