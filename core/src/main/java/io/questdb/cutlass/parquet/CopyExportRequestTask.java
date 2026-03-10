@@ -583,9 +583,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) writerIdx << 32 | symbolColumnType);
+                    // Mask to 32 bits: symbolColumnType can have bit 31 set (no-null flag),
+                    // making it negative. Without the mask, Java sign-extends it to 64 bits
+                    // before the OR, clobbering writerIdx in the upper 32 bits.
+                    columnMetadata.add((long) writerIdx << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {
-                    columnMetadata.add((long) writerIdx << 32 | columnType);
+                    columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
                 }
             }
 

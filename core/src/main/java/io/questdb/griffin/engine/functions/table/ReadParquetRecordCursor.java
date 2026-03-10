@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -167,7 +167,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
             if (columns != null) {
                 columns.add(parquetIndex);
-                columns.add(actualType);
+                columns.add(isSymbolToVarcharConversion ? expectedType : actualType);
             }
             if (columnMapping != null) {
                 columnMapping.addColumn(parquetIndex, parquetIndex);
