@@ -1291,7 +1291,7 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 //      word (American Flag Sort, in-place, 8 byte passes from MSB to LSB).
 //   3. Within each radix partition (same first word), std::sort handles
 //      the remaining key words and rowId (stability tiebreaker).
-//   4. std::inplace_merge combines sorted runs — no scratch buffer needed.
+//   4. std::inplace_merge combines sorted runs.
 // ---------------------------------------------------------------------------
 
 // Maps ENTRY_LONGS to the corresponding struct type.
@@ -1308,8 +1308,7 @@ inline uint64_t entry_first_word(const long_4x &e) { return e.l1; }
 inline uint64_t entry_first_word(const long_5x &e) { return e.l1; }
 
 // Comparator that compares all fields including rowId (tiebreaker for
-// stability). index_t::operator< only compares ts, which is insufficient
-// for encoded sort where equal keys must be ordered by rowId.
+// stability).
 struct encoded_less {
     bool operator()(const index_t &a, const index_t &b) const {
         if (a.ts != b.ts) return a.ts < b.ts;
@@ -1330,7 +1329,7 @@ struct encoded_less {
 // handles the remaining key words and rowId within each partition.
 //
 // For partitions smaller than 128 elements, delegates to std::sort directly
-// (matches DuckDB's StdSortThreshold). At this size the overhead of radix
+// At this size the overhead of radix
 // decomposition (256-entry count array + prefix sum + cycle sort) exceeds
 // what comparison sort costs in L1 cache.
 template<typename T>
@@ -1400,7 +1399,7 @@ void ska_sort_entries(T *arr, int64_t count) {
     msd_radix_byte<T>(arr, count, 56);
 }
 
-// vergesort_entries: DuckDB-style adaptive sort.
+// vergesort_entries: adaptive sort.
 //
 // 1. For small arrays (< 128), delegates directly to ska_sort.
 // 2. Scans for natural ascending/descending runs. Runs longer than
@@ -1526,6 +1525,7 @@ Java_io_questdb_std_Vect_sortEncodedEntries(JNIEnv *env, jclass cl,
         case 2: sort_encoded_impl<3>(base, count); break;
         case 3: sort_encoded_impl<4>(base, count); break;
         case 4: sort_encoded_impl<5>(base, count); break;
+        default: assert(false && "unsupported keyLongs"); break; // Java side validates keyLongs
     }
 }
 

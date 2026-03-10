@@ -50,7 +50,6 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     private long currentAddr;
     private long endAddr;
     private int entrySize;
-    private boolean isOpen;
     private boolean isSorted;
     private SortKeyType keyType;
     private int longsPerEntry;
@@ -64,9 +63,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     ) {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
-            long initialCapacityLongs = configuration.getSqlSortLightValuePageSize() / Long.BYTES;
-            this.entryMem = new DirectLongList(initialCapacityLongs, MemoryTag.NATIVE_DEFAULT);
-            this.isOpen = true;
+            this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
         } catch (Throwable th) {
             close();
             throw th;
@@ -75,13 +72,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void close() {
-        if (isOpen) {
-            isOpen = false;
-            Misc.free(entryMem);
-            Misc.free(encoder);
-            baseCursor = Misc.free(baseCursor);
-            baseRecord = null;
-        }
+        Misc.free(entryMem);
+        Misc.free(encoder);
+        baseCursor = Misc.free(baseCursor);
+        baseRecord = null;
     }
 
     @Override
@@ -123,14 +117,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
-        if (!isOpen) {
-            isOpen = true;
-            entryMem.reopen();
-        }
-
-        keyType = encoder.configure(baseCursor);
+        entryMem.reopen();
+        keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
-
         entrySize = keyType.entrySize();
         rowIdOffset = keyType.rowIdOffset();
         longsPerEntry = entrySize / Long.BYTES;
@@ -162,33 +151,37 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     private void buildAndSort() {
         // Pre-allocate if size is known
-        long estimatedSize = baseCursor.size();
-        if (estimatedSize > 0) {
-            entryMem.setCapacity(estimatedSize * longsPerEntry);
-        }
+        try {
+            long estimatedSize = baseCursor.size();
+            if (estimatedSize > 0) {
+                entryMem.setCapacity(estimatedSize * longsPerEntry);
+            }
 
-        // Collect (key, rowId) entries
-        entryMem.clear();
-        count = 0;
-        if (estimatedSize > 0) {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                long addr = entryMem.getAppendAddress();
-                encoder.encode(baseRecord, addr);
-                Unsafe.getUnsafe().putLong(addr + rowIdOffset, baseRecord.getRowId());
-                entryMem.skip(longsPerEntry);
-                count++;
+            // Collect (key, rowId) entries
+            entryMem.clear();
+            count = 0;
+            if (estimatedSize > 0) {
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(baseRecord, addr);
+                    Unsafe.getUnsafe().putLong(addr + rowIdOffset, baseRecord.getRowId());
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                }
+            } else {
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    entryMem.ensureCapacity(longsPerEntry);
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(baseRecord, addr);
+                    Unsafe.getUnsafe().putLong(addr + rowIdOffset, baseRecord.getRowId());
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                }
             }
-        } else {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                entryMem.ensureCapacity(longsPerEntry);
-                long addr = entryMem.getAppendAddress();
-                encoder.encode(baseRecord, addr);
-                Unsafe.getUnsafe().putLong(addr + rowIdOffset, baseRecord.getRowId());
-                entryMem.skip(longsPerEntry);
-                count++;
-            }
+        } finally {
+            Misc.free(encoder);
         }
 
         if (count <= 1) {
@@ -197,9 +190,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             return;
         }
 
-        int keyLongs = keyType.keyLength() / Long.BYTES;
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyLongs);
-
+        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES);
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
     }
