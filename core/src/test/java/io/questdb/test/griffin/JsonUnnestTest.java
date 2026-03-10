@@ -1337,4 +1337,840 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ========================================================================
+    // Comprehensive per-type tests: scalar arrays, object arrays, nullability
+    // ========================================================================
+
+    // ---- INT: scalar array ----
+
+    @Test
+    public void testScalarIntNullElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, null, 30]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "10\n"
+                            + "null\n"
+                            + "30\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarIntAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "null\n"
+                            + "null\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarIntTypeMismatchString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"not_a_number\", 42]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "42\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarIntFromDoubleValue() throws Exception {
+        // JSON has no integer type distinction; 1.9 should truncate or return NULL
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.9, 2.0, 3.1]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "1\n"
+                            + "2\n"
+                            + "3\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarIntNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            // INT_MIN (-2147483648) is Numbers.INT_NULL sentinel, so it reads as null
+            execute("INSERT INTO t VALUES ('[-1, -2147483647, 2147483647, 0]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "-1\n"
+                            + "-2147483647\n"
+                            + "2147483647\n"
+                            + "0\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- INT: object array ----
+
+    @Test
+    public void testObjectIntNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"v\":null}, {\"v\":30}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "10\n"
+                            + "null\n"
+                            + "30\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testObjectIntMissingField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"other\":99}, {\"v\":30}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "10\n"
+                            + "null\n"
+                            + "30\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- LONG: scalar array ----
+
+    @Test
+    public void testScalarLongNullElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[100, null, 300]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "100\n"
+                            + "null\n"
+                            + "300\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarLongLargeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            // LONG_MIN (-9223372036854775808) is Numbers.LONG_NULL sentinel, so it reads as null
+            execute("INSERT INTO t VALUES ('[9223372036854775807, -9223372036854775807, 0]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "9223372036854775807\n"
+                            + "-9223372036854775807\n"
+                            + "0\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarLongTypeMismatchString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", 42]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "42\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarLongAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "null\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- LONG: object array ----
+
+    @Test
+    public void testObjectLongNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":100}, {\"v\":null}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "100\n"
+                            + "null\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- SHORT: scalar array ----
+
+    @Test
+    public void testScalarShortNullElement() throws Exception {
+        // SHORT null sentinel is 0, so null elements return 0
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, null, 30]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "10\n"
+                            + "0\n"
+                            + "30\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarShortTypeMismatch() throws Exception {
+        // Type mismatch returns 0 (SHORT null sentinel)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"text\", 5]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "0\n"
+                            + "5\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarShortNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[-1, 32767, -32768]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "-1\n"
+                            + "32767\n"
+                            + "-32768\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- SHORT: object array ----
+
+    @Test
+    public void testObjectShortNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"v\":null}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "10\n"
+                            + "0\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- DOUBLE: scalar array ----
+
+    @Test
+    public void testScalarDoubleNullElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.5, null, 3.5]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "1.5\n"
+                            + "null\n"
+                            + "3.5\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarDoubleAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "null\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarDoubleTypeMismatchString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"abc\", 2.5]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "2.5\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarDoubleSpecialValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[0.0, -0.0, 1.7976931348623157E308]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "0.0\n"
+                            + "-0.0\n"
+                            + "1.7976931348623157E308\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- DOUBLE: object array ----
+
+    @Test
+    public void testObjectDoubleNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":1.5}, {\"v\":null}, {\"v\":3.5}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "1.5\n"
+                            + "null\n"
+                            + "3.5\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testObjectDoubleMissingField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":1.5}, {\"x\":99}, {\"v\":3.5}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "1.5\n"
+                            + "null\n"
+                            + "3.5\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- BOOLEAN: scalar array ----
+
+    @Test
+    public void testScalarBooleanNullElement() throws Exception {
+        // BOOLEAN null sentinel is false
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[true, null, false]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "true\n"
+                            + "false\n"
+                            + "false\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarBooleanAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "false\n"
+                            + "false\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarBooleanTypeMismatch() throws Exception {
+        // Non-boolean values return false
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1, \"yes\", true]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "false\n"
+                            + "false\n"
+                            + "true\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- BOOLEAN: object array ----
+
+    @Test
+    public void testObjectBooleanNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":true}, {\"v\":null}, {\"v\":false}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "true\n"
+                            + "false\n"
+                            + "false\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- VARCHAR: scalar array ----
+
+    @Test
+    public void testScalarVarcharNullElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", null, \"world\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "hello\n"
+                            + "\n"
+                            + "world\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarVarcharAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "\n"
+                            + "\n"
+                            + "\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarVarcharEmptyString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", \"\", \"world\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "hello\n"
+                            + "\n"
+                            + "world\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarVarcharNumberCoercion() throws Exception {
+        // Numbers extracted as VARCHAR should return as string representation
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[42, true, \"text\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "42\n"
+                            + "true\n"
+                            + "text\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarVarcharSpecialChars() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"line1\\nline2\", \"tab\\there\", \"quote\\\"inside\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "line1\nline2\n"
+                            + "tab\there\n"
+                            + "quote\"inside\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- VARCHAR: object array ----
+
+    @Test
+    public void testObjectVarcharNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":\"hello\"}, {\"v\":null}, {\"v\":\"world\"}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "hello\n"
+                            + "\n"
+                            + "world\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testObjectVarcharMissingField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":\"hello\"}, {\"other\":\"x\"}, {\"v\":\"world\"}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "hello\n"
+                            + "\n"
+                            + "world\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- TIMESTAMP: scalar array ----
+
+    @Test
+    public void testScalarTimestampNullElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"2024-01-01T00:00:00.000000Z\", null, \"2024-01-03T00:00:00.000000Z\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "2024-01-01T00:00:00.000000Z\n"
+                            + "\n"
+                            + "2024-01-03T00:00:00.000000Z\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarTimestampAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "\n"
+                            + "\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarTimestampInvalidStringReturnsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"not-a-timestamp\", \"2024-01-01T00:00:00.000000Z\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "\n"
+                            + "2024-01-01T00:00:00.000000Z\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarTimestampFromNumericMicros() throws Exception {
+        // 1704067200000000 = 2024-01-01T00:00:00.000000Z in micros
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1704067200000000, 0]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "2024-01-01T00:00:00.000000Z\n"
+                            + "1970-01-01T00:00:00.000000Z\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarTimestampMixedStringAndNumeric() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"2024-06-15T12:30:00.000000Z\", 1704067200000000, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "2024-06-15T12:30:00.000000Z\n"
+                            + "2024-01-01T00:00:00.000000Z\n"
+                            + "\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarTimestampTypeMismatchBoolean() throws Exception {
+        // Boolean value should return null for TIMESTAMP
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[true, \"2024-01-01T00:00:00.000000Z\"]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "\n"
+                            + "2024-01-01T00:00:00.000000Z\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- TIMESTAMP: object array ----
+
+    @Test
+    public void testObjectTimestampNullField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"ts\":\"2024-01-01T00:00:00.000000Z\"}, {\"ts\":null}]')");
+            assertQueryNoLeakCheck(
+                    "ts\n"
+                            + "2024-01-01T00:00:00.000000Z\n"
+                            + "\n",
+                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testObjectTimestampMissingField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"ts\":\"2024-01-01T00:00:00.000000Z\"}, {\"other\":1}]')");
+            assertQueryNoLeakCheck(
+                    "ts\n"
+                            + "2024-01-01T00:00:00.000000Z\n"
+                            + "\n",
+                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Multi-column object array: all types together ----
+
+    @Test
+    public void testObjectMultiTypeWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[" +
+                    "{\"i\":1, \"l\":100, \"d\":1.5, \"b\":true, \"s\":\"hello\", \"ts\":\"2024-01-01T00:00:00.000000Z\"}," +
+                    "{\"i\":null, \"l\":null, \"d\":null, \"b\":null, \"s\":null, \"ts\":null}," +
+                    "{\"i\":3, \"l\":300, \"d\":3.5, \"b\":false, \"s\":\"world\", \"ts\":\"2024-06-15T00:00:00.000000Z\"}" +
+                    "]')");
+            assertQueryNoLeakCheck(
+                    "i\tl\td\tb\ts\tts\n"
+                            + "1\t100\t1.5\ttrue\thello\t2024-01-01T00:00:00.000000Z\n"
+                            + "null\tnull\tnull\tfalse\t\t\n"
+                            + "3\t300\t3.5\tfalse\tworld\t2024-06-15T00:00:00.000000Z\n",
+                    "SELECT u.i, u.l, u.d, u.b, u.s, u.ts FROM t, UNNEST(t.payload" +
+                            " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testObjectAllFieldsMissing() throws Exception {
+        // Element is an object but has none of the declared fields
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"x\":1, \"y\":2}]')");
+            assertQueryNoLeakCheck(
+                    "i\td\ts\n"
+                            + "null\tnull\t\n",
+                    "SELECT u.i, u.d, u.s FROM t, UNNEST(t.payload" +
+                            " COLUMNS(i INT, d DOUBLE, s VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testObjectNullElement() throws Exception {
+        // Null element in object array: all fields should be null
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"i\":1, \"d\":1.5}, null, {\"i\":3, \"d\":3.5}]')");
+            assertQueryNoLeakCheck(
+                    "i\td\n"
+                            + "1\t1.5\n"
+                            + "null\tnull\n"
+                            + "3\t3.5\n",
+                    "SELECT u.i, u.d FROM t, UNNEST(t.payload COLUMNS(i INT, d DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Edge cases: empty/null/invalid JSON payload ----
+
+    @Test
+    public void testNullPayloadAllTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES (NULL)");
+            assertQueryNoLeakCheck(
+                    "i\tl\td\tb\ts\tts\n",
+                    "SELECT u.i, u.l, u.d, u.b, u.s, u.ts FROM t, UNNEST(t.payload" +
+                            " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testEmptyStringPayload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('')");
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSingleElementScalarArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[42]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "42\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testSingleElementObjectArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":42}]')");
+            assertQueryNoLeakCheck(
+                    "v\n"
+                            + "42\n",
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Multiple rows with mixed null/valid payloads ----
+
+    @Test
+    public void testMultipleRowsMixedPayloadsAllTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, payload VARCHAR)");
+            execute("INSERT INTO t VALUES " +
+                    "(1, '[{\"v\":10}, {\"v\":20}]')," +
+                    "(2, NULL)," +
+                    "(3, '[{\"v\":30}]')");
+            assertQueryNoLeakCheck(
+                    "id\tv\n"
+                            + "1\t10\n"
+                            + "1\t20\n"
+                            + "3\t30\n",
+                    "SELECT t.id, u.v FROM t, UNNEST(t.payload COLUMNS(v INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- getVarcharSize ----
+
+    @Test
+    public void testVarcharSizeReturnsCorrectLength() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"ab\", null, \"hello\"]')");
+            assertQueryNoLeakCheck(
+                    "val\tlen\n"
+                            + "ab\t2\n"
+                            + "\t0\n"
+                            + "hello\t5\n",
+                    "SELECT u.val, length(u.val) len FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
 }

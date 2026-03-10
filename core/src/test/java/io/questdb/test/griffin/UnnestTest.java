@@ -1463,8 +1463,35 @@ public class UnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertException(
                 "SELECT UNNEST(ARRAY[1.0, 2.0])",
                 7,
-                "UNNEST is not supported in SELECT"
+                "UNNEST cannot be used as an expression"
         ));
+    }
+
+    @Test
+    public void testNestedUnnestThrowsError() throws Exception {
+        assertMemoryLeak(() -> assertException(
+                "SELECT * FROM UNNEST(UNNEST(ARRAY[[1, 2], [3, 4]])) AS unnest_column",
+                21,
+                "UNNEST cannot be used as an expression"
+        ));
+    }
+
+    @Test
+    public void testUnnest2DArrayChained() throws Exception {
+        // Unnest a 2D array by chaining two UNNEST in FROM
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "1.0\n"
+                            + "2.0\n"
+                            + "3.0\n"
+                            + "4.0\n",
+                    "SELECT u2.val FROM ("
+                            + "  SELECT * FROM UNNEST(ARRAY[[1.0, 2.0], [3.0, 4.0]]) t(arr)"
+                            + "), UNNEST(arr) u2(val)",
+                    (String) null
+            );
+        });
     }
 
     @Test
