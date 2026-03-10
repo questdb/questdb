@@ -329,8 +329,9 @@ public class QwpWalAppender implements QuietCloseable {
     /**
      * Creates a CairoException for type mismatches.
      */
-    private static CairoException typeMismatchException(byte ilpType, int columnType,
-                                                        QwpTableBlockCursor tableBlock, int col) {
+    private static CairoException typeMismatchException(
+            byte ilpType, int columnType, QwpTableBlockCursor tableBlock, int col
+    ) {
         return CairoException.nonCritical()
                 .put("cannot write ")
                 .put(getIlpTypeName(ilpType))
@@ -522,11 +523,6 @@ public class QwpWalAppender implements QuietCloseable {
                                 appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
                                         fixedCursor.getValueCount(), fixedCursor.getValueSize(),
                                         fixedCursor.getNullBitmapAddress(), rowCount);
-                            } else if (wireSize > columnSize) {
-                                // Narrowing: wire is wider than column (e.g. LONG→SHORT)
-                                appender.putFixedColumnNarrowing(columnIndex, fixedCursor.getValuesAddress(),
-                                        fixedCursor.getValueCount(), wireSize,
-                                        fixedCursor.getNullBitmapAddress(), rowCount, columnType);
                             } else {
                                 throw coercionNotSupportedException(ilpType, columnType, tableBlock, col);
                             }
@@ -776,8 +772,11 @@ public class QwpWalAppender implements QuietCloseable {
         }
     }
 
-    private void appendToWalStreaming0(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
-                                       TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException, QwpParseException {
+    private void appendToWalStreaming0(
+            SecurityContext securityContext,
+            QwpTableBlockCursor tableBlock,
+            TableUpdateDetails tud
+    ) throws CommitFailedException, MetadataChangedException, QwpParseException {
         int columnCount = tableBlock.getColumnCount();
         int rowCount = tableBlock.getRowCount();
 

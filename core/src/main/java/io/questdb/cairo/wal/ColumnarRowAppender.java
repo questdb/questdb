@@ -243,27 +243,6 @@ public interface ColumnarRowAppender {
                         int valueSize, long nullBitmapAddress, int rowCount);
 
     /**
-     * Writes a fixed-width column with type narrowing conversion.
-     * <p>
-     * Used when the wire value size is wider than the target column size.
-     * For example: DOUBLE (8 bytes) → FLOAT (4 bytes), LONG (8 bytes) → SHORT (2 bytes).
-     * <p>
-     * The conversion reads values at sourceValueSize width and writes them at the
-     * target column's native width, performing appropriate casts.
-     *
-     * @param columnIndex       the column index in the table
-     * @param valuesAddress     address of packed non-null values (at source width)
-     * @param valueCount        number of non-null values
-     * @param sourceValueSize   size of each value in the wire format (bytes)
-     * @param nullBitmapAddress address of null bitmap (0 if no nulls)
-     * @param rowCount          total number of rows (including nulls)
-     * @param columnType        target QuestDB column type
-     */
-    void putFixedColumnNarrowing(int columnIndex, long valuesAddress, int valueCount,
-                                 int sourceValueSize, long nullBitmapAddress, int rowCount,
-                                 int columnType);
-
-    /**
      * Writes a fixed-width column with non-numeric wire types (UUID, LONG256, DATE, TIMESTAMP, CHAR)
      * to a STRING column.
      *
