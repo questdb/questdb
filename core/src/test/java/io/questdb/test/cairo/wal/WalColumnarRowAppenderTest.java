@@ -174,17 +174,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     "col_a\tcol_b\n" +
-                            "100\tnull\n" +  // First row (before col_b was added)
-                            "1000\t2000\n" +
-                            "1001\t2001\n" +
-                            "1002\t2002\n" +
-                            "1003\t2003\n" +
-                            "1004\t2004\n" +
-                            "1005\t2005\n" +
-                            "1006\t2006\n" +
-                            "1007\t2007\n" +
-                            "1008\t2008\n" +
-                            "1009\t2009\n",
+                    "100\tnull\n" +  // First row (before col_b was added)
+                    "1000\t2000\n" +
+                    "1001\t2001\n" +
+                    "1002\t2002\n" +
+                    "1003\t2003\n" +
+                    "1004\t2004\n" +
+                    "1005\t2005\n" +
+                    "1006\t2006\n" +
+                    "1007\t2007\n" +
+                    "1008\t2008\n" +
+                    "1009\t2009\n",
                     "select col_a, col_b from test_segment_roll order by ts"
             );
         });
@@ -1090,13 +1090,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            true
-                            false
-
-                            true
-                            """,
+                    "value\ntrue\nfalse\n\ntrue\n",
                     "SELECT value FROM test_bool_str ORDER BY ts"
             );
         });
@@ -1130,13 +1124,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            false
-                            true
-
-                            false
-                            """,
+                    "value\nfalse\ntrue\n\nfalse\n",
                     "SELECT value FROM test_bool_vc ORDER BY ts"
             );
         });
@@ -1355,12 +1343,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                1.50
-                                -3.75
-
-                                """,
+                        "value\n1.50\n-3.75\n\n",
                         "SELECT value FROM test_dec_str ORDER BY ts"
                 );
             } finally {
@@ -1414,12 +1397,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                2.50
-
-                                -1.00
-                                """,
+                        "value\n2.50\n\n-1.00\n",
                         "SELECT value FROM test_dec_vc ORDER BY ts"
                 );
             } finally {
@@ -2489,11 +2467,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                550e8400-e29b-41d4-a716-446655440000
-
-                                """,
+                        "value\n550e8400-e29b-41d4-a716-446655440000\n\n",
                         "SELECT value FROM test_uuid_vc ORDER BY ts"
                 );
             } finally {
@@ -2644,12 +2618,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                999
-
-                                -42
-                                """,
+                        "value\n999\n\n-42\n",
                         "SELECT value FROM test_long_vc ORDER BY ts"
                 );
             } finally {
@@ -2800,13 +2769,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                
-                                1.50
-                                
-                                2.25
-                                """,
+                        "value\n\n1.50\n\n2.25\n",
                         "SELECT value FROM test_float_dec_nulls ORDER BY ts"
                 );
             } finally {
@@ -3007,12 +2970,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                3.14
-
-                                -0.5
-                                """,
+                        "value\n3.14\n\n-0.5\n",
                         "SELECT value FROM test_dbl_vc ORDER BY ts"
                 );
             } finally {
@@ -3382,6 +3340,47 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutStringToBooleanColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_bool", PartitionBy.HOUR)
+                    .col("value", ColumnType.BOOLEAN)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            String[] values = {"true", "false", "1", "0", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToBooleanColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            value
+                            true
+                            false
+                            true
+                            false
+                            false
+                            """,
+                    "SELECT value FROM test_str_bool ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testPutStringToDecimalColumn_NoNulls() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(10, 2);
@@ -3452,55 +3451,8 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            1.50
-                            
-                            2.25
-                            
-                            """,
+                    "value\n1.50\n\n2.25\n\n",
                     "SELECT value FROM test_str_dec_nulls ORDER BY ts"
-            );
-        });
-    }
-
-    @Test
-    public void testPutStringToBooleanColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            TableToken tableToken = createTable(new TableModel(configuration, "test_str_bool", PartitionBy.HOUR)
-                    .col("value", ColumnType.BOOLEAN)
-                    .timestamp("ts")
-                    .wal()
-            );
-
-            int rowCount = 5;
-            String[] values = {"true", "false", "1", "0", null};
-
-            long[] timestamps = makeTimestamps(rowCount);
-
-            try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
-                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
-
-                appender.beginColumnarWrite(rowCount);
-                appender.putStringToBooleanColumn(0, wireFormat.cursor, rowCount);
-                putTimestampColumn(appender, walWriter, timestamps, rowCount);
-                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
-
-                walWriter.commit();
-            }
-
-            drainWalQueue();
-            assertSql(
-                    """
-                            value
-                            true
-                            false
-                            true
-                            false
-                            false
-                            """,
-                    "SELECT value FROM test_str_bool ORDER BY ts"
             );
         });
     }
@@ -3534,12 +3486,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            sp052
-                            u33d8
-
-                            """,
+                    "value\nsp052\nu33d8\n\n",
                     "SELECT value FROM test_str_geo ORDER BY ts"
             );
         });
@@ -3573,12 +3520,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            0x01
-                            0xff
-
-                            """,
+                    "value\n0x01\n0xff\n\n",
                     "SELECT value FROM test_str_l256 ORDER BY ts"
             );
         });
@@ -3690,13 +3632,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            alpha
-                            beta
-
-                            alpha
-                            """,
+                    "value\nalpha\nbeta\n\nalpha\n",
                     "SELECT value FROM test_str_sym ORDER BY ts"
             );
         });
@@ -3730,12 +3666,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            2021-09-06T13:12:01.000000Z
-                            2023-01-01T00:00:00.000000Z
-
-                            """,
+                    "value\n2021-09-06T13:12:01.000000Z\n2023-01-01T00:00:00.000000Z\n\n",
                     "SELECT value FROM test_str_ts ORDER BY ts"
             );
         });
@@ -3769,12 +3700,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            550e8400-e29b-41d4-a716-446655440000
-
-                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
-                            """,
+                    "value\n550e8400-e29b-41d4-a716-446655440000\n\na0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
                     "SELECT value FROM test_str_uuid ORDER BY ts"
             );
         });
@@ -4016,12 +3942,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            hello
-
-                            world
-                            """,
+                    "value\nhello\n\nworld\n",
                     "SELECT value FROM test_sym_str ORDER BY ts"
             );
         });
@@ -4055,12 +3976,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    """
-                            value
-                            abc
-                            def
-
-                            """,
+                    "value\nabc\ndef\n\n",
                     "SELECT value FROM test_sym_vc ORDER BY ts"
             );
         });
@@ -4330,12 +4246,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 drainWalQueue();
                 assertSql(
-                        """
-                                value
-                                2021-09-06T13:12:01.000Z
-                                1970-01-01T00:00:00.000Z
-
-                                """,
+                        "value\n2021-09-06T13:12:01.000Z\n1970-01-01T00:00:00.000Z\n\n",
                         "SELECT value FROM test_ts_vc ORDER BY ts"
                 );
             } finally {
