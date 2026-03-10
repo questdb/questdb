@@ -5689,6 +5689,17 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
             }
+
+            // process WINDOW JOIN dynamic bound expressions
+            if (jm.getJoinType() == JOIN_WINDOW) {
+                final WindowJoinContext wjc = jm.getWindowJoinContext();
+                if (wjc.isDynamicLo()) {
+                    emitLiteralsTopDown(wjc.getLoExpr(), model);
+                }
+                if (wjc.isDynamicHi()) {
+                    emitLiteralsTopDown(wjc.getHiExpr(), model);
+                }
+            }
         }
 
         final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();

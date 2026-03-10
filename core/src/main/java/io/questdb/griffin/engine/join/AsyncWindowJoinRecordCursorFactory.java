@@ -90,6 +90,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private static final PageFrameReducer AGGREGATE = AsyncWindowJoinRecordCursorFactory::aggregate;
     private static final PageFrameReducer AGGREGATE_DYNAMIC = AsyncWindowJoinRecordCursorFactory::aggregateDynamic;
     private static final PageFrameReducer AGGREGATE_DYNAMIC_PREVAILING = AsyncWindowJoinRecordCursorFactory::aggregateDynamicWithPrevailing;
+    private static final PageFrameReducer AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::aggregateDynamicWithPrevailingJoinFiltered;
     private static final PageFrameReducer AGGREGATE_PREVAILING = AsyncWindowJoinRecordCursorFactory::aggregateWithPrevailing;
     private static final PageFrameReducer AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::aggregateWithPrevailingJoinFiltered;
     private static final PageFrameReducer AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::aggregateVect;
@@ -97,6 +98,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncWindowJoinRecordCursorFactory::filterAndAggregate;
     private static final PageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC = AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamic;
     private static final PageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamicWithPrevailing;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::filterAndAggregateDynamicWithPrevailingJoinFiltered;
     private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING = AsyncWindowJoinRecordCursorFactory::filterAndAggregateWithPrevailing;
     private static final PageFrameReducer FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED = AsyncWindowJoinRecordCursorFactory::filterAndAggregateWithPrevailingJoinFiltered;
     private static final PageFrameReducer FILTER_AND_AGGREGATE_VECT = AsyncWindowJoinRecordCursorFactory::filterAndAggregateVect;
@@ -210,7 +212,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         PageFrameReducer reducer;
         if (isDynamicWindow) {
             if (includePrevailing) {
-                reducer = masterFilter != null ? FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING : AGGREGATE_DYNAMIC_PREVAILING;
+                if (joinFilter != null) {
+                    reducer = masterFilter != null ? FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED : AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED;
+                } else {
+                    reducer = masterFilter != null ? FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING : AGGREGATE_DYNAMIC_PREVAILING;
+                }
             } else {
                 reducer = masterFilter != null ? FILTER_AND_AGGREGATE_DYNAMIC : AGGREGATE_DYNAMIC;
             }
@@ -705,6 +711,237 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             }
                         }
                     }
+                }
+            }
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    private static void aggregateDynamicWithPrevailingJoinFiltered(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
+        final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+        task.setFilteredRowCount(frameRowCount);
+
+        final int masterTimestampIndex = atom.getMasterTimestampIndex();
+        final long windowLo = atom.getWindowLo();
+        final long windowHi = atom.getWindowHi();
+        final long valueSizeInBytes = atom.getValueSizeBytes();
+        assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
+        final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final FlyweightMapValue value = atom.getMapValue(slotId);
+        final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+        final JoinRecord joinRecord = atom.getJoinRecord(slotId);
+        joinRecord.of(record, slaveRecord);
+        final Function joinFilter = atom.getJoinFilter(slotId);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final long slaveTsScale = atom.getSlaveTsScale();
+        final long masterTsScale = atom.getMasterTsScale();
+
+        final Function windowLoFunc = atom.getWindowLoFunc(slotId);
+        final Function windowHiFunc = atom.getWindowHiFunc(slotId);
+        final int loSign = atom.getLoSign();
+        final int hiSign = atom.getHiSign();
+        final char loTimeUnit = atom.getLoTimeUnit();
+        final char hiTimeUnit = atom.getHiTimeUnit();
+        final TimestampDriver timestampDriver = atom.getTimestampDriver();
+
+        atom.clearTemporaryData(slotId);
+        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+        slaveRowIds.of(0);
+        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+        slaveTimestamps.of(0);
+
+        try {
+            final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
+
+            // First pass: compute overall slave bounds from all master rows.
+            long overallSlaveLo = Long.MAX_VALUE;
+            long overallSlaveHi = Long.MIN_VALUE;
+            for (long r = 0; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
+                long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
+                if (effectiveLo == Long.MIN_VALUE || effectiveHi == Long.MIN_VALUE) {
+                    continue;
+                }
+                final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
+                long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                if (lo < overallSlaveLo) {
+                    overallSlaveLo = lo;
+                }
+                if (hi > overallSlaveHi) {
+                    overallSlaveHi = hi;
+                }
+            }
+
+            int prevailingFrameIndex = -1;
+            long prevailingRowIndex = Long.MIN_VALUE;
+
+            // Pre-scan slave data in overall range, tracking prevailing position for backward scan fallback.
+            if (overallSlaveLo <= overallSlaveHi) {
+                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(overallSlaveLo, overallSlaveHi, true);
+                prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
+                prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
+
+                if (slaveRowIndex != Long.MIN_VALUE) {
+                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    for (; ; ) {
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
+                        final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
+                        if (slaveTimestamp > overallSlaveHi) {
+                            break;
+                        }
+                        slaveRowIds.add(baseSlaveRowId + slaveRowIndex);
+                        slaveTimestamps.add(slaveTimestamp);
+
+                        if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                            if (!slaveTimeFrameHelper.nextFrame(overallSlaveHi)) {
+                                break;
+                            }
+                            slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+                        }
+                    }
+                }
+            }
+
+            // Per-row aggregation with dynamic bounds + join filter prevailing scan.
+            for (long r = 0; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                rows.ensureCapacity(valueSizeInLongs);
+                value.of(rows.getAppendAddress());
+                rows.skip(valueSizeInLongs);
+                functionUpdater.updateEmpty(value);
+                value.setNew(true);
+
+                long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
+                long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
+                if (effectiveLo == Long.MIN_VALUE || effectiveHi == Long.MIN_VALUE) {
+                    continue;
+                }
+
+                final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                final long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+
+                boolean needToFindPrevailing = true;
+                if (slaveTimestamps.size() > 0) {
+                    // Search from 0 since dynamic bounds don't guarantee monotonic slave windows.
+                    long rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, 0, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
+
+                    if (rowLo < rowHi) {
+                        // Check if one of the first rows at slaveTimestampLo matches the join filter.
+                        long adjustedRowLo = rowLo;
+                        for (long i = rowLo; i < rowHi; i++) {
+                            if (slaveTimestamps.get(i) > slaveTimestampLo) {
+                                break;
+                            }
+                            adjustedRowLo++;
+                            final long slaveRowId = slaveRowIds.get(i);
+                            slaveTimeFrameHelper.recordAt(slaveRowId);
+                            if (joinFilter.getBool(joinRecord)) {
+                                functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                value.setNew(false);
+                                needToFindPrevailing = false;
+                                break;
+                            }
+                        }
+
+                        // Do a backward scan to find the prevailing row.
+                        if (needToFindPrevailing) {
+                            // First check the accumulated row ids before the window.
+                            for (long i = rowLo - 1; i >= 0; i--) {
+                                final long slaveRowId = slaveRowIds.get(i);
+                                slaveTimeFrameHelper.recordAt(slaveRowId);
+                                if (joinFilter.getBool(joinRecord)) {
+                                    functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                    value.setNew(false);
+                                    needToFindPrevailing = false;
+                                    break;
+                                }
+                            }
+                            // If no luck, do the backward scan in the time frame cursor.
+                            if (needToFindPrevailing) {
+                                findPrevailingForMasterRow(
+                                        slaveTimeFrameHelper,
+                                        prevailingFrameIndex,
+                                        prevailingRowIndex,
+                                        joinFilter,
+                                        joinRecord,
+                                        functionUpdater,
+                                        value
+                                );
+                            }
+                        }
+
+                        // Aggregate the rows within the time window.
+                        for (long i = adjustedRowLo; i < rowHi; i++) {
+                            final long slaveRowId = slaveRowIds.get(i);
+                            slaveTimeFrameHelper.recordAt(slaveRowId);
+                            if (joinFilter.getBool(joinRecord)) {
+                                if (value.isNew()) {
+                                    functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                    value.setNew(false);
+                                } else {
+                                    functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                }
+                            }
+                        }
+                    } else {
+                        // No slave rows in the window. Find the prevailing row.
+                        for (long i = rowLo - 1; i >= 0; i--) {
+                            final long slaveRowId = slaveRowIds.get(i);
+                            slaveTimeFrameHelper.recordAt(slaveRowId);
+                            if (joinFilter.getBool(joinRecord)) {
+                                functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                value.setNew(false);
+                                needToFindPrevailing = false;
+                                break;
+                            }
+                        }
+                        if (needToFindPrevailing) {
+                            findPrevailingForMasterRow(
+                                    slaveTimeFrameHelper,
+                                    prevailingFrameIndex,
+                                    prevailingRowIndex,
+                                    joinFilter,
+                                    joinRecord,
+                                    functionUpdater,
+                                    value
+                            );
+                        }
+                    }
+                } else {
+                    // No slave rows at all. Find the prevailing row.
+                    findPrevailingForMasterRow(
+                            slaveTimeFrameHelper,
+                            prevailingFrameIndex,
+                            prevailingRowIndex,
+                            joinFilter,
+                            joinRecord,
+                            functionUpdater,
+                            value
+                    );
                 }
             }
         } finally {
@@ -1769,6 +2006,267 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 }
                             }
                         }
+                    }
+                }
+            }
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    private static void filterAndAggregateDynamicWithPrevailingJoinFiltered(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
+        final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        final PageFrameMemory frameMemory;
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
+        record.init(frameMemory);
+
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final Function filter = atom.getMasterFilter(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+
+        try {
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
+            }
+
+            final long filteredRowCount = rows.size();
+            task.setFilteredRowCount(filteredRowCount);
+            if (isParquetFrame) {
+                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
+
+            if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
+                if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+                    record.init(frameMemory);
+                }
+
+                final int masterTimestampIndex = atom.getMasterTimestampIndex();
+                final long windowLo = atom.getWindowLo();
+                final long windowHi = atom.getWindowHi();
+                final long valueSizeInBytes = atom.getValueSizeBytes();
+                assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
+                final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
+
+                final FlyweightMapValue value = atom.getMapValue(slotId);
+                final WindowJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+                final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+                final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+                final JoinRecord joinRecord = atom.getJoinRecord(slotId);
+                joinRecord.of(record, slaveRecord);
+                final Function joinFilter = atom.getJoinFilter(slotId);
+
+                final long slaveTsScale = atom.getSlaveTsScale();
+                final long masterTsScale = atom.getMasterTsScale();
+
+                final Function windowLoFunc = atom.getWindowLoFunc(slotId);
+                final Function windowHiFunc = atom.getWindowHiFunc(slotId);
+                final int loSign = atom.getLoSign();
+                final int hiSign = atom.getHiSign();
+                final char loTimeUnit = atom.getLoTimeUnit();
+                final char hiTimeUnit = atom.getHiTimeUnit();
+                final TimestampDriver timestampDriver = atom.getTimestampDriver();
+
+                atom.clearTemporaryData(slotId);
+                final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+                slaveRowIds.of(0);
+                final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+                slaveTimestamps.of(0);
+
+                final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
+
+                // First pass: compute overall slave bounds from filtered master rows.
+                long overallSlaveLo = Long.MAX_VALUE;
+                long overallSlaveHi = Long.MIN_VALUE;
+                for (long p = 0; p < filteredRowCount; p++) {
+                    record.setRowIndex(rows.get(p));
+                    long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
+                    long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
+                    if (effectiveLo == Long.MIN_VALUE || effectiveHi == Long.MIN_VALUE) {
+                        continue;
+                    }
+                    final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                    long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
+                    long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    if (lo < overallSlaveLo) {
+                        overallSlaveLo = lo;
+                    }
+                    if (hi > overallSlaveHi) {
+                        overallSlaveHi = hi;
+                    }
+                }
+
+                int prevailingFrameIndex = -1;
+                long prevailingRowIndex = Long.MIN_VALUE;
+
+                // Pre-scan slave data in overall range, tracking prevailing position.
+                if (overallSlaveLo <= overallSlaveHi) {
+                    long slaveRowIndex = slaveTimeFrameHelper.findRowLo(overallSlaveLo, overallSlaveHi, true);
+                    prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
+                    prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
+
+                    if (slaveRowIndex != Long.MIN_VALUE) {
+                        long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                        for (; ; ) {
+                            slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
+                            final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
+                            if (slaveTimestamp > overallSlaveHi) {
+                                break;
+                            }
+                            slaveRowIds.add(baseSlaveRowId + slaveRowIndex);
+                            slaveTimestamps.add(slaveTimestamp);
+
+                            if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                                if (!slaveTimeFrameHelper.nextFrame(overallSlaveHi)) {
+                                    break;
+                                }
+                                slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
+                                baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                                slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+                            }
+                        }
+                    }
+                }
+
+                // Per-row aggregation with dynamic bounds + join filter prevailing scan.
+                for (long p = 0; p < filteredRowCount; p++) {
+                    long r = rows.get(p);
+                    record.setRowIndex(r);
+
+                    rows.ensureCapacity(valueSizeInLongs);
+                    value.of(rows.getAppendAddress());
+                    rows.skip(valueSizeInLongs);
+                    functionUpdater.updateEmpty(value);
+                    value.setNew(true);
+
+                    long effectiveLo = computeEffectiveBound(windowLoFunc, windowLo, record, loSign, loTimeUnit, timestampDriver);
+                    long effectiveHi = computeEffectiveBound(windowHiFunc, windowHi, record, hiSign, hiTimeUnit, timestampDriver);
+                    if (effectiveLo == Long.MIN_VALUE || effectiveHi == Long.MIN_VALUE) {
+                        continue;
+                    }
+
+                    final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                    final long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
+                    final long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+
+                    boolean needToFindPrevailing = true;
+                    if (slaveTimestamps.size() > 0) {
+                        long rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, 0, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
+
+                        if (rowLo < rowHi) {
+                            // Check if one of the first rows at slaveTimestampLo matches the join filter.
+                            long adjustedRowLo = rowLo;
+                            for (long i = rowLo; i < rowHi; i++) {
+                                if (slaveTimestamps.get(i) > slaveTimestampLo) {
+                                    break;
+                                }
+                                adjustedRowLo++;
+                                final long slaveRowId = slaveRowIds.get(i);
+                                slaveTimeFrameHelper.recordAt(slaveRowId);
+                                if (joinFilter.getBool(joinRecord)) {
+                                    functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                    value.setNew(false);
+                                    needToFindPrevailing = false;
+                                    break;
+                                }
+                            }
+
+                            // Do a backward scan to find the prevailing row.
+                            if (needToFindPrevailing) {
+                                for (long i = rowLo - 1; i >= 0; i--) {
+                                    final long slaveRowId = slaveRowIds.get(i);
+                                    slaveTimeFrameHelper.recordAt(slaveRowId);
+                                    if (joinFilter.getBool(joinRecord)) {
+                                        functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                        value.setNew(false);
+                                        needToFindPrevailing = false;
+                                        break;
+                                    }
+                                }
+                                if (needToFindPrevailing) {
+                                    findPrevailingForMasterRow(
+                                            slaveTimeFrameHelper,
+                                            prevailingFrameIndex,
+                                            prevailingRowIndex,
+                                            joinFilter,
+                                            joinRecord,
+                                            functionUpdater,
+                                            value
+                                    );
+                                }
+                            }
+
+                            // Aggregate the rows within the time window.
+                            for (long i = adjustedRowLo; i < rowHi; i++) {
+                                final long slaveRowId = slaveRowIds.get(i);
+                                slaveTimeFrameHelper.recordAt(slaveRowId);
+                                if (joinFilter.getBool(joinRecord)) {
+                                    if (value.isNew()) {
+                                        functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                        value.setNew(false);
+                                    } else {
+                                        functionUpdater.updateExisting(value, joinRecord, slaveRowId);
+                                    }
+                                }
+                            }
+                        } else {
+                            // No slave rows in the window. Find the prevailing row.
+                            for (long i = rowLo - 1; i >= 0; i--) {
+                                final long slaveRowId = slaveRowIds.get(i);
+                                slaveTimeFrameHelper.recordAt(slaveRowId);
+                                if (joinFilter.getBool(joinRecord)) {
+                                    functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                                    value.setNew(false);
+                                    needToFindPrevailing = false;
+                                    break;
+                                }
+                            }
+                            if (needToFindPrevailing) {
+                                findPrevailingForMasterRow(
+                                        slaveTimeFrameHelper,
+                                        prevailingFrameIndex,
+                                        prevailingRowIndex,
+                                        joinFilter,
+                                        joinRecord,
+                                        functionUpdater,
+                                        value
+                                );
+                            }
+                        }
+                    } else {
+                        // No slave rows at all. Find the prevailing row.
+                        findPrevailingForMasterRow(
+                                slaveTimeFrameHelper,
+                                prevailingFrameIndex,
+                                prevailingRowIndex,
+                                joinFilter,
+                                joinRecord,
+                                functionUpdater,
+                                value
+                        );
                     }
                 }
             }

@@ -112,6 +112,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 boolean joinFiltered = (boolean) permutation[5];
 
                 var leftTable = generateFuzzTradeTable(rnd, symbols, tradeSize, avgTradeSpread, filterTs, filterSymbol, filterValue, limit);
+                boolean isDynamicLo = rnd.nextBoolean();
                 long preceding, following;
                 if (rnd.nextBoolean()) {
                     preceding = rnd.nextLong(symbols.length * 2L) * avgTradeSpread;
@@ -140,7 +141,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 }
                 var joinFilter = sink.toString();
 
-                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns, includePrevailing);
+                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns, includePrevailing, isDynamicLo);
             }
         });
     }
@@ -152,7 +153,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             long following,
             CharSequence aggregates,
             CharSequence[] aggregatedColumns,
-            boolean includePrevailing
+            boolean includePrevailing,
+            boolean isDynamicLo
     ) throws SqlException {
         sink.clear();
         sink
@@ -170,10 +172,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         if (!joinFilter.isEmpty()) {
             sink.put(" ON ").put(joinFilter);
         }
+        sink.put(" RANGE BETWEEN ");
+        if (isDynamicLo) {
+            sink.put("boundLo microseconds PRECEDING AND ");
+        } else {
+            sink.put(preceding).put(" microseconds PRECEDING AND ");
+        }
         sink
-                .put(" RANGE BETWEEN ")
-                .put(preceding)
-                .put(" microseconds PRECEDING AND ")
                 .put(following)
                 .put(" microseconds FOLLOWING ")
                 .put(includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ")
@@ -194,14 +199,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             for (CharSequence aggregatedColumn : aggregatedColumns) {
                 sink.put(aggregatedColumn).put(", ");
             }
-            sink
-                    .put("p.id as pid FROM ")
-                    .put(leftTable)
-                    .put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -")
-                    .put(preceding)
-                    .put(", t.ts) AND p.ts <= dateadd('u', ")
-                    .put(following)
-                    .put(", t.ts)");
+            sink.put("p.id as pid FROM ").put(leftTable).put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -");
+            if (isDynamicLo) {
+                sink.put("t.boundLo");
+            } else {
+                sink.put(preceding);
+            }
+            sink.put(", t.ts) AND p.ts <= dateadd('u', ").put(following).put(", t.ts)");
             if (!joinFilter.isEmpty()) {
                 sink.put(" AND (").put(joinFilter).put(')');
             }
@@ -214,12 +218,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             for (CharSequence aggregatedColumn : aggregatedColumns) {
                 sink.put(aggregatedColumn).put(", ");
             }
-            sink
-                    .put("p.id as pid, p.ts as pts FROM ")
-                    .put(leftTable)
-                    .put(" JOIN prices p ON p.ts <= dateadd('u', -")
-                    .put(preceding)
-                    .put(", t.ts)");
+            sink.put("p.id as pid, p.ts as pts FROM ").put(leftTable).put(" JOIN prices p ON p.ts <= dateadd('u', -");
+            if (isDynamicLo) {
+                sink.put("t.boundLo");
+            } else {
+                sink.put(preceding);
+            }
+            sink.put(", t.ts)");
             if (!joinFilter.isEmpty()) {
                 sink.put(" AND (").put(joinFilter).put(')');
             }
@@ -232,14 +237,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             for (CharSequence aggregatedColumn : aggregatedColumns) {
                 sink.put(aggregatedColumn).put(", ");
             }
-            sink
-                    .put("p.ts, p.id FROM ")
-                    .put(leftTable)
-                    .put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -")
-                    .put(preceding)
-                    .put(", t.ts) AND p.ts <= dateadd('u', ")
-                    .put(following)
-                    .put(", t.ts)");
+            sink.put("p.ts, p.id FROM ").put(leftTable).put(" LEFT JOIN prices p ON p.ts >= dateadd('u', -");
+            if (isDynamicLo) {
+                sink.put("t.boundLo");
+            } else {
+                sink.put(preceding);
+            }
+            sink.put(", t.ts) AND p.ts <= dateadd('u', ").put(following).put(", t.ts)");
             if (!joinFilter.isEmpty()) {
                 sink.put(" AND (").put(joinFilter).put(')');
             }
@@ -255,6 +259,11 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         final StringSink expectedSink = new StringSink();
         printSql(leftJoinQuery, expectedSink);
 
+        if (!expectedSink.toString().equals(actualSink.toString())) {
+            LOG.error().$("isDynamicLo=").$(isDynamicLo).$(" includePrevailing=").$(includePrevailing).$();
+            LOG.error().$("WINDOW JOIN query: ").$(windowQuery).$();
+            LOG.error().$("Oracle query: ").$(leftJoinQuery).$();
+        }
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
@@ -367,6 +376,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                             id int,
                             sym symbol,
                             price double,
+                            boundLo int,
                             ts timestamp
                         ) timestamp(ts) partition by day bypass wal;
                         """
@@ -456,6 +466,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 r.putInt(0, i);
                 r.putSym(1, symbol);
                 r.putDouble(2, rnd.nextDouble() * 100);
+                r.putInt(3, (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE)));
                 r.append();
             }
             w.commit();

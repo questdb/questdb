@@ -4743,6 +4743,170 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicWindowBoundColumnNotInSelect() throws Exception {
+        // Verifies that the optimizer propagates dynamic bound columns as
+        // top-down columns even when they aren't in the SELECT list.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(bound, ts) VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (0, '2023-01-01T09:01:00.000000Z'),
+                    (3, '2023-01-01T09:02:00.000000Z'),
+                    (1, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T08:59:30.000000Z'),
+                    (4.0, '2023-01-01T09:00:00.000000Z'),
+                    (5.0, '2023-01-01T09:00:30.000000Z'),
+                    (6.0, '2023-01-01T09:01:00.000000Z'),
+                    (7.0, '2023-01-01T09:01:30.000000Z'),
+                    (8.0, '2023-01-01T09:02:00.000000Z'),
+                    (9.0, '2023-01-01T09:02:30.000000Z'),
+                    (10.0, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            // Reference query: bound column NOT in SELECT
+            printSql("""
+                    SELECT m.ts, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowBoundColumnNotInSelectWithPrevailing() throws Exception {
+        // Same as testDynamicWindowBoundColumnNotInSelect but with INCLUDE PREVAILING.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(bound, ts) VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (0, '2023-01-01T09:01:00.000000Z'),
+                    (3, '2023-01-01T09:02:00.000000Z'),
+                    (1, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T08:59:30.000000Z'),
+                    (4.0, '2023-01-01T09:00:00.000000Z'),
+                    (5.0, '2023-01-01T09:00:30.000000Z'),
+                    (6.0, '2023-01-01T09:01:00.000000Z'),
+                    (7.0, '2023-01-01T09:01:30.000000Z'),
+                    (8.0, '2023-01-01T09:02:00.000000Z'),
+                    (9.0, '2023-01-01T09:02:30.000000Z'),
+                    (10.0, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            // Reference query with prevailing
+            printSql("""
+                    SELECT ts, sum(val) AS agg FROM
+                    (
+                        SELECT * FROM (
+                            SELECT m.ts, s.val
+                            FROM master m
+                            LEFT JOIN slave s
+                            ON s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                        UNION
+                            SELECT ts, val FROM (
+                                SELECT m.ts, s.val, s.ts AS ts1
+                                FROM master m
+                                JOIN slave s ON s.ts <= dateadd('m', -m.bound, m.ts)
+                            ) LATEST ON ts1 PARTITION BY ts
+                        ) ORDER BY ts
+                    )
+                    ORDER BY ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDynamicWindowBoundFallsBackFromFastPath() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -4762,6 +4926,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: false\n" +
+                            "      join filter: t.sym=p.sym\n" +
                             "      window lo: dynamic" + (includePrevailing ? " (include prevailing)\n" : " (exclude prevailing)\n") +
                             "      window hi: 60000000 following\n" +
                             "        PageFrame\n" +

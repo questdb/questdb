@@ -4674,7 +4674,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 int leftSymbolIndex = -1;
                                 int rightSymbolIndex = -1;
                                 ExpressionNode parent = null;
-                                if (node != null) {
+                                if (node != null && !isDynamicWindow) {
+                                    // Only extract symbol equality for the fast path.
+                                    // When isDynamicWindow, the general path handles all filtering via joinFilter.
                                     final int columnSplit = master.getMetadata().getColumnCount();
                                     ExpressionNode nn = node;
                                     sqlNodeStack.clear();
@@ -4738,6 +4740,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (parent != null) {
                                         joinFilter = compileJoinFilter(parent, joinMetadata, executionContext);
                                     }
+                                } else if (node != null) {
+                                    // Dynamic window: compile the full filter without symbol extraction,
+                                    // since the fast path (WindowJoinFastRecordCursorFactory) is not used.
+                                    joinFilter = compileJoinFilter(node, joinMetadata, executionContext);
                                 }
 
                                 if (joinFilter != null && joinFilter.isConstant()) {
