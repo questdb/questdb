@@ -45,10 +45,13 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final double batchMin = Vect.minDouble(ptr, count);
-            mapValue.putDouble(valueIndex, batchMin);
+            final double existing = mapValue.getDouble(valueIndex);
+            if (batchMin < existing || Numbers.isNull(existing)) {
+                mapValue.putDouble(valueIndex, batchMin);
+            }
         }
     }
 

@@ -38,7 +38,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long nonNullCount = 0;
             final long hi = ptr + count * (long) Float.BYTES;
@@ -49,7 +49,7 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
                 }
             }
             if (nonNullCount > 0) {
-                mapValue.putLong(valueIndex, nonNullCount);
+                mapValue.addLong(valueIndex, nonNullCount);
             }
         }
     }
