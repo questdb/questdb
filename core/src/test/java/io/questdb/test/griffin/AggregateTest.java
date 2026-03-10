@@ -421,7 +421,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
                                 : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n");
             } else {
-                plan = "Sort light\n" +
+                plan = "Encode sort light\n" +
                         "  keys: [org_uuid]\n" +
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
