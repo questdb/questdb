@@ -259,7 +259,6 @@ import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
@@ -5697,21 +5696,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
-                        final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (
-                                configuration.isSqlOrderBySortEnabled()
-                                        && orderByColumnNames.size() == 1
-                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
-                        ) {
-                            return new LongSortedLightRecordCursorFactory(
-                                    configuration,
-                                    orderedMetadata,
-                                    recordCursorFactory,
-                                    listColumnFilterA.copy()
-                            );
-                        }
-
-                        if (SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
                             return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,

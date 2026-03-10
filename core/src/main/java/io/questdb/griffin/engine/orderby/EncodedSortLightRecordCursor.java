@@ -130,7 +130,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public long preComputedStateSize() {
-        return RecordCursor.fromBool(isSorted);
+        return RecordCursor.fromBool(isSorted) + baseCursor.preComputedStateSize();
     }
 
     @Override
