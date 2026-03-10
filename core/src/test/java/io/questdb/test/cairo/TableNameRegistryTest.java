@@ -292,7 +292,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         engine.getConfiguration().getMicrosecondClock())
                 ) {
                     barrier.await();
-                    engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
                     while (!done.get() && job.run(0)) {
                         // run until empty
