@@ -270,18 +270,15 @@ steps:
       export PATH=$LLVM_TOOLS_PATH:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
-      CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
-      PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
-      PROFRAW_FILES=${PROFRAW_FILES% }
-      if [ -z "$PROFRAW_FILES" ]; then
-        echo "LLVM profiling files not found"
+      PROFRAW="core/questdbr-junit.profraw"
+      if [ ! -f "$PROFRAW" ]; then
+        echo "LLVM profiling file not found: $PROFRAW"
         exit -1
       fi
-      llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
+      llvm-profdata merge -sparse -o $(testset).profdata "$PROFRAW"
 
       IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
-      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
-      OBJECTS="--object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so --object $QUESTDBR_TEST_BIN"
+      OBJECTS="--object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so"
 
       llvm-cov export \
         --format=lcov \
