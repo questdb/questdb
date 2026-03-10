@@ -168,7 +168,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             // Create 2 non-WAL tables and 1 view
             execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
+            execute("CREATE VIEW v AS (SELECT ts, min(x) FROM tab1 SAMPLE BY 1m)");
 
             execute("DROP ALL");
 
