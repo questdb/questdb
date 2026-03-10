@@ -190,15 +190,23 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     private void cullPartitions(TableReader reader, LongList intervals) {
         final long lo = intervals.getQuick(initialIntervalsLo * 2);
-        long intervalLo;
-        if (lo == Long.MIN_VALUE) {
-            intervalLo = reader.floorToPartitionTimestamp(reader.getMinTimestamp());
+        final long minTs = reader.getMinTimestamp();
+        // Any interval lo at or before the table's min timestamp starts at partition 0.
+        // This also covers Long.MIN_VALUE (unbounded interval lo).
+        if (lo <= minTs) {
+            this.initialPartitionLo = 0;
         } else {
-            intervalLo = reader.floorToPartitionTimestamp(lo);
+            long intervalLo = reader.floorToPartitionTimestamp(lo);
+            this.initialPartitionLo = minTs < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         }
-        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
-        long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
-        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
+        final long hi = intervals.getQuick((initialIntervalsHi - 1) * 2 + 1);
+        // Long.MAX_VALUE means unbounded interval hi — include all partitions.
+        if (hi == Long.MAX_VALUE) {
+            this.initialPartitionHi = reader.getPartitionCount();
+        } else {
+            long intervalHi = reader.floorToPartitionTimestamp(hi);
+            this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
+        }
     }
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
