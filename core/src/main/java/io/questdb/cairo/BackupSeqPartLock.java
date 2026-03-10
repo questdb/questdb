@@ -22,24 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.std.str.Path;
+import io.questdb.std.CharSequenceLongHashMap;
 
-public interface WalDirectoryPolicy {
-    void initDirectory(Path dirPath);
+// Thread safety: all access is serialized by CairoEngine.walPurgeJobLock.
+// The only exception is the cleared flag, which is volatile and can be set by other threads without locking.
+public class BackupSeqPartLock {
+    private final CharSequenceLongHashMap lockedSeqTxns = new CharSequenceLongHashMap();
+    private volatile boolean cleared;
 
-    default void initSequencerPart(Path seqDirPath, long partId) {
+    public void clear() {
+        cleared = true;
     }
 
-    boolean isInUse(Path path);
-
-    @SuppressWarnings("SameReturnValue")
-    default boolean isSeqPartInUse(Path seqDirPath, long partId) {
-        return false;
+    public void onLocked() {
+        if (cleared) {
+            lockedSeqTxns.clear();
+            cleared = false;
+        }
     }
 
-    void rollbackDirectory(Path path);
+    public long getLockedSeqTxn(TableToken tableToken) {
+        if (cleared) {
+            return CharSequenceLongHashMap.NO_ENTRY_VALUE;
+        }
+        return lockedSeqTxns.get(tableToken.getDirName());
+    }
 
-    boolean truncateFilesOnClose();
+    public void lock(TableToken tableToken, long seqTxn) {
+        lockedSeqTxns.put(tableToken.getDirName(), seqTxn);
+    }
 }

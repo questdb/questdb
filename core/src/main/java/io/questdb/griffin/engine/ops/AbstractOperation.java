@@ -37,14 +37,14 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
     @Nullable
-    protected SecurityContext securityContext;
+    SecurityContext securityContext;
     @Nullable
-    protected SqlExecutionContext sqlExecutionContext;
+    SqlExecutionContext sqlExecutionContext;
     @Nullable
-    protected CharSequence sqlText;
-    protected int tableNamePosition;
+    CharSequence sqlText;
+    int tableNamePosition;
     @Nullable
-    protected TableToken tableToken;
+    TableToken tableToken;
     private String cmdName;
     private int cmdType;
     private long correlationId;
@@ -138,7 +138,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlText = sqlStatement;
     }
 
-    protected void init(
+    void init(
             int cmdType,
             String cmdName,
             TableToken tableToken,

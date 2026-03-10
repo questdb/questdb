@@ -166,6 +166,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
+    protected final GenericDropOperationBuilder dropOperationBuilder;
     protected final CairoEngine engine;
     protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
@@ -177,8 +178,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
-    private final CharSequenceObjHashMap<String> dropAllTablesFailedTableNames = new CharSequenceObjHashMap<>();
-    private final GenericDropOperationBuilder dropOperationBuilder;
+    private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
@@ -482,33 +482,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Dispatches the operation to a type-specific {@code execute*} method based on its operation code.
+     * Each delegate returns {@code true} when the DDL took effect, or {@code false} for no-ops
+     * (e.g. {@code IF EXISTS} on a missing entity, {@code IF NOT EXISTS} on an existing one).
+     * The caller ({@link GenericDropOperation}, {@link CreateTableOperation}, etc.) uses this
+     * return value to decide whether to fire {@link io.questdb.cairo.DdlListener} callbacks.
+     * <p>
+     * {@code DROP ALL} is a special case: it fires {@link io.questdb.cairo.DdlListener#onTableOrViewOrMatViewDropped}
+     * per successfully dropped entity inside {@code executeDropAllTables}, so its return value
+     * only indicates whether at least one entity was dropped rather than gating a single callback.
+     */
     @Override
-    public void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
-        switch (op.getOperationCode()) {
-            case OperationCodes.CREATE_TABLE:
-                executeCreateTable((CreateTableOperation) op, executionContext);
-                break;
-            case OperationCodes.CREATE_VIEW:
-                executeCreateView((CreateViewOperation) op, executionContext);
-                break;
-            case OperationCodes.CREATE_MAT_VIEW:
-                executeCreateMatView((CreateMatViewOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_TABLE:
-                executeDropTable((GenericDropOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_VIEW:
-                executeDropView((GenericDropOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_MAT_VIEW:
-                executeDropMatView((GenericDropOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_ALL:
-                executeDropAllTables(executionContext);
-                break;
-            default:
-                throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
-        }
+    public boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
+        return switch (op.getOperationCode()) {
+            case OperationCodes.CREATE_TABLE -> executeCreateTable((CreateTableOperation) op, executionContext);
+            case OperationCodes.CREATE_VIEW -> executeCreateView((CreateViewOperation) op, executionContext);
+            case OperationCodes.CREATE_MAT_VIEW -> executeCreateMatView((CreateMatViewOperation) op, executionContext);
+            case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
+            default ->
+                    throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
+        };
     }
 
     @Override
@@ -1303,8 +1302,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
-                return;
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
 
@@ -1745,6 +1743,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         optimiser.clear();
         parser.clear();
         alterOperationBuilder.clear();
+        dropOperationBuilder.clear();
         functionParser.clear();
         compiledQuery.clear();
         columnNames.clear();
@@ -2611,7 +2610,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2650,7 +2649,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2693,7 +2692,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, dropOperationBuilder, tok, lexer.lastTokenPosition());
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2704,9 +2703,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                 }
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("';' or 'tables' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                } else {
+                    compiledQuery.ofDrop(DropAllOperation.INSTANCE);
                 }
-                compiledQuery.ofDrop(DropAllOperation.INSTANCE);
             } else {
                 compileDropOther(executionContext, tok, lexer.lastTokenPosition());
             }
@@ -3869,7 +3869,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
+    private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         if (createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
@@ -3891,6 +3891,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
                 }
+                QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+                return false;
             } else {
                 CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
                 if (volumeAlias != null) {
@@ -3961,6 +3963,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
             QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            return true;
         } catch (Throwable th) {
             if (th instanceof CairoException) {
                 ((CairoException) th).position(createMatViewOp.getTableNamePosition());
@@ -3972,7 +3975,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
+    private boolean executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
         boolean needRegister = createTableOp.needRegister();
         long sqlId = 0;
         long beginNanos = 0;
@@ -3996,6 +3999,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
                 }
+                if (needRegister) {
+                    QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+                }
+                return false;
             } else {
                 // create table (...) ... in volume volumeAlias;
                 CharSequence volumeAlias = createTableOp.getVolumeAlias();
@@ -4151,6 +4158,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (needRegister) {
                 QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
             }
+            return true;
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
@@ -4167,7 +4175,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
+    private boolean executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
@@ -4183,6 +4191,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createViewOp.getTableNamePosition(), "view already exists");
                 }
+                QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+                return false;
             } else {
                 final ViewDefinition viewDefinition;
                 final TableToken viewToken;
@@ -4237,6 +4247,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
             QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+            return true;
         } catch (Throwable th) {
             if (th instanceof CairoException) {
                 ((CairoException) th).position(createViewOp.getTableNamePosition());
@@ -4248,56 +4259,61 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeDropAllTables(SqlExecutionContext executionContext) {
-        // collect table names
-        dropAllTablesFailedTableNames.clear();
+    private boolean executeDropAllTables(DropAllOperation op, SqlExecutionContext executionContext) {
+        // collect failures
+        dropAllTablesFailures.clear();
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
         final SecurityContext securityContext = executionContext.getSecurityContext();
         TableToken tableToken;
+        boolean hasDroppedAny = false;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
             if (!tableToken.isSystem()) {
-                if (tableToken.isView()) {
-                    securityContext.authorizeViewDrop(tableToken);
-                } else if (tableToken.isMatView()) {
-                    securityContext.authorizeMatViewDrop(tableToken);
-                } else {
-                    securityContext.authorizeTableDrop(tableToken);
-                }
+                final String tableName = tableToken.getTableName();
                 try {
+                    if (tableToken.isView()) {
+                        securityContext.authorizeViewDrop(tableToken);
+                    } else if (tableToken.isMatView()) {
+                        securityContext.authorizeMatViewDrop(tableToken);
+                    } else {
+                        securityContext.authorizeTableDrop(tableToken);
+                    }
                     engine.dropTableOrViewOrMatView(path, tableToken);
-                } catch (CairoException report) {
-                    // it will fail when there are readers/writers and lock cannot be acquired
-                    dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
+                    hasDroppedAny = true;
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
+                } catch (Exception e) {
+                    LOG.error().$("Error while dropping table, view or materialized view [").$(tableName).$(", error=").$(e).I$();
+                    dropAllTablesFailures.put(tableName, e.getMessage());
                 }
             }
         }
-        if (dropAllTablesFailedTableNames.size() > 0) {
-            final CairoException ex = CairoException.nonCritical().put("failed to drop tables and materialized views [");
+        if (dropAllTablesFailures.size() > 0) {
+            final CairoException ex = CairoException.nonCritical().put("Failures while dropping tables, views and materialized views [");
             CharSequence tableName;
-            String reason;
-            final ObjList<CharSequence> keys = dropAllTablesFailedTableNames.keys();
+            String message;
+            final ObjList<CharSequence> keys = dropAllTablesFailures.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 tableName = keys.get(i);
-                reason = dropAllTablesFailedTableNames.get(tableName);
-                ex.put('\'').put(tableName).put("': ").put(reason);
+                message = dropAllTablesFailures.get(tableName);
+                ex.put('\'').put(tableName).put("': ").put(message);
                 if (i + 1 < n) {
                     ex.put(", ");
                 }
             }
             throw ex.put(']');
         }
+        return hasDroppedAny;
     }
 
-    private void executeDropMatView(
+    private boolean executeDropMatView(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
-                return;
+                return false;
             }
             throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
@@ -4313,7 +4329,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, mat view dropped already
-                return;
+                return false;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report mat view does not exist
                 throw CairoException.matViewDoesNotExist(op.getEntityName());
@@ -4322,16 +4338,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
+        return true;
     }
 
-    private void executeDropTable(
+    private boolean executeDropTable(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
-                return;
+                return false;
             }
             throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
@@ -4347,7 +4364,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, table dropped already
-                return;
+                return false;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report table does not exist
                 throw CairoException.tableDoesNotExist(op.getEntityName());
@@ -4356,16 +4373,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
+        return true;
     }
 
-    private void executeDropView(
+    private boolean executeDropView(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
-                return;
+                return false;
             }
             throw SqlException.viewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
@@ -4385,7 +4403,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, mat view dropped already
-                return;
+                return false;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report view does not exist
                 throw CairoException.viewDoesNotExist(op.getEntityName());
@@ -4394,6 +4412,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
+        return true;
     }
 
     private int filterApply(
@@ -5031,15 +5050,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
-    protected void compileDropExt(
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull GenericDropOperationBuilder opBuilder,
-            @NotNull CharSequence tok,
-            int position
-    ) throws SqlException {
-        throw SqlException.$(position, "unexpected token [").put(tok).put(']');
-    }
-
     protected void compileDropOther(
             @NotNull SqlExecutionContext executionContext,
             @NotNull CharSequence tok,
@@ -5126,15 +5136,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
-    }
-
-    protected void unknownDropColumnSuffix(
-            @Transient SecurityContext securityContext,
-            CharSequence tok,
-            TableToken tableToken,
-            AlterOperationBuilder dropColumnStatement
-    ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
     }
 
     @FunctionalInterface

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
@@ -111,7 +112,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     //     "structural changes" doesn't cover is as "add column" is supported
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        final QueryRegistry queryRegistry = sqlExecutionContext != null ? getCairoEngine().getQueryRegistry() : null;
         keepMatViewsValid = false;
         long queryId = -1;
         try {
@@ -155,26 +156,18 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     public AlterOperation deepClone() {
-        LongList extraInfo = new LongList(this.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.extraStrInfo.size());
-        for (int i = 0, n = this.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(this.extraStrInfo.getStrA(i)));
+        final LongList extraInfo = new LongList(this.extraInfo);
+        final ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.activeExtraStrInfo.size());
+        for (int i = 0, n = this.activeExtraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.activeExtraStrInfo.getStrA(i)));
         }
 
-        AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
+        final AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
         alterOperation.command = this.command;
         alterOperation.tableToken = this.tableToken;
         alterOperation.tableNamePosition = this.tableNamePosition;
-
-        if (this.activeExtraStrInfo == this.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (this.activeExtraStrInfo == this.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
+        alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
         alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
-
         return alterOperation;
     }
 
@@ -470,7 +463,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            svc.removeColumn(activeExtraStrInfo.getStrA(i));
+            removeColumn(svc, activeExtraStrInfo.getStrA(i));
         }
     }
 
@@ -760,7 +753,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return new AlterOperation(extraInfo, extraStrInfo);
     }
 
-    interface CharSequenceList extends Mutable {
+    private CairoEngine getCairoEngine() {
+        assert sqlExecutionContext != null;
+        return sqlExecutionContext.getCairoEngine();
+    }
+
+    private void removeColumn(MetadataService svc, CharSequence columnName) {
+        svc.removeColumn(columnName, securityContext);
+    }
+
+    private interface CharSequenceList extends Mutable {
         CharSequence getStrA(int i);
 
         CharSequence getStrB(int i);
