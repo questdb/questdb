@@ -229,7 +229,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         """,
                 """
                         QUERY PLAN
-                        Radix sort light
+                        Encode sort light
                           keys: [doubled]
                             VirtualRecord
                               functions: [name,memoize(json_extract()::byte),memoize(val*2)]
@@ -999,7 +999,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         """,
                 """
                         QUERY PLAN
-                        Radix sort light
+                        Encode sort light
                           keys: [doubled]
                             VirtualRecord
                               functions: [name,memoize(json_extract()),memoize(val*2)]

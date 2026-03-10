@@ -174,6 +174,9 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private static void buildRankMap(DirectIntList rankMap, DirectIntList tempList, StaticSymbolTable symbolTable, int symbolCount) {
+        if (symbolCount == 0) {
+            return;
+        }
         tempList.setPos(symbolCount);
         for (int k = 0; k < symbolCount; k++) {
             tempList.set(k, k);

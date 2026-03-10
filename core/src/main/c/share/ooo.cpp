@@ -1249,14 +1249,20 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 // ---------------------------------------------------------------------------
 
 // Entry structs for encoded sort. The last word in each entry is the rowId,
-// which is excluded from comparisond.
+// used as a tiebreaker to guarantee stable sort order.
 
 struct encoded_2x {
     uint64_t k1;
     uint64_t rowId;
 
-    bool operator<(const encoded_2x &other) const { return k1 < other.k1; }
-    bool operator<=(const encoded_2x &other) const { return k1 <= other.k1; }
+    bool operator<(const encoded_2x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        return rowId < other.rowId;
+    }
+    bool operator<=(const encoded_2x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        return rowId <= other.rowId;
+    }
 };
 
 struct encoded_3x {
@@ -1266,11 +1272,13 @@ struct encoded_3x {
 
     bool operator<(const encoded_3x &other) const {
         if (k1 != other.k1) return k1 < other.k1;
-        return k2 < other.k2;
+        if (k2 != other.k2) return k2 < other.k2;
+        return rowId < other.rowId;
     }
     bool operator<=(const encoded_3x &other) const {
         if (k1 != other.k1) return k1 < other.k1;
-        return k2 <= other.k2;
+        if (k2 != other.k2) return k2 < other.k2;
+        return rowId <= other.rowId;
     }
 };
 
@@ -1283,12 +1291,14 @@ struct encoded_4x {
     bool operator<(const encoded_4x &other) const {
         if (k1 != other.k1) return k1 < other.k1;
         if (k2 != other.k2) return k2 < other.k2;
-        return k3 < other.k3;
+        if (k3 != other.k3) return k3 < other.k3;
+        return rowId < other.rowId;
     }
     bool operator<=(const encoded_4x &other) const {
         if (k1 != other.k1) return k1 < other.k1;
         if (k2 != other.k2) return k2 < other.k2;
-        return k3 <= other.k3;
+        if (k3 != other.k3) return k3 < other.k3;
+        return rowId <= other.rowId;
     }
 };
 
@@ -1303,13 +1313,15 @@ struct encoded_5x {
         if (k1 != other.k1) return k1 < other.k1;
         if (k2 != other.k2) return k2 < other.k2;
         if (k3 != other.k3) return k3 < other.k3;
-        return k4 < other.k4;
+        if (k4 != other.k4) return k4 < other.k4;
+        return rowId < other.rowId;
     }
     bool operator<=(const encoded_5x &other) const {
         if (k1 != other.k1) return k1 < other.k1;
         if (k2 != other.k2) return k2 < other.k2;
         if (k3 != other.k3) return k3 < other.k3;
-        return k4 <= other.k4;
+        if (k4 != other.k4) return k4 < other.k4;
+        return rowId <= other.rowId;
     }
 };
 

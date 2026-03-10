@@ -8020,7 +8020,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [min]
                                     Async Group By workers: 1
                                       keys: [timestamp,timestamp1]

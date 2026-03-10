@@ -636,8 +636,6 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlOrderByRadixSortThreshold();
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();

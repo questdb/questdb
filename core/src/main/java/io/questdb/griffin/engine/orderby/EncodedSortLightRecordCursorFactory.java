@@ -90,7 +90,7 @@ public class EncodedSortLightRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Sort light (encoded)");
+        sink.type("Encode sort light");
         SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }
