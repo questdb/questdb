@@ -1080,7 +1080,7 @@ macro_rules! encode_simd_dict_cases {
                 let data = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_dict_c{card}_n{np}"),
@@ -1089,8 +1089,8 @@ macro_rules! encode_simd_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter =
-                            slice_to_dict_pages_simd(&data, 0, opts, pt.clone()).expect("encode");
+                        let iter = slice_to_dict_pages_simd(&data, 0, opts.clone(), pt.clone())
+                            .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1108,14 +1108,18 @@ macro_rules! encode_int_notnull_dict_cases {
             let data: Vec<$T> = $data;
             let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
             let pt = primitive_type_for(ct);
-            let opts = $opts;
+            let opts = $opts.clone();
             $cases.push(EncodeBenchCase {
                 name: format!(concat!($name, "_dict_c{card}_n0"), card = $card),
                 row_count: ROW_COUNT,
                 encode_fn: Box::new(move || {
-                    let iter =
-                        int_slice_to_dict_pages_notnull::<$T, $U>(&data, 0, opts, pt.clone())
-                            .expect("encode");
+                    let iter = int_slice_to_dict_pages_notnull::<$T, $U>(
+                        &data,
+                        0,
+                        opts.clone(),
+                        pt.clone(),
+                    )
+                    .expect("encode");
                     for page in iter {
                         black_box(page.expect("page"));
                     }
@@ -1133,7 +1137,7 @@ macro_rules! encode_int_nullable_dict_cases {
                 let data: Vec<$T> = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_dict_c{card}_n{np}"),
@@ -1142,9 +1146,13 @@ macro_rules! encode_int_nullable_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter =
-                            int_slice_to_dict_pages_nullable::<$T, $U>(&data, 0, opts, pt.clone())
-                                .expect("encode");
+                        let iter = int_slice_to_dict_pages_nullable::<$T, $U>(
+                            &data,
+                            0,
+                            opts.clone(),
+                            pt.clone(),
+                        )
+                        .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1163,7 +1171,7 @@ macro_rules! encode_bytes_dict_cases {
                 let data = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_dict_c{card}_n{np}"),
@@ -1172,8 +1180,8 @@ macro_rules! encode_bytes_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter =
-                            bytes_to_dict_pages(&data, $swap, 0, opts, pt.clone()).expect("encode");
+                        let iter = bytes_to_dict_pages(&data, $swap, 0, opts.clone(), pt.clone())
+                            .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1195,7 +1203,7 @@ macro_rules! encode_decimal_flba_dict_cases {
             for &null_pct in null_pcts(true) {
                 let data = make_dict_decimal_flba_data::<$src_len>(ROW_COUNT, null_pct, card);
                 let pt = primitive_type.clone();
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($label, "_dict_c{card}_n{np}"),
@@ -1204,8 +1212,8 @@ macro_rules! encode_decimal_flba_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter =
-                            bytes_to_dict_pages(&data, false, 0, opts, pt.clone()).expect("encode");
+                        let iter = bytes_to_dict_pages(&data, false, 0, opts.clone(), pt.clone())
+                            .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1707,6 +1715,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             let data = make_dict_string_data(ROW_COUNT, null_pct, card);
             let column_type = ColumnType::new(ColumnTypeTag::String, 0);
             let primitive_type = primitive_type_for(column_type);
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("string_dict_c{card}_n{null_pct}"),
                 row_count: ROW_COUNT,
@@ -1715,7 +1724,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                         &data.offsets,
                         &data.data,
                         0,
-                        options,
+                        options.clone(),
                         primitive_type.clone(),
                     )
                     .expect("encode");
@@ -1733,6 +1742,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             let data = make_dict_binary_data(ROW_COUNT, null_pct, card);
             let column_type = ColumnType::new(ColumnTypeTag::Binary, 0);
             let primitive_type = primitive_type_for(column_type);
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("binary_dict_c{card}_n{null_pct}"),
                 row_count: ROW_COUNT,
@@ -1741,7 +1751,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                         &data.offsets,
                         &data.data,
                         0,
-                        options,
+                        options.clone(),
                         primitive_type.clone(),
                     )
                     .expect("encode");
@@ -1762,12 +1772,14 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             for &null_pct in null_pcts(true) {
                 let data = make_dict_decimal_i32_data(ROW_COUNT, null_pct, card);
                 let pt = primitive_type.clone();
+                let options = options.clone();
                 cases.push(EncodeBenchCase {
                     name: format!("decimal_int32_dict_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone())
-                            .expect("encode");
+                        let iter =
+                            decimal_slice_to_dict_pages(&data, 0, options.clone(), pt.clone())
+                                .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1786,12 +1798,14 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             for &null_pct in null_pcts(true) {
                 let data = make_dict_decimal_i64_data(ROW_COUNT, null_pct, card);
                 let pt = primitive_type.clone();
+                let options = options.clone();
                 cases.push(EncodeBenchCase {
                     name: format!("decimal_int64_dict_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone())
-                            .expect("encode");
+                        let iter =
+                            decimal_slice_to_dict_pages(&data, 0, options.clone(), pt.clone())
+                                .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }

@@ -648,34 +648,6 @@ impl ParquetEncodingConfig {
     }
 }
 
-/// Extract per-column compression override from packed config.
-/// Returns None if the config uses default/global compression.
-fn compression_from_config(config: i32) -> Option<CompressionOptions> {
-    let is_explicit = (config as u32 & EXPLICIT_FLAG) != 0;
-    if !is_explicit {
-        return None;
-    }
-    let codec_id = (config as u32 >> COMPRESSION_SHIFT) & COMPRESSION_MASK;
-    let level = (config as u32 >> LEVEL_SHIFT) & LEVEL_MASK;
-    match codec_id {
-        0 => None, // use global default
-        1 => Some(CompressionOptions::Uncompressed),
-        2 => Some(CompressionOptions::Snappy),
-        3 => Some(CompressionOptions::Gzip(
-            parquet2::compression::GzipLevel::try_new(if level > 0 { level as u8 } else { 6 }).ok(),
-        )),
-        4 => Some(CompressionOptions::Brotli(
-            parquet2::compression::BrotliLevel::try_new(if level > 0 { level as u32 } else { 1 })
-                .ok(),
-        )),
-        5 => Some(CompressionOptions::Zstd(
-            parquet2::compression::ZstdLevel::try_new(if level > 0 { level } else { 1 }).ok(),
-        )),
-        6 => Some(CompressionOptions::Lz4Raw),
-        _ => None,
-    }
-}
-
 impl From<i32> for ParquetEncodingConfig {
     fn from(raw: i32) -> Self {
         Self::from_raw(raw)

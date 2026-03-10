@@ -2,7 +2,7 @@ mod common;
 
 use arrow::array::{
     Array, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, Int8Array, TimestampMicrosecondArray, TimestampMillisecondArray,
+    Int64Array, Int8Array, TimestampMicrosecondArray, TimestampMillisecondArray, UInt32Array,
 };
 use common::encode::{
     generate_nulls, make_primitive_column, read_parquet_batches, write_parquet, EncodeEncoding,
@@ -125,8 +125,35 @@ impl_verify_simple!(Short, Int16Array);
 
 // Int32-backed
 impl_verify_simple!(Int, Int32Array);
-impl_verify_simple!(IPv4, Int32Array);
 impl_verify_simple!(GeoInt, Int32Array);
+
+// IPv4 is stored as UInt32 in Parquet, but QuestDB uses i32 natively
+impl EncodeVerify for IPv4 {
+    fn verify(
+        parquet_bytes: &[u8],
+        expected: &[Option<<Self as PrimitiveType>::T>],
+        ctx: &str,
+    ) {
+        let batches = read_parquet_batches(parquet_bytes);
+        let arr = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .expect("UInt32Array");
+        assert_eq!(arr.len(), expected.len());
+        for (i, exp) in expected.iter().enumerate() {
+            match exp {
+                Some(v) => {
+                    assert!(!arr.is_null(i), "{ctx}: expected non-null at {i}");
+                    assert_eq!(arr.value(i) as i32, *v, "{ctx}: mismatch at {i}");
+                }
+                None => {
+                    assert!(arr.is_null(i), "{ctx}: expected null at {i}");
+                }
+            }
+        }
+    }
+}
 
 // Int64-backed
 impl_verify_simple!(Long, Int64Array);

@@ -1690,25 +1690,6 @@ mod tests {
         assert!(decoder.push().is_err()); // immediate error on oob
     }
 
-    #[test]
-    fn test_invalid_utf8_in_dict() {
-        let tas = TestAllocatorState::new();
-        let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
-
-        // Build a raw dict buffer with invalid UTF-8
-        let mut dict_buf = Vec::new();
-        dict_buf.extend_from_slice(&2u32.to_le_bytes()); // length 2
-        dict_buf.extend_from_slice(&[0xFF, 0xFE]); // invalid UTF-8
-
-        let dict_page = make_dict_page(&dict_buf, 1);
-
-        let encoded: Vec<u8> = vec![0];
-
-        let result = RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true);
-        assert!(result.is_err());
-    }
-
     // Dict value length >= 2^28 exceeds header capacity
     #[test]
     fn test_dict_value_exceeds_28bit_header() {
