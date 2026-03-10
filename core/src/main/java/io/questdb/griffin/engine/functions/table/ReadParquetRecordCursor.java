@@ -167,7 +167,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
             if (columns != null) {
                 columns.add(parquetIndex);
-                columns.add(actualType);
+                columns.add(isSymbolToVarcharConversion ? expectedType : actualType);
             }
             if (columnIndexes != null) {
                 columnIndexes.add(parquetIndex);
