@@ -1,4 +1,4 @@
-fix parameters:
+parameters:
   shouldRun: true
 steps:
   - script: |
