@@ -457,7 +457,14 @@ public class FuzzTransactionGenerator {
 
             // Need at least encoding or compression
             if (encoding == 0 && compression < 0) {
-                encoding = ParquetEncoding.ENCODING_PLAIN;
+                // Pick the first valid encoding for this column type (PLAIN is
+                // not valid for SYMBOL/VARCHAR, so we can't hardcode it).
+                for (int e = 1; e < ParquetEncoding.MAX_ENUM_INT; e++) {
+                    if (ParquetEncoding.isValidForColumnType(e, colType)) {
+                        encoding = e;
+                        break;
+                    }
+                }
             }
 
             FuzzTransaction transaction = new FuzzTransaction();
