@@ -51,15 +51,16 @@ struct long_3x {
     uint64_t l2;
     uint64_t l3;
 
-    bool operator<=(const long_3x &other) const {
-      if (l1 > other.l1) return false;
-      if (l1 == other.l1) {
-        if (l2 > other.l2) return false;
-        if (l2 == other.l2) {
-          if (l3 > other.l3) return false;
+    bool operator<=(const long_3x& other) const
+    {
+        if (l1 > other.l1) return false;
+        if (l1 == other.l1) {
+            if (l2 > other.l2) return false;
+            if (l2 == other.l2) {
+                if (l3 > other.l3) return false;
+            }
         }
-      }
-      return true;
+        return true;
     }
 };
 
@@ -1230,8 +1231,7 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
-
-} // extern "C"
+}  // extern "C"
 
 // ---------------------------------------------------------------------------
 // Encoded sort: adaptive vergesort + MSD radix + comparison sort
@@ -1326,11 +1326,24 @@ struct encoded_5x {
 };
 
 // Maps ENTRY_LONGS to the corresponding encoded entry type.
-template<int ENTRY_LONGS> struct entry_traits;
-template<> struct entry_traits<2> { using type = encoded_2x; };
-template<> struct entry_traits<3> { using type = encoded_3x; };
-template<> struct entry_traits<4> { using type = encoded_4x; };
-template<> struct entry_traits<5> { using type = encoded_5x; };
+template <int ENTRY_LONGS>
+struct entry_traits;
+template <>
+struct entry_traits<2> {
+    using type = encoded_2x;
+};
+template <>
+struct entry_traits<3> {
+    using type = encoded_3x;
+};
+template <>
+struct entry_traits<4> {
+    using type = encoded_4x;
+};
+template <>
+struct entry_traits<5> {
+    using type = encoded_5x;
+};
 
 // Returns the first uint64_t word (most significant key word) of an entry.
 inline uint64_t entry_first_word(const encoded_2x &e) { return e.k1; }
@@ -1339,10 +1352,18 @@ inline uint64_t entry_first_word(const encoded_4x &e) { return e.k1; }
 inline uint64_t entry_first_word(const encoded_5x &e) { return e.k1; }
 
 struct encoded_less {
-    bool operator()(const encoded_2x &a, const encoded_2x &b) const { return a < b; }
-    bool operator()(const encoded_3x &a, const encoded_3x &b) const { return a < b; }
-    bool operator()(const encoded_4x &a, const encoded_4x &b) const { return a < b; }
-    bool operator()(const encoded_5x &a, const encoded_5x &b) const { return a < b; }
+    bool operator()(const encoded_2x &a, const encoded_2x &b) const {
+        return a < b;
+    }
+    bool operator()(const encoded_3x &a, const encoded_3x &b) const {
+        return a < b;
+    }
+    bool operator()(const encoded_4x &a, const encoded_4x &b) const {
+        return a < b;
+    }
+    bool operator()(const encoded_5x &a, const encoded_5x &b) const {
+        return a < b;
+    }
 };
 
 // MSD (Most Significant Digit) radix sort on the first uint64_t word.
@@ -1358,7 +1379,7 @@ struct encoded_less {
 // At this size the overhead of radix
 // decomposition (256-entry count array + prefix sum + cycle sort) exceeds
 // what comparison sort costs in L1 cache.
-template<typename T>
+template <typename T>
 void msd_radix_byte(T *arr, int64_t count, int shift) {
     if (count < 128) {
         std::sort(arr, arr + count, encoded_less{});
@@ -1387,7 +1408,7 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
     for (int v = 0; v < 256; v++) {
         while (offsets[v] < ends[v]) {
             auto bv = static_cast<uint8_t>(
-                    (entry_first_word(arr[offsets[v]]) >> shift) & 0xFF);
+                (entry_first_word(arr[offsets[v]]) >> shift) & 0xFF);
             if (bv == v) {
                 offsets[v]++;
                 continue;
@@ -1395,8 +1416,8 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
             T elem = arr[offsets[v]];
             do {
                 std::swap(elem, arr[offsets[bv]++]);
-                bv = static_cast<uint8_t>(
-                        (entry_first_word(elem) >> shift) & 0xFF);
+                bv = static_cast<uint8_t>((entry_first_word(elem) >> shift) &
+                                          0xFF);
             } while (bv != v);
             arr[offsets[v]++] = elem;
         }
@@ -1420,7 +1441,7 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
 
 // ska_sort_entries: MSD radix sort on the first word with comparison fallback.
 // Entry point that starts processing from the most significant byte (shift=56).
-template<typename T>
+template <typename T>
 void ska_sort_entries(T *arr, int64_t count) {
     msd_radix_byte<T>(arr, count, 56);
 }
@@ -1435,7 +1456,7 @@ void ska_sort_entries(T *arr, int64_t count) {
 //
 // This approach is O(n) for already-sorted data, and O(n log n) for
 // random data with radix sort providing O(n * 8) sub-run sorting.
-template<typename T>
+template <typename T>
 void vergesort_entries(T *arr, int64_t count) {
     if (count < 128) {
         ska_sort_entries<T>(arr, count);
@@ -1467,20 +1488,23 @@ void vergesort_entries(T *arr, int64_t count) {
             encoded_less cmp;
             if (cmp(arr[runEnd], arr[runStart])) {
                 // Strictly descending run
-                while (runEnd < count && cmp(arr[runEnd], arr[runEnd - 1])) runEnd++;
+                while (runEnd < count && cmp(arr[runEnd], arr[runEnd - 1]))
+                    runEnd++;
                 std::reverse(arr + runStart, arr + runEnd);
             } else {
                 // Non-descending (ascending) run
-                while (runEnd < count && !cmp(arr[runEnd], arr[runEnd - 1])) runEnd++;
+                while (runEnd < count && !cmp(arr[runEnd], arr[runEnd - 1]))
+                    runEnd++;
             }
         }
 
         if (runEnd - runStart >= unstable_limit) {
             // Sort accumulated unstable region before this run
             if (has_unstable && runStart > begin_unstable) {
-                ska_sort_entries<T>(
-                        arr + begin_unstable, runStart - begin_unstable);
-                if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = begin_unstable;
+                ska_sort_entries<T>(arr + begin_unstable,
+                                    runStart - begin_unstable);
+                if (numBounds < MAX_BOUNDS - 2)
+                    bounds[numBounds++] = begin_unstable;
             }
             if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = runStart;
             begin_unstable = runEnd;
@@ -1498,8 +1522,7 @@ void vergesort_entries(T *arr, int64_t count) {
     // Sort remaining unstable region
     if (has_unstable || begin_unstable < count) {
         if (begin_unstable < count) {
-            ska_sort_entries<T>(
-                    arr + begin_unstable, count - begin_unstable);
+            ska_sort_entries<T>(arr + begin_unstable, count - begin_unstable);
         }
         if (numBounds == 0 || bounds[numBounds - 1] != begin_unstable) {
             bounds[numBounds++] = begin_unstable;
@@ -1507,18 +1530,15 @@ void vergesort_entries(T *arr, int64_t count) {
     }
     bounds[numBounds++] = count;
 
-    if (numBounds <= 2) return; // 0 or 1 run, already sorted
+    if (numBounds <= 2) return;  // 0 or 1 run, already sorted
 
     // Merge runs pairwise using std::inplace_merge.
     // Each pass halves the number of runs: O(log k) passes, O(n) work each.
     while (numBounds > 2) {
         int newNum = 0;
         for (int b = 0; b + 2 < numBounds; b += 2) {
-            std::inplace_merge(
-                    arr + bounds[b],
-                    arr + bounds[b + 1],
-                    arr + bounds[b + 2],
-                    encoded_less{});
+            std::inplace_merge(arr + bounds[b], arr + bounds[b + 1],
+                               arr + bounds[b + 2], encoded_less{});
             bounds[newNum++] = bounds[b];
         }
         // Odd run carries over unmerged
@@ -1530,7 +1550,7 @@ void vergesort_entries(T *arr, int64_t count) {
     }
 }
 
-template<int ENTRY_LONGS>
+template <int ENTRY_LONGS>
 void sort_encoded_impl(uint8_t *addr, int64_t count) {
     if (count <= 1) return;
 

@@ -385,6 +385,181 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByMultiColumnIntAndLongAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    CAST(CASE
+                                        WHEN x % 3 = 0 THEN 1
+                                        WHEN x % 3 = 1 THEN 2
+                                        ELSE 3
+                                    END AS INT) AS a,
+                                    CASE
+                                        WHEN x <= 3 THEN 30 - x
+                                        WHEN x <= 6 THEN 60 - x
+                                        ELSE 90 - x
+                                    END AS b
+                                FROM long_sequence(9)
+                            )"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            a	b
+                            1	27
+                            1	54
+                            1	81
+                            2	29
+                            2	56
+                            2	83
+                            3	28
+                            3	55
+                            3	82
+                            """,
+                    "SELECT * FROM x ORDER BY a, b"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByMultiColumnMixedDirectionsWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    CAST(CASE
+                                        WHEN x <= 2 THEN NULL
+                                        WHEN x <= 5 THEN 1
+                                        WHEN x <= 8 THEN 2
+                                        ELSE 3
+                                    END AS INT) AS a,
+                                    CAST(CASE
+                                        WHEN x % 3 = 1 THEN 100
+                                        WHEN x % 3 = 2 THEN 200
+                                        ELSE 300
+                                    END AS LONG) AS b
+                                FROM long_sequence(11)
+                            )"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            a	b
+                            3	100
+                            3	200
+                            3	300
+                            2	100
+                            2	200
+                            2	300
+                            1	100
+                            1	200
+                            1	300
+                            null	100
+                            null	200
+                            """,
+                    "SELECT * FROM x ORDER BY a DESC, b ASC"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByMultiColumnSymbolAndLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, val LONG)");
+            execute(
+                    """
+                            INSERT INTO x (sym, val) VALUES
+                            ('B', 2), ('A', 3), ('B', 1), ('A', 1), ('B', 3), ('A', 2)"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tval
+                            A\t1
+                            A\t2
+                            A\t3
+                            B\t1
+                            B\t2
+                            B\t3
+                            """,
+                    "SELECT * FROM x ORDER BY sym, val"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderBySymbolColumnAscWithNulls() throws Exception {
+        assertQuery(
+                """
+                        sym\tval
+                        \t4
+                        \t8
+                        \t12
+                        A\t1
+                        A\t5
+                        A\t9
+                        B\t2
+                        B\t6
+                        B\t10
+                        C\t3
+                        C\t7
+                        C\t11
+                        """,
+                "SELECT * FROM x ORDER BY sym ASC",
+                "CREATE TABLE x AS (" +
+                        "SELECT" +
+                        " CAST(CASE" +
+                        "     WHEN x % 4 = 0 THEN NULL" +
+                        "     WHEN x % 4 = 1 THEN 'A'" +
+                        "     WHEN x % 4 = 2 THEN 'B'" +
+                        "     ELSE 'C'" +
+                        " END AS SYMBOL) AS sym," +
+                        " x AS val" +
+                        " FROM long_sequence(12)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderBySymbolColumnDescWithNulls() throws Exception {
+        assertQuery(
+                """
+                        sym\tval
+                        C\t3
+                        C\t7
+                        C\t11
+                        B\t2
+                        B\t6
+                        B\t10
+                        A\t1
+                        A\t5
+                        A\t9
+                        \t4
+                        \t8
+                        \t12
+                        """,
+                "SELECT * FROM x ORDER BY sym DESC",
+                "CREATE TABLE x AS (" +
+                        "SELECT" +
+                        " CAST(CASE" +
+                        "     WHEN x % 4 = 0 THEN NULL" +
+                        "     WHEN x % 4 = 1 THEN 'A'" +
+                        "     WHEN x % 4 = 2 THEN 'B'" +
+                        "     ELSE 'C'" +
+                        " END AS SYMBOL) AS sym," +
+                        " x AS val" +
+                        " FROM long_sequence(12)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testOrderByTimestampColumnAscMixedValues() throws Exception {
         assertQuery(
                 """
