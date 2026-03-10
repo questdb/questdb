@@ -1242,6 +1242,715 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testOmittedBoolColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_bool (" +
+                        "col BOOLEAN, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_bool")
+                            .boolColumn("col", true)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_bool")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_bool")
+                            .boolColumn("col", false)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_bool")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_bool")
+                            .boolColumn("col", true)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_bool");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_bool ORDER BY ts",
+                        "col\ntrue\nfalse\nfalse\nfalse\ntrue\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedByteColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_byte (" +
+                        "col BYTE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_byte")
+                            .byteColumn("col", (byte) 1)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_byte")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_byte")
+                            .byteColumn("col", (byte) -1)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_byte")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_byte")
+                            .byteColumn("col", (byte) 127)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_byte");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_byte ORDER BY ts",
+                        "col\n1\n0\n-1\n0\n127\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedCharColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_char (" +
+                        "col CHAR, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_char")
+                            .charColumn("col", 'A')
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_char")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_char")
+                            .charColumn("col", 'Z')
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_char")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_char")
+                            .charColumn("col", 'a')
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_char");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_char ORDER BY ts",
+                        "col\nA\n\nZ\n\na\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedDateColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_date (" +
+                        "col DATE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("omit_date");
+                    QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_DATE, true);
+
+                    // 2024-01-01T00:00:00Z in millis
+                    col.addLong(1_704_067_200_000L);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    col.addNull();
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    // 2023-06-15T00:00:00Z in millis
+                    col.addLong(1_686_787_200_000L);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    col.addNull();
+                    sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    // 2025-12-31T00:00:00Z in millis
+                    col.addLong(1_767_139_200_000L);
+                    sender.at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_date");
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_date WHERE col IS NULL",
+                        "count\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_date WHERE col IS NOT NULL",
+                        "count\n3\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedDoubleColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_double (" +
+                        "col DOUBLE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_double")
+                            .doubleColumn("col", 3.14)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_double")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_double")
+                            .doubleColumn("col", -2.5)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_double")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_double")
+                            .doubleColumn("col", 100.0)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_double");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_double ORDER BY ts",
+                        "col\n3.14\nnull\n-2.5\nnull\n100.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedFloatColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_float (" +
+                        "col FLOAT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_float")
+                            .floatColumn("col", 1.5f)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_float")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_float")
+                            .floatColumn("col", -2.5f)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_float")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_float")
+                            .floatColumn("col", 0.5f)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_float");
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_float WHERE col IS NULL",
+                        "count\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_float WHERE col IS NOT NULL",
+                        "count\n3\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedGeoHashColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_geohash (" +
+                        "col GEOHASH(5b), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("omit_geohash");
+                    QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
+
+                    col.addGeoHash(0b10110L, 5);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    col.addNull();
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    col.addGeoHash(0b11111L, 5);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    col.addNull();
+                    sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    col.addGeoHash(0b01010L, 5);
+                    sender.at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_geohash");
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_geohash WHERE col IS NULL",
+                        "count\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_geohash WHERE col IS NOT NULL",
+                        "count\n3\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedIntColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_int (" +
+                        "col INT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_int")
+                            .intColumn("col", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_int")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_int")
+                            .intColumn("col", -7)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_int")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_int")
+                            .intColumn("col", 0)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_int");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_int ORDER BY ts",
+                        "col\n42\nnull\n-7\nnull\n0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedLong256Column() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_long256 (" +
+                        "col LONG256, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_long256")
+                            .long256Column("col", 1L, 2L, 3L, 4L)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long256")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long256")
+                            .long256Column("col", 5L, 6L, 7L, 8L)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long256")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long256")
+                            .long256Column("col", 9L, 10L, 11L, 12L)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_long256");
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_long256 WHERE col IS NULL",
+                        "count\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_long256 WHERE col IS NOT NULL",
+                        "count\n3\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedLongColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_long (" +
+                        "col LONG, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_long")
+                            .longColumn("col", 12345L)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long")
+                            .longColumn("col", -999L)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_long")
+                            .longColumn("col", 0L)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_long");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_long ORDER BY ts",
+                        "col\n12345\nnull\n-999\nnull\n0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedShortColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_short (" +
+                        "col SHORT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_short")
+                            .shortColumn("col", (short) 100)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_short")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_short")
+                            .shortColumn("col", (short) -200)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_short")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_short")
+                            .shortColumn("col", (short) 50)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_short");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_short ORDER BY ts",
+                        "col\n100\n0\n-200\n0\n50\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedStringColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_string (" +
+                        "col STRING, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_string")
+                            .stringColumn("col", "hello")
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_string")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_string")
+                            .stringColumn("col", "world")
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_string")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_string")
+                            .stringColumn("col", "test")
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_string");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_string ORDER BY ts",
+                        "col\nhello\n\nworld\n\ntest\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedSymbolColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_symbol (" +
+                        "col SYMBOL, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_symbol")
+                            .symbol("col", "alpha")
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_symbol")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_symbol")
+                            .symbol("col", "beta")
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_symbol")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_symbol")
+                            .symbol("col", "alpha")
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_symbol");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_symbol ORDER BY ts",
+                        "col\nalpha\n\nbeta\n\nalpha\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count_distinct(col) FROM omit_symbol",
+                        "count_distinct\n2\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedTimestampColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_timestamp (" +
+                        "col TIMESTAMP, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // 2024-01-01T00:00:00Z in micros
+                    sender.table("omit_timestamp")
+                            .timestampColumn("col", 1_704_067_200_000_000L, ChronoUnit.MICROS)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_timestamp")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    // 2024-06-15T11:30:00Z in micros
+                    sender.table("omit_timestamp")
+                            .timestampColumn("col", 1_718_451_000_000_000L, ChronoUnit.MICROS)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_timestamp")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    // 2023-01-01T00:00:00Z in micros
+                    sender.table("omit_timestamp")
+                            .timestampColumn("col", 1_672_531_200_000_000L, ChronoUnit.MICROS)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_timestamp");
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_timestamp WHERE col IS NULL",
+                        "count\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_timestamp WHERE col IS NOT NULL",
+                        "count\n3\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedUuidColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_uuid (" +
+                        "col UUID, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // UUID: a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+                    sender.table("omit_uuid")
+                            .uuidColumn("col", 0xbb6d6bb9bd380a11L, 0xa0eebc999c0b4ef8L)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_uuid")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    // UUID: 550e8400-e29b-41d4-a716-446655440000
+                    sender.table("omit_uuid")
+                            .uuidColumn("col", 0xa716446655440000L, 0x550e8400e29b41d4L)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_uuid")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    // UUID: 12345678-1234-5678-1234-567812345678
+                    sender.table("omit_uuid")
+                            .uuidColumn("col", 0x1234567812345678L, 0x1234567812345678L)
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_uuid");
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_uuid WHERE col IS NULL",
+                        "count\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM omit_uuid WHERE col IS NOT NULL",
+                        "count\n3\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOmittedVarcharColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE omit_varchar (" +
+                        "col VARCHAR, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("omit_varchar")
+                            .stringColumn("col", "hello")
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    sender.table("omit_varchar")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    sender.table("omit_varchar")
+                            .stringColumn("col", "world")
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    sender.table("omit_varchar")
+                            .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.table("omit_varchar")
+                            .stringColumn("col", "test")
+                            .at(1_000_000_000_004L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("omit_varchar");
+                serverMain.assertSql(
+                        "SELECT col FROM omit_varchar ORDER BY ts",
+                        "col\nhello\n\nworld\n\ntest\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSameColumnNameDifferentTypesDifferentTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
