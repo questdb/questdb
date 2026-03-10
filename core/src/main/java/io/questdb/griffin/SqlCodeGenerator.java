@@ -8649,7 +8649,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             parserMetadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
 
             ObjList<Function> functions = new ObjList<>(exprCount);
-            UnnestSource[] sources = new UnnestSource[exprCount];
+            ObjList<UnnestSource> sources = new ObjList<>(exprCount);
             try {
                 // Build output metadata separately from the
                 // parser metadata to avoid leaking UNNEST columns
@@ -8704,7 +8704,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     unnestModel
                                             .getUnnestJsonColumnTypes()
                                             .getQuick(i);
-                            sources[i] = new JsonUnnestSource(f, jsonColNames, jsonColTypes, configuration.getJsonUnnestMaxValueSize());
+                            sources.add(new JsonUnnestSource(f, jsonColNames, jsonColTypes, configuration.getJsonUnnestMaxValueSize()));
                             for (int j = 0, jn = jsonColNames.size();
                                  j < jn; j++) {
                                 CharSequence colName;
@@ -8734,8 +8734,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         .put(", got ")
                                         .put(ColumnType.nameOf(fType));
                             }
-                            sources[i] =
-                                    new ArrayUnnestSource(f);
+                            sources.add(new ArrayUnnestSource(f));
                             CharSequence colName;
                             if (aliasIdx < columnAliases.size()) {
                                 colName = columnAliases
@@ -8816,9 +8815,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             } catch (Throwable th) {
                 Misc.freeObjList(functions);
-                for (int i = 0, n = sources.length; i < n; i++) {
-                    Misc.freeIfCloseable(sources[i]);
-                }
+                Misc.freeObjListIfCloseable(sources);
                 throw th;
             }
         } catch (Throwable th) {

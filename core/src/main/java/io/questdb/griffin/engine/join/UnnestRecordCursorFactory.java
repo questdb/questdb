@@ -45,13 +45,13 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     private final UnnestRecordCursor cursor;
     private final ObjList<Function> functions;
     private final boolean hasOrdinality;
-    private final UnnestSource[] sources;
+    private final ObjList<UnnestSource> sources;
 
     public UnnestRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory baseFactory,
             ObjList<Function> functions,
-            UnnestSource[] sources,
+            ObjList<UnnestSource> sources,
             int columnSplit,
             boolean hasOrdinality,
             ObjList<CharSequence> columnNames
@@ -62,7 +62,10 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         this.sources = sources;
         this.hasOrdinality = hasOrdinality;
         this.columnNames = columnNames;
-        this.cursor = new UnnestRecordCursor(columnSplit, sources, hasOrdinality);
+        if (hasOrdinality) {
+            sources.add(new OrdinalityUnnestSource());
+        }
+        this.cursor = new UnnestRecordCursor(columnSplit, sources);
     }
 
     @Override
@@ -115,14 +118,12 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.freeIfCloseable(getMetadata());
         Misc.free(baseFactory);
         Misc.freeObjList(functions);
-        for (int i = 0, n = sources.length; i < n; i++) {
-            Misc.freeIfCloseable(sources[i]);
-        }
+        Misc.freeObjListIfCloseable(sources);
     }
 
     private static class UnnestRecordCursor implements NoRandomAccessRecordCursor {
         private final UnnestRecord record;
-        private final UnnestSource[] sources;
+        private final ObjList<UnnestSource> sources;
         private int arrayIndex;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -131,11 +132,10 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public UnnestRecordCursor(
                 int columnSplit,
-                UnnestSource[] sources,
-                boolean hasOrdinality
+                ObjList<UnnestSource> sources
         ) {
             this.sources = sources;
-            this.record = new UnnestRecord(columnSplit, sources, hasOrdinality);
+            this.record = new UnnestRecord(columnSplit, sources);
         }
 
         @Override
@@ -217,8 +217,8 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         private void initSources() {
             Record baseRecord = baseCursor.getRecord();
             maxArrayLen = 0;
-            for (int i = 0, n = sources.length; i < n; i++) {
-                int len = sources[i].init(baseRecord);
+            for (int i = 0, n = sources.size(); i < n; i++) {
+                int len = sources.getQuick(i).init(baseRecord);
                 if (len > maxArrayLen) {
                     maxArrayLen = len;
                 }

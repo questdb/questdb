@@ -32,6 +32,10 @@ NULL value.
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
 
+Use `ObjList<T>` instead of `T[]` object arrays. `ObjList` is QuestDB's
+standard resizable list and integrates with `Misc.freeObjList()` /
+`Misc.freeObjListIfCloseable()` for resource cleanup.
+
 ### Tests
 
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit

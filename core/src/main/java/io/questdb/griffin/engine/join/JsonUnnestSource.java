@@ -369,7 +369,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     @Override
     public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
         // Cold path: extract into B sink using per-column approach
-        return getVarcharFresh(sourceCol, elementIndex, 1);
+        return getVarcharFresh(sourceCol, elementIndex);
     }
 
     @Override
@@ -387,11 +387,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         }
         initPaddedJson(json);
         extractedElementIndex = -1;
-        // Use empty pointer to get array length of top-level array
-        pointerSink.clear();
-        int len = parser.queryPointerArrayLength(
-                jsonSeq, pointerSink, result
-        );
+        int len = parser.queryArrayInfo(jsonSeq, result);
         if (result.getError() != SimdJsonError.SUCCESS) {
             this.jsonSeq = null;
             return 0;
@@ -399,29 +395,12 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         if (len == 0) {
             return 0;
         }
-        // Detect scalar vs object array.
-        // If all elements are null, we default to scalar (isObjectArray = false).
-        // This is correct because both scalar (/N) and object (/N/col) paths
-        // return NULL for null elements, producing identical results.
+        // queryArrayInfo sets result type to the first non-null element's
+        // type, or NULL if all elements are null. For all-null arrays,
+        // both scalar and object paths produce identical NULL results.
         if (columnNames.size() == 1) {
-            // Single column: could be scalar or object array.
-            // Scan forward to find the first non-null element and
-            // check its type. Null elements are inconclusive.
-            isObjectArray = false;
-            for (int i = 0; i < len; i++) {
-                pointerSink.clear();
-                pointerSink.putAscii('/');
-                pointerSink.put(i);
-                parser.queryPointerBoolean(jsonSeq, pointerSink, result);
-                if (result.getError() == SimdJsonError.SUCCESS
-                        && result.getType() != SimdJsonType.NULL) {
-                    isObjectArray =
-                            result.getType() == SimdJsonType.OBJECT;
-                    break;
-                }
-            }
+            isObjectArray = result.getType() == SimdJsonType.OBJECT;
         } else {
-            // Multiple columns: must be object array
             isObjectArray = true;
         }
         return len;
@@ -454,11 +433,11 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         extractedElementIndex = elementIndex;
     }
 
-    private Utf8Sequence getVarcharFresh(int sourceCol, int elementIndex, int copy) {
+    private Utf8Sequence getVarcharFresh(int sourceCol, int elementIndex) {
         if (jsonSeq == null) {
             return null;
         }
-        DirectUtf8Sink sink = varcharSinks[sourceCol][copy];
+        DirectUtf8Sink sink = varcharSinks[sourceCol][1];
         sink.clear();
         buildPointer(elementIndex, sourceCol);
         parser.queryPointerUtf8(

@@ -94,6 +94,25 @@ public class SimdJsonParser implements QuietCloseable {
         }
     }
 
+    /**
+     * Get array length and first non-null element type in a single parse.
+     * The result's type field indicates the first non-null element type
+     * (OBJECT, STRING, NUMBER, etc.), or NULL if all elements are null.
+     */
+    public int queryArrayInfo(
+            DirectUtf8Sequence json,
+            SimdJsonResult result
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryArrayInfo(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                result.ptr()
+        );
+    }
+
     public int queryPointerArrayLength(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
@@ -282,6 +301,14 @@ public class SimdJsonParser implements QuietCloseable {
     );
 
     private native static int getSimdJsonPadding();
+
+    private static native int queryArrayInfo(
+            long impl,
+            long jsonPtr,
+            long jsonLen,
+            long jsonTailPadding,
+            long resultPtr
+    );
 
     private static native int queryPointerArrayLength(
             long impl,

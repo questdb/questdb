@@ -33,6 +33,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -40,38 +41,33 @@ import io.questdb.std.str.Utf8Sequence;
  * Composite record that combines base table columns (col &lt; split)
  * with unnested columns (col &gt;= split). The unnested region maps
  * each column index to a (source, sourceCol) pair via flat lookup
- * arrays. An optional trailing ordinality column (1-based row number)
- * sits at position split + unnestColumnCount.
+ * arrays. When WITH ORDINALITY is used, an {@link OrdinalityUnnestSource}
+ * is included in the sources array and mapped like any other column.
  */
 public class UnnestRecord implements Record {
     private final int[] colToSourceCol;
     private final int[] colToSourceIndex;
-    private final boolean hasOrdinality;
-    private final UnnestSource[] sources;
+    private final ObjList<UnnestSource> sources;
     private final int split;
-    private final int unnestColumnCount;
     private int arrayIndex;
     private Record baseRecord;
 
     public UnnestRecord(
             int split,
-            UnnestSource[] sources,
-            boolean hasOrdinality
+            ObjList<UnnestSource> sources
     ) {
         this.split = split;
         this.sources = sources;
-        this.hasOrdinality = hasOrdinality;
         // Compute total unnest column count and build column mappings.
         int totalCols = 0;
-        for (int i = 0; i < sources.length; i++) {
-            totalCols += sources[i].getColumnCount();
+        for (int i = 0, n = sources.size(); i < n; i++) {
+            totalCols += sources.getQuick(i).getColumnCount();
         }
-        this.unnestColumnCount = totalCols;
         this.colToSourceIndex = new int[totalCols];
         this.colToSourceCol = new int[totalCols];
         int idx = 0;
-        for (int i = 0; i < sources.length; i++) {
-            int count = sources[i].getColumnCount();
+        for (int i = 0, n = sources.size(); i < n; i++) {
+            int count = sources.getQuick(i).getColumnCount();
             for (int j = 0; j < count; j++) {
                 colToSourceIndex[idx] = i;
                 colToSourceCol[idx] = j;
@@ -86,17 +82,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getArray(col, columnType);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return null;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getArray(
-                    srcCol, arrayIndex, columnType
-            );
-        }
-        return null;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getArray(srcCol, arrayIndex, columnType);
     }
 
     @Override
@@ -121,15 +109,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getBool(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return false;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getBool(srcCol, arrayIndex);
-        }
-        return false;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getBool(srcCol, arrayIndex);
     }
 
     @Override
@@ -138,15 +120,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getByte(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return 0;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getByte(srcCol, arrayIndex);
-        }
-        return 0;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getByte(srcCol, arrayIndex);
     }
 
     @Override
@@ -155,15 +131,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getChar(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return 0;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getChar(srcCol, arrayIndex);
-        }
-        return 0;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getChar(srcCol, arrayIndex);
     }
 
     @Override
@@ -172,15 +142,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getDate(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return Numbers.LONG_NULL;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getDate(srcCol, arrayIndex);
-        }
-        return Numbers.LONG_NULL;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getDate(srcCol, arrayIndex);
     }
 
     @Override
@@ -235,15 +199,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getDouble(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return arrayIndex + 1;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getDouble(srcCol, arrayIndex);
-        }
-        return Double.NaN;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getDouble(srcCol, arrayIndex);
     }
 
     @Override
@@ -252,15 +210,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getFloat(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return Float.NaN;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getFloat(srcCol, arrayIndex);
-        }
-        return Float.NaN;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getFloat(srcCol, arrayIndex);
     }
 
     @Override
@@ -309,15 +261,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getInt(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return Numbers.INT_NULL;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getInt(srcCol, arrayIndex);
-        }
-        return Numbers.INT_NULL;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getInt(srcCol, arrayIndex);
     }
 
     @Override
@@ -334,15 +280,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getLong(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return arrayIndex + 1; // 1-based ordinality
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getLong(srcCol, arrayIndex);
-        }
-        return Numbers.LONG_NULL;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getLong(srcCol, arrayIndex);
     }
 
     @Override
@@ -395,15 +335,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getShort(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return 0;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getShort(srcCol, arrayIndex);
-        }
-        return 0;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getShort(srcCol, arrayIndex);
     }
 
     @Override
@@ -412,15 +346,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getStrA(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return null;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getStrA(srcCol, arrayIndex);
-        }
-        return null;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getStrA(srcCol, arrayIndex);
     }
 
     @Override
@@ -429,15 +357,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getStrB(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return null;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getStrB(srcCol, arrayIndex);
-        }
-        return null;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getStrB(srcCol, arrayIndex);
     }
 
     @Override
@@ -446,15 +368,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getStrLen(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return -1;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getStrLen(srcCol, arrayIndex);
-        }
-        return -1;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getStrLen(srcCol, arrayIndex);
     }
 
     @Override
@@ -479,15 +395,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getTimestamp(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return Numbers.LONG_NULL;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getTimestamp(srcCol, arrayIndex);
-        }
-        return Numbers.LONG_NULL;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getTimestamp(srcCol, arrayIndex);
     }
 
     @Override
@@ -496,15 +406,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getVarcharA(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return null;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getVarcharA(srcCol, arrayIndex);
-        }
-        return null;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getVarcharA(srcCol, arrayIndex);
     }
 
     @Override
@@ -513,15 +417,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getVarcharB(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return null;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getVarcharB(srcCol, arrayIndex);
-        }
-        return null;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getVarcharB(srcCol, arrayIndex);
     }
 
     @Override
@@ -530,15 +428,9 @@ public class UnnestRecord implements Record {
             return baseRecord.getVarcharSize(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == unnestColumnCount) {
-            return -1;
-        }
-        if (unnestCol < unnestColumnCount) {
-            int srcIdx = colToSourceIndex[unnestCol];
-            int srcCol = colToSourceCol[unnestCol];
-            return sources[srcIdx].getVarcharSize(srcCol, arrayIndex);
-        }
-        return -1;
+        int srcIdx = colToSourceIndex[unnestCol];
+        int srcCol = colToSourceCol[unnestCol];
+        return sources.getQuick(srcIdx).getVarcharSize(srcCol, arrayIndex);
     }
 
     int getSplit() {

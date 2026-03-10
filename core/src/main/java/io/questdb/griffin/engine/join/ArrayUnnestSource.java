@@ -40,6 +40,10 @@ public class ArrayUnnestSource implements UnnestSource {
     private final DerivedArrayView derivedView = new DerivedArrayView();
     private final Function function;
     private final int outputType;
+    private int cachedBaseOffset;
+    private int cachedLen;
+    private int cachedStride0;
+    private boolean isDerivedViewReady;
     private ArrayView view;
 
     /**
@@ -65,15 +69,23 @@ public class ArrayUnnestSource implements UnnestSource {
             int elementIndex,
             int columnType
     ) {
-        if (view == null) {
+        if (elementIndex >= cachedLen) {
             return null;
         }
-        int len = view.getDimLen(0);
-        if (elementIndex >= len) {
-            return null;
+        if (!isDerivedViewReady) {
+            // First call: full setup — of() copies shape/strides,
+            // subArray() slices and removes dim 0.
+            derivedView.of(view);
+            cachedStride0 = view.getStride(0);
+            cachedBaseOffset = view.getFlatViewOffset();
+            derivedView.subArray(0, elementIndex);
+            isDerivedViewReady = true;
+        } else {
+            // Subsequent calls: just reposition the offset.
+            derivedView.setFlatViewOffset(
+                    cachedBaseOffset + elementIndex * cachedStride0
+            );
         }
-        derivedView.of(view);
-        derivedView.subArray(0, elementIndex);
         return derivedView;
     }
 
@@ -114,11 +126,7 @@ public class ArrayUnnestSource implements UnnestSource {
 
     @Override
     public double getDouble(int sourceCol, int elementIndex) {
-        if (view == null) {
-            return Double.NaN;
-        }
-        int len = view.getDimLen(0);
-        if (elementIndex >= len) {
+        if (elementIndex >= cachedLen) {
             return Double.NaN;
         }
         return view.getDouble(elementIndex);
@@ -138,11 +146,7 @@ public class ArrayUnnestSource implements UnnestSource {
     // It will be reachable once LONG[] is enabled in ColumnType.arrayTypeSet.
     @Override
     public long getLong(int sourceCol, int elementIndex) {
-        if (view == null) {
-            return Numbers.LONG_NULL;
-        }
-        int len = view.getDimLen(0);
-        if (elementIndex >= len) {
+        if (elementIndex >= cachedLen) {
             return Numbers.LONG_NULL;
         }
         return view.getLong(elementIndex);
@@ -193,9 +197,12 @@ public class ArrayUnnestSource implements UnnestSource {
         ArrayView v = function.getArray(baseRecord);
         if (v.isNull()) {
             this.view = null;
+            this.cachedLen = 0;
             return 0;
         }
         this.view = v;
-        return v.isEmpty() ? 0 : v.getDimLen(0);
+        this.cachedLen = v.isEmpty() ? 0 : v.getDimLen(0);
+        this.isDerivedViewReady = false;
+        return cachedLen;
     }
 }
