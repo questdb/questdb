@@ -29,6 +29,7 @@
 #include "ooo_dispatch.h"
 #include <algorithm>
 #include "ooo_radix.h"
+#include "pdqsort/pdqsort.h"
 
 #ifdef OOO_CPP_PROFILE_TIMING
 #include <atomic>
@@ -1243,7 +1244,7 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 //   1. vergesort detects natural ascending/descending runs in O(n).
 //   2. Unsorted sub-runs go through MSD radix sort on the first uint64_t
 //      word (American Flag Sort, in-place, 8 byte passes from MSB to LSB).
-//   3. Within each radix partition (same first word), std::sort handles
+//   3. Within each radix partition (same first word), pdqsort handles
 //      the remaining key words.
 //   4. std::inplace_merge combines sorted runs.
 // ---------------------------------------------------------------------------
@@ -1372,17 +1373,17 @@ struct encoded_less {
 // in-place American Flag Sort: count byte values, compute bucket offsets,
 // then cycle-sort elements into their target buckets without a scratch buffer.
 //
-// After fully partitioning by the first word (shift reaches 0), std::sort
+// After fully partitioning by the first word (shift reaches 0), pdqsort
 // handles the remaining key words within each partition.
 //
-// For partitions smaller than 128 elements, delegates to std::sort directly
+// For partitions smaller than 128 elements, delegates to pdqsort directly
 // At this size the overhead of radix
 // decomposition (256-entry count array + prefix sum + cycle sort) exceeds
 // what comparison sort costs in L1 cache.
 template <typename T>
 void msd_radix_byte(T *arr, int64_t count, int shift) {
     if (count < 128) {
-        std::sort(arr, arr + count, encoded_less{});
+        pdqsort(arr, arr + count, encoded_less{});
         return;
     }
 
@@ -1432,7 +1433,7 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
             } else {
                 // First word fully partitioned; comparison sort handles
                 // the remaining key words within this partition
-                std::sort(arr + sum, arr + sum + counts[v], encoded_less{});
+                pdqsort(arr + sum, arr + sum + counts[v], encoded_less{});
             }
         }
         sum += counts[v];
