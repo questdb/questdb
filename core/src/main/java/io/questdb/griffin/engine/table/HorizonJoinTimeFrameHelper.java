@@ -404,8 +404,7 @@ public class HorizonJoinTimeFrameHelper {
         // Try linear scan first
         long scanResult = linearScanAsOf(targetTimestamp, rowLo);
         if (scanResult >= 0) {
-            bookmarkCurrentFrame(scanResult);
-            return Rows.toRowID(timeFrame.getFrameIndex(), scanResult);
+            return bookmarkAndCache(scanResult);
         } else if (scanResult == Long.MIN_VALUE) {
             // All rows in scan range are > target, check if we have a previous best
             if (bestRowIndex != Long.MIN_VALUE) {
@@ -420,16 +419,13 @@ public class HorizonJoinTimeFrameHelper {
         final long searchStart = -scanResult - 1;
         final long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
         if (searchResult != Long.MIN_VALUE) {
-            bookmarkCurrentFrame(searchResult);
-            return Rows.toRowID(timeFrame.getFrameIndex(), searchResult);
+            return bookmarkAndCache(searchResult);
         }
 
         // Binary search found no rows <= target from searchStart onward.
         // The linear scan confirmed all rows in [rowLo, searchStart) were <= target,
         // so the ASOF match is the last one: searchStart - 1.
-        final long lastLinearRow = searchStart - 1;
-        bookmarkCurrentFrame(lastLinearRow);
-        return Rows.toRowID(timeFrame.getFrameIndex(), lastLinearRow);
+        return bookmarkAndCache(searchStart - 1);
     }
 
     /**
@@ -594,21 +590,40 @@ public class HorizonJoinTimeFrameHelper {
     /**
      * Reset state for processing a new master page frame.
      * <p>
-     * Resets forward/backward watermarks (used for keyed ASOF caching within a frame),
-     * but preserves the bookmark position (used by findAsOfRow) to speed up ASOF lookups
-     * when timestamps increase across frames. findAsOfRow() handles the case where horizon
-     * timestamps decrease between frames by scanning backward from the bookmark.
+     * Resets all state including bookmarks. Bookmarks are reset because workers process
+     * master page frames in non-deterministic order (dispatched via ring queue). A stale
+     * bookmark from a previously processed frame could point to a slave position far from
+     * the current target, causing findAsOfRow() to linearly scan through O(N) slave frames
+     * instead of using seekEstimate's O(log N) binary search. Resetting bookmarks forces
+     * seekEstimate on the first findAsOfRow() call per frame, which is fast and eliminates
+     * the jitter caused by out-of-order frame processing.
      */
     public void toTop() {
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
-        // Note: bookmarkedFrameIndex/bookmarkedRowIndex are intentionally NOT reset.
-        // They help findAsOfRow() start closer to the target when processing subsequent frames.
+        bookmarkedFrameIndex = -1;
+        bookmarkedRowIndex = Long.MIN_VALUE;
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
+    }
+
+    /**
+     * Bookmark the result row and populate the ASOF cache for the ultra-fast path.
+     * Reads the next row's timestamp to determine how long the cached result stays valid.
+     */
+    private long bookmarkAndCache(long resultRowIndex) {
+        bookmarkCurrentFrame(resultRowIndex);
+        final long result = Rows.toRowID(timeFrame.getFrameIndex(), resultRowIndex);
+        final long nextRow = resultRowIndex + 1;
+        if (nextRow < timeFrame.getRowHi()) {
+            timeFrameCursor.recordAtRowIndex(record, nextRow);
+            cachedAsOfRowId = result;
+            cachedNextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+        }
+        return result;
     }
 
     /**
