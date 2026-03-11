@@ -283,26 +283,33 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putDecimal128Column(int columnIndex, QwpDecimalColumnCursor cursor,
-                                    int rowCount, int columnType) throws QwpParseException {
+    public void putDecimal128Column(
+            int columnIndex,
+            QwpDecimalColumnCursor cursor,
+            int rowCount,
+            int columnType
+    ) {
         putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
     @Override
-    public void putDecimal256Column(int columnIndex, QwpDecimalColumnCursor cursor,
-                                    int rowCount, int columnType) throws QwpParseException {
+    public void putDecimal256Column(
+            int columnIndex, QwpDecimalColumnCursor cursor, int rowCount, int columnType
+    ) {
         putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
     @Override
-    public void putDecimal64Column(int columnIndex, QwpDecimalColumnCursor cursor,
-                                   int rowCount, int columnType) throws QwpParseException {
+    public void putDecimal64Column(
+            int columnIndex, QwpDecimalColumnCursor cursor, int rowCount, int columnType
+    ) {
         putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
     @Override
-    public void putDecimalToSmallDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
-                                               int rowCount, int columnType) throws QwpParseException {
+    public void putDecimalToSmallDecimalColumn(
+            int columnIndex, QwpDecimalColumnCursor cursor, int rowCount, int columnType
+    ) {
         putDecimalToDecimalColumn(columnIndex, cursor, rowCount, columnType);
     }
 
@@ -430,12 +437,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     @Override
     public void putFixedColumn(
-            int columnIndex,
-            long valuesAddress,
-            int valueCount,
-            int valueSize,
-            long nullBitmapAddress,
-            int rowCount
+            int columnIndex, long valuesAddress, int valueCount, int valueSize, long nullBitmapAddress, int rowCount
     ) {
         checkInColumnarWrite();
 
@@ -628,8 +630,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putFixedToDecimal128Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                           int rowCount, int columnType) {
+    public void putFixedToDecimal128Column(
+            int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
+    ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
@@ -652,8 +655,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putFixedToDecimal256Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                           int rowCount, int columnType) {
+    public void putFixedToDecimal256Column(
+            int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
+    ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
@@ -677,8 +681,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putFixedToDecimal64Column(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                          int rowCount, int columnType) {
+    public void putFixedToDecimal64Column(
+            int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
+    ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
@@ -701,8 +706,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putFixedToSmallDecimalColumn(int columnIndex, QwpFixedWidthColumnCursor cursor,
-                                             int rowCount, int columnType) {
+    public void putFixedToSmallDecimalColumn(
+            int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
+    ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
@@ -851,10 +857,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     @Override
     public void putFloatToNumericColumn(
-            int columnIndex,
-            QwpFixedWidthColumnCursor cursor,
-            int rowCount,
-            int columnType
+            int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -997,11 +1000,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     @Override
     public void putGeoHashColumn(
-            int columnIndex,
-            QwpGeoHashColumnCursor cursor,
-            int rowCount,
-            int columnType
-    ) throws QwpParseException {
+            int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount, int columnType
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -1040,7 +1040,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putGeoHashToStringColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) throws QwpParseException {
+    public void putGeoHashToStringColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
@@ -1065,7 +1065,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putGeoHashToVarcharColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) throws QwpParseException {
+    public void putGeoHashToVarcharColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
@@ -1091,10 +1091,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     @Override
     public void putIntegerToNumericColumn(
-            int columnIndex,
-            QwpFixedWidthColumnCursor cursor,
-            int rowCount,
-            int columnType
+            int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -1174,121 +1171,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putNullColumn(int columnIndex, int columnType, int rowCount) {
-        checkInColumnarWrite();
-
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putByte((byte) 0);
-                }
-            }
-            case ColumnType.SHORT, ColumnType.CHAR -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putShort((short) 0);
-                }
-            }
-            case ColumnType.INT -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putInt(Numbers.INT_NULL);
-                }
-            }
-            case ColumnType.IPv4 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putInt(Numbers.IPv4_NULL);
-                }
-            }
-            case ColumnType.SYMBOL -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                }
-            }
-            case ColumnType.FLOAT -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putFloat(Float.NaN);
-                }
-            }
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putLong(Numbers.LONG_NULL);
-                }
-            }
-            case ColumnType.DOUBLE -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putDouble(Double.NaN);
-                }
-            }
-            case ColumnType.UUID, ColumnType.LONG128 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                }
-            }
-            case ColumnType.LONG256 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                }
-            }
-            case ColumnType.GEOBYTE -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putByte(GeoHashes.BYTE_NULL);
-                }
-            }
-            case ColumnType.GEOSHORT -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putShort(GeoHashes.SHORT_NULL);
-                }
-            }
-            case ColumnType.GEOINT -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putInt(GeoHashes.INT_NULL);
-                }
-            }
-            case ColumnType.GEOLONG -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putLong(GeoHashes.NULL);
-                }
-            }
-            case ColumnType.DECIMAL8 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putByte(Decimals.DECIMAL8_NULL);
-                }
-            }
-            case ColumnType.DECIMAL16 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putShort(Decimals.DECIMAL16_NULL);
-                }
-            }
-            case ColumnType.DECIMAL32 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putInt(Decimals.DECIMAL32_NULL);
-                }
-            }
-            case ColumnType.DECIMAL64 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putLong(Decimals.DECIMAL64_NULL);
-                }
-            }
-            case ColumnType.DECIMAL128 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
-                }
-            }
-            case ColumnType.DECIMAL256 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
-                            Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
-                }
-            }
-            default -> throw CairoException.nonCritical()
-                    .put("unsupported column type for null sentinel: ").put(ColumnType.nameOf(columnType));
-        }
-
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
-    }
-
-    @Override
     public void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 
@@ -1364,17 +1246,17 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         try {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.DECIMAL8 ->
-                        putStringToDecimal8Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                        putStringToDecimal8Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
                 case ColumnType.DECIMAL16 ->
                         putStringToDecimal16Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
                 case ColumnType.DECIMAL32 ->
-                        putStringToDecimal32Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                        putStringToDecimal32Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
                 case ColumnType.DECIMAL64 ->
-                        putStringToDecimal64Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                        putStringToDecimal64Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
                 case ColumnType.DECIMAL128 ->
                         putStringToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
                 default ->
-                        putStringToDecimal256Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                        putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             }
         } catch (QwpParseException e) {
             throw CairoException.nonCritical().put("failed to convert STRING to decimal");
@@ -2040,79 +1922,21 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
 
     /**
-     * Writes the appropriate null sentinel value for the given column type.
+     * Writes the appropriate null sentinel value for the given decimal column type.
      */
-    private static void writeNullSentinel(MemoryMA dataMem, int columnType) {
+    private static void writeDecimalNullSentinel(MemoryMA dataMem, int columnType) {
         switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-                dataMem.putByte((byte) 0);
-                break;
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-                dataMem.putShort((short) 0);
-                break;
-            case ColumnType.INT:
-                dataMem.putInt(Numbers.INT_NULL);
-                break;
-            case ColumnType.IPv4:
-                dataMem.putInt(Numbers.IPv4_NULL);
-                break;
-            case ColumnType.SYMBOL:
-                dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                break;
-            case ColumnType.FLOAT:
-                dataMem.putFloat(Float.NaN);
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                dataMem.putLong(Numbers.LONG_NULL);
-                break;
-            case ColumnType.DOUBLE:
-                dataMem.putDouble(Double.NaN);
-                break;
-            case ColumnType.UUID:
-            case ColumnType.LONG128:
-                dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                break;
-            case ColumnType.LONG256:
-                dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                break;
-            case ColumnType.GEOBYTE:
-                dataMem.putByte(GeoHashes.BYTE_NULL);
-                break;
-            case ColumnType.GEOSHORT:
-                dataMem.putShort(GeoHashes.SHORT_NULL);
-                break;
-            case ColumnType.GEOINT:
-                dataMem.putInt(GeoHashes.INT_NULL);
-                break;
-            case ColumnType.GEOLONG:
-                dataMem.putLong(GeoHashes.NULL);
-                break;
-            case ColumnType.DECIMAL8:
-                dataMem.putByte(Decimals.DECIMAL8_NULL);
-                break;
-            case ColumnType.DECIMAL16:
-                dataMem.putShort(Decimals.DECIMAL16_NULL);
-                break;
-            case ColumnType.DECIMAL32:
-                dataMem.putInt(Decimals.DECIMAL32_NULL);
-                break;
-            case ColumnType.DECIMAL64:
-                dataMem.putLong(Decimals.DECIMAL64_NULL);
-                break;
-            case ColumnType.DECIMAL128:
-                dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
-                break;
-            case ColumnType.DECIMAL256:
-                dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
-                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
-                break;
-            default:
-                throw CairoException.nonCritical().put("unsupported column type for null sentinel: ")
-                        .put(ColumnType.nameOf(columnType));
+            case ColumnType.DECIMAL8 -> dataMem.putByte(Decimals.DECIMAL8_NULL);
+            case ColumnType.DECIMAL16 -> dataMem.putShort(Decimals.DECIMAL16_NULL);
+            case ColumnType.DECIMAL32 -> dataMem.putInt(Decimals.DECIMAL32_NULL);
+            case ColumnType.DECIMAL64 -> dataMem.putLong(Decimals.DECIMAL64_NULL);
+            case ColumnType.DECIMAL128 ->
+                    dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+            case ColumnType.DECIMAL256 ->
+                    dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                            Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+            default -> throw CairoException.nonCritical().put("unsupported decimal column type for null sentinel: ")
+                    .put(ColumnType.nameOf(columnType));
         }
     }
 
@@ -2173,14 +1997,15 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put(']');
     }
 
-    private void putDecimal128ToDecimalColumn(MemoryMA dataMem, QwpDecimalColumnCursor cursor,
-                                              int rowCount, int wireScale, int columnScale,
-                                              int columnType, int columnIndex) throws QwpParseException {
+    private void putDecimal128ToDecimalColumn(
+            MemoryMA dataMem, QwpDecimalColumnCursor cursor, int rowCount,
+            int wireScale, int columnScale, int columnType, int columnIndex
+    ) {
         boolean needsRescale = wireScale != columnScale;
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                writeDecimalNullSentinel(dataMem, columnType);
             } else {
                 decimal.ofRaw(cursor.getDecimal128Hi(), cursor.getDecimal128Lo());
                 decimal.setScale(wireScale);
@@ -2192,14 +2017,15 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
-    private void putDecimal256ToDecimalColumn(MemoryMA dataMem, QwpDecimalColumnCursor cursor,
-                                              int rowCount, int wireScale, int columnScale,
-                                              int columnType, int columnIndex) throws QwpParseException {
+    private void putDecimal256ToDecimalColumn(
+            MemoryMA dataMem, QwpDecimalColumnCursor cursor, int rowCount,
+            int wireScale, int columnScale, int columnType, int columnIndex
+    ) {
         boolean needsRescale = wireScale != columnScale;
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                writeDecimalNullSentinel(dataMem, columnType);
             } else {
                 decimal.ofRaw(
                         cursor.getDecimal256Hh(), cursor.getDecimal256Hl(),
@@ -2214,14 +2040,20 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
-    private void putDecimal64ToDecimalColumn(MemoryMA dataMem, QwpDecimalColumnCursor cursor,
-                                             int rowCount, int wireScale, int columnScale,
-                                             int columnType, int columnIndex) throws QwpParseException {
+    private void putDecimal64ToDecimalColumn(
+            MemoryMA dataMem,
+            QwpDecimalColumnCursor cursor,
+            int rowCount,
+            int wireScale,
+            int columnScale,
+            int columnType,
+            int columnIndex
+    ) {
         boolean needsRescale = wireScale != columnScale;
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                writeDecimalNullSentinel(dataMem, columnType);
             } else {
                 decimal.ofRaw(cursor.getDecimal64());
                 decimal.setScale(wireScale);
@@ -2233,8 +2065,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
-    private void putDecimalToDecimalColumn(int columnIndex, QwpDecimalColumnCursor cursor,
-                                           int rowCount, int columnType) throws QwpParseException {
+    private void putDecimalToDecimalColumn(
+            int columnIndex, QwpDecimalColumnCursor cursor, int rowCount, int columnType
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -2257,17 +2090,22 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putFloatToDecimal128Loop(
-            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
             } else {
                 double value = cursor.getDouble();
                 if (!Numbers.isFinite(value)) {
-                    writeNullSentinel(dataMem, columnType);
+                    dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
                 } else {
                     try {
                         Numbers.doubleToDecimal(value, decimal128, columnPrecision, columnScale, false);
@@ -2281,17 +2119,22 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putFloatToDecimal16Loop(
-            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putShort(Decimals.DECIMAL16_NULL);
             } else {
                 double value = cursor.getDouble();
                 if (!Numbers.isFinite(value)) {
-                    writeNullSentinel(dataMem, columnType);
+                    dataMem.putShort(Decimals.DECIMAL16_NULL);
                 } else {
                     try {
                         Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
@@ -2305,17 +2148,24 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putFloatToDecimal256Loop(
-            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
             } else {
                 double value = cursor.getDouble();
                 if (!Numbers.isFinite(value)) {
-                    writeNullSentinel(dataMem, columnType);
+                    dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                            Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
                 } else {
                     try {
                         Numbers.doubleToDecimal(value, decimal, columnPrecision, columnScale, false);
@@ -2329,17 +2179,22 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putFloatToDecimal32Loop(
-            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putInt(Decimals.DECIMAL32_NULL);
             } else {
                 double value = cursor.getDouble();
                 if (!Numbers.isFinite(value)) {
-                    writeNullSentinel(dataMem, columnType);
+                    dataMem.putInt(Decimals.DECIMAL32_NULL);
                 } else {
                     try {
                         Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
@@ -2359,11 +2214,11 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putLong(Decimals.DECIMAL64_NULL);
             } else {
                 double value = cursor.getDouble();
                 if (!Numbers.isFinite(value)) {
-                    writeNullSentinel(dataMem, columnType);
+                    dataMem.putLong(Decimals.DECIMAL64_NULL);
                 } else {
                     try {
                         Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
@@ -2377,17 +2232,22 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putFloatToDecimal8Loop(
-            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpFixedWidthColumnCursor cursor,
+            int rowCount,
+            int columnType,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putByte(Decimals.DECIMAL8_NULL);
             } else {
                 double value = cursor.getDouble();
                 if (!Numbers.isFinite(value)) {
-                    writeNullSentinel(dataMem, columnType);
+                    dataMem.putByte(Decimals.DECIMAL8_NULL);
                 } else {
                     try {
                         Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
@@ -2407,7 +2267,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 try {
@@ -2428,7 +2288,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putShort(Decimals.DECIMAL16_NULL);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 try {
@@ -2443,13 +2303,18 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putStringToDecimal256Loop(
-            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpStringColumnCursor cursor,
+            int rowCount,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 try {
@@ -2464,13 +2329,17 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putStringToDecimal32Loop(
-            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpStringColumnCursor cursor,
+            int rowCount,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putInt(Decimals.DECIMAL32_NULL);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 try {
@@ -2485,13 +2354,17 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putStringToDecimal64Loop(
-            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpStringColumnCursor cursor,
+            int rowCount,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putLong(Decimals.DECIMAL64_NULL);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 try {
@@ -2506,13 +2379,17 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putStringToDecimal8Loop(
-            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpStringColumnCursor cursor,
+            int rowCount,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                writeNullSentinel(dataMem, columnType);
+                dataMem.putByte(Decimals.DECIMAL8_NULL);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 try {

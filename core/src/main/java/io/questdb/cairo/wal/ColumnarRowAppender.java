@@ -465,15 +465,6 @@ public interface ColumnarRowAppender {
     );
 
     /**
-     * Marks a column as all-null for the current batch.
-     *
-     * @param columnIndex the column index in the table
-     * @param columnType  the column type (needed to write correct null sentinel)
-     * @param rowCount    total number of rows
-     */
-    void putNullColumn(int columnIndex, int columnType, int rowCount);
-
-    /**
      * Writes a STRING column.
      * <p>
      * STRING uses a different storage format than VARCHAR (legacy format with offset pointers).
