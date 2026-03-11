@@ -1241,12 +1241,13 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 //   ENTRY_LONGS - total uint64_t words per entry (key words + 1 rowId word)
 //
 // For all key sizes (FIXED_8/16/24/32):
-//   1. vergesort detects natural ascending/descending runs in O(n).
-//   2. Unsorted sub-runs go through MSD radix sort on the first uint64_t
-//      word (American Flag Sort, in-place, 8 byte passes from MSB to LSB).
-//   3. Within each radix partition (same first word), pdqsort handles
-//      the remaining key words.
-//   4. std::inplace_merge combines sorted runs.
+//   1. vergesort detects natural ascending/descending runs via jump-sampling.
+//      O(log n) probes, each extending linearly up to n/log(n) elements.
+//   2. Unsorted sub-runs go through MSD radix sort across all words
+//      including rowId (American Flag Sort, in-place, one byte at a time
+//      from MSB to LSB, with uniform bytes skipped iteratively).
+//   3. Partitions smaller than 128 elements fall back to pdqsort at any
+//      radix stage.
 // ---------------------------------------------------------------------------
 
 // Entry structs for encoded sort. The last word in each entry is the rowId,
@@ -1324,11 +1325,11 @@ struct entry_traits<5> {
     using type = encoded_5x;
 };
 
-// Returns the first uint64_t word (most significant key word) of an entry.
-inline uint64_t entry_first_word(const encoded_2x &e) { return e.k1; }
-inline uint64_t entry_first_word(const encoded_3x &e) { return e.k1; }
-inline uint64_t entry_first_word(const encoded_4x &e) { return e.k1; }
-inline uint64_t entry_first_word(const encoded_5x &e) { return e.k1; }
+// Returns the key word at the given index from an entry.
+template <typename T>
+inline uint64_t entry_word(const T &e, int wordIndex) {
+    return reinterpret_cast<const uint64_t *>(&e)[wordIndex];
+}
 
 struct encoded_less {
     bool operator()(const encoded_2x &a, const encoded_2x &b) const {
@@ -1345,30 +1346,62 @@ struct encoded_less {
     }
 };
 
-// MSD (Most Significant Digit) radix sort on the first uint64_t word.
+// MSD (Most Significant Digit) radix sort across multiple key words.
 //
 // Processes one byte at a time from MSB (shift=56) to LSB (shift=0) using
 // in-place American Flag Sort: count byte values, compute bucket offsets,
 // then cycle-sort elements into their target buckets without a scratch buffer.
 //
-// After fully partitioning by the first word (shift reaches 0), pdqsort
-// handles the remaining key words within each partition.
+// Progresses through key words sequentially: after fully partitioning the
+// current word (shift reaches 0), advances to the next key word (wordIndex++)
+// up to maxWordIndex (which includes the rowId word).
 //
-// For partitions smaller than 128 elements, delegates to pdqsort directly
-// At this size the overhead of radix
-// decomposition (256-entry count array + prefix sum + cycle sort) exceeds
-// what comparison sort costs in L1 cache.
+// For partitions smaller than 128 elements, delegates to pdqsort directly.
 template <typename T>
-void msd_radix_byte(T *arr, int64_t count, int shift) {
-    if (count < 128) {
-        pdqsort(arr, arr + count, encoded_less{});
-        return;
-    }
+void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
+                    int maxWordIndex) {
+    // Skip uniform bytes iteratively to avoid unnecessary stack frames.
+    // Only recurse when there are multiple buckets (genuine data splits).
+    int64_t counts[256];
+    for (;;) {
+        if (count < 128) {
+            pdqsort(arr, arr + count, encoded_less{});
+            return;
+        }
 
-    // Count occurrences of each byte value at the current position
-    int64_t counts[256] = {};
-    for (int64_t i = 0; i < count; i++) {
-        counts[(entry_first_word(arr[i]) >> shift) & 0xFF]++;
+        // Count occurrences of each byte value at the current position
+        memset(counts, 0, sizeof(counts));
+        for (int64_t i = 0; i < count; i++) {
+            counts[(entry_word(arr[i], wordIndex) >> shift) & 0xFF]++;
+        }
+
+        // Check if all elements share the same byte value
+        int sole_bucket = -1;
+        for (int v = 0; v < 256; v++) {
+            if (counts[v] > 0) {
+                if (sole_bucket >= 0) {
+                    sole_bucket = -1;
+                    break;
+                }
+                sole_bucket = v;
+            }
+        }
+
+        if (sole_bucket < 0) {
+            break;
+        }
+
+        // Single bucket: advance to next byte/word iteratively.
+        // When all words are exhausted, elements are byte-identical
+        // and no sorting is needed.
+        if (shift > 0) {
+            shift -= 8;
+        } else if (wordIndex < maxWordIndex) {
+            shift = 56;
+            wordIndex++;
+        } else {
+            return;
+        }
     }
 
     // Compute bucket start offsets (prefix sum) and end positions
@@ -1382,12 +1415,11 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
     }
 
     // In-place cycle sort: for each bucket, follow swap cycles until
-    // every element lands in its target bucket. Each element participates
-    // in at most one cycle, so total work is O(n).
+    // every element lands in its target bucket (O(n)).
     for (int v = 0; v < 256; v++) {
         while (offsets[v] < ends[v]) {
             auto bv = static_cast<uint8_t>(
-                (entry_first_word(arr[offsets[v]]) >> shift) & 0xFF);
+                (entry_word(arr[offsets[v]], wordIndex) >> shift) & 0xFF);
             if (bv == v) {
                 offsets[v]++;
                 continue;
@@ -1395,8 +1427,8 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
             T elem = arr[offsets[v]];
             do {
                 std::swap(elem, arr[offsets[bv]++]);
-                bv = static_cast<uint8_t>((entry_first_word(elem) >> shift) &
-                                          0xFF);
+                bv = static_cast<uint8_t>(
+                    (entry_word(elem, wordIndex) >> shift) & 0xFF);
             } while (bv != v);
             arr[offsets[v]++] = elem;
         }
@@ -1407,22 +1439,26 @@ void msd_radix_byte(T *arr, int64_t count, int shift) {
     for (int v = 0; v < 256; v++) {
         if (counts[v] > 1) {
             if (shift > 0) {
-                msd_radix_byte<T>(arr + sum, counts[v], shift - 8);
-            } else {
-                // First word fully partitioned; comparison sort handles
-                // the remaining key words within this partition
-                pdqsort(arr + sum, arr + sum + counts[v], encoded_less{});
+                msd_radix_byte<T>(arr + sum, counts[v], shift - 8, wordIndex,
+                                  maxWordIndex);
+            } else if (wordIndex < maxWordIndex) {
+                // Current word fully partitioned; advance to the next key word
+                msd_radix_byte<T>(arr + sum, counts[v], 56, wordIndex + 1,
+                                  maxWordIndex);
             }
         }
         sum += counts[v];
     }
 }
 
-// ska_sort_entries: MSD radix sort on the first word with comparison fallback.
-// Entry point that starts processing from the most significant byte (shift=56).
+// ska_sort_entries: MSD radix sort entry point.
+// Starts from the most significant byte (shift=56) of the first key word
+// and radix-sorts across all words including rowId
 template <typename T>
 void ska_sort_entries(T *arr, int64_t count) {
-    msd_radix_byte<T>(arr, count, 56);
+    constexpr int maxWordIndex =
+        static_cast<int>(sizeof(T) / sizeof(uint64_t)) - 1;
+    msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
 }
 
 // vergesort_entries: adaptive sort with jump-sampling run detection.
@@ -1431,7 +1467,6 @@ void ska_sort_entries(T *arr, int64_t count) {
 // 2. Probes for natural runs by jumping unstable_limit positions at a time,
 //    then extending outward from the sample point. Random data triggers
 //    only ~log2(n) probes instead of scanning every element.
-// 3. Merges all sorted runs pairwise using std::inplace_merge.
 //
 // O(n) for already-sorted data, O(n log n) for random data.
 template <typename T>
@@ -1477,13 +1512,13 @@ void vergesort_entries(T *arr, int64_t count) {
                 if (lo > begin_range && begin_unstable < 0)
                     begin_unstable = begin_range;
                 if (begin_unstable >= 0) {
-                    ska_sort_entries<T>(arr + begin_unstable, lo - begin_unstable);
+                    ska_sort_entries<T>(arr + begin_unstable,
+                                        lo - begin_unstable);
                     if (numBounds < MAX_BOUNDS - 2)
                         bounds[numBounds++] = begin_unstable;
                     begin_unstable = -1;
                 }
-                if (numBounds < MAX_BOUNDS - 2)
-                    bounds[numBounds++] = lo;
+                if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = lo;
                 pos = hi + 1;
             } else {
                 if (begin_unstable < 0) begin_unstable = begin_range;
@@ -1498,13 +1533,13 @@ void vergesort_entries(T *arr, int64_t count) {
                 if (lo > begin_range && begin_unstable < 0)
                     begin_unstable = begin_range;
                 if (begin_unstable >= 0) {
-                    ska_sort_entries<T>(arr + begin_unstable, lo - begin_unstable);
+                    ska_sort_entries<T>(arr + begin_unstable,
+                                        lo - begin_unstable);
                     if (numBounds < MAX_BOUNDS - 2)
                         bounds[numBounds++] = begin_unstable;
                     begin_unstable = -1;
                 }
-                if (numBounds < MAX_BOUNDS - 2)
-                    bounds[numBounds++] = lo;
+                if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = lo;
                 pos = hi + 1;
             } else {
                 if (begin_unstable < 0) begin_unstable = begin_range;
@@ -1549,18 +1584,26 @@ void sort_encoded_impl(uint8_t *addr, int64_t count) {
 
 extern "C" {
 
-JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_sortEncodedEntries(JNIEnv *env, jclass cl,
-                                             jlong addr, jlong count,
-                                             jint keyLongs) {
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntries(
+    JNIEnv *env, jclass cl, jlong addr, jlong count, jint keyLongs) {
     auto *base = reinterpret_cast<uint8_t *>(addr);
 
     switch (keyLongs) {
-        case 1: sort_encoded_impl<2>(base, count); break;
-        case 2: sort_encoded_impl<3>(base, count); break;
-        case 3: sort_encoded_impl<4>(base, count); break;
-        case 4: sort_encoded_impl<5>(base, count); break;
-        default: assert(false && "unsupported keyLongs"); break; // Java side validates keyLongs
+        case 1:
+            sort_encoded_impl<2>(base, count);
+            break;
+        case 2:
+            sort_encoded_impl<3>(base, count);
+            break;
+        case 3:
+            sort_encoded_impl<4>(base, count);
+            break;
+        case 4:
+            sort_encoded_impl<5>(base, count);
+            break;
+        default:
+            assert(false && "unsupported keyLongs");
+            break;  // Java side validates keyLongs
     }
 }
 
@@ -2169,6 +2212,5 @@ Java_io_questdb_std_Vect_sortArrayColumn(JNIEnv *env, jclass cl, jlong mergedTim
     }
     return __JLONG_REINTERPRET_CAST__(jlong, offset);
 }
-
 }
 // extern "C"
