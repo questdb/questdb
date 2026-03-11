@@ -10579,12 +10579,35 @@ public class SqlOptimiser implements Mutable {
     }
 
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        long result = tryEvalNonNegativeLongConstant(functionParser, expr, sqlExecutionContext);
-        if (result == -1) {
-            assert expr != null;
-            throw SqlException.$(expr.position, "constant expression expected");
+        if (expr != null) {
+            // Unlike tryEvalNonNegativeLongConstant, we don't catch SqlException here.
+            // Parse errors (e.g. "invalid constant") must propagate to the caller.
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                throw SqlException.$(expr.position, "constant expression expected");
+            }
+
+            try {
+                long value;
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
+                } else {
+                    long tmp = (byte) (func.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(func);
+            }
         }
-        return result;
+        return Long.MAX_VALUE;
     }
 
     /**
