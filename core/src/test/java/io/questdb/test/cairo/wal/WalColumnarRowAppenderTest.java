@@ -174,17 +174,17 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     "col_a\tcol_b\n" +
-                    "100\tnull\n" +  // First row (before col_b was added)
-                    "1000\t2000\n" +
-                    "1001\t2001\n" +
-                    "1002\t2002\n" +
-                    "1003\t2003\n" +
-                    "1004\t2004\n" +
-                    "1005\t2005\n" +
-                    "1006\t2006\n" +
-                    "1007\t2007\n" +
-                    "1008\t2008\n" +
-                    "1009\t2009\n",
+                            "100\tnull\n" +  // First row (before col_b was added)
+                            "1000\t2000\n" +
+                            "1001\t2001\n" +
+                            "1002\t2002\n" +
+                            "1003\t2003\n" +
+                            "1004\t2004\n" +
+                            "1005\t2005\n" +
+                            "1006\t2006\n" +
+                            "1007\t2007\n" +
+                            "1008\t2008\n" +
+                            "1009\t2009\n",
                     "select col_a, col_b from test_segment_roll order by ts"
             );
         });
