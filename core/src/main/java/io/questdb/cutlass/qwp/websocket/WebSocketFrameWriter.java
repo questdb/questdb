@@ -66,41 +66,6 @@ public final class WebSocketFrameWriter {
     }
 
     /**
-     * Masks payload data in place using XOR with the given mask key.
-     *
-     * @param buf     the payload buffer
-     * @param len     the payload length
-     * @param maskKey the 4-byte mask key
-     */
-    public static void maskPayload(long buf, long len, int maskKey) {
-        // Process 8 bytes at a time when possible
-        long i = 0;
-        long longMask = ((long) maskKey << 32) | (maskKey & 0xFFFFFFFFL);
-
-        // Process 8-byte chunks
-        while (i + 8 <= len) {
-            long value = Unsafe.getUnsafe().getLong(buf + i);
-            Unsafe.getUnsafe().putLong(buf + i, value ^ longMask);
-            i += 8;
-        }
-
-        // Process 4-byte chunk if remaining
-        if (i + 4 <= len) {
-            int value = Unsafe.getUnsafe().getInt(buf + i);
-            Unsafe.getUnsafe().putInt(buf + i, value ^ maskKey);
-            i += 4;
-        }
-
-        // Process remaining bytes (0-3 bytes) - extract mask byte inline to avoid allocation
-        while (i < len) {
-            byte b = Unsafe.getUnsafe().getByte(buf + i);
-            int maskByte = (maskKey >> (((int) i & 3) << 3)) & 0xFF;
-            Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ maskByte));
-            i++;
-        }
-    }
-
-    /**
      * Writes a binary frame header only (for when payload is written separately).
      *
      * @param buf        the buffer to write to
@@ -227,26 +192,6 @@ public final class WebSocketFrameWriter {
      */
     public static int writePingFrame(long buf, byte[] payload, int payloadOff, int payloadLen) {
         int headerLen = writeHeader(buf, true, WebSocketOpcode.PING, payloadLen, false);
-
-        // Copy payload
-        for (int i = 0; i < payloadLen; i++) {
-            Unsafe.getUnsafe().putByte(buf + headerLen + i, payload[payloadOff + i]);
-        }
-
-        return headerLen + payloadLen;
-    }
-
-    /**
-     * Writes a complete Pong frame to the buffer.
-     *
-     * @param buf        the buffer to write to
-     * @param payload    the pong payload (should match the received ping)
-     * @param payloadOff offset into payload array
-     * @param payloadLen length of payload to write
-     * @return the total number of bytes written
-     */
-    public static int writePongFrame(long buf, byte[] payload, int payloadOff, int payloadLen) {
-        int headerLen = writeHeader(buf, true, WebSocketOpcode.PONG, payloadLen, false);
 
         // Copy payload
         for (int i = 0; i < payloadLen; i++) {

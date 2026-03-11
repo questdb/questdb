@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.websocket;
 
-import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.std.Unsafe;
@@ -84,136 +83,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
         Assert.assertEquals(6, WebSocketFrameWriter.headerSize(125, true));
         Assert.assertEquals(8, WebSocketFrameWriter.headerSize(126, true));
         Assert.assertEquals(14, WebSocketFrameWriter.headerSize(65536, true));
-    }
-
-    @Test
-    public void testMaskPayload() {
-        long buf = allocateBuffer(64);
-        try {
-            byte[] original = "Hello, WebSocket!".getBytes(StandardCharsets.UTF_8);
-            int maskKey = 0x12345678;
-
-            // Write original data
-            for (int i = 0; i < original.length; i++) {
-                Unsafe.getUnsafe().putByte(buf + i, original[i]);
-            }
-
-            // Mask it
-            WebSocketFrameWriter.maskPayload(buf, original.length, maskKey);
-
-            // Verify it's masked (different from original)
-            byte[] masked = readBytes(buf, original.length);
-            boolean allSame = true;
-            for (int i = 0; i < original.length; i++) {
-                if (original[i] != masked[i]) {
-                    allSame = false;
-                    break;
-                }
-            }
-            Assert.assertFalse("Data should be masked", allSame);
-
-            // Mask again to unmask (XOR is its own inverse)
-            WebSocketFrameWriter.maskPayload(buf, original.length, maskKey);
-
-            // Verify it's back to original
-            byte[] unmasked = readBytes(buf, original.length);
-            Assert.assertArrayEquals(original, unmasked);
-        } finally {
-            freeBuffer(buf, 64);
-        }
-    }
-
-    @Test
-    public void testMaskPayloadVaryingLengths() {
-        // Test masking with various lengths to exercise different code paths
-        for (int len : new int[]{1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 100}) {
-            long buf = allocateBuffer(128);
-            try {
-                byte[] original = new byte[len];
-                for (int i = 0; i < len; i++) {
-                    original[i] = (byte) (i + 1);
-                }
-                int maskKey = 0xDEADBEEF;
-
-                // Write and mask
-                for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(buf + i, original[i]);
-                }
-                WebSocketFrameWriter.maskPayload(buf, len, maskKey);
-
-                // Unmask
-                WebSocketFrameWriter.maskPayload(buf, len, maskKey);
-
-                // Verify
-                byte[] result = readBytes(buf, len);
-                Assert.assertArrayEquals("Failed for length " + len, original, result);
-            } finally {
-                freeBuffer(buf, 128);
-            }
-        }
-    }
-
-    @Test
-    public void testRoundTrip() {
-        // Write a masked frame, then parse it - verify consistency
-        long buf = allocateBuffer(256);
-        try {
-            int payloadLen = 100;
-            int maskKey = 0x12345678;
-
-            // Write masked header
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, payloadLen, maskKey);
-            for (int i = 0; i < payloadLen; i++) {
-                Unsafe.getUnsafe().putByte(buf + headerLen + i, (byte) i);
-            }
-            WebSocketFrameWriter.maskPayload(buf + headerLen, payloadLen, maskKey);
-
-            // Parse
-            WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + headerLen + payloadLen);
-
-            Assert.assertEquals(headerLen + payloadLen, consumed);
-            Assert.assertTrue(parser.isFin());
-            Assert.assertEquals(WebSocketOpcode.BINARY, parser.getOpcode());
-            Assert.assertEquals(payloadLen, parser.getPayloadLength());
-        } finally {
-            freeBuffer(buf, 256);
-        }
-    }
-
-    @Test
-    public void testRoundTripWithMasking() {
-        long buf = allocateBuffer(256);
-        try {
-            byte[] payload = "Test payload data".getBytes(StandardCharsets.UTF_8);
-            int maskKey = 0xABCDEF12;
-
-            // Write header with mask
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, payload.length, maskKey);
-
-            // Write and mask payload
-            for (int i = 0; i < payload.length; i++) {
-                Unsafe.getUnsafe().putByte(buf + headerLen + i, payload[i]);
-            }
-            WebSocketFrameWriter.maskPayload(buf + headerLen, payload.length, maskKey);
-
-            // Parse
-            WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + headerLen + payload.length);
-
-            Assert.assertEquals(headerLen + payload.length, consumed);
-            Assert.assertTrue(parser.isMasked());
-            Assert.assertEquals(maskKey, parser.getMaskKey());
-
-            // Unmask and verify payload
-            parser.unmaskPayload(buf + headerLen, payload.length);
-            byte[] result = readBytes(buf + headerLen, payload.length);
-            Assert.assertArrayEquals(payload, result);
-        } finally {
-            freeBuffer(buf, 256);
-        }
     }
 
     @Test
@@ -519,27 +388,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
             Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
         } finally {
             freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWritePongFrameComplete() {
-        long buf = allocateBuffer(32);
-        try {
-            byte[] payload = {0x01, 0x02, 0x03, 0x04};
-            int totalLen = WebSocketFrameWriter.writePongFrame(buf, payload, 0, payload.length);
-
-            // Verify header
-            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
-
-            // Verify payload
-            for (int i = 0; i < payload.length; i++) {
-                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
-            }
-
-            Assert.assertEquals(2 + payload.length, totalLen);
-        } finally {
-            freeBuffer(buf, 32);
         }
     }
 
