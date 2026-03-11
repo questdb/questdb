@@ -168,7 +168,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             if (columns != null) {
                 columns.add(parquetIndex);
                 if (isSymbolToVarcharConversion) {
-                    columns.add(expectedType);
+                    // Decode SYMBOL as VARCHAR_SLICE so that the aux format
+                    // matches what ParquetRecord.getVarcharA() expects.
+                    columns.add(ColumnType.VARCHAR_SLICE);
                 } else {
                     int decodedType = actualType;
                     if (ColumnType.tagOf(decodedType) == ColumnType.VARCHAR) {
