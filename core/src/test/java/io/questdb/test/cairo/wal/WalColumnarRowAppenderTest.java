@@ -581,6 +581,48 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testColumnarWrite_MultipleSortedBatchesInSingleDedupTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_multi_batch_dedup (id int, ts timestamp) timestamp(ts) partition by HOUR WAL DEDUP UPSERT KEYS(ts, id)");
+
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("test_multi_batch_dedup"))) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                int batchCount = 5;
+                long baseTimestamp = 1_000_000_000L;
+                long valuesAddr = Unsafe.malloc((long) batchCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < batchCount; i++) {
+                        Unsafe.getUnsafe().putInt(valuesAddr + (long) i * Integer.BYTES, i);
+                    }
+
+                    long[] timestamps = new long[batchCount];
+                    for (int i = 0; i < batchCount; i++) {
+                        timestamps[i] = baseTimestamp + i * 1_000_000L;
+                    }
+
+                    appender.beginColumnarWrite(batchCount);
+                    appender.putFixedColumn(0, valuesAddr, batchCount, Integer.BYTES, 0, batchCount);
+                    putTimestampColumn(appender, walWriter, timestamps, batchCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[batchCount - 1], false);
+
+                    appender.beginColumnarWrite(batchCount);
+                    appender.putFixedColumn(0, valuesAddr, batchCount, Integer.BYTES, 0, batchCount);
+                    putTimestampColumn(appender, walWriter, timestamps, batchCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[batchCount - 1], false);
+
+                    walWriter.commit();
+                } finally {
+                    Unsafe.free(valuesAddr, (long) batchCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+
+            drainWalQueue();
+            assertSql("count\n5\n", "SELECT count() FROM test_multi_batch_dedup");
+            assertSql("id\n0\n1\n2\n3\n4\n", "SELECT id FROM test_multi_batch_dedup ORDER BY ts, id");
+        });
+    }
+
     /**
      * Tests that columns not written during columnar write are properly filled with nulls.
      * This tests the bug where finishColumnarWrite only wrote ONE null instead of rowCount nulls.

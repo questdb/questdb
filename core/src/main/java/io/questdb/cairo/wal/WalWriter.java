@@ -1981,6 +1981,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
         }
 
+        if (rowCount > 0 && txnMaxTimestamp != -1 && minTimestamp < txnMaxTimestamp) {
+            txnOutOfOrder = true;
+        }
+
         // Update min/max timestamps
         if (minTimestamp < txnMinTimestamp) {
             txnMinTimestamp = minTimestamp;
