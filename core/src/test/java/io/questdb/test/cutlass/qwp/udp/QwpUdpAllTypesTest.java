@@ -43,8 +43,8 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -588,12 +588,19 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore
     @Test
     public void testStress100KRows() throws Exception {
+        // This test sends a lot of rows over UDP, chances are that some datagrams gets lost.
+        // Instead of weakening assertion, we pre-setup the target table with deduplication enabled
+        // and keep ingesting the same data in a loop. So if some datagrams are dropped by the OS,
+        // we can still assert that the data are eventually ingested correctly since the Sender will keep resending the same rows until the test finishes.
+
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_stress100k (tag SYMBOL, id LONG, val DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS (timestamp, id)");
+
             try (QwpUdpReceiver receiver = receiverFactory.create(STRESS_CONF, engine)) {
-                // Drain concurrently with sending to prevent kernel UDP buffer overflow
+                // Drain concurrently with sending to minimize chances of kernel UDP buffer overflow
+                // It can still happen during a hiccup. that's ok, the Sender thread retransmits and QuestDB server deduplicates
                 AtomicBoolean stop = new AtomicBoolean(false);
                 Thread drainThread = new Thread(() -> {
                     try {
@@ -606,40 +613,61 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     } finally {
                         Path.clearThreadLocals();
                     }
-                });
+                }, "qwp-stress100k-drain");
                 drainThread.start();
 
-                try (QwpUdpSender sender = newSender(8000)) {
-                    for (int i = 0; i < 100_000; i++) {
-                        sender.table("t_stress100k")
-                                .symbol("tag", "srv-" + (i % 10))
-                                .longColumn("id", i)
-                                .doubleColumn("val", i * 0.1)
-                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                Thread senderThread = new Thread(() -> {
+                    try (QwpUdpSender sender = newSender(1500)) {
+                        while (!stop.get()) {
+                            for (int i = 0; i < 100_000 && !stop.get(); i++) {
+                                sender.table("t_stress100k")
+                                        .symbol("tag", "srv-" + (i % 10))
+                                        .longColumn("id", i)
+                                        .doubleColumn("val", i * 0.1)
+                                        .at(1_000_000L + i, ChronoUnit.MICROS);
+                            }
+                            sender.flush();
+                        }
                     }
-                    sender.flush();
-                }
+                }, "qwp-stress100k-sender");
+                senderThread.start();
 
-                // Poll until all rows are visible via SQL
-                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-                while (System.nanoTime() < deadline) {
-                    drainWalQueue();
-                    try {
+                Throwable failure = null;
+                try {
+                    TestUtils.assertEventually(() -> {
+                        drainWalQueue();
                         assertSql(
                                 "count\n100000\n",
                                 "SELECT count() FROM t_stress100k"
                         );
-                        break;
-                    } catch (AssertionError | Exception e) {
-                        Os.sleep(100);
+                    });
+                } catch (Throwable th) {
+                    failure = th;
+                    throw th;
+                } finally {
+                    stop.set(true);
+                    senderThread.join(10_000);
+                    drainThread.join(10_000);
+
+                    if (senderThread.isAlive()) {
+                        AssertionError leak = new AssertionError("sender thread did not stop");
+                        if (failure != null) {
+                            failure.addSuppressed(leak);
+                        } else {
+                            throw leak;
+                        }
+                    }
+                    if (drainThread.isAlive()) {
+                        AssertionError leak = new AssertionError("drain thread did not stop");
+                        if (failure != null) {
+                            failure.addSuppressed(leak);
+                        } else {
+                            throw leak;
+                        }
                     }
                 }
-
-                stop.set(true);
-                drainThread.join(10_000);
             }
 
-            drainWalQueue();
             assertSql(
                     "count\n100000\n",
                     "SELECT count() FROM t_stress100k"
