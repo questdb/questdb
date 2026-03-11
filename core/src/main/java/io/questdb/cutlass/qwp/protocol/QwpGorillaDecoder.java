@@ -31,11 +31,11 @@ package io.questdb.cutlass.qwp.protocol;
  * <pre>
  * D = (t[n] - t[n-1]) - (t[n-1] - t[n-2])
  *
- * if D == 0:              write '0'              (1 bit)
- * elif D in [-64, 63]:    write '10' + 7-bit     (9 bits)
- * elif D in [-256, 255]:  write '110' + 9-bit    (12 bits)
- * elif D in [-2048, 2047]: write '1110' + 12-bit (16 bits)
- * else:                   write '1111' + 32-bit  (36 bits)
+ * if D == 0:                write '0'               (1 bit)
+ * elif D in [-64, 63]:      write '10' + 7-bit      (9 bits)
+ * elif D in [-256, 255]:    write '110' + 9-bit    (12 bits)
+ * elif D in [-2048, 2047]:  write '1110' + 12-bit  (16 bits)
+ * else:                     write '1111' + 32-bit  (36 bits)
  * </pre>
  * <p>
  * The decoder reads bit-packed delta-of-delta values and reconstructs
@@ -43,13 +43,6 @@ package io.questdb.cutlass.qwp.protocol;
  */
 public class QwpGorillaDecoder {
 
-    private static final int BUCKET_12BIT_MAX = 2047;
-    private static final int BUCKET_12BIT_MIN = -2048;
-    private static final int BUCKET_7BIT_MAX = 63;
-    // Bucket boundaries (two's complement signed ranges)
-    private static final int BUCKET_7BIT_MIN = -64;
-    private static final int BUCKET_9BIT_MAX = 255;
-    private static final int BUCKET_9BIT_MIN = -256;
     private final QwpBitReader bitReader;
     private int decodeCount;
     private long prevDelta;
@@ -61,43 +54,6 @@ public class QwpGorillaDecoder {
      */
     public QwpGorillaDecoder() {
         this.bitReader = new QwpBitReader();
-    }
-
-    /**
-     * Returns the number of bits required to encode a delta-of-delta value.
-     *
-     * @param deltaOfDelta the delta-of-delta value
-     * @return bits required
-     */
-    public static int getBitsRequired(long deltaOfDelta) {
-        int bucket = getBucket(deltaOfDelta);
-        return switch (bucket) {
-            case 0 -> 1;
-            case 1 -> 9;
-            case 2 -> 12;
-            case 3 -> 16;
-            default -> 36;
-        };
-    }
-
-    /**
-     * Determines which bucket a delta-of-delta value falls into.
-     *
-     * @param deltaOfDelta the delta-of-delta value
-     * @return bucket number (0 = 1-bit, 1 = 9-bit, 2 = 12-bit, 3 = 16-bit, 4 = 36-bit)
-     */
-    public static int getBucket(long deltaOfDelta) {
-        if (deltaOfDelta == 0) {
-            return 0; // 1-bit
-        } else if (deltaOfDelta >= BUCKET_7BIT_MIN && deltaOfDelta <= BUCKET_7BIT_MAX) {
-            return 1; // 9-bit (2 prefix + 7 value)
-        } else if (deltaOfDelta >= BUCKET_9BIT_MIN && deltaOfDelta <= BUCKET_9BIT_MAX) {
-            return 2; // 12-bit (3 prefix + 9 value)
-        } else if (deltaOfDelta >= BUCKET_12BIT_MIN && deltaOfDelta <= BUCKET_12BIT_MAX) {
-            return 3; // 16-bit (4 prefix + 12 value)
-        } else {
-            return 4; // 36-bit (4 prefix + 32 value)
-        }
     }
 
     /**
@@ -128,30 +84,21 @@ public class QwpGorillaDecoder {
     }
 
     /**
-     * Returns the number of values decoded since the last {@link #reset}.
-     *
-     * @return decode count
-     */
-    public int getDecodeCount() {
-        return decodeCount;
-    }
-
-    /**
-     * Returns the number of bits remaining.
-     *
-     * @return available bits
-     */
-    public long getAvailableBits() {
-        return bitReader.getAvailableBits();
-    }
-
-    /**
      * Returns the current bit position (bits read since reset).
      *
      * @return bits read
      */
     public long getBitPosition() {
         return bitReader.getBitPosition();
+    }
+
+    /**
+     * Returns the number of values decoded since the last {@link #reset}.
+     *
+     * @return decode count
+     */
+    public int getDecodeCount() {
+        return decodeCount;
     }
 
     /**
