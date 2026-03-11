@@ -922,6 +922,177 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultipleSourcesBoundsDouble() throws Exception {
+        // When one source is shorter, out-of-bounds DOUBLE must be null, not 0.0 or garbage.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.0]', '[10.0, 20.0, 30.0]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            1.0\t10.0
+                            null\t20.0
+                            null\t30.0
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x DOUBLE), "
+                            + "t.b COLUMNS(y DOUBLE)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1]', '[10, 20, 30]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            1\t10
+                            null\t20
+                            null\t30
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x INT), "
+                            + "t.b COLUMNS(y INT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1]', '[100, 200, 300]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            1\t100
+                            null\t200
+                            null\t300
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x LONG), "
+                            + "t.b COLUMNS(y LONG)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"a\"]', '[\"x\", \"y\", \"z\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            a\tx
+                            \ty
+                            \tz
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x VARCHAR), "
+                            + "t.b COLUMNS(y VARCHAR)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"2026-01-01T00:00:00.000000Z\"]', '[1, 2, 3]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            2026-01-01T00:00:00.000000Z\t1
+                            \t2
+                            \t3
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x TIMESTAMP), "
+                            + "t.b COLUMNS(y INT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[true]', '[1, 2, 3]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            true\t1
+                            false\t2
+                            false\t3
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x BOOLEAN), "
+                            + "t.b COLUMNS(y INT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1]', '[10, 20, 30]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty
+                            1\t10
+                            0\t20
+                            0\t30
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST("
+                            + "t.a COLUMNS(x SHORT), "
+                            + "t.b COLUMNS(y SHORT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSourcesBoundsMixedTypes() throws Exception {
+        // Three sources with different lengths: tests bounds across all types simultaneously.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR, c VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.5, 2.5]', '[\"x\"]', '[100, 200, 300]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tv\ti
+                            1.5\tx\t100
+                            2.5\t\t200
+                            null\t\t300
+                            """,
+                    "SELECT u.d, u.v, u.i FROM t, UNNEST("
+                            + "t.a COLUMNS(d DOUBLE), "
+                            + "t.b COLUMNS(v VARCHAR), "
+                            + "t.c COLUMNS(i INT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testAvgOnJsonUnnest() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");

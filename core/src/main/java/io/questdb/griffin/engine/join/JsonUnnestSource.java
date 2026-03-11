@@ -103,6 +103,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     private final DirectUtf8String varcharViewB = new DirectUtf8String();
     private int bulkResultsCapacity;
     private long bulkResultsPtr;
+    private int currentElementCount;
     private long descsPtr;
     private DirectUtf8Sequence jsonSeq;
     private DirectUtf8Sink jsonSink;
@@ -186,7 +187,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public boolean getBool(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return false;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -224,7 +225,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public double getDouble(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return Double.NaN;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -244,7 +245,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public int getInt(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return Numbers.INT_NULL;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -257,7 +258,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public long getLong(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return Numbers.LONG_NULL;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -271,7 +272,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     @Override
     public short getShort(int sourceCol, int elementIndex) {
         // 0 is the correct NULL sentinel for SHORT in QuestDB
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return 0;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -299,7 +300,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public long getTimestamp(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return Numbers.LONG_NULL;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -330,7 +331,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return null;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -352,7 +353,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
-        if (jsonSeq == null) {
+        if (jsonSeq == null || elementIndex >= currentElementCount) {
             return null;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -383,15 +384,18 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         Utf8Sequence json = function.getVarcharA(baseRecord);
         if (json == null || json.size() == 0) {
             this.jsonSeq = null;
+            this.currentElementCount = 0;
             return 0;
         }
         initPaddedJson(json);
         int len = parser.queryArrayInfo(jsonSeq, result);
         if (result.getError() != SimdJsonError.SUCCESS) {
             this.jsonSeq = null;
+            this.currentElementCount = 0;
             return 0;
         }
         if (len == 0) {
+            this.currentElementCount = 0;
             return 0;
         }
         // queryArrayInfo sets result type to the first non-null element's
@@ -415,6 +419,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                     columnCount, len, nativeSink.ptr()
             );
         }
+        this.currentElementCount = len;
         return len;
     }
 
