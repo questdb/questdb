@@ -118,13 +118,13 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         this.columnTypes = columnTypes;
         this.maxJsonValueSize = maxJsonValueSize;
         this.columnCount = columnTypes.size();
-        this.parser = new SimdJsonParser();
-        this.result = new SimdJsonResult();
-        this.stringBuf = new DirectUtf8Sink(maxJsonValueSize);
         this.jsonSink = null;
         this.columnNameSinks = new DirectUtf8Sink[columnCount];
 
         try {
+            this.parser = new SimdJsonParser();
+            this.result = new SimdJsonResult();
+            this.stringBuf = new DirectUtf8Sink(maxJsonValueSize);
             // Allocate native memory for column names (stable pointers for C++ access).
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = columnNames.getQuick(i);
