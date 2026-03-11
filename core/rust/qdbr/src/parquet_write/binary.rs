@@ -248,7 +248,8 @@ pub fn binary_to_dict_pages(
     let mut total_keys_bytes = 0usize;
 
     for s in byte_slices.iter().flatten() {
-        let next_id = dict_entries.len() as u32;
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
         let key = *dict_map.entry(s).or_insert_with(|| {
             total_keys_bytes += 4 + s.len();
             dict_entries.push(s);
