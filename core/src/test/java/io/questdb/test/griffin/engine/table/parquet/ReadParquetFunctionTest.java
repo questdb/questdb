@@ -64,6 +64,41 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         this.parallel = parallel;
     }
 
+    @Test
+    public void testNativeSymbolColumnReadBack() throws Exception {
+        // Verifies that read_parquet() can decode SYMBOL columns stored in QuestDB's
+        // native parquet encoding (dictionary-encoded BYTE_ARRAY with LocalKeyIsGlobal format).
+        // read_parquet() converts SYMBOL to VARCHAR in its metadata, so the Rust decoder
+        // must resolve dictionary entries to UTF-8 strings rather than returning INT32 keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('AAA', 1, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO x VALUES ('BBB', 2, '2024-01-01T01:00:00.000000Z')");
+            execute("INSERT INTO x VALUES ('AAA', 3, '2024-01-01T02:00:00.000000Z')");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                assertSql(
+                        """
+                                id\tval\tts
+                                AAA\t1\t2024-01-01T00:00:00.000000Z
+                                BBB\t2\t2024-01-01T01:00:00.000000Z
+                                AAA\t3\t2024-01-01T02:00:00.000000Z
+                                """,
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
     @Parameterized.Parameters(name = "parallel={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{

@@ -80,7 +80,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
-    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     // doesn't include unsupported columns
@@ -92,6 +91,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
+    private long filterBufEnd;
     private boolean isFilterListPrepared;
     private int rowGroupIndex;
     private long rowGroupRowCount;
@@ -167,11 +167,15 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
             if (columns != null) {
                 columns.add(parquetIndex);
-                int decodedType = actualType;
-                if (ColumnType.tagOf(decodedType) == ColumnType.VARCHAR) {
-                    decodedType = ColumnType.VARCHAR_SLICE;
+                if (isSymbolToVarcharConversion) {
+                    columns.add(expectedType);
+                } else {
+                    int decodedType = actualType;
+                    if (ColumnType.tagOf(decodedType) == ColumnType.VARCHAR) {
+                        decodedType = ColumnType.VARCHAR_SLICE;
+                    }
+                    columns.add(decodedType);
                 }
-                columns.add(decodedType);
             }
             if (columnIndexes != null) {
                 columnIndexes.add(parquetIndex);
