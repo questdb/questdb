@@ -52,32 +52,36 @@ import org.jetbrains.annotations.NotNull;
  */
 public class QwpResponse {
 
+    /**
+     * Batch accepted successfully.
+     */
+    public static final byte OK = 0x00;
+    /**
+     * Server overloaded, the client should retry with backoff.
+     */
+    public static final byte OVERLOADED = 0x07;
+    /**
+     * Some rows failed to process. Error payload contains per-table details.
+     */
+    public static final byte PARTIAL = 0x01;
+
     private String errorMessage;
     private byte statusCode;
     private ObjList<TableError> tableErrors;
 
     /**
-     * Creates an error response with a message.
+     * Returns a human-readable name for the status code.
      *
-     * @param statusCode   error status code
-     * @param errorMessage error message
-     * @return error response
+     * @param code status code
+     * @return name string
      */
-    public static QwpResponse error(byte statusCode, String errorMessage) {
-        QwpResponse response = new QwpResponse();
-        response.statusCode = statusCode;
-        response.errorMessage = errorMessage;
-        return response;
-    }
-
-    /**
-     * Creates an internal error response.
-     *
-     * @param message error details
-     * @return internal error response
-     */
-    public static QwpResponse internalError(String message) {
-        return error(QwpStatusCode.INTERNAL_ERROR, message);
+    public static String name(byte code) {
+        return switch (code) {
+            case OK -> "OK";
+            case PARTIAL -> "PARTIAL";
+            case OVERLOADED -> "OVERLOADED";
+            default -> "UNKNOWN(" + (code & 0xFF) + ")";
+        };
     }
 
     /**
@@ -87,7 +91,7 @@ public class QwpResponse {
      */
     public static QwpResponse ok() {
         QwpResponse response = new QwpResponse();
-        response.statusCode = QwpStatusCode.OK;
+        response.statusCode = OK;
         return response;
     }
 
@@ -97,17 +101,10 @@ public class QwpResponse {
      * @return overloaded response
      */
     public static QwpResponse overloaded() {
-        return error(QwpStatusCode.OVERLOADED, "server overloaded, retry later");
-    }
-
-    /**
-     * Creates a parse error response.
-     *
-     * @param message error details
-     * @return parse error response
-     */
-    public static QwpResponse parseError(String message) {
-        return error(QwpStatusCode.PARSE_ERROR, message);
+        QwpResponse response = new QwpResponse();
+        response.statusCode = OVERLOADED;
+        response.errorMessage = "server overloaded, retry later";
+        return response;
     }
 
     /**
@@ -118,41 +115,9 @@ public class QwpResponse {
      */
     public static QwpResponse partial(ObjList<TableError> errors) {
         QwpResponse response = new QwpResponse();
-        response.statusCode = QwpStatusCode.PARTIAL;
+        response.statusCode = PARTIAL;
         response.tableErrors = errors;
         return response;
-    }
-
-    /**
-     * Creates a schema mismatch response.
-     *
-     * @param tableName  table with mismatched schema
-     * @param columnName column with type mismatch
-     * @return schema mismatch response
-     */
-    public static QwpResponse schemaMismatch(String tableName, String columnName) {
-        return error(QwpStatusCode.SCHEMA_MISMATCH,
-                "column type mismatch [table=" + tableName + ", column=" + columnName + "]");
-    }
-
-    /**
-     * Creates a schema required response.
-     *
-     * @param tableName table that needs full schema
-     * @return schema required response
-     */
-    public static QwpResponse schemaRequired(String tableName) {
-        return error(QwpStatusCode.SCHEMA_REQUIRED, "schema not found for table: " + tableName);
-    }
-
-    /**
-     * Creates a table not found response.
-     *
-     * @param tableName table that wasn't found
-     * @return table not found response
-     */
-    public static QwpResponse tableNotFound(String tableName) {
-        return error(QwpStatusCode.TABLE_NOT_FOUND, "table not found: " + tableName);
     }
 
     /**
@@ -174,36 +139,18 @@ public class QwpResponse {
     }
 
     /**
-     * Gets the list of table errors (for PARTIAL responses).
-     *
-     * @return table errors, or null for non-PARTIAL responses
-     */
-    public ObjList<TableError> getTableErrors() {
-        return tableErrors;
-    }
-
-    /**
-     * Returns true if this is a retriable error.
-     *
-     * @return true if retriable
-     */
-    public boolean isRetriable() {
-        return QwpStatusCode.isRetriable(statusCode);
-    }
-
-    /**
      * Returns true if this is a success response.
      *
      * @return true if OK or PARTIAL
      */
     public boolean isSuccess() {
-        return QwpStatusCode.isSuccess(statusCode);
+        return statusCode == OK || statusCode == PARTIAL;
     }
 
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append("QwpResponse{status=").append(QwpStatusCode.name(statusCode));
+        sb.append("QwpResponse{status=").append(name(statusCode));
         if (errorMessage != null) {
             sb.append(", message=\"").append(errorMessage).append("\"");
         }
@@ -227,7 +174,7 @@ public class QwpResponse {
         @Override
         public @NotNull String toString() {
             return "TableError{index=" + tableIndex +
-                    ", code=" + QwpStatusCode.name(errorCode) +
+                    ", code=" + name(errorCode) +
                     ", message=\"" + errorMessage + "\"}";
         }
     }
