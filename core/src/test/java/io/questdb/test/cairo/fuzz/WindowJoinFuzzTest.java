@@ -113,6 +113,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
 
                 var leftTable = generateFuzzTradeTable(rnd, symbols, tradeSize, avgTradeSpread, filterTs, filterSymbol, filterValue, limit);
                 boolean isDynamicLo = rnd.nextBoolean();
+                boolean isDynamicHi = rnd.nextBoolean();
                 long preceding, following;
                 if (rnd.nextBoolean()) {
                     preceding = rnd.nextLong(symbols.length * 2L) * avgTradeSpread;
@@ -141,7 +142,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 }
                 var joinFilter = sink.toString();
 
-                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns, includePrevailing, isDynamicLo);
+                assertFuzzExecute(leftTable, joinFilter, preceding, following, aggregates, aggregatedColumns, includePrevailing, isDynamicLo, isDynamicHi);
             }
         });
     }
@@ -154,7 +155,8 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             CharSequence aggregates,
             CharSequence[] aggregatedColumns,
             boolean includePrevailing,
-            boolean isDynamicLo
+            boolean isDynamicLo,
+            boolean isDynamicHi
     ) throws SqlException {
         sink.clear();
         sink
@@ -178,9 +180,12 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         } else {
             sink.put(preceding).put(" microseconds PRECEDING AND ");
         }
+        if (isDynamicHi) {
+            sink.put("boundHi microseconds FOLLOWING ");
+        } else {
+            sink.put(following).put(" microseconds FOLLOWING ");
+        }
         sink
-                .put(following)
-                .put(" microseconds FOLLOWING ")
                 .put(includePrevailing ? " INCLUDE PREVAILING " : " EXCLUDE PREVAILING ")
                 .put(" ORDER BY t.ts, t.sym, t.id");
 
@@ -205,7 +210,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             } else {
                 sink.put(preceding);
             }
-            sink.put(", t.ts) AND p.ts <= dateadd('u', ").put(following).put(", t.ts)");
+            sink.put(", t.ts) AND p.ts <= dateadd('u', ");
+            if (isDynamicHi) {
+                sink.put("t.boundHi");
+            } else {
+                sink.put(following);
+            }
+            sink.put(", t.ts)");
             if (!joinFilter.isEmpty()) {
                 sink.put(" AND (").put(joinFilter).put(')');
             }
@@ -243,7 +254,13 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
             } else {
                 sink.put(preceding);
             }
-            sink.put(", t.ts) AND p.ts <= dateadd('u', ").put(following).put(", t.ts)");
+            sink.put(", t.ts) AND p.ts <= dateadd('u', ");
+            if (isDynamicHi) {
+                sink.put("t.boundHi");
+            } else {
+                sink.put(following);
+            }
+            sink.put(", t.ts)");
             if (!joinFilter.isEmpty()) {
                 sink.put(" AND (").put(joinFilter).put(')');
             }
@@ -260,7 +277,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
         printSql(leftJoinQuery, expectedSink);
 
         if (!expectedSink.toString().equals(actualSink.toString())) {
-            LOG.error().$("isDynamicLo=").$(isDynamicLo).$(" includePrevailing=").$(includePrevailing).$();
+            LOG.error().$("isDynamicLo=").$(isDynamicLo).$(" isDynamicHi=").$(isDynamicHi).$(" includePrevailing=").$(includePrevailing).$();
             LOG.error().$("WINDOW JOIN query: ").$(windowQuery).$();
             LOG.error().$("Oracle query: ").$(leftJoinQuery).$();
         }
@@ -377,6 +394,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                             sym symbol,
                             price double,
                             boundLo int,
+                            boundHi int,
                             ts timestamp
                         ) timestamp(ts) partition by day bypass wal;
                         """
@@ -467,6 +485,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 r.putSym(1, symbol);
                 r.putDouble(2, rnd.nextDouble() * 100);
                 r.putInt(3, (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE)));
+                r.putInt(4, (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE)));
                 r.append();
             }
             w.commit();

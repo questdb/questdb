@@ -121,6 +121,66 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWindowJoinDynamicThreadUnsafe() throws Exception {
+        // Uses wndBoundStr::long (varchar-to-long cast) as the dynamic bound.
+        // The cast function is not thread-safe, so this exercises the per-worker
+        // function copy path in compileWorkerFunctionsConditionally.
+        testParallelWindowJoinDynamic(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """,
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING EXCLUDE PREVAILING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinDynamicThreadUnsafeOnSymbol() throws Exception {
+        // Same as testParallelWindowJoinDynamicThreadUnsafe but with a symbol ON key.
+        testParallelWindowJoinDynamic(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """,
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING EXCLUDE PREVAILING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
     public void testParallelWindowJoinFiltered() throws Exception {
         testParallelWindowJoin(
                 "SELECT avg(price) avg_price, max(max_sym) max_sym " +
@@ -507,7 +567,8 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                                                 side SYMBOL CAPACITY 4,
                                                 price DOUBLE,
                                                 amount DOUBLE,
-                                                wndBound INT
+                                                wndBound INT,
+                                                wndBoundStr VARCHAR
                                         ) TIMESTAMP(ts) PARTITION BY DAY;
                                         """,
                                 sqlExecutionContext
@@ -520,7 +581,8 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
                                         "      rnd_symbol('buy', 'sell') as side, " +
                                         "      rnd_double() * 20 + 10 AS price, " +
                                         "      rnd_double() * 20 + 10 AS amount, " +
-                                        "      1 as wndBound " +
+                                        "      1 as wndBound, " +
+                                        "      '1'::varchar as wndBoundStr " +
                                         "  FROM long_sequence(" + ROW_COUNT + ");",
                                 sqlExecutionContext
                         );
