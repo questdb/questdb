@@ -4095,7 +4095,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by DAY",
                 33,
-                "invalid parquet encoding, supported values:"
+                "invalid parquet encoding 'INVALID_ENCODING', supported values: plain, rle_dictionary"
         );
     }
 

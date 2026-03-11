@@ -2037,7 +2037,9 @@ public class SqlParser {
         int encodingPos = lexer.lastTokenPosition();
         int encoding = ParquetEncoding.getEncoding(tok);
         if (encoding < 0) {
-            throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
+            SqlException e = SqlException.$(encodingPos, "invalid parquet encoding '").put(tok).put("', supported values: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, model.getColumnType());
+            throw e;
         }
         if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, model.getColumnType())) {
             throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(model.getColumnType()));
