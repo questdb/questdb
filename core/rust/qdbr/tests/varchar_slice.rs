@@ -1370,3 +1370,263 @@ fn test_varchar_slice_all_nulls_rle_dictionary() {
         );
     }
 }
+
+// --- Filtered decode (fill-nulls) path ---
+
+/// Like `encode_decode_and_verify_varchar_slice_filtered` but calls
+/// `decode_row_group_filtered::<true>()` (FILL_NULLS=true).
+///
+/// With FILL_NULLS=true the output contains ALL rows from the row group, not
+/// just the filtered ones. Rows not present in the filter are emitted as NULL
+/// (header == SLICE_NULL_HEADER, reserved == 0, pointer == 0).
+fn encode_decode_and_verify_varchar_slice_filtered_fill_nulls(
+    values: &[ByteArray],
+    nulls: &[bool],
+    schema: parquet::schema::types::Type,
+    props: parquet::file::properties::WriterProperties,
+    expected_values: &[String],
+    ascii: bool,
+    rows_filter: &[i64],
+) {
+    let non_null_values = non_null_only(values, nulls);
+    let def_levels = def_levels_from_nulls(nulls);
+    let buf = write_parquet_column::<ByteArrayType>(
+        "col",
+        schema,
+        &non_null_values,
+        Some(&def_levels),
+        Arc::new(props),
+    );
+
+    let mem_tracking = Box::new(MemTracking::new());
+    let tagged_used = Box::new(AtomicUsize::new(0));
+    let allocator = QdbAllocator::new(&*mem_tracking, &*tagged_used, 65);
+
+    let buf_len = buf.len() as u64;
+    let mut reader = Cursor::new(&buf);
+    let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)
+        .expect("ParquetDecoder::read");
+
+    assert_eq!(decoder.col_count, 1, "expected single column");
+    let col_type = decoder.columns[0]
+        .column_type
+        .expect("column type should be recognized");
+
+    let row_group_count = decoder.row_group_count;
+    let mut rgb = RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+    let columns = vec![(0i32, col_type)];
+
+    let file_range = MemRange::new(buf.as_ptr(), buf.len());
+
+    let mut row_offset = 0usize;
+
+    for rg_idx in 0..row_group_count {
+        let rg_size = decoder.row_group_sizes[rg_idx as usize] as u32;
+
+        // Build filter indices relative to this row group.
+        let rg_filter: Vec<i64> = rows_filter
+            .iter()
+            .filter(|&&idx| {
+                let i = idx as usize;
+                i >= row_offset && i < row_offset + rg_size as usize
+            })
+            .map(|&idx| idx - row_offset as i64)
+            .collect();
+
+        decoder
+            .decode_row_group_filtered::<true>(
+                &mut ctx, &mut rgb, 0, &columns, rg_idx, 0, rg_size, &rg_filter,
+            )
+            .unwrap_or_else(|e| panic!("decode row group filtered fill_nulls {rg_idx}: {e}"));
+
+        let bufs = &rgb.column_buffers()[0];
+        let rg_row_count = bufs.aux_vec.len() / VARCHAR_SLICE_AUX_SIZE;
+
+        // With FILL_NULLS=true the output has all rows in the row group.
+        assert_eq!(
+            rg_row_count, rg_size as usize,
+            "fill_nulls row count mismatch in row group {rg_idx}: expected {rg_size}, got {rg_row_count}"
+        );
+
+        // Build a set of filter indices for quick lookup.
+        let rg_filter_set: std::collections::HashSet<i64> = rg_filter.iter().copied().collect();
+
+        // Build expected nulls and values for all rows in the row group.
+        // Rows in the filter keep their original null/value; rows not in the
+        // filter are treated as null.
+        let fill_nulls: Vec<bool> = (0..rg_size as usize)
+            .map(|i| {
+                if rg_filter_set.contains(&(i as i64)) {
+                    nulls[row_offset + i]
+                } else {
+                    true
+                }
+            })
+            .collect();
+        let fill_expected: Vec<String> = (0..rg_size as usize)
+            .map(|i| {
+                if rg_filter_set.contains(&(i as i64)) && !nulls[row_offset + i] {
+                    expected_values[row_offset + i].clone()
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+
+        // Build valid memory ranges.
+        let data_range = if !bufs.data_vec.is_empty() {
+            Some(MemRange::new(bufs.data_vec.as_ptr(), bufs.data_vec.len()))
+        } else {
+            None
+        };
+        let page_ranges: Vec<MemRange> = bufs
+            .page_buffers
+            .iter()
+            .filter(|pb| !pb.is_empty())
+            .map(|pb| MemRange::new(pb.as_ptr(), pb.len()))
+            .collect();
+
+        let mut all_ranges = vec![MemRange {
+            start: file_range.start,
+            end: file_range.end,
+        }];
+        if let Some(ref dr) = data_range {
+            all_ranges.push(MemRange {
+                start: dr.start,
+                end: dr.end,
+            });
+        }
+        for pr in &page_ranges {
+            all_ranges.push(MemRange {
+                start: pr.start,
+                end: pr.end,
+            });
+        }
+
+        assert_varchar_slice_aux(
+            &fill_nulls,
+            &bufs.aux_vec,
+            &fill_expected,
+            &all_ranges,
+            ascii,
+        );
+
+        row_offset += rg_size as usize;
+    }
+}
+
+fn run_varchar_slice_filtered_fill_nulls_test(name: &str, encoding: Encoding) {
+    for version in &VERSIONS {
+        for null in &[Null::None, Null::Sparse] {
+            let count = COUNT;
+            let nulls = generate_nulls(count, *null);
+            let values = generate_values(count);
+            let expected_values: Vec<String> = (0..count).map(|i| format!("val_{i:04}")).collect();
+            let rows_filter = every_other_row_filter(count);
+
+            eprintln!(
+                "Testing filtered fill_nulls {name} with version={version:?}, encoding={encoding:?}, \
+                 null={null:?}"
+            );
+
+            let schema = if matches!(null, Null::None) {
+                required_byte_array_schema("col", Some(LogicalType::String))
+            } else {
+                optional_byte_array_schema("col", Some(LogicalType::String))
+            };
+
+            let props = qdb_props_ascii(ColumnTypeTag::VarcharSlice, *version, encoding, true);
+            encode_decode_and_verify_varchar_slice_filtered_fill_nulls(
+                &values,
+                &nulls,
+                schema,
+                props,
+                &expected_values,
+                true,
+                &rows_filter,
+            );
+        }
+    }
+}
+
+#[test]
+fn test_varchar_slice_filtered_fill_nulls_plain() {
+    run_varchar_slice_filtered_fill_nulls_test("VarcharSlice filtered fill_nulls", Encoding::Plain);
+}
+
+#[test]
+fn test_varchar_slice_filtered_fill_nulls_delta_length() {
+    run_varchar_slice_filtered_fill_nulls_test(
+        "VarcharSlice filtered fill_nulls",
+        Encoding::DeltaLengthByteArray,
+    );
+}
+
+#[test]
+fn test_varchar_slice_filtered_fill_nulls_delta_byte_array() {
+    run_varchar_slice_filtered_fill_nulls_test(
+        "VarcharSlice filtered fill_nulls",
+        Encoding::DeltaByteArray,
+    );
+}
+
+#[test]
+fn test_varchar_slice_filtered_fill_nulls_rle_dictionary() {
+    run_varchar_slice_filtered_fill_nulls_test(
+        "VarcharSlice filtered fill_nulls",
+        Encoding::RleDictionary,
+    );
+}
+
+// --- Genuinely long strings (1KB, 64KB) ---
+
+#[test]
+fn test_varchar_slice_1kb_strings() {
+    let count = 100;
+    let values: Vec<ByteArray> = (0..count)
+        .map(|i| {
+            let chunk = format!("k{i:04}");
+            let repeats = 1024 / chunk.len() + 1;
+            let s: String = chunk.repeat(repeats);
+            let s = &s[..1024];
+            ByteArray::from(s)
+        })
+        .collect();
+    let expected_values: Vec<String> = (0..count)
+        .map(|i| {
+            let chunk = format!("k{i:04}");
+            let repeats = 1024 / chunk.len() + 1;
+            let s: String = chunk.repeat(repeats);
+            s[..1024].to_string()
+        })
+        .collect();
+    let nulls = vec![false; count];
+
+    run_varchar_slice_test_encoding_matrix("1KB strings", &values, &nulls, &expected_values, true);
+}
+
+#[test]
+fn test_varchar_slice_64kb_strings() {
+    let count = 20;
+    let values: Vec<ByteArray> = (0..count)
+        .map(|i| {
+            let chunk = format!("k{i:04}");
+            let repeats = 65536 / chunk.len() + 1;
+            let s: String = chunk.repeat(repeats);
+            let s = &s[..65536];
+            ByteArray::from(s)
+        })
+        .collect();
+    let expected_values: Vec<String> = (0..count)
+        .map(|i| {
+            let chunk = format!("k{i:04}");
+            let repeats = 65536 / chunk.len() + 1;
+            let s: String = chunk.repeat(repeats);
+            s[..65536].to_string()
+        })
+        .collect();
+    let nulls = vec![false; count];
+
+    run_varchar_slice_test_encoding_matrix("64KB strings", &values, &nulls, &expected_values, true);
+}

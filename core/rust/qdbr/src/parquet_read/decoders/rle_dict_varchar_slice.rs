@@ -5,7 +5,7 @@
 //! Dict values are pre-computed into 16-byte aux entries at construction time,
 //! so each decoded index requires only a single 16-byte memcpy.
 
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::dictionary::BaseVarDictDecoder;
 use crate::parquet_read::decoders::{RepeatN, RleIterator};
@@ -26,7 +26,6 @@ pub struct RleDictVarcharSliceDecoder<'a> {
     dict_len: u32,
     decoder: Option<Decoder<'a>>,
     data: RleIterator<'a>,
-    error: Option<ParquetError>,
 }
 
 impl<'a> RleDictVarcharSliceDecoder<'a> {
@@ -69,7 +68,6 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
                 dict_len,
                 decoder: Some(hybrid_decoder),
                 data: RleIterator::Rle(RepeatN::new(0, 0)),
-                error: None,
             };
             res.decode_next_run()?;
             Ok(res)
@@ -85,7 +83,6 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
                 dict_len,
                 decoder: None,
                 data: RleIterator::Rle(RepeatN::new(0, usize::MAX)),
-                error: None,
             })
         }
     }
@@ -146,43 +143,33 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        if self.error.is_some() {
-            return Ok(());
-        }
-
-        if let Some(idx) = self.data.next() {
-            if idx < self.dict_len {
-                let entry = self.dict_aux[idx as usize];
-                let aux_ptr = unsafe {
-                    self.buffers
-                        .aux_vec
-                        .as_mut_ptr()
-                        .add(self.buffers.aux_vec.len())
-                };
-                self.write_aux_entry(aux_ptr, &entry);
-                unsafe {
-                    self.buffers
-                        .aux_vec
-                        .set_len(self.buffers.aux_vec.len() + AUX_ENTRY_SIZE);
-                }
-                Ok(())
-            } else {
-                self.error = Some(fmt_err!(
-                    Layout,
-                    "index {} is out of dict bounds {}",
-                    idx,
-                    self.dict_len
-                ));
-                Ok(())
-            }
-        } else {
-            match self.decode_next_run() {
-                Ok(()) => self.push(),
-                Err(err) => {
-                    self.error = Some(err);
+        loop {
+            if let Some(idx) = self.data.next() {
+                return if idx < self.dict_len {
+                    let entry = self.dict_aux[idx as usize];
+                    let aux_ptr = unsafe {
+                        self.buffers
+                            .aux_vec
+                            .as_mut_ptr()
+                            .add(self.buffers.aux_vec.len())
+                    };
+                    self.write_aux_entry(aux_ptr, &entry);
+                    unsafe {
+                        self.buffers
+                            .aux_vec
+                            .set_len(self.buffers.aux_vec.len() + AUX_ENTRY_SIZE);
+                    }
                     Ok(())
-                }
+                } else {
+                    Err(fmt_err!(
+                        Layout,
+                        "index {} is out of dict bounds {}",
+                        idx,
+                        self.dict_len
+                    ))
+                };
             }
+            self.decode_next_run()?;
         }
     }
 
@@ -231,7 +218,7 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         let mut remaining = count;
         loop {
-            if remaining == 0 || self.error.is_some() {
+            if remaining == 0 {
                 return Ok(());
             }
 
@@ -242,13 +229,12 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                         0
                     } else {
                         if repeat.value >= self.dict_len {
-                            self.error = Some(fmt_err!(
+                            return Err(fmt_err!(
                                 Layout,
                                 "index {} is out of dict bounds {}",
                                 repeat.value,
                                 self.dict_len
                             ));
-                            return Ok(());
                         }
                         let entry = self.dict_aux[repeat.value as usize];
                         let aux_ptr = unsafe {
@@ -299,13 +285,12 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                                         self.buffers.aux_vec.len() + consumed * AUX_ENTRY_SIZE,
                                     );
                                 }
-                                self.error = Some(fmt_err!(
+                                return Err(fmt_err!(
                                     Layout,
                                     "index {} is out of dict bounds {}",
                                     idx,
                                     dict_len
                                 ));
-                                return Ok(());
                             }
                             let entry = dict_aux[idx as usize];
                             unsafe {
@@ -355,13 +340,12 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                                     .set_len(self.buffers.aux_vec.len() + i * AUX_ENTRY_SIZE);
                             }
                             *pos += i;
-                            self.error = Some(fmt_err!(
+                            return Err(fmt_err!(
                                 Layout,
                                 "index {} is out of dict bounds {}",
                                 idx,
                                 dict_len
                             ));
-                            return Ok(());
                         }
                         let entry = dict_aux[idx as usize];
                         unsafe {
@@ -383,45 +367,26 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
 
             remaining -= consumed;
             if remaining > 0 {
-                match self.decode_next_run() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        self.error = Some(err);
-                        return Ok(());
-                    }
-                }
+                self.decode_next_run()?;
             }
         }
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        if self.error.is_some() {
-            return Ok(());
-        }
-
         let mut remaining = count;
         while remaining > 0 {
             let skipped = self.data.skip(remaining);
             remaining -= skipped;
 
             if remaining > 0 {
-                match self.decode_next_run() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        self.error = Some(err);
-                        return Ok(());
-                    }
-                }
+                self.decode_next_run()?;
             }
         }
         Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
-        match &self.error {
-            Some(err) => Err(err.clone()),
-            None => Ok(()),
-        }
+        Ok(())
     }
 }
 
@@ -1642,9 +1607,7 @@ mod tests {
 
         decoder.push().unwrap(); // ok: a
         decoder.push().unwrap(); // ok: b
-        decoder.push().unwrap(); // oob: sets error
-
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err()); // oob: immediate error
     }
 
     #[test]
@@ -1663,9 +1626,7 @@ mod tests {
         let mut decoder =
             RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
         decoder.reserve(5).unwrap();
-        decoder.push_slice(5).unwrap();
-
-        assert!(decoder.result().is_err());
+        assert!(decoder.push_slice(5).is_err());
     }
 
     #[test]
@@ -1686,12 +1647,7 @@ mod tests {
         decoder.reserve(3).unwrap();
 
         decoder.push().unwrap(); // ok
-        decoder.push().unwrap(); // sets error internally
-        assert!(decoder.result().is_err());
-
-        // After error, push still returns Ok (error is sticky)
-        decoder.push().unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err()); // immediate error on oob
     }
 
     #[test]
@@ -1711,12 +1667,7 @@ mod tests {
         decoder.reserve(3).unwrap();
 
         decoder.push().unwrap();
-        decoder.push().unwrap(); // sets error
-        assert!(decoder.result().is_err());
-
-        // skip after error is no-op
-        decoder.skip(10).unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err()); // immediate error on oob
     }
 
     #[test]
@@ -1736,12 +1687,7 @@ mod tests {
         decoder.reserve(5).unwrap();
 
         decoder.push().unwrap();
-        decoder.push().unwrap(); // sets error
-        assert!(decoder.result().is_err());
-
-        // push_slice after error is no-op
-        decoder.push_slice(3).unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err()); // immediate error on oob
     }
 
     #[test]
@@ -1806,8 +1752,7 @@ mod tests {
         decoder.reserve(5).unwrap();
 
         // push_slice hits the OOB repeated value
-        decoder.push_slice(5).unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push_slice(5).is_err());
     }
 
     // push_slice OOB in ByteIndices (8-bit) path
@@ -1828,9 +1773,7 @@ mod tests {
         let mut decoder =
             RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
         decoder.reserve(5).unwrap();
-        decoder.push_slice(5).unwrap();
-
-        assert!(decoder.result().is_err());
+        assert!(decoder.push_slice(5).is_err());
     }
 
     // push() exhausts encoded data, decode_next_run fails
@@ -1860,11 +1803,9 @@ mod tests {
         for _ in 0..64 {
             decoder.push().unwrap();
         }
-        assert!(decoder.result().is_ok());
 
         // 65th push exhausts the decoder
-        decoder.push().unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err());
     }
 
     // push_slice() exhausts encoded data
@@ -1888,10 +1829,7 @@ mod tests {
 
         // Push all 64, then try to push more
         decoder.push_slice(64).unwrap();
-        assert!(decoder.result().is_ok());
-
-        decoder.push_slice(1).unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push_slice(1).is_err());
     }
 
     // skip() exhausts encoded data
@@ -1914,10 +1852,7 @@ mod tests {
 
         // Skip all 64, then try to skip more
         decoder.skip(64).unwrap();
-        assert!(decoder.result().is_ok());
-
-        decoder.skip(1).unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.skip(1).is_err());
     }
 
     // First RLE run exhausted (remaining=0), triggers decode_next_run
@@ -1988,11 +1923,9 @@ mod tests {
         for _ in 0..5 {
             decoder.push().unwrap();
         }
-        assert!(decoder.result().is_ok());
 
         // Next push loads second RLE run, then hits OOB
-        decoder.push().unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err());
     }
 
     // Happy path — decode a genuine RLE run with valid values.
@@ -2074,11 +2007,9 @@ mod tests {
 
         // Consume all 5
         decoder.push_slice(5).unwrap();
-        assert!(decoder.result().is_ok());
 
         // 6th value: RLE run exhausted, decode_next_run finds no more runs
-        decoder.push().unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err());
     }
 
     // push_slice crossing from one RLE run to another
@@ -2168,8 +2099,7 @@ mod tests {
             RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
 
         // Skip more than the run contains
-        decoder.skip(10).unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.skip(10).is_err());
     }
 
     // RLE run with nulls interleaved
