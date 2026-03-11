@@ -52,7 +52,6 @@ public class QwpUdpServerMainTest extends AbstractBootstrapTest {
         dbPath.parent().$();
     }
 
-    @Ignore
     @Test
     public void testE2E_100rows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

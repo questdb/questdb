@@ -238,18 +238,20 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     @Override
     public void close() {
         if (fd > -1) {
-            // Close socket first to unblock any blocking recvRaw() call
+            boolean wasRunning = running.compareAndSet(true, false);
+
+            // Close socket to unblock any blocking recvRaw() call
             if (nf.close(fd) != 0) {
                 LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             } else {
                 LOG.info().$("closed [fd=").$(fd).$(']').$();
             }
-            fd = -1;
 
-            if (running.compareAndSet(true, false)) {
+            if (wasRunning) {
                 started.await();
                 halted.await();
             }
+            fd = -1;
 
             try {
                 tudCache.commitAll();
@@ -322,16 +324,19 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
             new Thread(() -> {
                 started.countDown();
-                if (configuration.ownThreadAffinity() != -1) {
-                    Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+                try {
+                    if (configuration.ownThreadAffinity() != -1) {
+                        Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
+                    }
+                    logStarted();
+                    while (running.get()) {
+                        runSerially();
+                    }
+                    LOG.info().$("shutdown").$();
+                } finally {
+                    Path.clearThreadLocals();
+                    halted.countDown();
                 }
-                logStarted();
-                while (running.get()) {
-                    runSerially();
-                }
-                LOG.info().$("shutdown").$();
-                Path.clearThreadLocals();
-                halted.countDown();
             }).start();
         }
     }
