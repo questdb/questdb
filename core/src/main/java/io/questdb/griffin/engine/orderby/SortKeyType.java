@@ -38,6 +38,7 @@ public enum SortKeyType {
     }
 
     public static SortKeyType fromKeyLength(int keyLength) {
+        assert keyLength >= 0;
         if (keyLength <= 8) {
             return FIXED_8;
         }

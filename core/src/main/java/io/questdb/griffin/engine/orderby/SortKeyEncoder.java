@@ -92,7 +92,7 @@ public class SortKeyEncoder implements QuietCloseable {
                 rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
             }
         }
-        this.isSingleColumnFixed8 = n == 1 && !isSymbol[0] && columnByteWidths[0] <= 8;
+        this.isSingleColumnFixed8 = n == 1 && columnByteWidths[0] <= 8;
         this.tempList = hasSymbol ? new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true) : null;
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;
         this.decimal256Sink = hasDecimal256 ? new Decimal256() : null;
@@ -334,7 +334,16 @@ public class SortKeyEncoder implements QuietCloseable {
         int colType = columnTypes[0];
         boolean desc = isDesc[0];
         int shift = (8 - columnByteWidths[0]) * 8;
-        long key = switch (colType) {
+        long key;
+        if (isSymbol[0]) {
+            int symKey = record.getInt(colIdx);
+            int rank = (symKey < 0) ? 0 : rankMaps.getQuick(0).get(symKey);
+            key = Integer.toUnsignedLong(desc ? ~rank : rank) << shift;
+            Unsafe.getUnsafe().putLong(destAddr, key);
+            Unsafe.getUnsafe().putLong(destAddr + 8, rowId);
+            return;
+        }
+        key = switch (colType) {
             case ColumnType.BOOLEAN -> {
                 byte b = record.getBool(colIdx) ? (byte) 1 : (byte) 0;
                 yield (desc ? ~b : b) & 0xFFL;

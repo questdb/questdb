@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -53,6 +54,41 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, sortMode == SortMode.SORT_ENABLED);
         super.setUp();
+    }
+
+    @Test
+    public void testOrderBy32ByteKeyBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    x % 3 AS a,
+                                    x % 2 AS b,
+                                    x / 4 AS c,
+                                    x AS d
+                                FROM long_sequence(12)
+                            )"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb\tc\td
+                            0\t1\t0\t3
+                            0\t1\t2\t9
+                            0\t0\t1\t6
+                            0\t0\t3\t12
+                            1\t1\t0\t1
+                            1\t1\t1\t7
+                            1\t0\t1\t4
+                            1\t0\t2\t10
+                            2\t1\t1\t5
+                            2\t1\t2\t11
+                            2\t0\t0\t2
+                            2\t0\t2\t8
+                            """,
+                    "SELECT * FROM x ORDER BY a ASC, b DESC, c, d"
+            );
+        });
     }
 
     @Test
@@ -147,6 +183,109 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testOrderByDoubleEdgeCases() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT CASE x
+                                    WHEN 1 THEN CAST('NaN' AS DOUBLE)
+                                    WHEN 2 THEN CAST('-Infinity' AS DOUBLE)
+                                    WHEN 3 THEN CAST('Infinity' AS DOUBLE)
+                                    WHEN 4 THEN 0.0
+                                    WHEN 5 THEN -0.0
+                                    WHEN 6 THEN 1.0000000000000002
+                                    WHEN 7 THEN 1.0000000000000004
+                                    WHEN 8 THEN -1.0000000000000002
+                                    WHEN 9 THEN -1.0000000000000004
+                                    WHEN 10 THEN CAST('NaN' AS DOUBLE)
+                                    ELSE 0.5
+                                END AS d
+                                FROM long_sequence(11)
+                            )"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            d
+                            -1.0000000000000004
+                            -1.0000000000000002
+                            -0.0
+                            0.0
+                            0.5
+                            1.0000000000000002
+                            1.0000000000000004
+                            null
+                            null
+                            null
+                            null
+                            """,
+                    "SELECT * FROM x ORDER BY d ASC"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            d
+                            null
+                            null
+                            null
+                            null
+                            1.0000000000000004
+                            1.0000000000000002
+                            0.5
+                            0.0
+                            -0.0
+                            -1.0000000000000002
+                            -1.0000000000000004
+                            """,
+                    "SELECT * FROM x ORDER BY d DESC"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByFloatEdgeCases() throws Exception {
+        Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT CAST(CASE x
+                                    WHEN 1 THEN CAST('NaN' AS DOUBLE)
+                                    WHEN 2 THEN CAST('-Infinity' AS DOUBLE)
+                                    WHEN 3 THEN CAST('Infinity' AS DOUBLE)
+                                    WHEN 4 THEN 0.0
+                                    WHEN 5 THEN -0.0
+                                    WHEN 6 THEN 1.0001
+                                    WHEN 7 THEN 1.0002
+                                    WHEN 8 THEN -1.0001
+                                    WHEN 9 THEN -1.0002
+                                    WHEN 10 THEN CAST('NaN' AS DOUBLE)
+                                    ELSE 0.5
+                                END AS FLOAT) AS f
+                                FROM long_sequence(11)
+                            )"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            f
+                            -1.0002
+                            -1.0001
+                            -0.0
+                            0.0
+                            0.5
+                            1.0001
+                            1.0002
+                            null
+                            null
+                            null
+                            null
+                            """,
+                    "SELECT * FROM x ORDER BY f ASC"
+            );
+        });
     }
 
     @Test
@@ -488,6 +627,61 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByOneRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT 42 AS a FROM long_sequence(1))");
+            assertQueryNoLeakCheck(
+                    """
+                            a
+                            42
+                            """,
+                    "SELECT * FROM x ORDER BY a"
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByStableSort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    1 AS key,
+                                    x AS insertion_order
+                                FROM long_sequence(20)
+                            )"""
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            key\tinsertion_order
+                            1\t1
+                            1\t2
+                            1\t3
+                            1\t4
+                            1\t5
+                            1\t6
+                            1\t7
+                            1\t8
+                            1\t9
+                            1\t10
+                            1\t11
+                            1\t12
+                            1\t13
+                            1\t14
+                            1\t15
+                            1\t16
+                            1\t17
+                            1\t18
+                            1\t19
+                            1\t20
+                            """,
+                    "SELECT * FROM x ORDER BY key"
+            );
+        });
+    }
+
+    @Test
     public void testOrderBySymbolColumnAscWithNulls() throws Exception {
         assertQuery(
                 """
@@ -651,6 +845,19 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testOrderByZeroRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b LONG)");
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb
+                            """,
+                    "SELECT * FROM x ORDER BY a"
+            );
+        });
     }
 
     @Test
