@@ -683,7 +683,8 @@ where
         } else {
             statistics.update(value);
             let bytes = value.to_bytes();
-            let next_id = dict_entries.len() as u32;
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
             let key = *dict_map.entry(bytes).or_insert_with(|| {
                 dict_entries.push(value);
                 next_id
@@ -768,7 +769,8 @@ where
             let p: P = value.as_();
             statistics.update(p);
             let bytes = p.to_bytes();
-            let next_id = dict_entries.len() as u32;
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
             let key = *dict_map.entry(bytes).or_insert_with(|| {
                 dict_entries.push(p);
                 next_id
@@ -848,7 +850,8 @@ where
     if column_top > 0 {
         let default_p: P = T::default().as_();
         let bytes = default_p.to_bytes();
-        let next_id = dict_entries.len() as u32;
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
         let key = *dict_map.entry(bytes).or_insert_with(|| {
             dict_entries.push(default_p);
             next_id
@@ -862,7 +865,8 @@ where
         let p: P = value.as_();
         statistics.update(p);
         let bytes = p.to_bytes();
-        let next_id = dict_entries.len() as u32;
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
         let key = *dict_map.entry(bytes).or_insert_with(|| {
             dict_entries.push(p);
             next_id
@@ -927,7 +931,8 @@ where
         } else {
             statistics.update(value);
             let bytes = value.to_bytes();
-            let next_id = dict_entries.len() as u32;
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
             let key = *dict_map.entry(bytes).or_insert_with(|| {
                 dict_entries.push(value);
                 next_id

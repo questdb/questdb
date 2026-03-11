@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels,
@@ -145,7 +145,8 @@ pub fn bytes_to_dict_pages<const N: usize>(
             } else {
                 value
             };
-            let next_id = dict_entries.len() as u32;
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
             let key = *dict_map.entry(stored).or_insert_with(|| {
                 dict_entries.push(stored);
                 next_id
