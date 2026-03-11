@@ -751,7 +751,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getPartitionEncoderParquetMinCompressionRatio() {
-        return 1.2;
+        return 0.0;
     }
 
     @Override
