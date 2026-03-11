@@ -865,7 +865,7 @@ public interface CairoConfiguration {
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
-
+    
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();

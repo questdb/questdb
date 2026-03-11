@@ -1465,7 +1465,7 @@ void vergesort_entries(T *arr, int64_t count) {
 
     // unstable_limit: minimum run length to be considered "significant".
     // Shorter runs are accumulated and sorted with ska_sort.
-    int lg = 63 - __builtin_clzll(count);
+    int lg = 63 - clzll(count);
     if (lg < 1) lg = 1;
     int64_t unstable_limit = count / lg;
 
