@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.TestOnly;
@@ -84,6 +85,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // maximum number of values tree can store (including repeating values)
     private long limit; // -1 means 'almost' unlimited
     private int minMaxNode = -1;
+    private int comparatorLeftSideValidForFrame = -1;
     // for fast filtering out of records in here we store rowId of:
     //  - record with max value for firstN/bottomN query
     //  - record with min value for lastN/topN query
@@ -112,6 +114,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     public void clear() {
         super.clear();
         valueHeapPos = valueHeapStart;
+        comparatorLeftSideValidForFrame = -1;
         minMaxRowId = -1;
         minMaxNode = -1;
         currentValues = 0;
@@ -210,18 +213,20 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
 
         // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
+        // The comparator's left side was pre-set at the end of the previous
+        // put() call. For Parquet frames, the record holds flyweight references
+        // pointing into decoded row group buffers. Those buffers may have been
+        // freed between frames (by releaseParquetBuffers()), so we re-navigate
+        // once per frame change to ensure the references are backed by live memory.
+        int currentFrameIndex = Rows.toPartitionIndex(currentRecord.getRowId());
+
         if (limit == currentValues) {
-            // Refresh the comparator's left side before comparing. The left side
-            // was pre-set by prepareComparatorLeftSideIfAtMaxCapacity() at the end
-            // of the previous put() call. For Parquet frames with VARCHAR_SLICE
-            // columns, the stored reference is a flyweight pointing to decoded row
-            // group data. That data may have been freed between put() calls (e.g.,
-            // by PageFrameMemoryPool.releaseParquetBuffers() or cache eviction),
-            // so we must re-navigate to the min/max row to ensure the reference is
-            // backed by live memory.
-            assert minMaxRowId != -1;
-            sourceCursor.recordAt(ownedRecord, minMaxRowId);
-            comparator.setLeft(ownedRecord);
+            if (currentFrameIndex != comparatorLeftSideValidForFrame) {
+                assert minMaxRowId != -1;
+                sourceCursor.recordAt(ownedRecord, minMaxRowId);
+                comparator.setLeft(ownedRecord);
+                comparatorLeftSideValidForFrame = currentFrameIndex;
+            }
             int cmp = comparator.compare(currentRecord);
 
             if (isFirstN && cmp <= 0) { // bigger than max for firstN/bottomN
@@ -239,7 +244,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             minMaxNode = root;
             minMaxRowId = currentRecordRowId;
             currentValues++;
-            prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
+            prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator, currentFrameIndex);
             return;
         }
 
@@ -266,7 +271,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
                     refreshMinMaxNode();
                 }
                 currentValues++;
-                prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
+                prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator, currentFrameIndex);
                 return;
             }
         } while (p > -1);
@@ -282,7 +287,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         fixInsert(p);
         refreshMinMaxNode();
         currentValues++;
-        prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
+        prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator, currentFrameIndex);
     }
 
     // remove node and put on freelist (if holds only one value in chain)
@@ -388,11 +393,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return Unsafe.getUnsafe().getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
     }
 
-    private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator) {
+    private void prepareComparatorLeftSideIfAtMaxCapacity(RecordRandomAccess sourceCursor, Record ownedRecord, RecordComparator comparator, int currentFrameIndex) {
         if (currentValues == limit) {
             assert minMaxRowId != -1;
             sourceCursor.recordAt(ownedRecord, minMaxRowId);
             comparator.setLeft(ownedRecord);
+            comparatorLeftSideValidForFrame = currentFrameIndex;
         }
     }
 
