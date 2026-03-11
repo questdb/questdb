@@ -145,7 +145,8 @@ pub fn string_to_dict_pages(
         let offset = usize::try_from(*offset).expect("invalid offset value in string aux column");
         match get_utf16(&data[offset..]) {
             Some(utf16) => {
-                let next_id = dict_entries.len() as u32;
+                let next_id = u32::try_from(dict_entries.len())
+                    .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
                 let key = *dict_map.entry(utf16).or_insert_with(|| {
                     dict_entries.push(utf16);
                     next_id
@@ -168,7 +169,8 @@ pub fn string_to_dict_pages(
         None
     };
     for utf16 in &dict_entries {
-        let utf8 = String::from_utf16(utf16).expect("utf16 string");
+        let utf8 = String::from_utf16(utf16)
+            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 in dictionary entry: {e}"))?;
         let utf8_bytes = utf8.as_bytes();
         dict_buffer.extend_from_slice(&(utf8_bytes.len() as u32).to_le_bytes());
         dict_buffer.extend_from_slice(utf8_bytes);

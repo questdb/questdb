@@ -207,7 +207,8 @@ pub fn varchar_to_dict_pages(
     let mut keys = Vec::with_capacity(utf8_slices.len() - null_count);
     let mut total_keys_bytes = 0usize;
     for s in utf8_slices.iter().flatten() {
-        let next_id = dict_entries.len() as u32;
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
         let key = *dict_map.entry(s).or_insert_with(|| {
             dict_entries.push(s);
             total_keys_bytes += 4 + s.len(); // 4 bytes for length prefix
