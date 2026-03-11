@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
 import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
-import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
@@ -38,30 +38,6 @@ import java.nio.charset.StandardCharsets;
  * Tests for QWP v1 WebSocket upgrade processor.
  */
 public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
-
-    // ==================== PROCESSOR CREATION TESTS ====================
-    // Note: Processor instantiation requires CairoEngine and configuration
-    // Full processor tests are covered by integration tests (QwpWebSocketHandshakeTest, etc.)
-
-    // ==================== HANDSHAKE RESPONSE TESTS ====================
-
-    @Test
-    public void testHandshakeResponseSize() {
-        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
-        int expectedSize = QwpWebSocketUpgradeProcessor.handshakeResponseSize(key);
-
-        Assert.assertTrue("Expected size should be positive", expectedSize > 0);
-
-        // Verify actual size matches expected
-        long bufferSize = 256;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            int actualSize = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
-            Assert.assertEquals("Actual size should match expected size", expectedSize, actualSize);
-        } finally {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
 
     @Test
     public void testWriteBadRequestResponse() {
@@ -90,7 +66,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
     public void testWriteHandshakeResponse() {
         // Given a valid WebSocket key
         Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
-        String expectedAccept = WebSocketHandshake.computeAcceptKey(key);
+        String expectedAccept = QwpWebSocketHttpProcessor.computeAcceptKey(key);
 
         // When we write the handshake response
         long bufferSize = 256;
@@ -135,8 +111,6 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== ERROR RESPONSE TESTS ====================
-
     @Test
     public void testWriteHandshakeResponseMultipleKeys() {
         String[] keys = {
@@ -148,7 +122,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 
         for (String keyStr : keys) {
             Utf8String key = new Utf8String(keyStr);
-            String expectedAccept = WebSocketHandshake.computeAcceptKey(key);
+            String expectedAccept = QwpWebSocketHttpProcessor.computeAcceptKey(key);
 
             long bufferSize = 256;
             long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -193,8 +167,6 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== RESPONSE SIZE CALCULATION TESTS ====================
-
     @Test
     public void testWriteHandshakeResponseWithRfc6455TestVector() {
         // RFC 6455 test vector
@@ -218,8 +190,6 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
             Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
-
-    // ==================== MULTIPLE KEYS TESTS ====================
 
     @Test
     public void testWriteUpgradeRequiredResponse() {

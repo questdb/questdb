@@ -34,7 +34,6 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
-import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -100,17 +99,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Returns the size of the handshake response for the given key.
-     *
-     * @param key the WebSocket key from the client
-     * @return the response size in bytes
-     */
-    public static int handshakeResponseSize(Utf8Sequence key) {
-        String acceptKey = WebSocketHandshake.computeAcceptKey(key);
-        return WebSocketHandshake.responseSize(acceptKey);
-    }
-
-    /**
      * Writes a 400 Bad Request response.
      *
      * @param buffer     the buffer to write to
@@ -164,14 +152,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @return the number of bytes written, or -1 if buffer too small
      */
     public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key) {
-        String acceptKey = WebSocketHandshake.computeAcceptKey(key);
-        int requiredSize = WebSocketHandshake.responseSize(acceptKey);
+        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(key);
+        int requiredSize = QwpWebSocketHttpProcessor.responseSize(acceptKey);
 
         if (requiredSize > bufferSize) {
             return -1;
         }
 
-        return WebSocketHandshake.writeResponse(buffer, acceptKey);
+        return QwpWebSocketHttpProcessor.writeResponse(buffer, acceptKey);
     }
 
     /**
