@@ -58,13 +58,13 @@ public class SimdJsonParser implements QuietCloseable {
      * (VARCHAR/TIMESTAMP) is appended to the shared string sink, with packed
      * {@code (offset << 32) | length} stored in each result's value field.
      *
-     * @param json           padded JSON document
-     * @param isObjectArray  true if elements are objects, false for scalar arrays
-     * @param descsPtr       pointer to native column_desc_t array
-     * @param resultsPtr     pointer to native column_result_t matrix (elementCount * columnCount entries)
-     * @param columnCount    number of columns
-     * @param elementCount   number of array elements to extract
-     * @param stringSinkPtr  pointer to native questdb_byte_sink_t for all string data
+     * @param json          padded JSON document
+     * @param isObjectArray true if elements are objects, false for scalar arrays
+     * @param descsPtr      pointer to native column_desc_t array
+     * @param resultsPtr    pointer to native column_result_t matrix (elementCount * columnCount entries)
+     * @param columnCount   number of columns
+     * @param elementCount  number of array elements to extract
+     * @param stringSinkPtr pointer to native questdb_byte_sink_t for all string data
      */
     public void extractAllArrayElements(
             DirectUtf8Sequence json,
