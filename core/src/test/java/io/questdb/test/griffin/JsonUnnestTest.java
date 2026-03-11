@@ -910,7 +910,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             val\tname
                             1.0\tx
                             2.0\ty
-                            0.0\tz
+                            null\tz
                             """,
                     "SELECT u.val, u.name FROM t, UNNEST("
                             + "t.a COLUMNS(val DOUBLE), "
