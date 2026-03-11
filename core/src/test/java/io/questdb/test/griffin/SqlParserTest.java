@@ -4646,7 +4646,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop all foobar",
                 9,
-                "';' or 'tables' expected"
+                "unexpected token [foobar]"
         );
     }
 
@@ -4655,7 +4655,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop all tables foobar",
                 16,
-                "';' or 'tables' expected"
+                "unexpected token [foobar]"
         );
     }
 

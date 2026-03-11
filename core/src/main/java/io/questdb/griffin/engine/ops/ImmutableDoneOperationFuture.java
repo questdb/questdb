@@ -22,35 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.ops;
 
-public class DefaultDdlListener implements DdlListener {
-    public static final DdlListener INSTANCE = new DefaultDdlListener();
+import io.questdb.cairo.sql.OperationFuture;
 
-    protected DefaultDdlListener() {
+public class ImmutableDoneOperationFuture extends DoneOperationFuture {
+    public static final ImmutableDoneOperationFuture INSTANCE = new ImmutableDoneOperationFuture();
+
+    private ImmutableDoneOperationFuture() {
     }
 
     @Override
-    public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+    public long getAffectedRowsCount() {
+        return -1L;
     }
 
     @Override
-    public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
-    }
-
-    @Override
-    public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
-    }
-
-    @Override
-    public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
-    }
-
-    @Override
-    public void onTableOrViewOrMatViewDropped(String tableName) {
-    }
-
-    @Override
-    public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+    public OperationFuture of(long affectedRowsCount) {
+        throw new UnsupportedOperationException("this class is immutable");
     }
 }
