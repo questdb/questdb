@@ -110,25 +110,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Computes the Sec-WebSocket-Accept value for the given key string.
-     *
-     * @param key the Sec-WebSocket-Key from the client
-     * @return the base64-encoded SHA-1 hash to send in the response
-     */
-    public static String computeAcceptKey(String key) {
-        MessageDigest sha1 = SHA1_DIGEST.get();
-        sha1.reset();
-
-        // Concatenate key + GUID
-        sha1.update(key.getBytes(StandardCharsets.US_ASCII));
-        sha1.update(WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII));
-
-        // Compute SHA-1 hash and base64 encode
-        byte[] hash = sha1.digest();
-        return Base64.getEncoder().encodeToString(hash);
-    }
-
-    /**
      * Gets the WebSocket key from the request header.
      *
      * @param header the HTTP request header
@@ -219,36 +200,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Checks if the request is a valid WebSocket upgrade request.
-     *
-     * @param header the HTTP request header
-     * @return true if this is a valid WebSocket upgrade request
-     */
-    public static boolean isWebSocketUpgradeRequest(HttpRequestHeader header) {
-        // Check Upgrade header
-        Utf8Sequence upgradeHeader = header.getHeader(HEADER_UPGRADE);
-        if (!isWebSocketUpgrade(upgradeHeader)) {
-            return false;
-        }
-
-        // Check Connection header
-        Utf8Sequence connectionHeader = header.getHeader(HEADER_CONNECTION);
-        if (!isConnectionUpgrade(connectionHeader)) {
-            return false;
-        }
-
-        // Check Sec-WebSocket-Key
-        Utf8Sequence keyHeader = header.getHeader(HEADER_SEC_WEBSOCKET_KEY);
-        if (!isValidKey(keyHeader)) {
-            return false;
-        }
-
-        // Check Sec-WebSocket-Version
-        Utf8Sequence versionHeader = header.getHeader(HEADER_SEC_WEBSOCKET_VERSION);
-        return isValidVersion(versionHeader);
-    }
-
-    /**
      * Returns the size of the handshake response for the given accept key.
      *
      * @param acceptKey the computed accept key
@@ -256,51 +207,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      */
     public static int responseSize(String acceptKey) {
         return RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
-    }
-
-    /**
-     * Returns the size of the handshake response with an optional subprotocol.
-     *
-     * @param acceptKey the computed accept key
-     * @param protocol  the negotiated subprotocol (may be null or empty)
-     * @return the total response size in bytes
-     */
-    public static int responseSizeWithProtocol(String acceptKey, String protocol) {
-        int size = RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
-        if (protocol != null && !protocol.isEmpty()) {
-            size += "\r\nSec-WebSocket-Protocol: ".length() + protocol.length();
-        }
-        return size;
-    }
-
-    /**
-     * Validates all required headers for a WebSocket upgrade request.
-     *
-     * @param upgradeHeader    the Upgrade header value
-     * @param connectionHeader the Connection header value
-     * @param keyHeader        the Sec-WebSocket-Key header value
-     * @param versionHeader    the Sec-WebSocket-Version header value
-     * @return null if valid, or an error message describing the problem
-     */
-    public static String validate(
-            Utf8Sequence upgradeHeader,
-            Utf8Sequence connectionHeader,
-            Utf8Sequence keyHeader,
-            Utf8Sequence versionHeader
-    ) {
-        if (!isWebSocketUpgrade(upgradeHeader)) {
-            return "Missing or invalid Upgrade header";
-        }
-        if (!isConnectionUpgrade(connectionHeader)) {
-            return "Missing or invalid Connection header";
-        }
-        if (!isValidKey(keyHeader)) {
-            return "Missing or invalid Sec-WebSocket-Key header";
-        }
-        if (!isValidVersion(versionHeader)) {
-            return "Unsupported WebSocket version";
-        }
-        return null;
     }
 
     /**
@@ -350,39 +256,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Writes a 400 Bad Request response.
-     *
-     * @param buf    the buffer to write to
-     * @param reason the reason for the bad request
-     * @return the number of bytes written
-     */
-    public static int writeBadRequestResponse(long buf, String reason) {
-        int offset = 0;
-
-        byte[] statusLine = "HTTP/1.1 400 Bad Request\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : statusLine) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        byte[] contentType = "Content-Type: text/plain\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : contentType) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        byte[] reasonBytes = reason != null ? reason.getBytes(StandardCharsets.UTF_8) : new byte[0];
-        byte[] contentLength = ("Content-Length: " + reasonBytes.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII);
-        for (byte b : contentLength) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        for (byte b : reasonBytes) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        return offset;
-    }
-
-    /**
      * Writes the WebSocket handshake response to the given buffer.
      *
      * @param buf       the buffer to write to
@@ -405,71 +278,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
 
         // Write suffix
         for (byte b : RESPONSE_SUFFIX) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        return offset;
-    }
-
-    /**
-     * Writes the WebSocket handshake response with an optional subprotocol.
-     *
-     * @param buf       the buffer to write to
-     * @param acceptKey the computed Sec-WebSocket-Accept value
-     * @param protocol  the negotiated subprotocol (may be null or empty)
-     * @return the number of bytes written
-     */
-    public static int writeResponseWithProtocol(long buf, String acceptKey, String protocol) {
-        int offset = 0;
-
-        // Write prefix
-        for (byte b : RESPONSE_PREFIX) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        // Write accept key
-        byte[] acceptBytes = acceptKey.getBytes(StandardCharsets.US_ASCII);
-        for (byte b : acceptBytes) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        // Write protocol header if present
-        if (protocol != null && !protocol.isEmpty()) {
-            byte[] protocolHeader = ("\r\nSec-WebSocket-Protocol: " + protocol).getBytes(StandardCharsets.US_ASCII);
-            for (byte b : protocolHeader) {
-                Unsafe.getUnsafe().putByte(buf + offset++, b);
-            }
-        }
-
-        // Write suffix
-        for (byte b : RESPONSE_SUFFIX) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        return offset;
-    }
-
-    /**
-     * Writes a 426 Upgrade Required response indicating unsupported WebSocket version.
-     *
-     * @param buf the buffer to write to
-     * @return the number of bytes written
-     */
-    public static int writeVersionNotSupportedResponse(long buf) {
-        int offset = 0;
-
-        byte[] statusLine = "HTTP/1.1 426 Upgrade Required\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : statusLine) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        byte[] versionHeader = "Sec-WebSocket-Version: 13\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : versionHeader) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        byte[] contentLength = "Content-Length: 0\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : contentLength) {
             Unsafe.getUnsafe().putByte(buf + offset++, b);
         }
 

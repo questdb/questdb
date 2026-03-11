@@ -29,7 +29,6 @@ import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
-import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;

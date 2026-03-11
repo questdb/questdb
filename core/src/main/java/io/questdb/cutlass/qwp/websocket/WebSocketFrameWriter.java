@@ -119,18 +119,6 @@ public final class WebSocketFrameWriter {
     }
 
     /**
-     * Writes the payload for a Close frame.
-     *
-     * @param buf    the buffer to write to (after the header)
-     * @param code   the close status code
-     * @param reason the close reason (may be null)
-     * @return the number of bytes written
-     */
-    public static int writeClosePayload(long buf, int code, String reason) {
-        return writeClosePayload(buf, code, encodeReason(reason));
-    }
-
-    /**
      * Writes a WebSocket frame header to the buffer.
      *
      * @param buf           the buffer to write to
@@ -163,22 +151,6 @@ public final class WebSocketFrameWriter {
         }
 
         return offset;
-    }
-
-    /**
-     * Writes a WebSocket frame header with optional mask key.
-     *
-     * @param buf           the buffer to write to
-     * @param fin           true if this is the final frame
-     * @param opcode        the frame opcode
-     * @param payloadLength the payload length
-     * @param maskKey       the mask key (only used if masked is true)
-     * @return the number of bytes written (header size including mask key)
-     */
-    public static int writeHeader(long buf, boolean fin, int opcode, long payloadLength, int maskKey) {
-        int offset = writeHeader(buf, fin, opcode, payloadLength, true);
-        Unsafe.getUnsafe().putInt(buf + offset, maskKey);
-        return offset + 4;
     }
 
     /**

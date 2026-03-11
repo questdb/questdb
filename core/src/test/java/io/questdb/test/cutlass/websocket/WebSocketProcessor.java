@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.qwp.websocket;
+package io.questdb.test.cutlass.websocket;
 
 /**
  * Interface for processing WebSocket messages.

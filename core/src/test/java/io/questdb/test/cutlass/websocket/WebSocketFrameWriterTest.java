@@ -162,46 +162,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteCloseFrameWithCode() {
-        long buf = allocateBuffer(32);
-        try {
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.CLOSE, 2, false);
-            WebSocketFrameWriter.writeClosePayload(buf + headerLen, 1000, null);
-
-            Assert.assertEquals(2, headerLen);
-            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + 2));
-            Assert.assertEquals(1000, code);
-        } finally {
-            freeBuffer(buf, 32);
-        }
-    }
-
-    @Test
-    public void testWriteCloseFrameWithCodeAndReason() {
-        long buf = allocateBuffer(64);
-        try {
-            String reason = "Goodbye";
-            byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.CLOSE, 2 + reasonBytes.length, false);
-            int payloadLen = WebSocketFrameWriter.writeClosePayload(
-                    buf + headerLen, 1001, reason);
-
-            Assert.assertEquals(2 + reasonBytes.length, payloadLen);
-
-            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + headerLen));
-            Assert.assertEquals(1001, code);
-
-            byte[] writtenReason = readBytes(buf + headerLen + 2, reasonBytes.length);
-            Assert.assertArrayEquals(reasonBytes, writtenReason);
-        } finally {
-            freeBuffer(buf, 64);
-        }
-    }
-
-    @Test
     public void testWriteCloseFrameWithEmptyReason() {
         long buf = allocateBuffer(32);
         try {
@@ -274,27 +234,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
             Assert.assertEquals((byte) 0x80, Unsafe.getUnsafe().getByte(buf));
         } finally {
             freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteHeaderWithMaskKey() {
-        long buf = allocateBuffer(32);
-        try {
-            int maskKey = 0x12345678;
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, 10, maskKey);
-
-            // Should be 2 (basic header) + 4 (mask key) = 6
-            Assert.assertEquals(6, headerLen);
-
-            // Verify mask bit is set
-            Assert.assertEquals((byte) (0x80 | 10), Unsafe.getUnsafe().getByte(buf + 1));
-
-            // Verify mask key
-            Assert.assertEquals(maskKey, Unsafe.getUnsafe().getInt(buf + 2));
-        } finally {
-            freeBuffer(buf, 32);
         }
     }
 
