@@ -341,38 +341,42 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testClear() {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (
-                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-                UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB)
-        ) {
-            putStable("foo", 42, map, sinkA, true);
-            putUnstable("foo", 42, map, false);
-            Assert.assertEquals(42, get("foo", map));
-            Assert.assertEquals(1, map.size());
-            map.clear();
-            Assert.assertNull(findValue("foo", map));
-            Assert.assertEquals(0, map.size());
-        }
+    public void testClear() throws Exception {
+        assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (
+                    DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                    UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB)
+            ) {
+                putStable("foo", 42, map, sinkA, true);
+                putUnstable("foo", 42, map, false);
+                Assert.assertEquals(42, get("foo", map));
+                Assert.assertEquals(1, map.size());
+                map.clear();
+                Assert.assertNull(findValue("foo", map));
+                Assert.assertEquals(0, map.size());
+            }
+        });
     }
 
     @Test
-    public void testClearFreeHeapMemory() {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 1024, 4 * Numbers.SIZE_1GB)) {
-            long memUsedBefore = Unsafe.getMemUsed();
-            for (int i = 0; i < 10_000; i++) {
-                putUnstable("foo" + i, 42, map, true);
-            }
-            long memUsedAfterInsert = Unsafe.getMemUsed();
-            Assert.assertTrue(memUsedAfterInsert > memUsedBefore);
+    public void testClearFreeHeapMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (UnorderedVarcharMap map = new UnorderedVarcharMap(valueType, 16, 0.6, Integer.MAX_VALUE, 1024, 4 * Numbers.SIZE_1GB)) {
+                long memUsedBefore = Unsafe.getMemUsed();
+                for (int i = 0; i < 10_000; i++) {
+                    putUnstable("foo" + i, 42, map, true);
+                }
+                long memUsedAfterInsert = Unsafe.getMemUsed();
+                Assert.assertTrue(memUsedAfterInsert > memUsedBefore);
 
-            map.clear();
-            map.restoreInitialCapacity();
-            long memUsedAfterClear = Unsafe.getMemUsed();
-            Assert.assertEquals(memUsedAfterClear, memUsedBefore);
-        }
+                map.clear();
+                map.restoreInitialCapacity();
+                long memUsedAfterClear = Unsafe.getMemUsed();
+                Assert.assertEquals(memUsedAfterClear, memUsedBefore);
+            }
+        });
     }
 
     @Test
@@ -531,58 +535,62 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMerge() {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (
-                DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
-                DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
-                UnorderedVarcharMap mapA = newDefaultMap(valueType);
-                UnorderedVarcharMap mapB = newDefaultMap(valueType)
-        ) {
-            int keyCountA = 100;
-            int keyCountB = 200;
-            for (int i = 0; i < keyCountA; i++) {
-                putStable("foo" + i, i, mapA, sinkA, true);
-            }
+    public void testMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (
+                    DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
+                    DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
+                    UnorderedVarcharMap mapA = newDefaultMap(valueType);
+                    UnorderedVarcharMap mapB = newDefaultMap(valueType)
+            ) {
+                int keyCountA = 100;
+                int keyCountB = 200;
+                for (int i = 0; i < keyCountA; i++) {
+                    putStable("foo" + i, i, mapA, sinkA, true);
+                }
 
-            for (int i = 0; i < keyCountB; i++) {
-                putStable("foo" + i, i, mapB, sinkB, true);
-            }
+                for (int i = 0; i < keyCountB; i++) {
+                    putStable("foo" + i, i, mapB, sinkB, true);
+                }
 
-            mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
+                mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
 
-            for (int i = 0; i < keyCountA; i++) {
-                Assert.assertEquals(i * 2, get("foo" + i, mapA));
+                for (int i = 0; i < keyCountA; i++) {
+                    Assert.assertEquals(i * 2, get("foo" + i, mapA));
+                }
+                for (int i = keyCountA; i < keyCountB; i++) {
+                    Assert.assertEquals(i, get("foo" + i, mapA));
+                }
             }
-            for (int i = keyCountA; i < keyCountB; i++) {
-                Assert.assertEquals(i, get("foo" + i, mapA));
-            }
-        }
+        });
     }
 
     @Test
-    public void testMergeUnstable() {
-        SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-        try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
-            int keyCountA = 100;
-            int keyCountB = 200;
-            try (UnorderedVarcharMap mapB = newDefaultMap(valueType)) {
-                for (int i = 0; i < keyCountA; i++) {
-                    putUnstable("foo" + i, i, mapA, true);
+    public void testMergeUnstable() throws Exception {
+        assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (UnorderedVarcharMap mapA = newDefaultMap(valueType)) {
+                int keyCountA = 100;
+                int keyCountB = 200;
+                try (UnorderedVarcharMap mapB = newDefaultMap(valueType)) {
+                    for (int i = 0; i < keyCountA; i++) {
+                        putUnstable("foo" + i, i, mapA, true);
+                    }
+                    for (int i = 0; i < keyCountB; i++) {
+                        putUnstable("foo" + i, i, mapB, true);
+                    }
+                    mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
                 }
-                for (int i = 0; i < keyCountB; i++) {
-                    putUnstable("foo" + i, i, mapB, true);
-                }
-                mapA.merge(mapB, (dstValue, srcValue) -> dstValue.putInt(0, dstValue.getInt(0) + srcValue.getInt(0)));
-            }
 
-            for (int i = 0; i < keyCountA; i++) {
-                Assert.assertEquals(i * 2, get("foo" + i, mapA));
+                for (int i = 0; i < keyCountA; i++) {
+                    Assert.assertEquals(i * 2, get("foo" + i, mapA));
+                }
+                for (int i = keyCountA; i < keyCountB; i++) {
+                    Assert.assertEquals(i, get("foo" + i, mapA));
+                }
             }
-            for (int i = keyCountA; i < keyCountB; i++) {
-                Assert.assertEquals(i, get("foo" + i, mapA));
-            }
-        }
+        });
     }
 
     @Test

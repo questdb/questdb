@@ -1021,6 +1021,40 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetVarcharNonAsciiRoundtrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE" +
+                    "   WHEN x % 8 = 0 THEN NULL" +
+                    "   WHEN x % 8 = 1 THEN CAST('héllo wörld' AS VARCHAR)" +
+                    "   WHEN x % 8 = 2 THEN CAST('こんにちは世界' AS VARCHAR)" +
+                    "   WHEN x % 8 = 3 THEN CAST('Привет мир' AS VARCHAR)" +
+                    "   WHEN x % 8 = 4 THEN CAST('🎉🎊🎈🎁' AS VARCHAR)" +
+                    "   WHEN x % 8 = 5 THEN CAST('مرحبا بالعالم' AS VARCHAR)" +
+                    "   WHEN x % 8 = 6 THEN CAST('café résumé naïve' AS VARCHAR)" +
+                    "   ELSE CAST('混合ABC日本語123' AS VARCHAR)" +
+                    " END AS v" +
+                    " FROM long_sequence(200))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
     public void testParquetVarcharOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT" +
