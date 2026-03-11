@@ -48,7 +48,6 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
-import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -89,10 +88,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.CompiledQuery.BEGIN;
-import static io.questdb.griffin.CompiledQuery.COMMIT;
-import static io.questdb.griffin.CompiledQuery.ROLLBACK;
-import static io.questdb.griffin.CompiledQuery.SET;
+import static io.questdb.griffin.CompiledQuery.*;
 
 public class SqlCompilerImplTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(SqlCompilerImplTest.class);
@@ -7486,15 +7482,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.assertTrue(compiler.parseShowSqlCalled);
                 }
 
-                execute(compiler, "create table ka(a int)", sqlExecutionContext);
-                try {
-                    execute(compiler, "drop table ka boom zoom", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception e) {
-                    Assert.assertTrue(compiler.compileDropTableExtCalled);
-                    compiler.compileDropTableExtCalled = false;
-                }
-
                 try {
                     execute(compiler, "drop fridge blue toenail", sqlExecutionContext);
                     Assert.fail();
@@ -7521,14 +7508,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
                 try {
                     execute(compiler, "create table tab (i int)", sqlExecutionContext);
-                    compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropColumnSuffixCalled);
-                }
-
-                try {
-                    execute(compiler, "create table tab2 (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -7893,14 +7872,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
-        boolean compileDropTableExtCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean createViewSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
-        boolean unknownDropColumnSuffixCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -7963,26 +7940,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void compileDropExt(
-                @NotNull SqlExecutionContext executionContext,
-                @NotNull GenericDropOperationBuilder opBuilder,
-                @NotNull CharSequence tok,
-                int position
-        ) throws SqlException {
-            compileDropTableExtCalled = true;
-            super.compileDropExt(executionContext, opBuilder, tok, position);
-        }
-
-        @Override
         protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
             compileDropOtherCalled = true;
             super.compileDropOther(executionContext, tok, position);
-        }
-
-        @Override
-        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
-            unknownDropColumnSuffixCalled = true;
-            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
         }
     }
 }
