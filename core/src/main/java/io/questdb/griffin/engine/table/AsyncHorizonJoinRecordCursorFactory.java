@@ -60,6 +60,8 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
@@ -80,6 +82,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * Factory for parallel horizon join query execution.
  */
 public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinRecordCursorFactory.class);
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinRecordCursorFactory::reduce;
     private final AsyncHorizonJoinRecordCursor cursor;
@@ -478,8 +481,13 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
+        final long t0 = System.nanoTime();
+        long tupleCount = 0;
+        long firstScaledHorizonTs = Long.MIN_VALUE;
+        long lastScaledHorizonTs = Long.MIN_VALUE;
 
         while (horizonIterator.next()) {
+            tupleCount++;
             // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
@@ -492,6 +500,10 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
+            if (firstScaledHorizonTs == Long.MIN_VALUE) {
+                firstScaledHorizonTs = scaledHorizonTs;
+            }
+            lastScaledHorizonTs = scaledHorizonTs;
 
             // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
@@ -502,6 +514,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 if (asOfRowId != Long.MIN_VALUE) {
                     if (slaveTimeFrameHelper.getForwardWatermark() == Long.MIN_VALUE) {
                         // First tuple: backward scan from ASOF position to find matching key
+                        final long bwdBefore1 = slaveTimeFrameHelper.backwardScanRows;
                         matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                 asOfRowId,
                                 masterKeyRecord,
@@ -510,15 +523,42 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                                 asOfJoinMap,
                                 symbolTranslatingRecord
                         );
+                        final long bwdDelta1 = slaveTimeFrameHelper.backwardScanRows - bwdBefore1;
+                        if (bwdDelta1 > 100_000) {
+                            LOG.info()
+                                    .$("slow backwardScan (first) [slot=").$(groupByMapFragment.slotId)
+                                    .$(", tuple=").$(tupleCount)
+                                    .$(", rows=").$(bwdDelta1)
+                                    .$(", asOfRowId=").$(asOfRowId)
+                                    .$(", horizonTs=").$(horizonTs)
+                                    .$(", scaledHorizonTs=").$(scaledHorizonTs)
+                                    .I$();
+                        }
                         // Initialize forward watermark to ASOF position for subsequent forward scans
                         slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
                     } else {
                         // Subsequent tuples: forward scan first (updates internal watermark)
+                        final long fwdBefore = slaveTimeFrameHelper.forwardScanRows;
+                        final long fwdWatermark = slaveTimeFrameHelper.getForwardWatermark();
                         slaveTimeFrameHelper.forwardScanToPosition(
                                 asOfRowId,
                                 slaveAsOfJoinMapSink,
                                 asOfJoinMap
                         );
+                        final long fwdDelta = slaveTimeFrameHelper.forwardScanRows - fwdBefore;
+                        if (fwdDelta > 100_000) {
+                            LOG.info()
+                                    .$("slow forwardScan [slot=").$(groupByMapFragment.slotId)
+                                    .$(", tuple=").$(tupleCount)
+                                    .$(", rows=").$(fwdDelta)
+                                    .$(", watermark=").$(fwdWatermark)
+                                    .$(", targetRowId=").$(asOfRowId)
+                                    .$(", horizonTs=").$(horizonTs)
+                                    .$(", scaledHorizonTs=").$(scaledHorizonTs)
+                                    .$(", masterRowIdx=").$(masterRowIdx)
+                                    .$(", offsetIdx=").$(offsetIdx)
+                                    .I$();
+                        }
 
                         // Look up the key in the cache
                         MapKey cacheKey = asOfJoinMap.withKey();
@@ -529,6 +569,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             matchRowId = cacheValue.getLong(0);
                         } else {
                             // Cache miss: continue backward scan (uses internal watermark)
+                            final long bwdBefore2 = slaveTimeFrameHelper.backwardScanRows;
                             matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
                                     asOfRowId,
                                     masterKeyRecord,
@@ -537,6 +578,17 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                                     asOfJoinMap,
                                     symbolTranslatingRecord
                             );
+                            final long bwdDelta2 = slaveTimeFrameHelper.backwardScanRows - bwdBefore2;
+                            if (bwdDelta2 > 100_000) {
+                                LOG.info()
+                                        .$("slow backwardScan (miss) [slot=").$(groupByMapFragment.slotId)
+                                        .$(", tuple=").$(tupleCount)
+                                        .$(", rows=").$(bwdDelta2)
+                                        .$(", asOfRowId=").$(asOfRowId)
+                                        .$(", horizonTs=").$(horizonTs)
+                                        .$(", scaledHorizonTs=").$(scaledHorizonTs)
+                                        .I$();
+                            }
                         }
                     }
                 }
@@ -558,6 +610,24 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 aggregateRecord(horizonJoinRecord, masterRowId, groupByMapFragment, groupByMapSink, functionUpdater);
             }
         }
+
+        final long elapsed = System.nanoTime() - t0;
+        LOG.info()
+                .$("horizon join frame done [slot=").$(groupByMapFragment.slotId)
+                .$(", tuples=").$(tupleCount)
+                .$(", elapsedMs=").$(elapsed / 1_000_000)
+                .$(", masterTsScale=").$(masterTsScale)
+                .$(", horizonTsLo=").$(firstScaledHorizonTs)
+                .$(", horizonTsHi=").$(lastScaledHorizonTs)
+                .$(", fwdScanRows=").$(slaveTimeFrameHelper.forwardScanRows)
+                .$(", bwdScanRows=").$(slaveTimeFrameHelper.backwardScanRows)
+                .$(", asofCalls=").$(slaveTimeFrameHelper.findAsOfCalls)
+                .$(", asofCacheHits=").$(slaveTimeFrameHelper.findAsOfCacheHits)
+                .$(", asofBookmarkHits=").$(slaveTimeFrameHelper.findAsOfBookmarkHits)
+                .$(", asofSearchHits=").$(slaveTimeFrameHelper.findAsOfSearchHits)
+                .$(", asofMisses=").$(slaveTimeFrameHelper.findAsOfMisses)
+                .$(", asofFrameScans=").$(slaveTimeFrameHelper.findAsOfFrameScans)
+                .I$();
 
         atom.maybeEnableSharding(groupByMapFragment);
     }
