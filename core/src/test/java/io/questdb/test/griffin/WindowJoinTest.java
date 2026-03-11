@@ -4743,6 +4743,82 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicWindowBothBoundsDynamicDataCorrectness() throws Exception {
+        // Data correctness test where both lo and hi are dynamic column references,
+        // varying independently per master row.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(lo_bound, hi_bound, ts) VALUES
+                    (1, 1, '2023-01-01T09:00:00.000000Z'),
+                    (0, 2, '2023-01-01T09:01:00.000000Z'),
+                    (2, 0, '2023-01-01T09:02:00.000000Z'),
+                    (3, 3, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T09:00:00.000000Z'),
+                    (4.0, '2023-01-01T09:01:00.000000Z'),
+                    (5.0, '2023-01-01T09:02:00.000000Z'),
+                    (6.0, '2023-01-01T09:03:00.000000Z'),
+                    (7.0, '2023-01-01T09:04:00.000000Z'),
+                    (8.0, '2023-01-01T09:05:00.000000Z'),
+                    (9.0, '2023-01-01T09:06:00.000000Z')
+                    """);
+
+            // Reference: lo = lo_bound minutes PRECEDING, hi = hi_bound minutes FOLLOWING
+            printSql("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON s.ts >= dateadd('m', -m.lo_bound, m.ts) AND s.ts <= dateadd('m', m.hi_bound, m.ts)
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDynamicWindowBoundColumnNotInSelect() throws Exception {
         // Verifies that the optimizer propagates dynamic bound columns as
         // top-down columns even when they aren't in the SELECT list.
@@ -4940,6 +5016,85 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicWindowBoundOnSymbolKeyDataCorrectness() throws Exception {
+        // Data correctness test for dynamic bound with ON key equality.
+        // The fast path is bypassed and the sym equality becomes a join filter.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (sym SYMBOL, bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(sym, bound, ts) VALUES
+                    ('A', 1, '2023-01-01T09:00:00.000000Z'),
+                    ('B', 2, '2023-01-01T09:01:00.000000Z'),
+                    ('A', 0, '2023-01-01T09:02:00.000000Z'),
+                    ('B', 1, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(sym, val, ts) VALUES
+                    ('A', 1.0, '2023-01-01T08:59:00.000000Z'),
+                    ('B', 2.0, '2023-01-01T08:59:00.000000Z'),
+                    ('A', 3.0, '2023-01-01T09:00:00.000000Z'),
+                    ('B', 4.0, '2023-01-01T09:00:00.000000Z'),
+                    ('A', 5.0, '2023-01-01T09:01:00.000000Z'),
+                    ('B', 6.0, '2023-01-01T09:01:00.000000Z'),
+                    ('A', 7.0, '2023-01-01T09:02:00.000000Z'),
+                    ('B', 8.0, '2023-01-01T09:02:00.000000Z'),
+                    ('A', 9.0, '2023-01-01T09:03:00.000000Z'),
+                    ('B', 10.0, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            // Reference: sym equality + dynamic lo bound
+            printSql("""
+                    SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON m.sym = s.sym AND s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path (ON key + dynamic bound)
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            ON (m.sym = s.sym)
+                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            ON (m.sym = s.sym)
+                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDynamicWindowBoundWithTimeUnit() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -5049,6 +5204,103 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: prices\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowCoalesceBound() throws Exception {
+        // Tests that coalesce (paramCount >= 3) works as a dynamic bound,
+        // exercising the args-based tree walking in resolveWindowJoinBoundColumns.
+        // The master table prefix inside a nested expression within coalesce
+        // must be stripped for the bound function to compile correctly.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(bound, ts) VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (NULL, '2023-01-01T09:01:00.000000Z'),
+                    (3, '2023-01-01T09:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T09:00:00.000000Z'),
+                    (4.0, '2023-01-01T09:01:00.000000Z'),
+                    (5.0, '2023-01-01T09:02:00.000000Z'),
+                    (6.0, '2023-01-01T09:03:00.000000Z'),
+                    (7.0, '2023-01-01T09:04:00.000000Z')
+                    """);
+
+            // Reference query: lo = coalesce(m.bound, 0, 0) minutes.
+            // When bound is NULL, coalesce returns 0 (CURRENT ROW equivalent).
+            // When bound is 1 or 3, the window extends that many minutes back.
+            printSql("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON s.ts >= dateadd('m', -coalesce(m.bound, 0, 0), m.ts) AND s.ts <= m.ts
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN coalesce(m.bound, 0, 0) minutes PRECEDING AND CURRENT ROW
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 3) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN coalesce(m.bound, 0, 0) minutes PRECEDING AND CURRENT ROW
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowFailsOnSlaveColumnInCoalesceBound() throws Exception {
+        // Tests that a slave column reference nested inside coalesce (paramCount >= 3)
+        // is properly rejected by resolveWindowJoinBoundColumns.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            "ON (t.sym = p.sym) " +
+                            " RANGE BETWEEN coalesce(p.price::long, 0, 0) PRECEDING AND 1 minute FOLLOWING;",
+                    136,
+                    "RANGE BETWEEN expression must not reference right table columns"
             );
         });
     }

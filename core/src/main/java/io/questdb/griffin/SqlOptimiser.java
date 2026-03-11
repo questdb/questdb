@@ -11156,15 +11156,20 @@ public class SqlOptimiser implements Mutable {
                         if (node.paramCount < 3) {
                             node.lhs = rewriteWindowJoinBoundLiteral(node.lhs, masterModel, slaveModel);
                             node.rhs = rewriteWindowJoinBoundLiteral(node.rhs, masterModel, slaveModel);
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            node = node.lhs;
                         } else {
                             for (int i = 0, n = node.paramCount; i < n; i++) {
-                                node.args.setQuick(i, rewriteWindowJoinBoundLiteral(node.args.getQuick(i), masterModel, slaveModel));
+                                ExpressionNode arg = rewriteWindowJoinBoundLiteral(node.args.getQuick(i), masterModel, slaveModel);
+                                node.args.setQuick(i, arg);
+                                if (arg != null && arg.type != LITERAL) {
+                                    sqlNodeStack.push(arg);
+                                }
                             }
+                            node = null;
                         }
-                        if (node.rhs != null) {
-                            sqlNodeStack.push(node.rhs);
-                        }
-                        node = node.lhs;
                         continue;
                     default:
                         node = null;
