@@ -301,3 +301,96 @@ async fn test_column_async(column: &str, compression: CompressionOptions) -> Res
 async fn test_async() -> Result<()> {
     test_column_async("float_col", CompressionOptions::Uncompressed).await
 }
+
+/// Helper: write a single Int32 column through a Compressor with the given
+/// compression and min_compression_ratio, then return the column chunk codec
+/// from the file metadata and the round-tripped data.
+fn write_and_read_codec(
+    data: &[i32],
+    compression: CompressionOptions,
+    min_compression_ratio: f64,
+) -> Result<(parquet2::compression::Compression, Vec<Option<i32>>)> {
+    use parquet2::schema::types::PhysicalType;
+
+    let options = WriteOptions {
+        write_statistics: true,
+        version: Version::V1,
+        bloom_filter_fpp: 0.0,
+    };
+
+    let type_ = ParquetType::from_physical("col".to_string(), PhysicalType::Int32);
+    let schema = SchemaDescriptor::new("schema".to_string(), vec![type_]);
+    let a = schema.columns();
+
+    let array = Array::Int32(data.iter().copied().map(Some).collect());
+    let page = array_to_page(&array, &options, &a[0].descriptor)?;
+
+    let pages = DynStreamingIterator::new(Compressor::new(
+        std::iter::once(Ok(page) as Result<Page>),
+        compression,
+        vec![],
+        min_compression_ratio,
+    ));
+    let columns = std::iter::once(Ok(pages));
+
+    let writer = Cursor::new(vec![]);
+    let mut writer = FileWriter::new(writer, schema, options, None);
+    writer.write(DynIter::new(columns), &[])?;
+    writer.end(None)?;
+
+    let file_bytes = writer.into_inner().into_inner();
+    let metadata = read_metadata(&mut Cursor::new(&file_bytes))?;
+
+    let codec = metadata.row_groups[0].columns()[0].compression();
+
+    let (array, _) = read_column(&mut Cursor::new(&file_bytes))?;
+    let values = match array {
+        Array::Int32(v) => v,
+        _ => panic!("expected Int32 array"),
+    };
+
+    Ok((codec, values))
+}
+
+#[test]
+fn min_compression_ratio_disabled() -> Result<()> {
+    // ratio=0.0 disables the check — pages should stay compressed.
+    let data: Vec<i32> = (0..10_000).collect();
+    let (codec, values) = write_and_read_codec(&data, CompressionOptions::Snappy, 0.0)?;
+    assert_eq!(codec, parquet2::compression::Compression::Snappy);
+    assert_eq!(values, data.iter().copied().map(Some).collect::<Vec<_>>());
+    Ok(())
+}
+
+#[test]
+fn min_compression_ratio_met() -> Result<()> {
+    // Highly compressible data (all zeros) — ratio should easily be met.
+    let data = vec![0i32; 10_000];
+    let (codec, values) = write_and_read_codec(&data, CompressionOptions::Snappy, 1.2)?;
+    assert_eq!(codec, parquet2::compression::Compression::Snappy);
+    assert_eq!(values, data.iter().copied().map(Some).collect::<Vec<_>>());
+    Ok(())
+}
+
+#[test]
+fn min_compression_ratio_not_met_falls_back_to_uncompressed() -> Result<()> {
+    // Random-looking data that won't compress well with snappy,
+    // combined with an impossibly high ratio threshold.
+    let data: Vec<i32> = (0..10_000).map(|i: i32| i.wrapping_mul(0x9E3779B1u32 as i32)).collect();
+    let (codec, values) = write_and_read_codec(&data, CompressionOptions::Snappy, 100.0)?;
+    // With ratio=100.0 the check will always fail → fall back to uncompressed.
+    assert_eq!(codec, parquet2::compression::Compression::Uncompressed);
+    assert_eq!(values, data.iter().copied().map(Some).collect::<Vec<_>>());
+    Ok(())
+}
+
+#[test]
+fn min_compression_ratio_uncompressed_codec_is_noop() -> Result<()> {
+    // When the requested codec is already Uncompressed, ratio check is irrelevant.
+    let data: Vec<i32> = (0..1_000).collect();
+    let (codec, values) =
+        write_and_read_codec(&data, CompressionOptions::Uncompressed, 100.0)?;
+    assert_eq!(codec, parquet2::compression::Compression::Uncompressed);
+    assert_eq!(values, data.iter().copied().map(Some).collect::<Vec<_>>());
+    Ok(())
+}
