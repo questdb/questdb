@@ -614,6 +614,14 @@ public class HorizonJoinTimeFrameHelper {
     }
 
     /**
+     * Reset the backward watermark so the next backward scan starts from scratch.
+     * Called when the ASOF position changes and cached key→rowId entries are no longer valid.
+     */
+    public void resetBackwardWatermark() {
+        backwardWatermark = Long.MAX_VALUE;
+    }
+
+    /**
      * Reset state for processing a new master page frame.
      * <p>
      * Resets all state including bookmarks. Bookmarks are reset because workers process
