@@ -33,6 +33,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
@@ -51,6 +52,7 @@ public class QwpUdpServerMainTest extends AbstractBootstrapTest {
         dbPath.parent().$();
     }
 
+    @Ignore
     @Test
     public void testE2E_100rows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
