@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.qwp.server;
+package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cutlass.qwp.server.WebSocketBuffer;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;

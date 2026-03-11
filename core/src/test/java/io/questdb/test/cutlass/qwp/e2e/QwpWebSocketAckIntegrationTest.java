@@ -582,8 +582,6 @@ public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== HELPER METHODS ====================
-
     private static class PingThenDelayedAckHandler implements TestWebSocketServer.WebSocketServerHandler {
         private final long delayMs;
         private final AtomicLong nextSequence = new AtomicLong(0);

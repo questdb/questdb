@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.websocket;
 
-import io.questdb.cutlass.qwp.server.WebSocketConnectionContext;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 import io.questdb.log.Log;
@@ -44,7 +43,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -226,8 +224,6 @@ public class TestWebSocketServer implements QuietCloseable {
     public class ClientHandler implements QuietCloseable {
         private final CountDownLatch closeLatch = new CountDownLatch(1);
         private final WebSocketConnectionContext context;
-        private final List<byte[]> receivedBinaryMessages = new ArrayList<>();
-        private final List<String> receivedTextMessages = new ArrayList<>();
         private final AtomicBoolean running = new AtomicBoolean(false);
         private final Socket socket;
         private volatile int closeCode = -1;
@@ -264,34 +260,6 @@ public class TestWebSocketServer implements QuietCloseable {
                 }
             }
             context.close();
-        }
-
-        /**
-         * Returns the close code received from the client.
-         */
-        public int getCloseCode() {
-            return closeCode;
-        }
-
-        /**
-         * Returns the close reason received from the client.
-         */
-        public String getCloseReason() {
-            return closeReason;
-        }
-
-        /**
-         * Returns all received binary messages.
-         */
-        public List<byte[]> getReceivedBinaryMessages() {
-            return new ArrayList<>(receivedBinaryMessages);
-        }
-
-        /**
-         * Returns all received text messages.
-         */
-        public List<String> getReceivedTextMessages() {
-            return new ArrayList<>(receivedTextMessages);
         }
 
         /**
@@ -457,7 +425,6 @@ public class TestWebSocketServer implements QuietCloseable {
                 for (int i = 0; i < length; i++) {
                     data[i] = io.questdb.std.Unsafe.getUnsafe().getByte(payload + i);
                 }
-                receivedBinaryMessages.add(data);
                 handler.onBinaryMessage(ClientHandler.this, data);
             }
 
@@ -513,7 +480,6 @@ public class TestWebSocketServer implements QuietCloseable {
                     data[i] = io.questdb.std.Unsafe.getUnsafe().getByte(payload + i);
                 }
                 String text = new String(data, StandardCharsets.UTF_8);
-                receivedTextMessages.add(text);
                 handler.onTextMessage(ClientHandler.this, text);
             }
         }
