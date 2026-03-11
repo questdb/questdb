@@ -451,7 +451,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             // Expand sparse to dense, inserting null sentinels
             int valueIdx = 0;
             switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BOOLEAN, ColumnType.BYTE -> {
+                case ColumnType.BYTE -> {
                     for (int row = 0; row < rowCount; row++) {
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                             dataMem.putByte((byte) 0);
@@ -537,46 +537,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                                     Unsafe.getUnsafe().getLong(addr + 16),
                                     Unsafe.getUnsafe().getLong(addr + 24)
                             );
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.GEOBYTE -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putByte(GeoHashes.BYTE_NULL);
-                        } else {
-                            dataMem.putByte(Unsafe.getUnsafe().getByte(valuesAddress + valueIdx));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.GEOSHORT -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putShort(GeoHashes.SHORT_NULL);
-                        } else {
-                            dataMem.putShort(Unsafe.getUnsafe().getShort(valuesAddress + (long) valueIdx * 2));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.GEOINT -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putInt(GeoHashes.INT_NULL);
-                        } else {
-                            dataMem.putInt(Unsafe.getUnsafe().getInt(valuesAddress + (long) valueIdx * 4));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.GEOLONG -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putLong(GeoHashes.NULL);
-                        } else {
-                            dataMem.putLong(Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8));
                             valueIdx++;
                         }
                     }
