@@ -24,11 +24,43 @@
 
 package io.questdb.cairo;
 
+/**
+ * Listener for DDL (Data Definition Language) events. The enterprise implementation
+ * uses these callbacks to maintain permission metadata in sync with schema changes.
+ * <p>
+ * All callbacks fire only when the DDL actually takes effect. No-op statements
+ * (e.g. {@code DROP TABLE IF EXISTS} for a non-existent table, or
+ * {@code ADD COLUMN} for a duplicate column caught by ILP) do not trigger callbacks.
+ */
 public interface DdlListener {
 
+    /**
+     * Called when a column is added to a table. The enterprise implementation grants
+     * owner permissions on the new column to the principal that created it.
+     *
+     * @param securityContext the security context of the user adding the column
+     * @param tableToken      the table token of the table the column is added to
+     * @param columnName      the name of the new column
+     */
     void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
 
-    void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
+    /**
+     * Called when a column is dropped from a table.
+     *
+     * @param tableToken the table token of the table the column is dropped from
+     * @param columnName the name of the dropped column
+     */
+    void onColumnDropped(TableToken tableToken, CharSequence columnName);
+
+    /**
+     * Called when a column is renamed. The enterprise implementation transfers all existing
+     * permissions from the old column name to the new one.
+     *
+     * @param tableToken    the table token of the table containing the column
+     * @param oldColumnName the original column name
+     * @param newColumnName the new column name
+     */
+    void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
 
     /**
      * Called when a table, view or materialized view is created.
@@ -43,5 +75,25 @@ public interface DdlListener {
      */
     void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
-    void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
+    /**
+     * Called when a table, view or materialized view is dropped. This method takes
+     * {@code tableName} as a {@link String} instead of a {@link TableToken} because it is
+     * called after the table has been dropped, at which point the token is no longer valid.
+     * <p>
+     * {@code DROP ALL} also calls this method once per successfully dropped entity, skipping
+     * system tables and tables that could not be locked. Tables that fail to drop are collected
+     * and reported in a single {@code CairoException} after the loop completes.
+     *
+     * @param tableName the name of the dropped table, view or materialized view
+     */
+    void onTableOrViewOrMatViewDropped(String tableName);
+
+    /**
+     * Called when a table is renamed. The enterprise implementation transfers all existing
+     * permissions from the old table name to the new one.
+     *
+     * @param oldTableToken the table token before the rename
+     * @param newTableToken the table token after the rename
+     */
+    void onTableRenamed(TableToken oldTableToken, TableToken newTableToken);
 }
