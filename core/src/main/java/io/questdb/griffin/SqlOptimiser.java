@@ -11108,6 +11108,10 @@ public class SqlOptimiser implements Mutable {
     /**
      * Resolves column prefixes in WINDOW JOIN RANGE BETWEEN bound expressions.
      * Strips the master table prefix and rejects the slave table prefix with an error.
+     * <p>
+     * This method only processes children of FUNCTION/OPERATION/SET_OPERATION nodes,
+     * so the caller must apply {@link #rewriteWindowJoinBoundLiteral} to the root node
+     * first to handle the case where the bound expression is a bare column reference.
      */
     private void resolveWindowJoinBoundColumns(
             ExpressionNode node,

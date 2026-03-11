@@ -5267,6 +5267,164 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDynamicWindowNullBound() throws Exception {
+        // Tests that rows with NULL dynamic bounds produce NULL aggregates.
+        // When computeEffectiveBound receives NULL, it returns Long.MIN_VALUE,
+        // and the row skips aggregation (empty/NULL result).
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(bound, ts) VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (NULL, '2023-01-01T09:01:00.000000Z'),
+                    (2, '2023-01-01T09:02:00.000000Z'),
+                    (NULL, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T09:00:00.000000Z'),
+                    (4.0, '2023-01-01T09:01:00.000000Z'),
+                    (5.0, '2023-01-01T09:02:00.000000Z')
+                    """);
+
+            // Reference query with LEFT JOIN.
+            // When m.bound is NULL, dateadd returns NULL, ON condition fails,
+            // and sum(s.val) is NULL for that row.
+            printSql("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path (LIMIT on master forces non-async)
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowNullBoundWithPrevailing() throws Exception {
+        // Same scenario as testDynamicWindowNullBound but with INCLUDE PREVAILING.
+        // NULL bound rows should still produce NULL aggregates.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(bound, ts) VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (NULL, '2023-01-01T09:01:00.000000Z'),
+                    (2, '2023-01-01T09:02:00.000000Z'),
+                    (NULL, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T09:00:00.000000Z'),
+                    (4.0, '2023-01-01T09:01:00.000000Z'),
+                    (5.0, '2023-01-01T09:02:00.000000Z')
+                    """);
+
+            // Reference query with LEFT JOIN + UNION for prevailing.
+            printSql("""
+                    SELECT ts, bound, sum(val) AS agg FROM
+                    (
+                        SELECT * FROM (
+                            SELECT m.ts, m.bound, s.val
+                            FROM master m
+                            LEFT JOIN slave s
+                            ON s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                        UNION
+                            SELECT ts, bound, val FROM (
+                                SELECT m.ts, m.bound, s.val, s.ts AS ts1
+                                FROM master m
+                                JOIN slave s ON s.ts <= dateadd('m', -m.bound, m.ts)
+                            ) LATEST ON ts1 PARTITION BY ts
+                        ) ORDER BY ts
+                    )
+                    ORDER BY ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND 0 seconds FOLLOWING
+                            INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
     private void assertSkipToAndCalculateSize(String select, int size) throws Exception {
         assertQueryNoLeakCheck("count\n" + size + "\n", "select count(*) from (" + select + ")", null, false, true);
         RecordCursor.Counter counter = new RecordCursor.Counter();
