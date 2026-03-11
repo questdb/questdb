@@ -1260,10 +1260,6 @@ struct encoded_2x {
         if (k1 != other.k1) return k1 < other.k1;
         return rowId < other.rowId;
     }
-    bool operator<=(const encoded_2x &other) const {
-        if (k1 != other.k1) return k1 < other.k1;
-        return rowId <= other.rowId;
-    }
 };
 
 struct encoded_3x {
@@ -1275,11 +1271,6 @@ struct encoded_3x {
         if (k1 != other.k1) return k1 < other.k1;
         if (k2 != other.k2) return k2 < other.k2;
         return rowId < other.rowId;
-    }
-    bool operator<=(const encoded_3x &other) const {
-        if (k1 != other.k1) return k1 < other.k1;
-        if (k2 != other.k2) return k2 < other.k2;
-        return rowId <= other.rowId;
     }
 };
 
@@ -1294,12 +1285,6 @@ struct encoded_4x {
         if (k2 != other.k2) return k2 < other.k2;
         if (k3 != other.k3) return k3 < other.k3;
         return rowId < other.rowId;
-    }
-    bool operator<=(const encoded_4x &other) const {
-        if (k1 != other.k1) return k1 < other.k1;
-        if (k2 != other.k2) return k2 < other.k2;
-        if (k3 != other.k3) return k3 < other.k3;
-        return rowId <= other.rowId;
     }
 };
 
@@ -1316,13 +1301,6 @@ struct encoded_5x {
         if (k3 != other.k3) return k3 < other.k3;
         if (k4 != other.k4) return k4 < other.k4;
         return rowId < other.rowId;
-    }
-    bool operator<=(const encoded_5x &other) const {
-        if (k1 != other.k1) return k1 < other.k1;
-        if (k2 != other.k2) return k2 < other.k2;
-        if (k3 != other.k3) return k3 < other.k3;
-        if (k4 != other.k4) return k4 < other.k4;
-        return rowId <= other.rowId;
     }
 };
 
@@ -1447,16 +1425,15 @@ void ska_sort_entries(T *arr, int64_t count) {
     msd_radix_byte<T>(arr, count, 56);
 }
 
-// vergesort_entries: adaptive sort.
+// vergesort_entries: adaptive sort with jump-sampling run detection.
 //
 // 1. For small arrays (< 128), delegates directly to ska_sort.
-// 2. Scans for natural ascending/descending runs. Runs longer than
-//    unstable_limit (= count / log2(count)) are kept as-is; the gaps
-//    between them are sorted with ska_sort.
+// 2. Probes for natural runs by jumping unstable_limit positions at a time,
+//    then extending outward from the sample point. Random data triggers
+//    only ~log2(n) probes instead of scanning every element.
 // 3. Merges all sorted runs pairwise using std::inplace_merge.
 //
-// This approach is O(n) for already-sorted data, and O(n log n) for
-// random data with radix sort providing O(n * 8) sub-run sorting.
+// O(n) for already-sorted data, O(n log n) for random data.
 template <typename T>
 void vergesort_entries(T *arr, int64_t count) {
     if (count < 128) {
@@ -1464,77 +1441,89 @@ void vergesort_entries(T *arr, int64_t count) {
         return;
     }
 
-    // unstable_limit: minimum run length to be considered "significant".
-    // Shorter runs are accumulated and sorted with ska_sort.
     int lg = 63 - clzll(count);
     if (lg < 1) lg = 1;
     int64_t unstable_limit = count / lg;
 
-    // Run boundaries: bounds[0..numBounds-1] where run i spans
-    // [bounds[i], bounds[i+1]). bounds[numBounds-1] = count.
-    // Max runs = 2 * lg + 4 (each significant run adds at most 2 boundaries).
     constexpr int MAX_BOUNDS = 256;
     int64_t bounds[MAX_BOUNDS];
     int numBounds = 0;
 
-    int64_t begin_unstable = 0;
-    bool has_unstable = false;
+    int64_t begin_unstable = -1;
     int64_t pos = 0;
+    encoded_less cmp;
 
     while (pos < count) {
-        int64_t runStart = pos;
-        int64_t runEnd = pos + 1;
+        int64_t begin_range = pos;
 
-        if (runEnd < count) {
-            encoded_less cmp;
-            if (cmp(arr[runEnd], arr[runStart])) {
-                // Strictly descending run
-                while (runEnd < count && cmp(arr[runEnd], arr[runEnd - 1]))
-                    runEnd++;
-                std::reverse(arr + runStart, arr + runEnd);
-            } else {
-                // Non-descending (ascending) run
-                while (runEnd < count && !cmp(arr[runEnd], arr[runEnd - 1]))
-                    runEnd++;
-            }
+        // Too few elements left to form a significant run.
+        if (count - pos <= unstable_limit) {
+            if (begin_unstable < 0) begin_unstable = begin_range;
+            break;
         }
 
-        if (runEnd - runStart >= unstable_limit) {
-            // Sort accumulated unstable region before this run
-            if (has_unstable && runStart > begin_unstable) {
-                ska_sort_entries<T>(arr + begin_unstable,
-                                    runStart - begin_unstable);
+        // Jump to sample point and probe direction.
+        int64_t probe = pos + unstable_limit;
+        int64_t lo = probe - 1;
+        int64_t hi = probe;
+
+        if (cmp(arr[probe], arr[probe - 1])) {
+            // Descending trend. Extend backward and forward.
+            while (lo > begin_range && cmp(arr[lo], arr[lo - 1])) --lo;
+            while (hi + 1 < count && cmp(arr[hi + 1], arr[hi])) ++hi;
+
+            if (hi - lo + 1 >= unstable_limit) {
+                std::reverse(arr + lo, arr + hi + 1);
+                if (lo > begin_range && begin_unstable < 0)
+                    begin_unstable = begin_range;
+                if (begin_unstable >= 0) {
+                    ska_sort_entries<T>(arr + begin_unstable, lo - begin_unstable);
+                    if (numBounds < MAX_BOUNDS - 2)
+                        bounds[numBounds++] = begin_unstable;
+                    begin_unstable = -1;
+                }
                 if (numBounds < MAX_BOUNDS - 2)
-                    bounds[numBounds++] = begin_unstable;
+                    bounds[numBounds++] = lo;
+                pos = hi + 1;
+            } else {
+                if (begin_unstable < 0) begin_unstable = begin_range;
+                pos = hi + 1;
             }
-            if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = runStart;
-            begin_unstable = runEnd;
-            has_unstable = false;
         } else {
-            if (!has_unstable) {
-                begin_unstable = runStart;
-                has_unstable = true;
+            // Non-descending trend. Extend backward and forward.
+            while (lo > begin_range && !cmp(arr[lo], arr[lo - 1])) --lo;
+            while (hi + 1 < count && !cmp(arr[hi + 1], arr[hi])) ++hi;
+
+            if (hi - lo + 1 >= unstable_limit) {
+                if (lo > begin_range && begin_unstable < 0)
+                    begin_unstable = begin_range;
+                if (begin_unstable >= 0) {
+                    ska_sort_entries<T>(arr + begin_unstable, lo - begin_unstable);
+                    if (numBounds < MAX_BOUNDS - 2)
+                        bounds[numBounds++] = begin_unstable;
+                    begin_unstable = -1;
+                }
+                if (numBounds < MAX_BOUNDS - 2)
+                    bounds[numBounds++] = lo;
+                pos = hi + 1;
+            } else {
+                if (begin_unstable < 0) begin_unstable = begin_range;
+                pos = hi + 1;
             }
         }
-
-        pos = runEnd;
     }
 
     // Sort remaining unstable region
-    if (has_unstable || begin_unstable < count) {
-        if (begin_unstable < count) {
-            ska_sort_entries<T>(arr + begin_unstable, count - begin_unstable);
-        }
-        if (numBounds == 0 || bounds[numBounds - 1] != begin_unstable) {
+    if (begin_unstable >= 0 && begin_unstable < count) {
+        ska_sort_entries<T>(arr + begin_unstable, count - begin_unstable);
+        if (numBounds == 0 || bounds[numBounds - 1] != begin_unstable)
             bounds[numBounds++] = begin_unstable;
-        }
     }
     bounds[numBounds++] = count;
 
-    if (numBounds <= 2) return;  // 0 or 1 run, already sorted
+    if (numBounds <= 2) return;
 
     // Merge runs pairwise using std::inplace_merge.
-    // Each pass halves the number of runs: O(log k) passes, O(n) work each.
     while (numBounds > 2) {
         int newNum = 0;
         for (int b = 0; b + 2 < numBounds; b += 2) {
@@ -1542,7 +1531,6 @@ void vergesort_entries(T *arr, int64_t count) {
                                arr + bounds[b + 2], encoded_less{});
             bounds[newNum++] = bounds[b];
         }
-        // Odd run carries over unmerged
         if ((numBounds - 1) % 2 == 1) {
             bounds[newNum++] = bounds[numBounds - 2];
         }
