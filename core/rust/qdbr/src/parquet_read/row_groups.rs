@@ -1,18 +1,21 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
+use crate::parquet_read::column_sink::var::fixup_varchar_slice_spill_pointers;
 use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     page_row_count, sliced_page_row_count,
 };
+use crate::parquet_read::page::DataPage;
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
     RowGroupStatBuffers, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
     FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
+use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
-use parquet2::read::{SlicePageReader, SlicedPage};
+use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::{cmp, mem::size_of, ptr, slice};
@@ -71,6 +74,31 @@ impl RowGroupBuffers {
     }
 }
 
+/// Decompress a varchar_slice data page, choosing the buffer strategy based on encoding.
+///
+/// For dictionary and DeltaByteArray encodings, aux entries don't reference
+/// the data page buffer (they point to the dict buffer or `data_vec`), so
+/// the buffer can be reused. For other encodings (Plain, DeltaLengthByteArray),
+/// aux entries point directly into the page buffer, so it must persist.
+fn decompress_varchar_slice_data<'a>(
+    page: &'a SlicedDataPage<'a>,
+    reusable_buf: &'a mut Vec<u8>,
+    persistent_bufs: &'a mut Vec<Vec<u8>>,
+    buf_pool: &mut Vec<Vec<u8>>,
+) -> ParquetResult<DataPage<'a>> {
+    match page.encoding() {
+        Encoding::RleDictionary | Encoding::PlainDictionary | Encoding::DeltaByteArray => {
+            decompress_sliced_data(page, reusable_buf)
+        }
+        _ => {
+            let mut buf = buf_pool.pop().unwrap_or_default();
+            buf.clear();
+            persistent_bufs.push(buf);
+            decompress_sliced_data(page, persistent_bufs.last_mut().unwrap())
+        }
+    }
+}
+
 impl ParquetDecoder {
     pub fn decode_row_group(
         &self,
@@ -108,7 +136,16 @@ impl ParquetDecoder {
             // The `read_parquet` function does not support symbol columns,
             // so this workaround allows them to be read as varchar columns.
             if column_type.tag() == ColumnTypeTag::Symbol
-                && to_column_type.tag() == ColumnTypeTag::Varchar
+                && (to_column_type.tag() == ColumnTypeTag::Varchar
+                    || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
+            {
+                column_type = to_column_type;
+            }
+
+            // Allow requesting VarcharSlice when the file stores Varchar.
+            // VarcharSlice is a zero-copy decode format for Varchar data.
+            if column_type.tag() == ColumnTypeTag::Varchar
+                && to_column_type.tag() == ColumnTypeTag::VarcharSlice
             {
                 column_type = to_column_type;
             }
@@ -126,19 +163,19 @@ impl ParquetDecoder {
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
 
             // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let (column_top, format) = self
+            let (column_top, format, ascii) = self
                 .qdb_meta
                 .as_ref()
                 .and_then(|m| m.schema.get(column_idx))
-                .map(|c| (c.column_top, c.format))
-                .unwrap_or((0, None));
+                .map(|c| (c.column_top, c.format, c.ascii))
+                .unwrap_or((0, None, None));
 
             if column_top >= row_group_hi as usize + accumulated_size {
                 column_chunk_bufs.reset();
                 continue;
             }
 
-            let col_info = QdbMetaCol { column_type, column_top, format };
+            let col_info = QdbMetaCol { column_type, column_top, format, ascii };
             match self.decode_column_chunk(
                 ctx,
                 column_chunk_bufs,
@@ -224,7 +261,15 @@ impl ParquetDecoder {
 
             // Special case for handling symbol columns in QuestDB-created Parquet files.
             if column_type.tag() == ColumnTypeTag::Symbol
-                && to_column_type.tag() == ColumnTypeTag::Varchar
+                && (to_column_type.tag() == ColumnTypeTag::Varchar
+                    || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
+            {
+                column_type = to_column_type;
+            }
+
+            // Allow requesting VarcharSlice when the file stores Varchar.
+            if column_type.tag() == ColumnTypeTag::Varchar
+                && to_column_type.tag() == ColumnTypeTag::VarcharSlice
             {
                 column_type = to_column_type;
             }
@@ -242,19 +287,19 @@ impl ParquetDecoder {
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
 
             // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let (column_top, format) = self
+            let (column_top, format, ascii) = self
                 .qdb_meta
                 .as_ref()
                 .and_then(|m| m.schema.get(column_idx))
-                .map(|c| (c.column_top, c.format))
-                .unwrap_or((0, None));
+                .map(|c| (c.column_top, c.format, c.ascii))
+                .unwrap_or((0, None, None));
 
             if column_top >= row_group_hi as usize + accumulated_size {
                 column_chunk_bufs.reset();
                 continue;
             }
 
-            let col_info = QdbMetaCol { column_type, column_top, format };
+            let col_info = QdbMetaCol { column_type, column_top, format, ascii };
 
             // Decode the column chunk with row filter
             match self.decode_column_chunk_filtered::<FILL_NULLS>(
@@ -320,17 +365,31 @@ impl ParquetDecoder {
         let mut filter_idx = 0usize;
         let filter_count = rows_filter.len();
 
+        let is_varchar_slice = col_info.column_type.tag() == ColumnTypeTag::VarcharSlice;
+
+        let DecodeContext {
+            decompress_buffer,
+            dict_decompress_buffer,
+            varchar_slice_buf_pool,
+            varchar_slice_dict_buf,
+            ..
+        } = ctx;
+
+        varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
-        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
-        let decompress_buffer = &mut ctx.decompress_buffer;
+        let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
 
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
-                    let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
+                    let page = if is_varchar_slice {
+                        decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
+                    } else {
+                        decompress_sliced_dict(dict_page, dict_decompress_buffer)?
+                    };
                     dict = Some(page);
                 }
                 SlicedPage::Data(page) => {
@@ -361,7 +420,16 @@ impl ParquetDecoder {
                         if FILL_NULLS {
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-                            let page = decompress_sliced_data(&page, decompress_buffer)?;
+                            let page = if is_varchar_slice {
+                                decompress_varchar_slice_data(
+                                    &page,
+                                    decompress_buffer,
+                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_buf_pool,
+                                )?
+                            } else {
+                                decompress_sliced_data(&page, decompress_buffer)?
+                            };
                             decode_page_filtered::<true>(
                                 &page,
                                 dict.as_ref(),
@@ -386,7 +454,16 @@ impl ParquetDecoder {
                                 )
                             })?;
                         } else if page_filter_start < filter_idx {
-                            let page = decompress_sliced_data(&page, decompress_buffer)?;
+                            let page = if is_varchar_slice {
+                                decompress_varchar_slice_data(
+                                    &page,
+                                    decompress_buffer,
+                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_buf_pool,
+                                )?
+                            } else {
+                                decompress_sliced_data(&page, decompress_buffer)?
+                            };
                             decode_page_filtered::<false>(
                                 &page,
                                 dict.as_ref(),
@@ -417,7 +494,16 @@ impl ParquetDecoder {
                             break;
                         }
 
-                        let page = decompress_sliced_data(&page, decompress_buffer)?;
+                        let page = if is_varchar_slice {
+                            decompress_varchar_slice_data(
+                                &page,
+                                decompress_buffer,
+                                &mut varchar_slice_page_bufs,
+                                varchar_slice_buf_pool,
+                            )?
+                        } else {
+                            decompress_sliced_data(&page, decompress_buffer)?
+                        };
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
                         let page_end = page_row_start + page_row_count;
 
@@ -494,6 +580,19 @@ impl ParquetDecoder {
                     }
                 }
             };
+        }
+
+        if is_varchar_slice {
+            if !column_chunk_bufs.data_vec.is_empty() {
+                fixup_varchar_slice_spill_pointers(column_chunk_bufs);
+            }
+            column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
+            if !varchar_slice_dict_buf.is_empty() {
+                let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
+                column_chunk_bufs
+                    .page_buffers
+                    .push(std::mem::replace(varchar_slice_dict_buf, replacement));
+            }
         }
 
         column_chunk_bufs.refresh_ptrs();
@@ -536,17 +635,31 @@ impl ParquetDecoder {
         let mut dict = None;
         let mut row_count = 0usize;
 
+        let is_varchar_slice = col_info.column_type.tag() == ColumnTypeTag::VarcharSlice;
+
+        let DecodeContext {
+            decompress_buffer,
+            dict_decompress_buffer,
+            varchar_slice_buf_pool,
+            varchar_slice_dict_buf,
+            ..
+        } = ctx;
+
+        varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
-        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
-        let decompress_buffer = &mut ctx.decompress_buffer;
+        let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
 
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
-                    let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
+                    let page = if is_varchar_slice {
+                        decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
+                    } else {
+                        decompress_sliced_dict(dict_page, dict_decompress_buffer)?
+                    };
                     dict = Some(page);
                 }
                 SlicedPage::Data(page) => {
@@ -554,7 +667,16 @@ impl ParquetDecoder {
 
                     if let Some(page_row_count) = page_row_count_opt {
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                            let page = decompress_sliced_data(&page, decompress_buffer)?;
+                            let page = if is_varchar_slice {
+                                decompress_varchar_slice_data(
+                                    &page,
+                                    decompress_buffer,
+                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_buf_pool,
+                                )?
+                            } else {
+                                decompress_sliced_data(&page, decompress_buffer)?
+                            };
                             decode_page(
                                 &page,
                                 dict.as_ref(),
@@ -577,7 +699,16 @@ impl ParquetDecoder {
                         }
                         row_count += page_row_count;
                     } else {
-                        let page = decompress_sliced_data(&page, decompress_buffer)?;
+                        let page = if is_varchar_slice {
+                            decompress_varchar_slice_data(
+                                &page,
+                                decompress_buffer,
+                                &mut varchar_slice_page_bufs,
+                                varchar_slice_buf_pool,
+                            )?
+                        } else {
+                            decompress_sliced_data(&page, decompress_buffer)?
+                        };
                         let page_row_count = page_row_count(&page, col_info.column_type)?;
 
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
@@ -605,6 +736,19 @@ impl ParquetDecoder {
                     }
                 }
             };
+        }
+
+        if is_varchar_slice {
+            if !column_chunk_bufs.data_vec.is_empty() {
+                fixup_varchar_slice_spill_pointers(column_chunk_bufs);
+            }
+            column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
+            if !varchar_slice_dict_buf.is_empty() {
+                let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
+                column_chunk_bufs
+                    .page_buffers
+                    .push(std::mem::replace(varchar_slice_dict_buf, replacement));
+            }
         }
 
         column_chunk_bufs.refresh_ptrs();
@@ -637,7 +781,14 @@ impl ParquetDecoder {
                     column_idx
                 )
             })?;
-            if column_type != to_column_type {
+            // Allow Varchar->VarcharSlice and Symbol->Varchar/VarcharSlice remapping.
+            let types_match = column_type == to_column_type
+                || (column_type.tag() == ColumnTypeTag::Varchar
+                    && to_column_type.tag() == ColumnTypeTag::VarcharSlice)
+                || (column_type.tag() == ColumnTypeTag::Symbol
+                    && (to_column_type.tag() == ColumnTypeTag::Varchar
+                        || to_column_type.tag() == ColumnTypeTag::VarcharSlice));
+            if !types_match {
                 return Err(fmt_err!(
                     InvalidType,
                     "requested column type {} does not match file column type {}, column index: {}",
@@ -1922,6 +2073,7 @@ impl ParquetDecoder {
             column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
         self.decode_column_chunk(
             &mut ctx,

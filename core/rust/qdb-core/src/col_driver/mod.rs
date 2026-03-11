@@ -31,7 +31,7 @@ mod string;
 mod varchar;
 
 use crate::col_type::{ColumnType, ColumnTypeTag};
-use crate::error::CoreResult;
+use crate::error::{CoreResult, fmt_err};
 
 pub use array::*;
 pub use binary::*;
@@ -82,6 +82,10 @@ pub fn try_lookup_driver(col_type: ColumnType) -> CoreResult<&'static dyn Column
         (ColumnTypeTag::Long128, _) => Ok(&Long128Driver),
         (ColumnTypeTag::IPv4, _) => Ok(&IPv4Driver),
         (ColumnTypeTag::Varchar, _) => Ok(&VarcharDriver),
+        (ColumnTypeTag::VarcharSlice, _) => Err(fmt_err!(
+            InvalidType,
+            "VarcharSlice is a transient in-memory type with no on-disk column driver"
+        )),
         (ColumnTypeTag::Array, _) => Ok(&ArrayDriver),
         (ColumnTypeTag::Decimal8, _) => Ok(&Decimal8Driver),
         (ColumnTypeTag::Decimal16, _) => Ok(&Decimal16Driver),

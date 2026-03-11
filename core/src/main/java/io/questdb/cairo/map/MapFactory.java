@@ -82,9 +82,28 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
     ) {
+        return createUnorderedMap(configuration, keyTypes, valueTypes, false);
+    }
+
+    /**
+     * Creates an unordered Map pre-allocated to a small capacity to be used in GROUP BY queries, but not only.
+     * <p>
+     * The returned map may actually preserve insertion order, i.e. it may be ordered, depending on the types
+     * of key and value columns.
+     *
+     * @param isDeferredKeyCopy when true, UnorderedVarcharMap skips the defensive copy of unstable varchar keys
+     *                          in putVarchar() and copyFrom(), deferring the copy to asNew(). Only safe when the
+     *                          caller guarantees the key pointer remains valid from putVarchar() through createValue().
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            boolean isDeferredKeyCopy
+    ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final long pageSize = configuration.getSqlSmallMapPageSize();
-        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize);
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, isDeferredKeyCopy);
     }
 
     /**
@@ -99,6 +118,23 @@ public class MapFactory {
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
             long pageSize
+    ) {
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, false);
+    }
+
+    /**
+     * Creates an unordered Map pre-allocated to a small capacity to be used in GROUP BY queries, but not only.
+     * <p>
+     * The returned map may actually preserve insertion order, i.e. it may be ordered, depending on the types
+     * of key and value columns.
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            long pageSize,
+            boolean isDeferredKeyCopy
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
@@ -128,7 +164,8 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes(),
                         configuration.getGroupByAllocatorDefaultChunkSize(),
-                        configuration.getGroupByAllocatorMaxChunkSize()
+                        configuration.getGroupByAllocatorMaxChunkSize(),
+                        isDeferredKeyCopy
                 );
             }
         }
