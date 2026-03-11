@@ -910,7 +910,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             val\tname
                             1.0\tx
                             2.0\ty
-                            null\tz
+                            0.0\tz
                             """,
                     "SELECT u.val, u.name FROM t, UNNEST("
                             + "t.a COLUMNS(val DOUBLE), "
@@ -2266,6 +2266,694 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             hello\t5
                             """,
                     "SELECT u.val, length(u.val) len FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- CAST TESTS: casting unnested JSON values ----
+
+    @Test
+    public void testCastIntToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1, 2, 3]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    "SELECT u.val::DOUBLE val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1, 2, 3]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            2
+                            3
+                            """,
+                    "SELECT u.val::LONG val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntToShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[100, 200, 300]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            100
+                            200
+                            300
+                            """,
+                    "SELECT u.val::SHORT val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[42, null, -7]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            \
+                            
+                            -7
+                            """,
+                    "SELECT u.val::VARCHAR val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntToBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[0, 1, 42]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            false
+                            true
+                            true
+                            """,
+                    "SELECT u.val::BOOLEAN val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastLongToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[100, 200, 300]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            100
+                            200
+                            300
+                            """,
+                    "SELECT u.val::INT val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastLongToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[100, 200, 300]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            100.0
+                            200.0
+                            300.0
+                            """,
+                    "SELECT u.val::DOUBLE val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastLongToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[42, null, -7]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            \
+                            
+                            -7
+                            """,
+                    "SELECT u.val::VARCHAR val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastLongToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1000000, 0]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1970-01-01T00:00:01.000000Z
+                            1970-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT u.val::TIMESTAMP val FROM t, UNNEST(t.payload COLUMNS(val LONG)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastDoubleToInt() throws Exception {
+        // double-to-int cast truncates toward zero
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.9, 2.1, 3.5]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            2
+                            3
+                            """,
+                    "SELECT u.val::INT val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastDoubleToLong() throws Exception {
+        // double-to-long cast truncates toward zero
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.9, 2.1, 3.5]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            2
+                            3
+                            """,
+                    "SELECT u.val::LONG val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastDoubleToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.5, null, -3.14]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.5
+                            \
+                            
+                            -3.14
+                            """,
+                    "SELECT u.val::VARCHAR val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastShortToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, 20, 30]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10
+                            20
+                            30
+                            """,
+                    "SELECT u.val::INT val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastShortToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, 20, 30]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10.0
+                            20.0
+                            30.0
+                            """,
+                    "SELECT u.val::DOUBLE val FROM t, UNNEST(t.payload COLUMNS(val SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastBooleanToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[true, false, true]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            0
+                            1
+                            """,
+                    "SELECT u.val::INT val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastBooleanToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[true, false]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            true
+                            false
+                            """,
+                    "SELECT u.val::VARCHAR val FROM t, UNNEST(t.payload COLUMNS(val BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastTimestampToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"2024-01-01T00:00:00.000000Z\", \"2024-06-15T12:30:00.000000Z\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2024-01-01T00:00:00.000000Z
+                            2024-06-15T12:30:00.000000Z
+                            """,
+                    "SELECT u.val::VARCHAR val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastTimestampToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"2024-01-01T00:00:00.000000Z\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1704067200000000
+                            """,
+                    "SELECT u.val::LONG val FROM t, UNNEST(t.payload COLUMNS(val TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastVarcharToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"42\", \"100\", \"-7\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            100
+                            -7
+                            """,
+                    "SELECT u.val::INT val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastVarcharToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"1.5\", \"2.7\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.5
+                            2.7
+                            """,
+                    "SELECT u.val::DOUBLE val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastVarcharToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"2024-01-01T00:00:00.000000Z\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2024-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT u.val::TIMESTAMP val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastVarcharToBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"true\", \"false\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            true
+                            false
+                            """,
+                    "SELECT u.val::BOOLEAN val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastNullPreservation() throws Exception {
+        // Null INT cast to DOUBLE preserves null
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, 42]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            42.0
+                            """,
+                    "SELECT u.val::DOUBLE val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastIntNullToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, 42]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            \
+                            
+                            42
+                            """,
+                    "SELECT u.val::VARCHAR val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastObjectFieldToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"price\": 10}, {\"price\": 20}]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10.0
+                            20.0
+                            """,
+                    "SELECT u.price::DOUBLE val FROM t, UNNEST(t.payload COLUMNS(price INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testCastObjectFieldTimestampToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"ts\": \"2024-01-01T00:00:00.000000Z\"}]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1704067200000000
+                            """,
+                    "SELECT u.ts::LONG val FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- WITH ORDINALITY cast tests ----
+
+    @Test
+    public void testOrdinalityCastToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, 20, 30]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val\tord
+                            10\t1
+                            20\t2
+                            30\t3
+                            """,
+                    "SELECT u.val, u.ordinality::INT ord FROM t, UNNEST(t.payload COLUMNS(val INT)) WITH ORDINALITY u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testOrdinalityCastToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, 20]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val\tord
+                            10\t1.0
+                            20\t2.0
+                            """,
+                    "SELECT u.val, u.ordinality::DOUBLE ord FROM t, UNNEST(t.payload COLUMNS(val INT)) WITH ORDINALITY u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Varchar B copy (cursor stability) via cross-join ----
+
+    @Test
+    public void testVarcharBCopyViaJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", \"world\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb
+                            hello\thello
+                            hello\tworld
+                            world\thello
+                            world\tworld
+                            """,
+                    "SELECT u1.val a, u2.val b"
+                            + " FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u1"
+                            + ", UNNEST(t.payload COLUMNS(val VARCHAR)) u2",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Overflow / truncation tests ----
+
+    @Test
+    public void testTimestampTruncationInObject() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            StringBuilder sb = new StringBuilder("[{\"ts\": \"");
+            for (int i = 0; i < JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE + 100; i++) {
+                sb.append('x');
+            }
+            sb.append("\"}]");
+            execute("INSERT INTO t VALUES ('" + sb + "')");
+            assertException(
+                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    0,
+                    "JSON UNNEST: value exceeds maximum size"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharTruncationInObjectThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            StringBuilder sb = new StringBuilder("[{\"v\": \"");
+            for (int i = 0; i < JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE + 100; i++) {
+                sb.append('a');
+            }
+            sb.append("\"}]");
+            execute("INSERT INTO t VALUES ('" + sb + "')");
+            assertException(
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v VARCHAR)) u",
+                    0,
+                    "JSON UNNEST: value exceeds maximum size"
+            );
+        });
+    }
+
+    // ---- init() edge cases ----
+
+    @Test
+    public void testWhitespaceOnlyPayloadReturnsNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('   ')");
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testJsonObjectNotArrayReturnsNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('{\"key\": \"value\"}')");
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultiColumnForcesObjectMode() throws Exception {
+        // With multiple columns, init() forces isObjectArray = true.
+        // Scalar array elements have no named fields, so all columns return null/default.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1, 2, 3]')");
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb
+                            null\tnull
+                            null\tnull
+                            null\tnull
+                            """,
+                    "SELECT u.a, u.b FROM t, UNNEST(t.payload COLUMNS(a DOUBLE, b DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Expressions on unnested values ----
+
+    @Test
+    public void testArithmeticOnUnnested() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[10, 20, 30]')");
+            assertQueryNoLeakCheck(
+                    """
+                            doubled
+                            20
+                            40
+                            60
+                            """,
+                    "SELECT u.val * 2 doubled FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testConcatOnUnnestedVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", \"world\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            greeting
+                            hello!
+                            world!
+                            """,
+                    "SELECT concat(u.val, '!') greeting FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Multi-row with mixed array lengths ----
+
+    @Test
+    public void testMultipleRowsDifferentArrayTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1]'), ('[2, 3]'), ('[4, 5, 6]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            2
+                            3
+                            4
+                            5
+                            6
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleRowsMixedNullAndValid() throws Exception {
+        // Mix of null payloads, empty arrays, valid arrays, and invalid JSON
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES (NULL), ('[]'), ('[1, 2]'), ('not json'), ('[3]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            2
+                            3
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val INT)) u",
                     (String) null
             );
         });
