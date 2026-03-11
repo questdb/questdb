@@ -468,9 +468,11 @@ public class WindowJoinTimeFrameHelper {
     public void restoreBookmark(int frameIndex, long rowIndex) {
         this.bookmarkedFrameIndex = frameIndex;
         this.bookmarkedRowIndex = rowIndex;
-        timeFrameCursor.jumpTo(bookmarkedFrameIndex);
-        timeFrameCursor.open();
-        timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        if (frameIndex >= 0) {
+            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+            timeFrameCursor.open();
+            timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        }
     }
 
     public void toTop() {
