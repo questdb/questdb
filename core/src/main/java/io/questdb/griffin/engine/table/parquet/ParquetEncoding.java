@@ -29,7 +29,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Os;
-import io.questdb.std.str.StringSink;
 
 public class ParquetEncoding {
     public static final int ENCODING_DEFAULT = 0;
@@ -39,15 +38,24 @@ public class ParquetEncoding {
     public static final int ENCODING_DELTA_BINARY_PACKED = ENCODING_DELTA_LENGTH_BYTE_ARRAY + 1; // 4
     public static final int ENCODING_BYTE_STREAM_SPLIT = ENCODING_DELTA_BINARY_PACKED + 1; // 5
     public static final int MAX_ENUM_INT = ENCODING_BYTE_STREAM_SPLIT + 1;
-    private static final StringSink ENCODING_NAMES = new StringSink(64);
     private static final IntObjHashMap<CharSequence> encodingToNameMap = new IntObjHashMap<>(16);
     private static final LowerCaseCharSequenceIntHashMap nameToEncodingMap = new LowerCaseCharSequenceIntHashMap(32);
 
     /**
-     * Appends the comma-separated list of supported encoding names to the given exception.
+     * Appends the comma-separated list of encoding names valid for the given column type
+     * to the given exception.
      */
-    public static void addEncodingNamesToException(SqlException e) {
-        e.put(ENCODING_NAMES);
+    public static void addValidEncodingNamesForType(SqlException e, int columnType) {
+        boolean first = true;
+        for (int i = 1, n = MAX_ENUM_INT; i < n; i++) {
+            if (isValidForColumnType(i, columnType)) {
+                if (!first) {
+                    e.put(", ");
+                }
+                e.put(encodingToNameMap.get(i));
+                first = false;
+            }
+        }
     }
 
     /**
@@ -100,12 +108,5 @@ public class ParquetEncoding {
         encodingToNameMap.put(ENCODING_DELTA_LENGTH_BYTE_ARRAY, "delta_length_byte_array");
         encodingToNameMap.put(ENCODING_DELTA_BINARY_PACKED, "delta_binary_packed");
         encodingToNameMap.put(ENCODING_BYTE_STREAM_SPLIT, "byte_stream_split");
-
-        for (int i = 1, n = MAX_ENUM_INT; i < n; i++) {
-            ENCODING_NAMES.put(encodingToNameMap.get(i));
-            if (i + 1 != n) {
-                ENCODING_NAMES.put(", ");
-            }
-        }
     }
 }

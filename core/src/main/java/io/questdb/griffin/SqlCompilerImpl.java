@@ -1639,13 +1639,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
         }
 
+        int columnType = tableMetadata.getColumnType(columnIndex);
+
         tok = expectToken(lexer, "encoding name");
         int encodingPos = lexer.lastTokenPosition();
         encoding = ParquetEncoding.getEncoding(tok);
         if (encoding < 0) {
-            throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
+            SqlException e = SqlException.$(encodingPos, "invalid parquet encoding '").put(tok).put("', supported values: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
+            throw e;
         }
-        int columnType = tableMetadata.getColumnType(columnIndex);
         if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, columnType)) {
             throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType));
         }

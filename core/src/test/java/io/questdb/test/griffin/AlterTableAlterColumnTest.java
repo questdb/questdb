@@ -492,7 +492,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET(INVALID_ENCODING)",
                 41,
-                "invalid parquet encoding, supported values:"
+                "invalid parquet encoding 'INVALID_ENCODING', supported values: plain, rle_dictionary"
         );
     }
 
