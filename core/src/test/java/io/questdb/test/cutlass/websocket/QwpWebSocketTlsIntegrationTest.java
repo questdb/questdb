@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.std.Os;
+import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,7 +54,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
  * These tests verify WebSocket upgrade and message flow over TLS
  * using JDK's built-in WebSocket client.
  */
-public class QwpWebSocketTlsIntegrationTest extends AbstractWebSocketTest {
+public class QwpWebSocketTlsIntegrationTest extends AbstractTest {
 
     private static final int TLS_TEST_PORT = 19300 + (int) (Os.currentTimeMicros() % 100);
 

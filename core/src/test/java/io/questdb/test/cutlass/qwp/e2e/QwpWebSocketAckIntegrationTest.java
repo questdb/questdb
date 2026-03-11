@@ -30,7 +30,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
-import io.questdb.test.cutlass.websocket.AbstractWebSocketTest;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.websocket.TestWebSocketServer;
 import org.junit.Assert;
 import org.junit.Test;
@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Integration tests for QWP v1 WebSocket ACK delivery mechanism.
  * These tests verify that the InFlightWindow and ACK responses work correctly end-to-end.
  */
-public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
+public class QwpWebSocketAckIntegrationTest extends AbstractTest {
 
     private static final Log LOG = LogFactory.getLog(QwpWebSocketAckIntegrationTest.class);
     private static final int TEST_PORT = 19500 + (int) (Os.currentTimeMicros() % 100);
