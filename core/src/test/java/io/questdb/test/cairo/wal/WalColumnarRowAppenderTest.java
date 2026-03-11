@@ -1131,6 +1131,136 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutCharColumn_EmptyString() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_char_empty", PartitionBy.HOUR)
+                    .col("value", ColumnType.CHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            String[] values = {"", "", ""};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                walName = walWriter.getWalName();
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putCharColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                RecordCursor cursor = reader.getDataCursor();
+                Record record = cursor.getRecord();
+
+                int row = 0;
+                while (cursor.hasNext()) {
+                    assertEquals(0, record.getChar(0));
+                    row++;
+                }
+                assertEquals(rowCount, row);
+            }
+        });
+    }
+
+    @Test
+    public void testPutCharColumn_FourByteUtf8() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_char_4byte", PartitionBy.HOUR)
+                    .col("value", ColumnType.CHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            // 4-byte UTF-8 characters (emoji) are not representable as a single char,
+            // so utf8CharDecode returns 0 and the column stores (char) 0
+            int rowCount = 2;
+            String[] values = {"\uD83C\uDF89", "\uD83D\uDE00"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                walName = walWriter.getWalName();
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putCharColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                RecordCursor cursor = reader.getDataCursor();
+                Record record = cursor.getRecord();
+
+                int row = 0;
+                while (cursor.hasNext()) {
+                    assertEquals(0, record.getChar(0));
+                    row++;
+                }
+                assertEquals(rowCount, row);
+            }
+        });
+    }
+
+    @Test
+    public void testPutCharColumn_MultiByte() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_char_multibyte", PartitionBy.HOUR)
+                    .col("value", ColumnType.CHAR)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            // 2-byte UTF-8: é (U+00E9), ñ (U+00F1)
+            // 3-byte UTF-8: € (U+20AC)
+            int rowCount = 3;
+            String[] values = {"\u00E9", "\u00F1", "\u20AC"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                walName = walWriter.getWalName();
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putCharColumn(0, wireFormat.cursor, rowCount);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                RecordCursor cursor = reader.getDataCursor();
+                Record record = cursor.getRecord();
+
+                int row = 0;
+                while (cursor.hasNext()) {
+                    assertEquals(values[row].charAt(0), record.getChar(0));
+                    row++;
+                }
+                assertEquals(rowCount, row);
+            }
+        });
+    }
+
+    @Test
     public void testPutDecimalColumn_Decimal256ToDecimal64() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(18, 2);
@@ -2520,6 +2650,216 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                                 0
                                 """,
                         "SELECT value FROM test_long_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToSmallDecimalColumn_Decimal16_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL16: precision 3-4 (2 bytes storage), scale 1
+            int columnType = ColumnType.getDecimalType(4, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_fixed_dec16", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            long[] values = {42, -5, 0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToSmallDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                42.0
+                                -5.0
+                                0.0
+                                """,
+                        "SELECT value FROM test_fixed_dec16 ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToSmallDecimalColumn_Decimal16_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(4, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_fixed_dec16_nulls", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            // Pattern: [NULL, 7, NULL]
+            long[] nonNullValues = {7};
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + nonNullValues.length * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 0);
+                QwpNullBitmap.setNull(dataAddress, 2);
+
+                Unsafe.getUnsafe().putLong(dataAddress + bitmapSize, 7);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToSmallDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        "value\n\n7.0\n\n",
+                        "SELECT value FROM test_fixed_dec16_nulls ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToSmallDecimalColumn_Decimal8_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL8: precision 1-2 (1 byte storage), scale 1
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_fixed_dec8", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            long[] values = {5, -3, 0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToSmallDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                5.0
+                                -3.0
+                                0.0
+                                """,
+                        "SELECT value FROM test_fixed_dec8 ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToSmallDecimalColumn_Decimal8_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_fixed_dec8_nulls", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            // Pattern: [3, NULL, -1]
+            long[] nonNullValues = {3, -1};
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + nonNullValues.length * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 1);
+
+                long valuesStart = dataAddress + bitmapSize;
+                for (int i = 0; i < nonNullValues.length; i++) {
+                    Unsafe.getUnsafe().putLong(valuesStart + (long) i * 8, nonNullValues[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_LONG, true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToSmallDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        "value\n3.0\n\n-1.0\n",
+                        "SELECT value FROM test_fixed_dec8_nulls ORDER BY ts"
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
