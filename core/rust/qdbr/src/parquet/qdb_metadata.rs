@@ -253,6 +253,7 @@ mod tests {
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
+                ascii: None,
             }],
             unused_bytes: 4096,
         };
@@ -296,6 +297,7 @@ mod tests {
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
+                ascii: None,
             }],
             unused_bytes: 0,
         };

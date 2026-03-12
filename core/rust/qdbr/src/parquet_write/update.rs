@@ -734,6 +734,7 @@ mod tests {
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
+                ascii: None,
             });
         qdb_meta
             .schema
@@ -741,6 +742,7 @@ mod tests {
                 column_type: ColumnTypeTag::Float.into_type(),
                 column_top: 0,
                 format: None,
+                ascii: None,
             });
         let qdb_json = qdb_meta.serialize().expect("serialize qdb meta");
         let kv = parquet2::metadata::KeyValue {

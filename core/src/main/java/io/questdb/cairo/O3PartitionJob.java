@@ -2003,8 +2003,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
         final int colCount = (int) parquetColumns.size() / 2;
 
-        // Zero-fill reusable per-merge buffers. nullBufs tracks column-top null
-        // source allocations (freed in finally); srcPtrs holds effective data/aux pointers.
+        // Re-zero per-row-group buffers. The getters already zero them for the
+        // first call, but mergeRowGroup is called in a loop (once per MERGE action),
+        // so subsequent calls need stale values from the previous row group cleared.
         nullBufs.fill(0, colCount * 4, 0);
         srcPtrs.fill(0, colCount * 2, 0);
 
