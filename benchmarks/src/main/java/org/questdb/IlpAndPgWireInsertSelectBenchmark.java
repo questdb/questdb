@@ -90,10 +90,14 @@ public class IlpAndPgWireInsertSelectBenchmark {
         long insertsPerSecond = doneInserts * nsPerSecond / tookNs;
         long selectsPerSecond = doneSelects * nsPerSecond / tookNs;
 
-        System.out.printf("\n%d %s inserters, %d selectors combined performance:\n" +
-                        "%,d inserts per second, %,d selects per second\n" +
-                        "Per-thread performance:\n" +
-                        "%,d inserts per second, %,d selects per second\n\n",
+        System.out.printf("""
+                        
+                        %d %s inserters, %d selectors combined performance:
+                        %,d inserts per second, %,d selects per second
+                        Per-thread performance:
+                        %,d inserts per second, %,d selects per second
+                        
+                        """,
                 N_INSERTERS, useIlp ? "ILP" : "JDBC", N_SELECTORS, insertsPerSecond, selectsPerSecond,
                 N_INSERTERS != 0 ? insertsPerSecond / N_INSERTERS : 0,
                 N_SELECTORS != 0 ? selectsPerSecond / N_SELECTORS : 0);
