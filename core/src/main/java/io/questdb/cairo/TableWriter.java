@@ -2983,6 +2983,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
 
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+
             if (lastPartitionConverted) {
                 closeActivePartition(false);
             }
