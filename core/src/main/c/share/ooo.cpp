@@ -1455,7 +1455,7 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
 }
 
 // ska_sort_entries: MSD radix sort entry point.
-// For large arrays (>= 1M entries), performs the first radix pass
+// For large arrays (>= 100K entries), performs the first radix pass
 // single-threaded, then sorts each resulting bucket in parallel across
 // all available cores. This is safe because buckets occupy disjoint
 // memory regions.
@@ -1469,7 +1469,7 @@ void ska_sort_entries(T *arr, int64_t count) {
         return;
     }
 
-    // --- First pass: count + cycle sort by byte 0 (single-threaded) ---
+    // --- First pass: count + cycle sort by MSB (single-threaded) ---
     int64_t counts[256];
     memset(counts, 0, sizeof(counts));
     for (int64_t i = 0; i < count; i++) {
@@ -1477,8 +1477,7 @@ void ska_sort_entries(T *arr, int64_t count) {
     }
 
     // Find first non-uniform byte position to partition on. Skip uniform
-    // bytes iteratively (same optimization as msd_radix_byte) to reach a
-    // byte that actually splits the data into multiple buckets.
+    // bytes iteratively to reach a byte that actually splits the data.
     int shift = 56;
     int wordIndex = 0;
     for (;;) {
@@ -1558,8 +1557,11 @@ void ska_sort_entries(T *arr, int64_t count) {
 
     if (numWork == 0) return;
 
-    unsigned hw = std::thread::hardware_concurrency();
-    int numThreads = (hw > 2) ? static_cast<int>(hw) : 2;
+    static int cachedHw = [] {
+        unsigned hw = std::thread::hardware_concurrency();
+        return (hw > 2) ? static_cast<int>(hw) : 2;
+    }();
+    int numThreads = cachedHw;
     if (numThreads > numWork) numThreads = numWork;
 
     if (numThreads < 2) {
