@@ -518,6 +518,93 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3BoundaryTimestampExactlyOnRowGroupMax() throws Exception {
+        // Bug: overlap search uses rgMax + 1 as the search key, so a timestamp
+        // at rgMax + 1 is incorrectly included in the overlap instead of the
+        // next gap. Fix: search for rgMax instead.
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // Row group 0: min=100, max=200, rowCount=10000 (large)
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 10_000);
+            // Row group 1: min=400, max=500, rowCount=10000 (large)
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 400, 500, 10_000);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+
+            // O3 data: [150, 201]
+            // - 150 falls within rg0 [100, 200] -> overlap
+            // - 201 is just past rg0's max (200) -> should be in the gap
+            long sortedTimestampsAddr = allocateSortedTimestamps(150, 201);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds,
+                        sortedTimestampsAddr,
+                        0, 1,
+                        actionsBuf
+                );
+
+                // Expected: MERGE(rg0 with [150]), COPY_O3([201]), COPY_ROW_GROUP_SLICE(rg1)
+                Assert.assertEquals(3, n);
+
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).rowGroupIndex);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Hi); // only index 0 (ts=150)
+
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(1).type);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Hi); // index 1 (ts=201)
+
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(2).type);
+                Assert.assertEquals(1, actionsBuf.get(2).rowGroupIndex);
+            } finally {
+                freeSortedTimestamps(sortedTimestampsAddr, 2);
+            }
+        });
+    }
+
+    @Test
+    public void testO3BoundaryTimestampExactlyOnRowGroupMin() throws Exception {
+        // Bug: gap search uses rgMin as the search key, so a timestamp at rgMin
+        // is incorrectly included in the gap instead of the row group overlap.
+        // Fix: search for rgMin - 1 instead.
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // Row group 0: min=100, max=200, rowCount=10000 (large)
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 200, 10_000);
+
+            ObjList<MergeAction> actionsBuf = new ObjList<>();
+
+            // O3 data: [50, 100]
+            // - 50 is before rg0 -> gap
+            // - 100 equals rgMin -> should overlap with rg0
+            long sortedTimestampsAddr = allocateSortedTimestamps(50, 100);
+            try {
+                int n = O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds,
+                        sortedTimestampsAddr,
+                        0, 1,
+                        actionsBuf
+                );
+
+                // Expected: COPY_O3([50]), MERGE(rg0 with [100])
+                Assert.assertEquals(2, n);
+
+                Assert.assertEquals(ActionType.COPY_O3, actionsBuf.get(0).type);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Lo);
+                Assert.assertEquals(0, actionsBuf.get(0).o3Hi); // only index 0 (ts=50)
+
+                Assert.assertEquals(ActionType.MERGE, actionsBuf.get(1).type);
+                Assert.assertEquals(0, actionsBuf.get(1).rowGroupIndex);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Lo);
+                Assert.assertEquals(1, actionsBuf.get(1).o3Hi); // index 1 (ts=100)
+            } finally {
+                freeSortedTimestamps(sortedTimestampsAddr, 2);
+            }
+        });
+    }
+
+    @Test
     public void testO3InGapBetweenLargeRowGroups() throws Exception {
         assertMemoryLeak(() -> {
             LongList rowGroupBounds = new LongList();

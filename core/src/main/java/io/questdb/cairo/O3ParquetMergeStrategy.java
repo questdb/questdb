@@ -195,7 +195,7 @@ public class O3ParquetMergeStrategy {
                 // Find all O3 data before rgMin
                 long gapHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
-                        rgMin,
+                        rgMin - 1,
                         o3Cursor,
                         srcOooHi,
                         Vect.BIN_SEARCH_SCAN_DOWN
@@ -210,7 +210,7 @@ public class O3ParquetMergeStrategy {
                 // Find all O3 data that overlaps (timestamps <= rgMax)
                 long overlapHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
-                        rgMax + 1,
+                        rgMax,
                         o3Cursor,
                         srcOooHi,
                         Vect.BIN_SEARCH_SCAN_DOWN
