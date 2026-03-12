@@ -272,6 +272,15 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropInvalidKeyword() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d DROP nonsense",
+                34,
+                "'index' or 'parquet' expected"
+        );
+    }
+
+    @Test
     public void testDropParquetCompressionOnly() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -389,6 +398,42 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 );
             }
         });
+    }
+
+    @Test
+    public void testDropParquetUnexpectedToken() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d DROP PARQUET extratoken",
+                42,
+                "unexpected token"
+        );
+    }
+
+    @Test
+    public void testSetInvalidKeyword() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET nonsense",
+                33,
+                "'parquet' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelMissingCloseParen() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(3 extra",
+                57,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelNotANumber() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(abc))",
+                55,
+                "compression level must be a number"
+        );
     }
 
     @Test
