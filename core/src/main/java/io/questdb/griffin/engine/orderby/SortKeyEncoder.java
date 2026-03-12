@@ -196,8 +196,8 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
             case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
             case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32 -> 4;
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE,
-                 ColumnType.GEOLONG, ColumnType.DECIMAL64 -> 8;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE, ColumnType.GEOLONG,
+                 ColumnType.DECIMAL64 -> 8;
             case ColumnType.DECIMAL128 -> 16;
             case ColumnType.DECIMAL256 -> 32;
             case ColumnType.SYMBOL -> {
@@ -435,7 +435,8 @@ public class SortKeyEncoder implements QuietCloseable {
                         encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
                         encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
                     }
-                    default -> throw CairoException.nonCritical().put("unexpected type in encodeGeneric: ").put(ColumnType.nameOf(columnTypes[i]));
+                    default ->
+                            throw CairoException.nonCritical().put("unexpected type in encodeGeneric: ").put(ColumnType.nameOf(columnTypes[i]));
                 }
             }
         }
