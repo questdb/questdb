@@ -3,7 +3,7 @@
 //! The decoder consumes a hybrid-RLE index stream, resolves indices through a
 //! dictionary reader, and writes the final values to `ColumnChunkBuffers`.
 
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::dictionary::PrimitiveDictDecoder;
 use crate::parquet_read::decoders::{RepeatN, RleIterator};
@@ -16,12 +16,11 @@ use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 struct Slicer<'a> {
     decoder: Option<Decoder<'a>>,
     data: RleIterator<'a>,
-    error: Option<ParquetError>,
 }
 
 impl<'a> Slicer<'a> {
     fn new(decoder: Option<Decoder<'a>>, iter: RleIterator<'a>) -> Self {
-        Self { decoder, data: iter, error: None }
+        Self { decoder, data: iter }
     }
 
     fn decode(&mut self) -> ParquetResult<()> {
@@ -61,33 +60,17 @@ impl<'a> Slicer<'a> {
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
-        if self.error.is_some() {
-            return;
-        }
-
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         let mut remaining = count;
         while remaining > 0 {
             let skipped = self.data.skip(remaining);
             remaining -= skipped;
 
             if remaining > 0 {
-                match self.decode() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        self.error = Some(err);
-                        return;
-                    }
-                }
+                self.decode()?;
             }
         }
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        match &self.error {
-            Some(err) => Err(err.clone()),
-            None => Ok(()),
-        }
+        Ok(())
     }
 }
 
@@ -109,10 +92,6 @@ where
     U: Copy + 'static,
 {
     fn push(&mut self) -> ParquetResult<()> {
-        if self.inner.error.is_some() {
-            return Ok(());
-        }
-
         if let Some(idx) = self.inner.data.next() {
             if idx < self.dict.len() {
                 unsafe {
@@ -121,24 +100,18 @@ where
                 }
                 Ok(())
             } else {
-                self.inner.error = Some(fmt_err!(
+                Err(fmt_err!(
                     Layout,
                     "index {} is out of dict bounds {}",
                     idx,
                     self.dict.len()
-                ));
-                Ok(())
+                ))
             }
         } else {
             // This recursive is safe, it cannot go deeper than 1 level down.
             // After a successful call to `self.inner.decode()` there will be a value in `self.inner.data.next()`
-            match self.decode() {
-                Ok(()) => self.push(),
-                Err(err) => {
-                    self.inner.error = Some(err);
-                    Ok(())
-                }
-            }
+            self.decode()?;
+            self.push()
         }
     }
 
@@ -164,7 +137,7 @@ where
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         let mut remaining = count;
         loop {
-            if remaining == 0 || self.inner.error.is_some() {
+            if remaining == 0 {
                 return Ok(());
             }
 
@@ -175,13 +148,12 @@ where
                         0
                     } else {
                         if repeat.value >= self.dict.len() {
-                            self.inner.error = Some(fmt_err!(
+                            return Err(fmt_err!(
                                 Layout,
                                 "index {} is out of dict bounds {}",
                                 repeat.value,
                                 self.dict.len()
                             ));
-                            return Ok(());
                         }
                         let value = self.dict.get_dict_value(repeat.value);
                         let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
@@ -213,13 +185,12 @@ where
                                 #[allow(clippy::redundant_locals)]
                                 let idx = idx; // capture for error message, avoids a `mov` to the stack before the comparison in the loop
                                 self.buffers_offset = offset;
-                                self.inner.error = Some(fmt_err!(
+                                return Err(fmt_err!(
                                     Layout,
                                     "index {} is out of dict bounds {}",
                                     idx,
                                     dict_len
                                 ));
-                                return Ok(());
                             }
                             unsafe {
                                 *out_base.add(offset) = self.dict.get_dict_value(idx);
@@ -251,13 +222,12 @@ where
                         let idx = unsafe { *bytes.get_unchecked(i) } as u32;
                         if idx >= dict_len {
                             self.buffers_offset = offset;
-                            self.inner.error = Some(fmt_err!(
+                            return Err(fmt_err!(
                                 Layout,
                                 "index {} is out of dict bounds {}",
                                 idx,
                                 dict_len
                             ));
-                            return Ok(());
                         }
                         unsafe {
                             *out_base.add(offset) = self.dict.get_dict_value(idx);
@@ -273,13 +243,7 @@ where
 
             remaining -= consumed;
             if remaining > 0 {
-                match self.decode() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        self.inner.error = Some(err);
-                        return Ok(());
-                    }
-                }
+                self.decode()?;
             }
         }
     }
@@ -298,12 +262,7 @@ where
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.inner.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.inner.result()
+        self.inner.skip(count)
     }
 }
 
@@ -446,7 +405,6 @@ mod tests {
         for _ in 0..5 {
             decoder.push().unwrap();
         }
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![100, 200, 300, 200, 100]);
     }
 
@@ -466,7 +424,6 @@ mod tests {
         for _ in 0..10 {
             decoder.push().unwrap();
         }
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![42; 10]);
     }
 
@@ -486,7 +443,6 @@ mod tests {
         decoder.reserve(10).unwrap();
         decoder.push_slice(10).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(
             read_i32_results(&buffers),
             vec![10, 20, 30, 40, 50, 50, 40, 30, 20, 10]
@@ -508,7 +464,6 @@ mod tests {
         decoder.reserve(50).unwrap();
         decoder.push_slice(50).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![111; 50]);
     }
 
@@ -528,7 +483,6 @@ mod tests {
         decoder.reserve(200).unwrap();
         decoder.push_slice(200).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), dict_values);
     }
 
@@ -545,7 +499,6 @@ mod tests {
         decoder.reserve(0).unwrap();
         decoder.push_slice(0).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
     }
 
@@ -566,7 +519,6 @@ mod tests {
         decoder.push_slice(4).unwrap();
         decoder.push_slice(3).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(
             read_i32_results(&buffers),
             vec![10, 20, 30, 40, 50, 10, 20, 30, 40, 50]
@@ -591,7 +543,6 @@ mod tests {
         decoder.push_null().unwrap();
         decoder.push_null().unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![I32_NULL; 3]);
     }
 
@@ -608,7 +559,6 @@ mod tests {
         decoder.reserve(7).unwrap();
         decoder.push_nulls(7).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![I32_NULL; 7]);
     }
 
@@ -625,7 +575,6 @@ mod tests {
         decoder.reserve(0).unwrap();
         decoder.push_nulls(0).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
     }
 
@@ -647,7 +596,6 @@ mod tests {
         decoder.skip(2).unwrap();
         decoder.push_slice(3).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![30, 40, 50]);
     }
 
@@ -666,7 +614,6 @@ mod tests {
         decoder.skip(0).unwrap();
         decoder.push().unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![10]);
     }
 
@@ -683,7 +630,6 @@ mod tests {
             RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
         decoder.skip(5).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
     }
 
@@ -708,7 +654,6 @@ mod tests {
             decoder.skip(skip).unwrap();
             decoder.push_slice(to_read).unwrap();
 
-            assert!(decoder.result().is_ok(), "skip={skip}");
             let expected: Vec<i32> = (skip..skip + to_read).map(|i| (i % 16) as i32).collect();
             assert_eq!(read_i32_results(&buffers), expected, "skip={skip}");
         }
@@ -747,7 +692,6 @@ mod tests {
         // push(): position 11 → dict[3]=40
         decoder.push().unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(
             read_i32_results_n(&buffers, 10),
             vec![10, 20, I32_NULL, I32_NULL, 60, I32_NULL, 70, 80, 10, 40]
@@ -773,7 +717,6 @@ mod tests {
         decoder.push().unwrap(); // 100
         decoder.push_slice(3).unwrap(); // 200, 300, 400
 
-        assert!(decoder.result().is_ok());
         assert_eq!(
             read_i32_results(&buffers),
             vec![100, 200, 300, 400, 100, 200, 300, 400]
@@ -795,7 +738,6 @@ mod tests {
         decoder.reserve(100).unwrap();
         decoder.push_slice(100).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![999; 100]);
     }
 
@@ -813,7 +755,6 @@ mod tests {
         decoder.skip(15).unwrap();
         decoder.push_slice(5).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![42; 5]);
     }
 
@@ -837,7 +778,6 @@ mod tests {
         decoder.push_nulls(2).unwrap(); // NULL, NULL
         decoder.push().unwrap(); // 7
 
-        assert!(decoder.result().is_ok());
         assert_eq!(
             read_i32_results(&buffers),
             vec![7, I32_NULL, 7, 7, 7, I32_NULL, I32_NULL, 7]
@@ -862,9 +802,7 @@ mod tests {
 
         decoder.push().unwrap(); // ok: 10
         decoder.push().unwrap(); // ok: 20
-        decoder.push().unwrap(); // oob: sets error
-
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err()); // oob index 5
     }
 
     #[test]
@@ -879,9 +817,7 @@ mod tests {
         let mut decoder =
             RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
         decoder.reserve(5).unwrap();
-        decoder.push_slice(5).unwrap();
-
-        assert!(decoder.result().is_err());
+        assert!(decoder.push_slice(5).is_err()); // oob index 3
     }
 
     // --- Large data spanning multiple runs ---
@@ -902,7 +838,6 @@ mod tests {
         decoder.reserve(1000).unwrap();
         decoder.push_slice(1000).unwrap();
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..1000).map(|i| (i % 16) * 100).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -926,7 +861,6 @@ mod tests {
             decoder.push_slice(10).unwrap();
         }
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..500).map(|i| (i % 8) * 10).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -949,7 +883,6 @@ mod tests {
             decoder.push().unwrap();
         }
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..200).map(|i| (i % 4) + 1).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -978,7 +911,6 @@ mod tests {
         decoder.push_slice(25).unwrap();
         decoder.push_slice(32).unwrap();
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..80).map(|i| [10, 20, 30, 40][i % 4]).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -1005,7 +937,6 @@ mod tests {
         decoder.push_nulls(2).unwrap(); // -1, -1
         decoder.push().unwrap(); // 1
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![1, -1, 2, -1, -1, 1]);
     }
 
@@ -1033,7 +964,6 @@ mod tests {
         decoder.reserve(50).unwrap();
         decoder.push_slice(50).unwrap();
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..100).map(|i| [10, 20, 30][i % 3]).collect();
         assert_eq!(read_i32_results_n(&buffers, 100), expected);
     }
@@ -1054,7 +984,6 @@ mod tests {
         decoder.reserve(64).unwrap();
         decoder.push_slice(64).unwrap();
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..64).map(|i| i % 2).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -1073,7 +1002,6 @@ mod tests {
         decoder.reserve(64).unwrap();
         decoder.push_slice(64).unwrap();
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..64).map(|i| [100, 200, 300, 400][i % 4]).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -1093,7 +1021,6 @@ mod tests {
         decoder.reserve(128).unwrap();
         decoder.push_slice(128).unwrap();
 
-        assert!(decoder.result().is_ok());
         let expected: Vec<i32> = (0..128).map(|i| i % 16).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
@@ -1119,7 +1046,6 @@ mod tests {
             for _ in 0..100 {
                 decoder.push().unwrap();
             }
-            assert!(decoder.result().is_ok());
         }
 
         // Method 2: push_slice all at once
@@ -1131,7 +1057,6 @@ mod tests {
                     .unwrap();
             decoder.reserve(100).unwrap();
             decoder.push_slice(100).unwrap();
-            assert!(decoder.result().is_ok());
         }
 
         // Method 3: push_slice in small chunks
@@ -1145,7 +1070,6 @@ mod tests {
             for _ in 0..20 {
                 decoder.push_slice(5).unwrap();
             }
-            assert!(decoder.result().is_ok());
         }
 
         let r1 = read_i32_results(&buffers1);
@@ -1174,7 +1098,6 @@ mod tests {
                     .unwrap();
             decoder.reserve(100).unwrap();
             decoder.push_slice(100).unwrap();
-            assert!(decoder.result().is_ok());
         }
         let reference = read_i32_results(&ref_buffers);
 
@@ -1188,7 +1111,6 @@ mod tests {
             decoder.reserve(remaining).unwrap();
             decoder.skip(skip).unwrap();
             decoder.push_slice(remaining).unwrap();
-            assert!(decoder.result().is_ok(), "skip={skip}");
             assert_eq!(
                 read_i32_results(&buffers),
                 reference[skip..].to_vec(),
@@ -1234,7 +1156,6 @@ mod tests {
         decoder.push_nulls(2).unwrap();
         decoder.push().unwrap();
 
-        assert!(decoder.result().is_ok());
         let results: Vec<i64> = buffers
             .data_vec
             .chunks(8)
@@ -1260,8 +1181,6 @@ mod tests {
         );
     }
 
-    // --- Error propagation: after error, push still returns Ok but result() fails ---
-
     #[test]
     fn test_rle_dict_decoder_error_propagation() {
         let tas = TestAllocatorState::new();
@@ -1276,12 +1195,7 @@ mod tests {
         decoder.reserve(3).unwrap();
 
         decoder.push().unwrap(); // ok
-        decoder.push().unwrap(); // sets error internally
-        assert!(decoder.result().is_err());
-
-        // After error, push still returns Ok (error is sticky)
-        decoder.push().unwrap();
-        assert!(decoder.result().is_err());
+        assert!(decoder.push().is_err()); // sets error internall
     }
 
     // --- Alternating RLE runs: values that repeat to trigger RLE encoding ---
@@ -1309,7 +1223,6 @@ mod tests {
         decoder.push_slice(20).unwrap(); // 15 × 200, 5 × 300
         decoder.push_slice(25).unwrap(); // 25 × 300
 
-        assert!(decoder.result().is_ok());
         let mut expected = Vec::new();
         expected.extend(std::iter::repeat_n(100, 30));
         expected.extend(std::iter::repeat_n(200, 30));
@@ -1333,7 +1246,6 @@ mod tests {
         decoder.reserve(1).unwrap();
         decoder.push().unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![99]);
     }
 
@@ -1351,7 +1263,6 @@ mod tests {
         decoder.reserve(1).unwrap();
         decoder.push_slice(1).unwrap();
 
-        assert!(decoder.result().is_ok());
         assert_eq!(read_i32_results(&buffers), vec![99]);
     }
 }

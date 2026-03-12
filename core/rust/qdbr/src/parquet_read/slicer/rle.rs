@@ -1,34 +1,18 @@
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::decoders::{RepeatN, RleIterator, VarDictDecoder};
 use crate::parquet_read::slicer::{ByteSink, DataPageSlicer};
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
-struct SlicerInner<'a, 'b> {
+struct SlicerInner<'a> {
     decoder: Option<Decoder<'a>>,
     data: RleIterator<'a>,
     sliced_row_count: usize,
-    error: Option<ParquetError>,
-
-    // TODO(amunra): Clean this up -- non-idiomatic Rust code.
-    //               Use the type system instead of magic values.
-    error_value: &'b [u8],
 }
 
-impl<'a, 'b> SlicerInner<'a, 'b> {
-    fn new(
-        decoder: Option<Decoder<'a>>,
-        iter: RleIterator<'a>,
-        sliced_row_count: usize,
-        error_value: &'b [u8],
-    ) -> Self {
-        Self {
-            decoder,
-            data: iter,
-            sliced_row_count,
-            error: None,
-            error_value,
-        }
+impl<'a> SlicerInner<'a> {
+    fn new(decoder: Option<Decoder<'a>>, iter: RleIterator<'a>, sliced_row_count: usize) -> Self {
+        Self { decoder, data: iter, sliced_row_count }
     }
 
     fn decode(&mut self) -> ParquetResult<()> {
@@ -62,103 +46,67 @@ impl<'a, 'b> SlicerInner<'a, 'b> {
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
-        if self.error.is_some() {
-            return;
-        }
-
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         let mut remaining = count;
         while remaining > 0 {
             let skipped = self.data.skip(remaining);
             remaining -= skipped;
 
             if remaining > 0 {
-                match self.decode() {
-                    Ok(()) => {}
-                    Err(err) => {
-                        self.error = Some(err);
-                        return;
-                    }
-                }
+                self.decode()?;
             }
         }
+        Ok(())
     }
 
     fn count(&self) -> usize {
         self.sliced_row_count
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        match &self.error {
-            Some(err) => Err(err.clone()),
-            None => Ok(()),
-        }
-    }
 }
 
-pub struct RleDictionarySlicer<'a, 'b, T: VarDictDecoder> {
+pub struct RleDictionarySlicer<'a, T: VarDictDecoder> {
     dict: T,
-    inner: SlicerInner<'a, 'b>,
+    inner: SlicerInner<'a>,
 }
 
-impl<T: VarDictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
+impl<T: VarDictDecoder> DataPageSlicer for RleDictionarySlicer<'_, T> {
     // TODO(amunra): Clean this up -- non-idiomatic Rust code -- Should this just be a
     //               fn next(&mut self) -> Option<Result<&[u8], ParquetReadError>> ?
-    fn next(&mut self) -> &[u8] {
-        if self.inner.error.is_some() {
-            return self.inner.error_value;
-        }
-
+    fn next(&mut self) -> ParquetResult<&[u8]> {
         if let Some(idx) = self.inner.data.next() {
             if idx < self.dict.len() {
-                self.dict.get_dict_value(idx)
+                Ok(self.dict.get_dict_value(idx))
             } else {
-                self.inner.error = Some(fmt_err!(
+                Err(fmt_err!(
                     Layout,
                     "index {} is out of dict bounds {}",
                     idx,
                     self.dict.len()
-                ));
-                self.inner.error_value
+                ))
             }
         } else {
             // This recursive is safe, it cannot go deeper than 1 level down.
             // After a successful call to `self.inner.decode()` there will be a value in `self.inner.data.next()`
-            match self.decode() {
-                Ok(()) => self.next(),
-                Err(err) => {
-                    self.inner.error = Some(err);
-                    self.inner.error_value
-                }
-            }
+            self.decode()?;
+            self.next()
         }
     }
 
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        if self.inner.error.is_some() {
-            return dest.extend_from_slice(self.inner.error_value);
-        }
-
         if let Some(idx) = self.inner.data.next() {
             if idx < self.dict.len() {
                 dest.extend_from_slice(self.dict.get_dict_value(idx))
             } else {
-                self.inner.error = Some(fmt_err!(
+                Err(fmt_err!(
                     Layout,
                     "index {} is out of dict bounds {}",
                     idx,
                     self.dict.len()
-                ));
-                dest.extend_from_slice(self.inner.error_value)
+                ))
             }
         } else {
-            match self.decode() {
-                Ok(()) => self.next_into(dest),
-                Err(err) => {
-                    self.inner.error = Some(err);
-                    dest.extend_from_slice(self.inner.error_value)
-                }
-            }
+            self.decode()?;
+            self.next_into(dest)
         }
     }
 
@@ -170,8 +118,9 @@ impl<T: VarDictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
         Ok(())
     }
 
-    fn skip(&mut self, count: usize) {
-        self.inner.skip(count);
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
+        self.inner.skip(count)?;
+        Ok(())
     }
 
     fn count(&self) -> usize {
@@ -181,19 +130,14 @@ impl<T: VarDictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
     fn data_size(&self) -> usize {
         (self.inner.sliced_row_count as f32 * self.dict.avg_key_len()) as usize
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.inner.result()
-    }
 }
 
-impl<'a, 'b, T: VarDictDecoder> RleDictionarySlicer<'a, 'b, T> {
+impl<'a, T: VarDictDecoder> RleDictionarySlicer<'a, T> {
     pub fn try_new(
         mut buffer: &'a [u8],
         dict: T,
         row_count: usize,
         sliced_row_count: usize,
-        error_value: &'b [u8],
     ) -> ParquetResult<Self> {
         let num_bits = buffer[0];
         if num_bits > 0 {
@@ -205,7 +149,6 @@ impl<'a, 'b, T: VarDictDecoder> RleDictionarySlicer<'a, 'b, T> {
                     Some(decoder),
                     RleIterator::Rle(RepeatN::new(0, 0)),
                     sliced_row_count,
-                    error_value,
                 ),
             };
             res.decode()?;
@@ -217,7 +160,6 @@ impl<'a, 'b, T: VarDictDecoder> RleDictionarySlicer<'a, 'b, T> {
                     None,
                     RleIterator::Rle(RepeatN::new(0, row_count)),
                     sliced_row_count,
-                    error_value,
                 ),
             })
         }
