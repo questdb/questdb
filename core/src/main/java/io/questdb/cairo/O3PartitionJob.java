@@ -384,6 +384,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } finally {
                     chunkDescriptor.clear();
+                    partitionDescriptor.clear();
                     for (int bufIdx = 0; bufIdx < colCount; bufIdx++) {
                         int bi4 = bufIdx * 4;
                         for (int slot = 0; slot < 4; slot += 2) {
