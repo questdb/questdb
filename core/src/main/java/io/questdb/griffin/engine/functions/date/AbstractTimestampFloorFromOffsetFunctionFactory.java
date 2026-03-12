@@ -309,11 +309,12 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     private static long floorWithTz(long timestamp, TimeZoneRules tzRules, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long effectiveOffset, boolean returnUtc) {
         final long tzOff = tzRules.getOffset(timestamp);
         final long localTimestamp = timestamp + tzOff;
-        long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);
         if (returnUtc) {
+            long result = floorFunc.floor(localTimestamp, stride, 0);
             final long resultTzOff = tzRules.getOffset(result - tzOff);
-            return result - resultTzOff;
+            return result - resultTzOff + effectiveOffset;
         }
+        long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);
         // Move the timestamp to the bucket if it belongs to a DST gap, i.e. non-existing
         // time interval that occur due to a forward clock shift.
         // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
