@@ -131,9 +131,16 @@ public final class Vect {
     public static native int getSupportedInstructionSet();
 
     public static String getSupportedInstructionSetName() {
-        int inst = getSupportedInstructionSet();
+        return getSupportedInstructionSetName(getSupportedInstructionSet());
+    }
+
+    private static String getSupportedInstructionSetName(int inst) {
         String base;
-        if (inst >= 10) {
+        if (inst == 11) {
+            base = "SVE";
+        } else if (inst == 1) {
+            base = "NEON";
+        } else if (inst >= 10) {
             base = "AVX512";
         } else if (inst >= 8) {
             base = "AVX2";
@@ -144,7 +151,7 @@ public final class Vect {
         } else {
             base = "Vanilla";
         }
-        return " [" + base + "," + Vect.getSupportedInstructionSet() + "]";
+        return " [" + base + "," + inst + "]";
     }
 
     public static native void indexReshuffle128Bit(long pSrc, long pDest, long pIndex, long count);

@@ -451,7 +451,6 @@ void k_way_merge_long_index(
     }
 }
 
-DECLARE_DISPATCHER(make_timestamp_index);
 
 void binary_merge_ts_long_index(
         const int64_t *timestamps,
@@ -510,7 +509,6 @@ inline void measure_time(int index, T func) {
 
 extern "C" {
 
-DECLARE_DISPATCHER(platform_memcpy);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
         (JNIEnv *e, jclass cl, jlong src, jlong dst, jlong len) {
     platform_memcpy(
@@ -520,7 +518,6 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memcpy0
     );
 }
 
-DECLARE_DISPATCHER(platform_memcmp);
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
         (JNIEnv *e, jclass cl, jlong a, jlong b, jlong len) {
     int res;
@@ -533,7 +530,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_memcmp
     return res;
 }
 
-DECLARE_DISPATCHER(platform_memmove);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
         (JNIEnv *e, jclass cl, jlong dst, jlong src, jlong len) {
     platform_memmove(
@@ -543,7 +539,6 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memmove
     );
 }
 
-DECLARE_DISPATCHER(platform_memset);
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memset
         (JNIEnv *e, jclass cl, jlong dst, jlong len, jint value) {
     platform_memset(
@@ -553,7 +548,6 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_memset
     );
 }
 
-DECLARE_DISPATCHER(merge_copy_var_column_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
                                                jlong merge_index,
@@ -580,7 +574,6 @@ Java_io_questdb_std_Vect_oooMergeCopyStrColumn(JNIEnv *env, jclass cl,
     });
 }
 
-DECLARE_DISPATCHER(merge_copy_varchar_column);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
                                                    jlong merge_index,
@@ -607,7 +600,6 @@ Java_io_questdb_std_Vect_oooMergeCopyVarcharColumn(JNIEnv *env, jclass cl,
     });
 }
 
-DECLARE_DISPATCHER(merge_copy_array_column);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyArrayColumn(JNIEnv *env, jclass cl,
                                                  jlong merge_index,
@@ -637,7 +629,6 @@ Java_io_questdb_std_Vect_oooMergeCopyArrayColumn(JNIEnv *env, jclass cl,
 // 1 oooMergeCopyStrColumnWithTop removed and now executed as Merge Copy without Top
 // 2 oooMergeCopyBinColumnWithTop removed and now executed as Merge Copy without Top
 
-DECLARE_DISPATCHER(merge_copy_var_column_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooMergeCopyBinColumn(JNIEnv *env, jclass cl,
                                                jlong merge_index,
@@ -1771,7 +1762,6 @@ Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(
     );
 }
 
-DECLARE_DISPATCHER(re_shuffle_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
@@ -1785,7 +1775,6 @@ Java_io_questdb_std_Vect_indexReshuffle32Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                              jlong count) {
@@ -1799,7 +1788,6 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_128bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                               jlong count) {
@@ -1813,7 +1801,6 @@ Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc
     });
 }
 
-DECLARE_DISPATCHER(re_shuffle_256bit);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_indexReshuffle256Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
                                               jlong count) {
@@ -1886,7 +1873,7 @@ JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle32Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
     measure_time(11, [=]() {
-        merge_shuffle_vanilla<int32_t>(
+        merge_shuffle_int32(
                 reinterpret_cast<int32_t *>(src1),
                 reinterpret_cast<int32_t *>(src2),
                 reinterpret_cast<int32_t *>(dest),
@@ -1896,7 +1883,6 @@ Java_io_questdb_std_Vect_mergeShuffle32Bit(JNIEnv *env, jclass cl, jlong src1, j
     });
 }
 
-DECLARE_DISPATCHER(merge_shuffle_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
                                            jlong count) {
@@ -1942,7 +1928,6 @@ Java_io_questdb_std_Vect_mergeShuffle256Bit(JNIEnv *env, jclass cl, jlong src1, 
 
 // Methods 13-16 were mergeShuffleWithTop(s) and replaced with calls to simple mergeShuffle(s)
 
-DECLARE_DISPATCHER(flatten_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_flattenIndex(JNIEnv *env, jclass cl, jlong pIndex,
                                       jlong count) {
@@ -1979,7 +1964,6 @@ Java_io_questdb_std_Vect_makeTimestampIndex(JNIEnv *env, jclass cl, jlong pData,
     });
 }
 
-DECLARE_DISPATCHER(shift_timestamp_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc, jlong count, jlong pDest) {
     measure_time(31, [=]() {
@@ -1991,7 +1975,6 @@ Java_io_questdb_std_Vect_shiftTimestampIndex(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int64);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlong value,
                                        jlong count) {
@@ -2004,7 +1987,6 @@ Java_io_questdb_std_Vect_setMemoryLong(JNIEnv *env, jclass cl, jlong pData, jlon
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int32);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint value,
                                       jlong count) {
@@ -2017,7 +1999,6 @@ Java_io_questdb_std_Vect_setMemoryInt(JNIEnv *env, jclass cl, jlong pData, jint 
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_double);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jdouble value,
                                          jlong count) {
@@ -2030,7 +2011,6 @@ Java_io_questdb_std_Vect_setMemoryDouble(JNIEnv *env, jclass cl, jlong pData, jd
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_float);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfloat value,
                                         jlong count) {
@@ -2043,7 +2023,6 @@ Java_io_questdb_std_Vect_setMemoryFloat(JNIEnv *env, jclass cl, jlong pData, jfl
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_short);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jshort value,
                                         jlong count) {
@@ -2057,7 +2036,6 @@ Java_io_questdb_std_Vect_setMemoryShort(JNIEnv *env, jclass cl, jlong pData, jsh
 }
 
 
-DECLARE_DISPATCHER(set_string_column_null_refs);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setStringColumnNullRefs(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
@@ -2070,7 +2048,6 @@ Java_io_questdb_std_Vect_setStringColumnNullRefs(JNIEnv *env, jclass cl, jlong p
     });
 }
 
-DECLARE_DISPATCHER(set_binary_column_null_refs);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setBinaryColumnNullRefs(JNIEnv *env, jclass cl, jlong pData, jlong offset,
                                                jlong count) {
@@ -2083,7 +2060,6 @@ Java_io_questdb_std_Vect_setBinaryColumnNullRefs(JNIEnv *env, jclass cl, jlong p
     });
 }
 
-DECLARE_DISPATCHER(copy_index);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong index_size,
                                       jlong pDest) {
@@ -2096,7 +2072,6 @@ Java_io_questdb_std_Vect_oooCopyIndex(JNIEnv *env, jclass cl, jlong pIndex, jlon
     });
 }
 
-DECLARE_DISPATCHER(shift_copy);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                       jlong srcHi, jlong dst) {
@@ -2111,7 +2086,6 @@ Java_io_questdb_std_Vect_shiftCopyFixedSizeColumnData(JNIEnv *env, jclass cl, jl
     });
 }
 
-DECLARE_DISPATCHER(shift_copy_varchar_aux);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                    jlong srcHi, jlong dst) {
@@ -2126,7 +2100,6 @@ Java_io_questdb_std_Vect_shiftCopyVarcharColumnAux(JNIEnv *env, jclass cl, jlong
     });
 }
 
-DECLARE_DISPATCHER(copy_index_timestamp);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pIndex, jlong indexLo, jlong indexHi,
                                                 jlong pTs) {
@@ -2140,7 +2113,6 @@ Java_io_questdb_std_Vect_copyFromTimestampIndex(JNIEnv *env, jclass cl, jlong pI
     });
 }
 
-DECLARE_DISPATCHER(set_varchar_null_refs);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
                                                   jlong count) {
@@ -2153,7 +2125,6 @@ Java_io_questdb_std_Vect_setVarcharColumnNullRefs(JNIEnv *env, jclass cl, jlong 
     });
 }
 
-DECLARE_DISPATCHER(set_array_null_refs);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setArrayColumnNullRefs(JNIEnv *env, jclass cl, jlong aux, jlong offset,
                                                   jlong count) {
@@ -2166,7 +2137,6 @@ Java_io_questdb_std_Vect_setArrayColumnNullRefs(JNIEnv *env, jclass cl, jlong au
     });
 }
 
-DECLARE_DISPATCHER(shift_copy_array_aux);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_shiftCopyArrayColumnAux(JNIEnv *env, jclass cl, jlong shift, jlong src, jlong srcLo,
                                                  jlong srcHi, jlong dst) {
@@ -2181,7 +2151,6 @@ Java_io_questdb_std_Vect_shiftCopyArrayColumnAux(JNIEnv *env, jclass cl, jlong s
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int128);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong128(JNIEnv *env, jclass cl, jlong pData, jlong long0,
                                        jlong long1, jlong count) {
@@ -2197,7 +2166,6 @@ Java_io_questdb_std_Vect_setMemoryLong128(JNIEnv *env, jclass cl, jlong pData, j
     });
 }
 
-DECLARE_DISPATCHER(set_memory_vanilla_int256);
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_setMemoryLong256(JNIEnv *env, jclass cl, jlong pData, jlong long0,
                                        jlong long1, jlong long2, jlong long3, jlong count) {

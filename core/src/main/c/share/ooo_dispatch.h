@@ -25,7 +25,6 @@
 #ifndef QUESTDB_OOO_DISPATCH_H
 #define QUESTDB_OOO_DISPATCH_H
 
-#include "dispatcher.h"
 #include "util.h"
 
 struct index_l {
@@ -89,80 +88,54 @@ typedef struct __attribute__ ((packed)) long_256bit {
 const int64_t OFFSET_MAX = (1LL << 48) - 1L;
 const int64_t ARRAY_SIZE_MAX = 0xFFFFFFFFLL;
 
-DECLARE_DISPATCHER_TYPE(copy_index_timestamp, index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest);
+// Function declarations -- implementations provided by Highway dispatch
+extern "C" {
+void copy_index_timestamp(index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest);
+void shift_copy(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
+void shift_copy_varchar_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
+void shift_copy_array_aux(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
+void copy_index(const index_t *index, const int64_t count, int64_t *dest);
+void set_binary_column_null_refs(int64_t *data, int64_t offset, int64_t count);
+void set_string_column_null_refs(int64_t *data, int64_t offset, int64_t count);
+void set_varchar_null_refs(int64_t *aux, int64_t offset, int64_t count);
+void set_array_null_refs(int64_t *aux, int64_t offset, int64_t count);
+void set_memory_vanilla_int64(int64_t *data, const int64_t value, const int64_t count);
+void set_memory_vanilla_int32(int32_t *data, const int32_t value, const int64_t count);
+void set_memory_vanilla_double(double *data, const double value, const int64_t count);
+void set_memory_vanilla_float(float *data, const float value, const int64_t count);
+void set_memory_vanilla_short(int16_t *data, const int16_t value, const int64_t count);
+void set_memory_vanilla_int128(long_128bit *data, const long_128bit value, const int64_t count);
+void set_memory_vanilla_int256(long_256bit *data, const long_256bit value, const int64_t count);
+void make_timestamp_index(const int64_t *data, int64_t low, int64_t high, index_t *dest);
+void shift_timestamp_index(const index_t *data, int64_t count, index_t *dest);
+void flatten_index(index_t *index, int64_t count);
+void merge_shuffle_int32(const int32_t *src1, const int32_t *src2, int32_t *dest,
+                         const index_t *index, const int64_t count);
+void merge_shuffle_int64(const int64_t *src1, const int64_t *src2, int64_t *dest,
+                         const index_t *index, const int64_t count);
+void re_shuffle_128bit(const __int128 *src, __int128 *dest, const index_t *index, const int64_t count);
+void re_shuffle_256bit(const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count);
+void re_shuffle_int64(const int64_t *src, int64_t *dest, const index_t *index, const int64_t count);
+void re_shuffle_int32(const int32_t *src, int32_t *dest, const index_t *index, const int64_t count);
+void merge_copy_var_column_int32(index_t *merge_index, int64_t merge_index_size,
+                                  int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
+                                  int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
+void merge_copy_varchar_column(index_t *merge_index, int64_t merge_index_size,
+                                int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
+                                int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
+void merge_copy_var_column_int64(index_t *merge_index, int64_t merge_index_size,
+                                  int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
+                                  int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
+void merge_copy_array_column(index_t *merge_index, int64_t merge_index_size,
+                              int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
+                              int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
+void platform_memcpy(void *dst, const void *src, const size_t len);
+void platform_memcmp(const void *a, const void *b, const size_t len, int *res);
+void platform_memset(void *dst, const int val, const size_t len);
+void platform_memmove(void *dst, const void *src, const size_t len);
+} // extern "C"
 
-DECLARE_DISPATCHER_TYPE(shift_copy, int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
-
-DECLARE_DISPATCHER_TYPE(shift_copy_varchar_aux, int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
-
-DECLARE_DISPATCHER_TYPE(shift_copy_array_aux, int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
-
-DECLARE_DISPATCHER_TYPE(copy_index, const index_t *index, const int64_t count, int64_t *dest);
-
-DECLARE_DISPATCHER_TYPE(set_binary_column_null_refs, int64_t *data, int64_t offset, int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_string_column_null_refs, int64_t *data, int64_t offset, int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_varchar_null_refs, int64_t *aux, int64_t offset, int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_array_null_refs, int64_t *aux, int64_t offset, int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int64, int64_t *data, const int64_t value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int32, int32_t *data, const int32_t value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_double, double *data, const double value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_float, float *data, const float value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_short, int16_t *data, const int16_t value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int128, long_128bit *data, const long_128bit value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(set_memory_vanilla_int256, long_256bit *data, const long_256bit value, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(make_timestamp_index, const int64_t *data, int64_t low, int64_t high, index_t *dest);
-
-DECLARE_DISPATCHER_TYPE(shift_timestamp_index, const index_t *data, int64_t count, index_t *dest);
-
-DECLARE_DISPATCHER_TYPE(flatten_index, index_t *index, int64_t count);
-
-DECLARE_DISPATCHER_TYPE(merge_shuffle_int64, const int64_t *src1, const int64_t *src2, int64_t *dest,
-                        const index_t *index, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(re_shuffle_128bit, const __int128 *src, __int128 *dest, const index_t *index, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(re_shuffle_256bit, const long_256bit *src, long_256bit *dest, const index_t *index, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(re_shuffle_int64, const int64_t *src, int64_t *dest, const index_t *index, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE(re_shuffle_int32, const int32_t *src, int32_t *dest, const index_t *index, const int64_t count);
-
-DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int32, index_t *merge_index, int64_t merge_index_size,
-                         int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
-                         int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
-
-DECLARE_DISPATCHER_TYPE (merge_copy_varchar_column, index_t *merge_index, int64_t merge_index_size,
-                         int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
-                         int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
-
-DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int64, index_t *merge_index, int64_t merge_index_size,
-                         int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
-                         int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
-
-DECLARE_DISPATCHER_TYPE (merge_copy_array_column, index_t *merge_index, int64_t merge_index_size,
-                         int64_t *src_data_fix, char *src_data_var, int64_t *src_ooo_fix, char *src_ooo_var,
-                         int64_t *dst_fix, char *dst_var, int64_t dst_var_offset);
-
-DECLARE_DISPATCHER_TYPE(platform_memcpy, void *dst, const void *src, const size_t len);
-
-DECLARE_DISPATCHER_TYPE(platform_memcmp, const void *a, const void *b, const size_t len, int *res);
-
-DECLARE_DISPATCHER_TYPE(platform_memset, void *dst, const int val, const size_t len);
-
-DECLARE_DISPATCHER_TYPE(platform_memmove, void *dst, const void *src, const size_t len);
-
-// 8 - 11
+// Template helpers used by ooo_dispatch implementations and ooo.cpp
 template<typename T>
 inline void
 merge_shuffle_vanilla(const T *src1, const T *src2, T *dest, const index_t *index, const int64_t count) {
@@ -176,7 +149,6 @@ merge_shuffle_vanilla(const T *src1, const T *src2, T *dest, const index_t *inde
     };
 }
 
-// 7-8
 template<class T>
 inline void re_shuffle_vanilla(const T *src, T *dest, const index_t *index, const int64_t count) {
     for (int64_t i = 0; i < count; i++) {

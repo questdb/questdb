@@ -36,22 +36,19 @@ elseif (WIN32)
     set(OS_WINDOWS 1)
 endif (APPLE)
 
+# Highway SIMD files -- compiled once, Highway handles multi-ISA dispatch internally
 set(
-        VCL_FILES
-        src/main/c/share/vec_agg.cpp
-        src/main/c/share/ooo_dispatch.cpp
-        src/main/c/share/geohash_dispatch.cpp
+        HWY_FILES
+        src/main/c/share/hwy_vec_agg.cpp
+        src/main/c/share/hwy_ooo_dispatch.cpp
+        src/main/c/share/hwy_geohash_dispatch.cpp
 )
 
+# Common source files compiled once for all platforms
 set(
-        VCL_FILES_SSE2
-        src/main/c/share/vcl/instrset_detect.cpp
+        COMMON_SIMD_FILES
         src/main/c/share/rosti.cpp
-        src/main/c/share/vec_agg_vanilla.cpp
-        src/main/c/share/vec_agg.cpp
         src/main/c/share/vec_int_key_agg.cpp
-        src/main/c/share/ooo_dispatch.cpp
-        src/main/c/share/geohash_dispatch.cpp
 )
 
 set(
@@ -62,7 +59,6 @@ set(
         src/main/c/share/net.h
         src/main/c/share/zip.c
         src/main/c/share/os.h
-        src/main/c/share/vec_agg_vanilla.h
         src/main/c/share/util.cpp
         src/main/c/share/ooo.cpp
         src/main/c/share/bitmap_index_utils.h
@@ -172,6 +168,18 @@ FetchContent_MakeAvailable(asmjit)
 include_directories(${asmjit_SOURCE_DIR} SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
 
+# Google Highway SIMD library
+set(HWY_ENABLE_TESTS OFF CACHE BOOL "Disable Highway tests" FORCE)
+set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "Disable Highway examples" FORCE)
+set(HWY_ENABLE_INSTALL OFF CACHE BOOL "Disable Highway install" FORCE)
+set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "Disable Highway contrib" FORCE)
+FetchContent_Declare(
+        highway
+        GIT_REPOSITORY https://github.com/google/highway.git
+        GIT_TAG 1.3.0
+)
+FetchContent_MakeAvailable(highway)
+
 # use this is for debug purposes
 #add_compile_definitions(ASMJIT_BUILD_DEBUG)
 
@@ -234,100 +242,31 @@ endif ()
 
 if (ARCH_AARCH64)
     add_compile_definitions(__AARCH64__)
+endif ()
 
-    ## on ARM64 we use vanilla arithmetic functions for now
-    set(
-            AARCH64_FILES
-            src/main/c/share/rosti.cpp
-            src/main/c/aarch64/vect.cpp
-            src/main/c/share/vec_int_key_agg.cpp
-            src/main/c/share/vec_agg_vanilla.cpp
-            src/main/c/share/ooo_dispatch_vanilla.cpp
-            src/main/c/share/geohash_dispatch_vanilla.cpp
-    )
+# Highway SIMD files -- compiled once, Highway handles runtime dispatch for all ISAs
+add_library(questdb-hwy OBJECT ${HWY_FILES} ${COMMON_SIMD_FILES})
+target_link_libraries(questdb-hwy hwy)
+target_include_directories(questdb-hwy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share)
+target_compile_options(questdb-hwy PRIVATE "-fPIC"
+        "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+        "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
 
-    add_library(questdb-aarch64 OBJECT ${AARCH64_FILES})
-    target_compile_options(questdb-aarch64 PRIVATE "-fPIC"
-            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
+target_link_libraries(questdb questdb-hwy hwy)
 
-    target_link_libraries(
-            questdb
-            questdb-aarch64
-    )
-
-    target_compile_options(questdb PRIVATE
-            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
-
-else ()
-
-    #assembler subroutines by Agner Fog
-    set(ASMLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/asmlib/)
-    include(${ASMLIB_SOURCE_DIR}CMakeLists.txt)
-
-    ## We need to compile VCL four different times with different CXX options
-    ## for different instruction sets. As vect.cpp compiles it will produce
-    ## different function names for corresponding instruction sets.
-    ## Results of these compilations are then combined together in a single library.
-    ## This way same library will have a set of functions for each instruction sets.
-
-    ## Java will then call a dispatcher, which will check instruction set for the runtime
-    ## and fetch method pointer to the relevant implementation.
-    # SSE 4.1 lib
-    add_library(questdb-sse4 OBJECT ${VCL_FILES})
-    target_compile_options(questdb-sse4 PRIVATE "-m64;-msse4.1;-fPIC"
-            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
-
-    # AVX2 lib
-    add_library(questdb-avx2 OBJECT ${VCL_FILES})
-    target_compile_options(questdb-avx2 PRIVATE "-m64;-mavx2;-fPIC;-mfma"
-            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
-
-    #AVX512 lib
-    add_library(questdb-avx512 OBJECT ${VCL_FILES})
-    # A_memset, A_memcpy are faster on avx512 but slower on other CPU's on Linux
-    target_compile_definitions(questdb-avx512 PRIVATE ENABLE_ASMLIB)
-    target_compile_options(questdb-avx512 PRIVATE "-m64;-mavx512f;-fPIC;-mfma;-mavx512vl;-mavx512bw;-mavx512dq"
-            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
-
-    #SSE2 lib
-    add_library(questdb-sse2 OBJECT ${VCL_FILES_SSE2})
-    target_link_libraries(
-            questdb-sse2
-            questdb-sse4
-            questdb-avx2
-            questdb-avx512
-    )
-
-    if (WIN32)
-        target_compile_options(questdb-sse2 PRIVATE "-m64;-march=core2;-msse2;-Wno-attributes"
-                "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-                "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
-    else ()
-        target_compile_options(questdb-sse2 PRIVATE "-m64;-march=core2;-msse2;-fPIC"
-                "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
-                "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
-    endif (WIN32)
+if (ARCH_AMD64)
+    target_compile_options(questdb-hwy PRIVATE "-m64")
     target_compile_options(questdb PRIVATE "-m64"
             "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
             "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
+else ()
+    target_compile_options(questdb PRIVATE
+            "$<$<CONFIG:DEBUG>:${DEBUG_OPTIONS}>"
+            "$<$<CONFIG:RELEASE>:${RELEASE_OPTIONS}>")
+endif ()
 
-    ## Uncomment to measure time of ooo.cpp methods
-    ## add_compile_definitions(OOO_CPP_PROFILE_TIMING)
-
-    target_link_libraries(
-            questdb
-            questdb-sse2
-            questdb-sse4
-            questdb-avx2
-            questdb-avx512
-            asm
-    )
-endif (ARCH_AARCH64)
+## Uncomment to measure time of ooo.cpp methods
+## add_compile_definitions(OOO_CPP_PROFILE_TIMING)
 
 #simdjson
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "Link with thread support" FORCE)

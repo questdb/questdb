@@ -57,7 +57,11 @@ static inline uint32_t bit_scan_forward(uint64_t a) {
 #define BITS_SHIFT 3
 #else
 
-#include "vcl/vectorclass.h"
+#include <emmintrin.h>
+
+static inline uint32_t bit_scan_forward(uint32_t a) {
+    return __builtin_ctz(a);
+}
 
 #define BITS_SHIFT 0
 #endif
@@ -194,12 +198,14 @@ using Group = GroupPortableImpl;
 struct GroupSse2Impl {
 
     explicit GroupSse2Impl(const ctrl_t *pos) {
-        ctrl.load(pos);
+        ctrl = _mm_loadu_si128(reinterpret_cast<const __m128i *>(pos));
     }
 
     // Returns a bitmask representing the positions of slots that match hash.
     [[nodiscard]] inline BitMask<uint32_t> Match(h2_t hash) const {
-        return BitMask<uint32_t>(to_bits(Vec16c(hash) == ctrl));
+        auto match = _mm_set1_epi8(static_cast<char>(hash));
+        return BitMask<uint32_t>(
+                static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(match, ctrl))));
     }
 
     // Returns a bitmask representing the positions of empty slots.
@@ -209,10 +215,12 @@ struct GroupSse2Impl {
 
     // Returns a bitmask representing the positions of empty or deleted slots.
     [[nodiscard]] BitMask<uint32_t> MatchEmptyOrDeleted() const {
-        return BitMask<uint32_t>(to_bits(Vec16c(kSentinel) > ctrl));
+        auto sentinel = _mm_set1_epi8(static_cast<char>(kSentinel));
+        return BitMask<uint32_t>(
+                static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpgt_epi8(sentinel, ctrl))));
     }
 
-    Vec16c ctrl;
+    __m128i ctrl;
 };
 
 using Group = GroupSse2Impl;
