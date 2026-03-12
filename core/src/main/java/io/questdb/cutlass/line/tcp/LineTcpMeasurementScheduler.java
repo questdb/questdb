@@ -204,15 +204,19 @@ public class LineTcpMeasurementScheduler implements Closeable {
         Misc.free(path);
         Misc.free(ddlMem);
         for (int i = 0, n = assignedTables.length; i < n; i++) {
-            Misc.freeObjList(assignedTables[i]);
-            assignedTables[i].clear();
+            if (assignedTables[i] != null) {
+                Misc.freeObjList(assignedTables[i]);
+                assignedTables[i].clear();
+            }
         }
         //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
-            netIoJobs[i].close();
+            if (netIoJobs[i] != null) {
+                netIoJobs[i].close();
+            }
         }
         Misc.free(sink);
     }
