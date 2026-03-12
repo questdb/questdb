@@ -49,17 +49,17 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
-    private static final long FREE_COUNT_ADDR;
-    private static final long MALLOC_COUNT_ADDR;
+    private static long FREE_COUNT_ADDR;
+    private static long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
-    private static final long NON_RSS_MEM_USED_ADDR;
+    private static long NON_RSS_MEM_USED_ADDR;
     private static final long OVERRIDE;
-    private static final long REALLOC_COUNT_ADDR;
-    private static final long RSS_MEM_LIMIT_ADDR;
-    private static final long RSS_MEM_USED_ADDR;
+    private static long REALLOC_COUNT_ADDR;
+    private static long RSS_MEM_LIMIT_ADDR;
+    private static long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
-    private static final AnonymousClassDefiner anonymousClassDefiner;
+    private static AnonymousClassDefiner anonymousClassDefiner;
     private static final Method implAddExports;
 
     private Unsafe() {
@@ -218,6 +218,52 @@ public final class Unsafe {
 
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
+    }
+
+    /**
+     * Re-initialize the anonymous class definer. Required for GraalVM native-image
+     * where build-time field offsets and method handles are stale at runtime.
+     */
+    public static void reinitClassDefiner() {
+        // Reset stale build-time state in both definers
+        UnsafeClassDefiner.defineMethod = null;
+        MethodHandlesClassDefiner.defineMethod = null;
+        AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
+        if (classDefiner == null) {
+            classDefiner = MethodHandlesClassDefiner.newInstance();
+        }
+        if (classDefiner != null) {
+            anonymousClassDefiner = classDefiner;
+        }
+    }
+
+    /**
+     * Re-allocate native memory counters. Required for GraalVM native-image
+     * where build-time native addresses are stale at runtime.
+     */
+    public static void reinitNativeCounters() {
+        final long nativeMemCountersArraySize = (6 + COUNTERS.length) * 8;
+        final long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
+        UNSAFE.setMemory(nativeMemCountersArray, nativeMemCountersArraySize, (byte) 0);
+
+        long ptr = nativeMemCountersArray;
+        RSS_MEM_USED_ADDR = ptr;
+        ptr += 8;
+        RSS_MEM_LIMIT_ADDR = ptr;
+        ptr += 8;
+        MALLOC_COUNT_ADDR = ptr;
+        ptr += 8;
+        REALLOC_COUNT_ADDR = ptr;
+        ptr += 8;
+        FREE_COUNT_ADDR = ptr;
+        ptr += 8;
+        NON_RSS_MEM_USED_ADDR = ptr;
+        ptr += 8;
+        for (int i = 0; i < COUNTERS.length; i++) {
+            COUNTERS[i] = new LongAdder();
+            NATIVE_MEM_COUNTER_ADDRS[i] = ptr;
+            ptr += 8;
+        }
     }
 
     public static void incrFreeCount() {

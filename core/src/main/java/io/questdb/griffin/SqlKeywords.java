@@ -1243,6 +1243,16 @@ public class SqlKeywords {
                 && (tok.charAt(11) | 32) == 'd';
     }
 
+    public static boolean isMemoryKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'm'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'y';
+    }
+
     public static boolean isMaxIdentifierLength(CharSequence tok) {
         return tok.length() == 21
                 && (tok.charAt(0) | 32) == 'm'

@@ -51,6 +51,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
+import io.questdb.std.MemFdFilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
@@ -134,7 +135,35 @@ public class ServerMain implements Closeable {
 
     public static void main(String[] args) {
         try {
-            new ServerMain(args).start(true);
+            // --mem: run with anonymous in-memory storage (memfd_create, Linux only).
+            // No engine data is written to disk; the root directory is still used
+            // for Bootstrap config/log files.
+            boolean memMode = false;
+            int memArgIdx = -1;
+            for (int i = 0; i < args.length; i++) {
+                if ("--mem".equals(args[i])) {
+                    memMode = true;
+                    memArgIdx = i;
+                    break;
+                }
+            }
+
+            final ServerMain server;
+            if (memMode) {
+                final String[] filteredArgs = new String[args.length - 1];
+                System.arraycopy(args, 0, filteredArgs, 0, memArgIdx);
+                System.arraycopy(args, memArgIdx + 1, filteredArgs, memArgIdx, args.length - memArgIdx - 1);
+                final PropBootstrapConfiguration bc = new PropBootstrapConfiguration() {
+                    @Override
+                    public io.questdb.std.FilesFacade getFilesFacade() {
+                        return MemFdFilesFacade.INSTANCE;
+                    }
+                };
+                server = new ServerMain(new Bootstrap(bc, filteredArgs));
+            } else {
+                server = new ServerMain(args);
+            }
+            server.start(true);
         } catch (Bootstrap.BootstrapException e) {
             if (e.isSilentStacktrace()) {
                 System.err.println(e.getMessage());

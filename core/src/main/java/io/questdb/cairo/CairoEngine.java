@@ -122,6 +122,7 @@ import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
+import io.questdb.std.RoutingFilesFacade;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -620,7 +621,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
@@ -669,13 +670,27 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume,
             int tableKind
     ) {
+        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume, false, tableKind);
+    }
+
+    public @NotNull TableToken createTable(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock,
+            boolean inVolume,
+            boolean isMemoryTable,
+            int tableKind
+    ) {
         if (tableKind != TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT && Chars.startsWith(struct.getTableName(), configuration.getParquetExportTableNamePrefix())) {
             throw CairoException.nonCritical().put("table name cannot start with reserved prefix [tableName=").put(struct.getTableName())
                     .put(", parquetExportPrefix=").put(configuration.getParquetExportTableNamePrefix())
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind);
+        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, isMemoryTable, tableKind);
     }
 
     public @NotNull ViewDefinition createView(
@@ -688,7 +703,7 @@ public class CairoEngine implements Closeable, WriterSource {
             @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, false, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final ViewDefinition viewDefinition = struct.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
@@ -730,6 +745,15 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
                                 .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().getId()).put(']');
+                    }
+
+                    // Unregister memory table from RoutingFilesFacade if applicable.
+                    FilesFacade ff = configuration.getFilesFacade();
+                    if (ff instanceof RoutingFilesFacade rff) {
+                        String tableDirPath = configuration.getDbRoot() + Files.SEPARATOR + tableToken.getDirName();
+                        if (rff.isMemoryTable(tableDirPath)) {
+                            rff.unregisterMemoryTable(tableDirPath);
+                        }
                     }
 
                     tableNameRegistry.dropTable(tableToken);
@@ -2010,6 +2034,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock,
             boolean inVolume,
+            boolean isMemoryTable,
             int tableKind
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
@@ -2041,6 +2066,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 boolean locked = true;
                 if (lockedReason == null) {
                     try {
+                        // Register memory table with RoutingFilesFacade before file creation.
+                        if (isMemoryTable) {
+                            FilesFacade ff = configuration.getFilesFacade();
+                            if (ff instanceof RoutingFilesFacade rff) {
+                                rff.registerMemoryTable(
+                                        configuration.getDbRoot() + Files.SEPARATOR + tableToken.getDirName()
+                                );
+                            }
+                        }
+
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         } else {

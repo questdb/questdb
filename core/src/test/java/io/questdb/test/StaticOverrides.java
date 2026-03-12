@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemFdFilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.test.cairo.Overrides;
@@ -42,7 +43,14 @@ public class StaticOverrides extends Overrides {
     }
 
     public FilesFacade getFilesFacade() {
-        return AbstractCairoTest.ff;
+        FilesFacade ff = AbstractCairoTest.ff;
+        if (ff != null) {
+            return ff;
+        }
+        if (Boolean.getBoolean("questdb.test.memfd")) {
+            return MemFdFilesFacade.INSTANCE;
+        }
+        return null;
     }
 
     public String getInputRoot() {
@@ -71,6 +79,9 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.testNanoClock = AbstractCairoTest.defaultNanosecondClock;
         AbstractCairoTest.sqlExecutionContext.initNow();
         AbstractCairoTest.ff = null;
+        if (Boolean.getBoolean("questdb.test.memfd")) {
+            MemFdFilesFacade.INSTANCE.clear();
+        }
         AbstractCairoTest.factoryProvider = null;
         AbstractCairoTest.circuitBreakerConfiguration = null;
         AbstractCairoTest.circuitBreaker = Misc.free(AbstractCairoTest.circuitBreaker);

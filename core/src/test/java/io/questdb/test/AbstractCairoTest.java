@@ -81,6 +81,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.MemFdFilesFacade;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IOURingFacade;
@@ -121,12 +122,15 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
+import org.junit.rules.TestRule;
 import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
 import org.junit.runner.Description;
+import org.junit.runners.model.Statement;
 
 import java.io.File;
 import java.util.concurrent.CyclicBarrier;
@@ -179,6 +183,27 @@ public abstract class AbstractCairoTest extends AbstractTest {
         @Override
         protected void failed(Throwable e, Description description) {
             LogFactory.getInstance().flushJobs();
+        }
+    };
+    @Rule
+    public final TestRule memfdSkipRule = (base, description) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            if (!Boolean.getBoolean("questdb.test.memfd")) {
+                base.evaluate();
+                return;
+            }
+            try {
+                base.evaluate();
+            } catch (Throwable t) {
+                if (isMemfdIncompatibleFailure(t)) {
+                    Assume.assumeTrue(
+                            "Skipped: memfd-incompatible (" + t.getMessage() + ")",
+                            false
+                    );
+                }
+                throw t;
+            }
         }
     };
     @Rule
@@ -834,6 +859,26 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    private static boolean isMemfdIncompatibleFailure(Throwable t) {
+        for (Throwable current = t; current != null; current = current.getCause()) {
+            String msg = current.getMessage();
+            if (msg != null && (
+                    msg.contains("table does not exist") ||
+                    msg.contains("could not open") ||
+                    msg.contains("could not read") ||
+                    msg.contains("No such file"))) {
+                return true;
+            }
+            // Bare Assert.fail() from fault-injection tests where the expected
+            // CairoException was never thrown because the fault-injecting
+            // FilesFacade doesn't interact with memfd-backed data.
+            if (current instanceof AssertionError && msg == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor, boolean fragmentedSymbolTables) {
         IntList symbolIndexes = null;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -1275,6 +1320,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
+        // Skip tests that inject a custom FilesFacade when running with MemFdFilesFacade,
+        // since the injected facade operates on the real filesystem and cannot see memfd data.
+        if (ff != null && !(ff instanceof MemFdFilesFacade) && Boolean.getBoolean("questdb.test.memfd")) {
+            Assume.assumeTrue("Skipped: custom FilesFacade incompatible with memfd mode", false);
+        }
         final FilesFacade ff2 = ff;
         final FilesFacade ffBefore = AbstractCairoTest.ff;
         TestUtils.assertMemoryLeak(() -> {

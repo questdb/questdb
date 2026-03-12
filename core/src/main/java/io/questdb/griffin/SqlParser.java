@@ -1557,10 +1557,14 @@ public class SqlParser {
                 expectTok(lexer, "table");
             }
             tok = tok(lexer, "table name or 'if'");
+        } else if (isMemoryKeyword(tok)) {
+            expectTok(lexer, "table");
+            builder.setVolumeAlias(":memory:", lexer.lastTokenPosition());
+            tok = tok(lexer, "table name or 'if'");
         } else if (isTableKeyword(tok)) {
             tok = tok(lexer, "table name or 'if'");
         } else {
-            throw SqlException.$(lexer.lastTokenPosition(), "'atomic' or 'table' or 'batch' expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "'atomic' or 'table' or 'batch' or 'memory' expected");
         }
 
         if (isIfKeyword(tok)) {
@@ -3111,10 +3115,12 @@ public class SqlParser {
         int volumeKwPos = lexer.getPosition();
         expectTok(lexer, "volume");
         CharSequence tok = tok(lexer, "path for volume");
-        if (Os.isWindows()) {
+        CharSequence unquoted = GenericLexer.unquote(tok);
+        // ':memory:' is a virtual alias for in-memory tables, supported on all platforms.
+        if (Os.isWindows() && !Chars.equals(unquoted, ":memory:")) {
             throw SqlException.position(volumeKwPos).put("'in volume' is not supported on Windows");
         }
-        tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+        tableOpBuilder.setVolumeAlias(unquoted, lexer.lastTokenPosition());
     }
 
     private ExecutionModel parseInsert(

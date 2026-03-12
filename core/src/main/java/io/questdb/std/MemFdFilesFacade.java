@@ -30,7 +30,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.charset.StandardCharsets;
@@ -55,9 +54,12 @@ public class MemFdFilesFacade implements FilesFacade {
     private static final long DIRECTORY_MARKER = Long.MIN_VALUE;
     private static final Log LOG = LogFactory.getLog(MemFdFilesFacade.class);
 
-    // Logical path → primary unique fd (or DIRECTORY_MARKER for directories).
+    // Logical path → primary raw OS fd (or DIRECTORY_MARKER for directories).
+    // Raw OS fds are NOT wrapped in Files.createUniqueFd() and are therefore
+    // invisible to Files.getOpenCachedFileCount(). This mirrors the real
+    // filesystem where files on disk do not count as open file descriptors.
     // noEntryValue for CharSequenceLongHashMap is -1, which never collides with
-    // DIRECTORY_MARKER (Long.MIN_VALUE) or valid unique fds (always > 0).
+    // DIRECTORY_MARKER (Long.MIN_VALUE) or valid OS fds (always > 0).
     private final CharSequenceLongHashMap pathRegistry = new CharSequenceLongHashMap();
 
     // Child unique fd → logical path, populated by every open() call.
@@ -67,6 +69,25 @@ public class MemFdFilesFacade implements FilesFacade {
     private final LongObjHashMap<FindState> activeFinders = new LongObjHashMap<>();
 
     private long nextFindPtr = 1;
+
+    /**
+     * Closes all primary fds and clears all internal state. After this call
+     * the facade behaves as if freshly constructed. Intended for use between
+     * test methods to prevent state leaking across tests.
+     */
+    public synchronized void clear() {
+        ObjList<CharSequence> keys = pathRegistry.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            long val = pathRegistry.get(keys.get(i));
+            if (val != DIRECTORY_MARKER) {
+                Files.close0((int) val);
+            }
+        }
+        pathRegistry.clear();
+        childFdToPath.clear();
+        activeFinders.clear();
+        nextFindPtr = 1;
+    }
 
     // -------------------------------------------------------------------------
     // File open / create
@@ -79,19 +100,19 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public long openCleanRW(LPSZ name, long size) {
-        String path = Utf8s.toString(name);
+        String path = lpszToString(name);
         synchronized (this) {
             // Remove any existing entry so we start fresh.
             closePrimary(path);
+            registerAncestors(path);
             int osFd = Files.memfdCreate(name.ptr());
             if (osFd < 0) {
                 LOG.error().$("memfdCreate failed [path=").$(name).$(", errno=").$(Os.errno()).I$();
                 return -1;
             }
-            long primaryFd = Files.createUniqueFd(osFd);
-            pathRegistry.put(path, primaryFd);
+            pathRegistry.put(path, (long) osFd);
             if (size > 0) {
-                Files.truncate(primaryFd, size);
+                Files.truncate(osFd, size);
             }
             return dupChild(path, osFd);
         }
@@ -99,6 +120,19 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public long openRO(LPSZ name) {
+        String path = lpszToString(name);
+        synchronized (this) {
+            int idx = pathRegistry.keyIndex(path);
+            if (idx < 0 && pathRegistry.valueAt(idx) == DIRECTORY_MARKER) {
+                // On a real filesystem, open(dir, O_RDONLY) succeeds and returns
+                // an fd usable for fsync. Create a dummy memfd for the same purpose.
+                int osFd = Files.memfdCreate(name.ptr());
+                if (osFd < 0) {
+                    return -1;
+                }
+                return Files.createUniqueFd(osFd);
+            }
+        }
         return openOrCreate(name, false);
     }
 
@@ -210,7 +244,7 @@ public class MemFdFilesFacade implements FilesFacade {
         if (path == null) {
             return false;
         }
-        String p = Utf8s.toString(path);
+        String p = lpszToString(path);
         synchronized (this) {
             return pathRegistry.keyIndex(p) < 0;
         }
@@ -247,12 +281,14 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public long findFirst(LPSZ path) {
-        String dirPath = normDir(Utf8s.toString(path));
+        String dirPath = normDir(lpszToString(path));
         String prefix = dirPath + Files.SEPARATOR;
         ObjList<String> names = new ObjList<>();
         IntList types = new IntList();
 
         synchronized (this) {
+            boolean dirExists = pathRegistry.keyIndex(dirPath) < 0;
+
             ObjList<CharSequence> allKeys = pathRegistry.keys();
             for (int i = 0, n = allKeys.size(); i < n; i++) {
                 String key = allKeys.get(i).toString();
@@ -268,8 +304,18 @@ public class MemFdFilesFacade implements FilesFacade {
                 types.add(val == DIRECTORY_MARKER ? Files.DT_DIR : Files.DT_FILE);
             }
 
+            if (!dirExists && names.size() == 0) {
+                return 0;
+            }
+
+            // For empty existing directories, add a single "." entry so that
+            // findFirst returns a valid (non-zero) ptr.  Callers that iterate
+            // with a do-while pattern rely on findFirst succeeding for any
+            // directory that exists.  The "." is filtered by notDots() /
+            // typeDirOrSoftLinkDirNoDots() before it reaches application logic.
             if (names.size() == 0) {
-                return -1;
+                names.add(".");
+                types.add(Files.DT_DIR);
             }
 
             FindState state = new FindState(names, types);
@@ -337,14 +383,15 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public long getDirSize(Path path) {
-        String prefix = normDir(Utf8s.toString(path.$()));
+        String prefix = normDir(lpszToString(path.$()));
         long total = 0;
         synchronized (this) {
             ObjList<CharSequence> keys = pathRegistry.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 String key = keys.get(i).toString();
-                if (key.startsWith(prefix) && pathRegistry.get(key) != DIRECTORY_MARKER) {
-                    total += Files.length(pathRegistry.get(key));
+                long val = pathRegistry.get(key);
+                if (key.startsWith(prefix) && val != DIRECTORY_MARKER) {
+                    total += Files.length((int) val);
                 }
             }
         }
@@ -407,7 +454,27 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public int hardLink(LPSZ src, LPSZ hardLink) {
-        return -1;
+        String srcPath = lpszToString(src);
+        String dstPath = lpszToString(hardLink);
+        synchronized (this) {
+            int srcIdx = pathRegistry.keyIndex(srcPath);
+            if (srcIdx >= 0) {
+                return -1; // source does not exist
+            }
+            long srcOsFd = pathRegistry.valueAt(srcIdx);
+            if (srcOsFd == DIRECTORY_MARKER) {
+                return -1;
+            }
+            // Dup the source fd so both paths share the same backing memory.
+            int dupOsFd = Files.dup((int) srcOsFd);
+            if (dupOsFd < 0) {
+                return -1;
+            }
+            registerAncestors(dstPath);
+            int dstIdx = pathRegistry.keyIndex(dstPath);
+            pathRegistry.putAt(dstIdx, dstPath, (long) dupOsFd);
+            return 0;
+        }
     }
 
     @Override
@@ -422,7 +489,7 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean isDirOrSoftLinkDir(LPSZ path) {
-        String p = normDir(Utf8s.toString(path));
+        String p = normDir(lpszToString(path));
         synchronized (this) {
             int idx = pathRegistry.keyIndex(p);
             return idx < 0 && pathRegistry.valueAt(idx) == DIRECTORY_MARKER;
@@ -452,7 +519,9 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean isRestrictedFileSystem() {
-        return false;
+        // Return true to skip directory-fd fsync operations. The engine opens
+        // directories read-only to fsync them, but memfds have no directory fds.
+        return true;
     }
 
     @Override
@@ -489,17 +558,17 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public long length(LPSZ name) {
-        String p = Utf8s.toString(name);
+        String p = lpszToString(name);
         synchronized (this) {
             int idx = pathRegistry.keyIndex(p);
             if (idx >= 0) {
                 return -1;
             }
-            long primaryFd = pathRegistry.valueAt(idx);
-            if (primaryFd == DIRECTORY_MARKER) {
+            long primaryOsFd = pathRegistry.valueAt(idx);
+            if (primaryOsFd == DIRECTORY_MARKER) {
                 return -1;
             }
-            return Files.length(primaryFd);
+            return Files.length((int) primaryOsFd);
         }
     }
 
@@ -521,7 +590,7 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public int mkdir(LPSZ path, int mode) {
-        String p = normDir(Utf8s.toString(path));
+        String p = normDir(lpszToString(path));
         synchronized (this) {
             int idx = pathRegistry.keyIndex(p);
             if (idx < 0) {
@@ -534,10 +603,12 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public int mkdirs(Path path, int mode) {
-        int len = path.size();
-        for (int i = 1; i < len; i++) {
-            if (path.byteAt(i) == Files.SEPARATOR) {
-                String component = normDir(path.toString().substring(0, i));
+        // Use lpszToString to get the correct Java string from the native
+        // UTF-8 bytes. Then iterate over the string's characters (not bytes).
+        String fullPath = lpszToString(path.$());
+        for (int i = 1; i < fullPath.length(); i++) {
+            if (fullPath.charAt(i) == Files.SEPARATOR) {
+                String component = normDir(fullPath.substring(0, i));
                 synchronized (this) {
                     int idx = pathRegistry.keyIndex(component);
                     if (idx >= 0) {
@@ -547,7 +618,7 @@ public class MemFdFilesFacade implements FilesFacade {
             }
         }
         // Register the full path itself.
-        String full = normDir(Utf8s.toString(path.$()));
+        String full = normDir(fullPath);
         synchronized (this) {
             int idx = pathRegistry.keyIndex(full);
             if (idx >= 0) {
@@ -634,34 +705,62 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean removeQuiet(LPSZ name) {
-        String p = Utf8s.toString(name);
+        String p = lpszToString(name);
         synchronized (this) {
-            return closePrimary(p);
+            closePrimary(p);
+            // Always return true: removing a non-existent file is not an error,
+            // matching FilesFacadeImpl behavior (ENOENT is treated as success).
+            return true;
         }
     }
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
-        String fromStr = Utf8s.toString(from);
-        String toStr = Utf8s.toString(to);
+        String fromStr = lpszToString(from);
+        String toStr = lpszToString(to);
         synchronized (this) {
             int fromIdx = pathRegistry.keyIndex(fromStr);
             if (fromIdx >= 0) {
                 return -1; // source does not exist
             }
-            long primaryFd = pathRegistry.valueAt(fromIdx);
-            pathRegistry.removeAt(fromIdx);
-            pathRegistry.put(toStr, primaryFd);
 
-            // Update childFdToPath entries that referred to the old path.
-            LongList toUpdate = new LongList();
+            // Collect all entries to rename: the entry itself plus all children
+            // (e.g., renaming a directory renames all files under it).
+            String fromPrefix = fromStr + Files.SEPARATOR;
+            ObjList<CharSequence> allKeys = pathRegistry.keys();
+            ObjList<String> keysToRename = new ObjList<>();
+            keysToRename.add(fromStr);
+            for (int i = 0, n = allKeys.size(); i < n; i++) {
+                String key = allKeys.get(i).toString();
+                if (key.startsWith(fromPrefix)) {
+                    keysToRename.add(key);
+                }
+            }
+
+            for (int i = 0, n = keysToRename.size(); i < n; i++) {
+                String oldKey = keysToRename.get(i);
+                String newKey = oldKey.equals(fromStr)
+                        ? toStr
+                        : toStr + oldKey.substring(fromStr.length());
+                int idx = pathRegistry.keyIndex(oldKey);
+                if (idx < 0) {
+                    long fd = pathRegistry.valueAt(idx);
+                    pathRegistry.removeAt(idx);
+                    pathRegistry.put(newKey, fd);
+                }
+            }
+
+            // Update childFdToPath entries that referred to renamed paths.
+            LongList childKeysToUpdate = new LongList();
+            ObjList<String> childNewValues = new ObjList<>();
             childFdToPath.forEach((k, v) -> {
-                if (fromStr.equals(v)) {
-                    toUpdate.add(k);
+                if (v.equals(fromStr) || v.startsWith(fromPrefix)) {
+                    childKeysToUpdate.add(k);
+                    childNewValues.add(v.equals(fromStr) ? toStr : toStr + v.substring(fromStr.length()));
                 }
             });
-            for (int i = 0, n = toUpdate.size(); i < n; i++) {
-                childFdToPath.put(toUpdate.get(i), toStr);
+            for (int i = 0, n = childKeysToUpdate.size(); i < n; i++) {
+                childFdToPath.put(childKeysToUpdate.get(i), childNewValues.get(i));
             }
         }
         return 0;
@@ -674,7 +773,7 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean rmdir(Path name, boolean haltOnError) {
-        String prefix = normDir(Utf8s.toString(name.$()));
+        String prefix = normDir(lpszToString(name.$()));
         synchronized (this) {
             ObjList<CharSequence> keys = pathRegistry.keys();
             ObjList<String> toRemove = new ObjList<>();
@@ -723,7 +822,7 @@ public class MemFdFilesFacade implements FilesFacade {
     @Override
     public int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable MutableUtf8Sink nameSink) {
         if (!Files.notDots(pUtf8NameZ)) {
-            return -1;
+            return Files.DT_UNKNOWN;
         }
         int savedLen = path.size();
         path.trimTo(rootLen).concat(pUtf8NameZ).$();
@@ -749,15 +848,12 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean unlinkOrRemove(Path path, Log LOG) {
-        return removeQuiet(path.$());
+        return rmdir(path);
     }
 
     @Override
     public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
-        if (checkedType == Files.DT_DIR) {
-            return rmdir(path);
-        }
-        return removeQuiet(path.$());
+        return rmdir(path);
     }
 
     // -------------------------------------------------------------------------
@@ -785,10 +881,10 @@ public class MemFdFilesFacade implements FilesFacade {
         if (idx >= 0) {
             return false; // not found
         }
-        long primaryFd = pathRegistry.valueAt(idx);
+        long primaryOsFd = pathRegistry.valueAt(idx);
         pathRegistry.removeAt(idx);
-        if (primaryFd != DIRECTORY_MARKER) {
-            Files.close(primaryFd);
+        if (primaryOsFd != DIRECTORY_MARKER) {
+            Files.close0((int) primaryOsFd);
         }
         return true;
     }
@@ -806,6 +902,20 @@ public class MemFdFilesFacade implements FilesFacade {
         return childFd;
     }
 
+    // Registers all ancestor directories of the given path as DIRECTORY_MARKER
+    // if they are not already present. Must be called under synchronization.
+    private void registerAncestors(String path) {
+        for (int i = path.length() - 1; i > 0; i--) {
+            if (path.charAt(i) == Files.SEPARATOR) {
+                String ancestor = path.substring(0, i);
+                int idx = pathRegistry.keyIndex(ancestor);
+                if (idx >= 0) {
+                    pathRegistry.putAt(idx, ancestor, DIRECTORY_MARKER);
+                }
+            }
+        }
+    }
+
     // Strips a trailing path separator from a directory path so that the
     // registry uses consistent keys.
     private static String normDir(String path) {
@@ -815,31 +925,48 @@ public class MemFdFilesFacade implements FilesFacade {
         return path;
     }
 
+    // Reads the null-terminated UTF-8 content from an LPSZ native pointer
+    // into a Java String. Unlike Utf8s.toString() which delegates to
+    // Object.toString() (broken for PathLPSZ), this reads the actual bytes.
+    private static String lpszToString(LPSZ lpsz) {
+        if (lpsz == null) {
+            return null;
+        }
+        int len = lpsz.size();
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = lpsz.byteAt(i);
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
     // Opens an existing path (create=false) or creates it if absent (create=true).
     // Returns a child unique fd on success, -1 on failure.
     private long openOrCreate(LPSZ name, boolean create) {
-        String path = Utf8s.toString(name);
+        String path = lpszToString(name);
         synchronized (this) {
             int idx = pathRegistry.keyIndex(path);
             if (idx < 0) {
-                long primaryFd = pathRegistry.valueAt(idx);
-                if (primaryFd == DIRECTORY_MARKER) {
+                long primaryOsFd = pathRegistry.valueAt(idx);
+                if (primaryOsFd == DIRECTORY_MARKER) {
                     return -1; // cannot open a directory as a file
                 }
-                int primaryOsFd = Numbers.decodeHighInt(primaryFd);
-                return dupChild(path, primaryOsFd);
+                return dupChild(path, (int) primaryOsFd);
             }
             if (!create) {
                 return -1; // file not found
             }
+            // Auto-register ancestor directories so isDirOrSoftLinkDir works.
+            registerAncestors(path);
             // Create a new memfd and register it as the primary.
             int osFd = Files.memfdCreate(name.ptr());
             if (osFd < 0) {
-                LOG.error().$("memfdCreate failed [path=").$(name).$(", errno=").$(Os.errno()).I$();
+                LOG.error().$("memfdCreate failed [path=").$(path).$(", errno=").$(Os.errno()).I$();
                 return -1;
             }
-            long primaryFd = Files.createUniqueFd(osFd);
-            pathRegistry.putAt(idx, path, primaryFd);
+            // Re-query index since registerAncestors may have rehashed the map.
+            idx = pathRegistry.keyIndex(path);
+            pathRegistry.putAt(idx, path, (long) osFd);
             return dupChild(path, osFd);
         }
     }

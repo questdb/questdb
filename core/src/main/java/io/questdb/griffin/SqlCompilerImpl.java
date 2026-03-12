@@ -3991,17 +3991,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else {
                 // create table (...) ... in volume volumeAlias;
                 CharSequence volumeAlias = createTableOp.getVolumeAlias();
+                boolean isMemoryTable = false;
                 if (volumeAlias != null) {
-                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
-                    if (volumePath != null) {
-                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).position(createTableOp.getVolumePosition())
-                                    .put("not a valid path for volume [alias=")
-                                    .put(volumeAlias).put(", path=").put(path).put(']');
+                    if (Chars.equals(volumeAlias, ":memory:")) {
+                        // Memory table: use normal creation path (no symlink).
+                        // RoutingFilesFacade will direct I/O to MemFdFilesFacade.
+                        isMemoryTable = true;
+                        if (createTableOp.isWalEnabled()) {
+                            throw SqlException.position(createTableOp.getVolumePosition())
+                                    .put("WAL is not supported for memory tables");
                         }
+                        volumeAlias = null;
                     } else {
-                        throw SqlException.position(createTableOp.getVolumePosition()).put("volume alias is not allowed [alias=")
-                                .put(volumeAlias).put(']');
+                        CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+                        if (volumePath != null) {
+                            if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                                throw CairoException.critical(0).position(createTableOp.getVolumePosition())
+                                        .put("not a valid path for volume [alias=")
+                                        .put(volumeAlias).put(", path=").put(path).put(']');
+                            }
+                        } else {
+                            throw SqlException.position(createTableOp.getVolumePosition()).put("volume alias is not allowed [alias=")
+                                    .put(volumeAlias).put(']');
+                        }
                     }
                 }
 
@@ -4053,6 +4065,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 createTableOp,
                                 keepLock,
                                 volumeAlias != null,
+                                isMemoryTable,
                                 createTableOp.getTableKind()
                         );
 
@@ -4107,6 +4120,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         createTableOp,
                                         false,
                                         volumeAlias != null,
+                                        isMemoryTable,
                                         TABLE_KIND_REGULAR_TABLE
                                 );
                             }
@@ -4119,6 +4133,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp,
                                     false,
                                     volumeAlias != null,
+                                    isMemoryTable,
                                     TABLE_KIND_REGULAR_TABLE
                             );
                         }

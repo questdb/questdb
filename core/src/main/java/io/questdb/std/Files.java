@@ -661,7 +661,7 @@ public final class Files {
 
     private native static boolean isDir(long pUtf8PathZ);
 
-    private native static long length(int fd);
+    native static long length(int fd);
 
     private native static long length0(long lpszName);
 
@@ -754,7 +754,7 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
-    private native static boolean truncate(int fd, long size);
+    native static boolean truncate(int fd, long size);
 
     private static int unlink0(Path path, int recursiveDepth) {
         int unlinkRes = unlink(path.ptr());

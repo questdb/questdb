@@ -264,13 +264,18 @@ public final class Os {
     private static native int setCurrentThreadAffinity0(int cpu);
 
     private static boolean isJlinkRuntime() {
-        // Detect jlink-ed runtime by checking if CodeSource uses jrt: protocol
-        CodeSource codeSource = Os.class.getProtectionDomain().getCodeSource();
-        if (codeSource == null) {
+        // Detect jlink-ed runtime by checking if CodeSource uses jrt: protocol.
+        // In GraalVM native-image, there is no jrt provider — return false.
+        try {
+            CodeSource codeSource = Os.class.getProtectionDomain().getCodeSource();
+            if (codeSource == null) {
+                return false;
+            }
+            URL location = codeSource.getLocation();
+            return location != null && "jrt".equals(location.getProtocol());
+        } catch (Throwable e) {
             return false;
         }
-        URL location = codeSource.getLocation();
-        return location != null && "jrt".equals(location.getProtocol());
     }
 
     @Nullable
