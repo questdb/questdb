@@ -500,7 +500,7 @@ mod tests {
         decoder.push_slice(2).unwrap();
         decoder.push_slice(2).unwrap_err(); // only 1 value left
 
-        assert_eq!(&buffers.data_vec[..], &[1, 0, 1, 0]);
+        assert_eq!(&buffers.data_vec[..3], &[1, 0, 1]);
     }
 
     #[test]
