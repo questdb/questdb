@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.RecordComparator;
@@ -42,6 +42,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
 import io.questdb.std.ex.BytecodeException;
@@ -52,6 +53,7 @@ public class RecordComparatorCompiler {
     private static final byte RECORD_TYPE_NORMAL = 0;
     private static final byte RECORD_TYPE_DECIMAL128 = RECORD_TYPE_NORMAL + 1;
     private static final byte RECORD_TYPE_DECIMAL256 = RECORD_TYPE_DECIMAL128 + 1;
+    private static final byte RECORD_TYPE_SYMBOL_RANKED = RECORD_TYPE_DECIMAL256 + 1;
     private final BytecodeAssembler asm;
     private final IntList branches = new IntList();
     private final IntList comparatorAccessorIndices = new IntList();
@@ -79,6 +81,8 @@ public class RecordComparatorCompiler {
     private final ByteList fieldRecordTypes = new ByteList();
     private final IntList fieldTypeIndices = new IntList();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
+    private final IntList symbolColumnIndices = new IntList();
+    private final IntList symbolRankMapFieldIndices = new IntList();
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
     private int decimal128ClassIndex = -1;
     private int decimal128CtorIndex = -1;
@@ -98,6 +102,8 @@ public class RecordComparatorCompiler {
     // getDecimal256(...)
     private int decimal256RecordGetterIndex = -1;
     private int maxColumnSize = 0; // Maximum used stack-size by a column.
+    private int objListGetQuickMethodIndex = -1;
+    private int sortKeyEncoderRankMethodIndex = -1;
 
     public RecordComparatorCompiler(BytecodeAssembler asm) {
         this.asm = asm;
@@ -107,13 +113,13 @@ public class RecordComparatorCompiler {
      * Generates byte code for record comparator. To avoid frequent calls to
      * record field getters comparator caches values of left argument.
      *
-     * @param columnTypes      types of columns in the cursor. All but BINARY types are supported
+     * @param metadata         types of columns in the cursor. All but BINARY types are supported
      * @param keyColumnIndices indexes of columns in types object. Column indexes are 1-based.
      *                         Index sign indicates direction of sort: negative - descending,
      *                         positive - ascending.
      * @return generated class.
      */
-    public Class<RecordComparator> compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) throws SqlException {
+    public Class<RecordComparator> compile(RecordMetadata metadata, @Transient IntList keyColumnIndices) throws SqlException {
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
 
         asm.init(RecordComparator.class);
@@ -127,10 +133,18 @@ public class RecordComparatorCompiler {
         int compareNameIndex = asm.poolUtf8("compare");
         // our compare method signature
         int compareDescIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;)I");
-        poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, columnTypes, keyColumnIndices);
+        poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, metadata, keyColumnIndices);
         // elements for setLeft() method
         int setLeftNameIndex = asm.poolUtf8("setLeft");
         int setLeftDescIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;)V");
+        boolean hasSymbolColumns = symbolColumnIndices.size() > 0;
+        int setRankMapsNameIndex = -1;
+        int setRankMapsDescIndex = -1;
+        if (hasSymbolColumns) {
+            poolSymbolRankArtifacts();
+            setRankMapsNameIndex = asm.poolUtf8("setRankMaps");
+            setRankMapsDescIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
+        }
         poolDecimals();
         asm.finishPool();
         asm.defineClass(thisClassIndex);
@@ -140,10 +154,13 @@ public class RecordComparatorCompiler {
         for (int i = 0, n = fieldNameIndices.size(); i < n; i++) {
             asm.defineField(fieldNameIndices.getQuick(i), fieldTypeIndices.getQuick(i));
         }
-        asm.methodCount(3);
+        asm.methodCount(hasSymbolColumns ? 4 : 3);
         compileConstructor();
         instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, keyColumnIndices);
         instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, keyColumnIndices);
+        if (hasSymbolColumns) {
+            instrumentSetRankMapsMethod(setRankMapsNameIndex, setRankMapsDescIndex);
+        }
 
         // class attribute count
         asm.putShort(0);
@@ -155,14 +172,15 @@ public class RecordComparatorCompiler {
      * Generates byte code for record comparator and creates an instance. To avoid frequent calls to
      * record field getters comparator caches values of left argument.
      *
-     * @param columnTypes      types of columns in the cursor. All but BINARY types are supported
+     * @param metadata         metadata of columns in the cursor, used to detect static symbol tables
+     *                         for ranked comparison optimization. All but BINARY types are supported.
      * @param keyColumnIndices indexes of columns in types object. Column indexes are 1-based.
      *                         Index sign indicates direction of sort: negative - descending,
      *                         positive - ascending.
      * @return RecordComparator instance.
      */
-    public RecordComparator newInstance(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) throws SqlException {
-        final Class<RecordComparator> clazz = compile(columnTypes, keyColumnIndices);
+    public RecordComparator newInstance(RecordMetadata metadata, @Transient IntList keyColumnIndices) throws SqlException {
+        final Class<RecordComparator> clazz = compile(metadata, keyColumnIndices);
         return newInstance(clazz);
     }
 
@@ -241,6 +259,7 @@ public class RecordComparatorCompiler {
 
         int fieldIndex = 0;
         int accessorIndex = 0;
+        int symbolIdx = 0;
         for (int i = 0; i < sz; i++) {
             if (i > 0) {
                 asm.iload(2);
@@ -291,6 +310,16 @@ public class RecordComparatorCompiler {
                     // stack: [...fields, decimal256, record, columnIndex, decimal256]
                     asm.invokeInterface(decimal256RecordGetterIndex, 2);
                     // stack: [...fields, decimal256]
+                }
+                case RECORD_TYPE_SYMBOL_RANKED -> {
+                    // Right side: SortKeyEncoder.rank(this.rm_j, record.getInt(colIdx))
+                    int rmFieldIndex = symbolRankMapFieldIndices.getQuick(symbolIdx++);
+                    asm.aload(0);
+                    asm.getfield(rmFieldIndex);
+                    asm.aload(1);
+                    asm.iconst(columnIndex);
+                    asm.invokeInterface(fieldRecordAccessorIndicesRight.getQuick(accessorIndex++), 1);
+                    asm.invokeStatic(sortKeyEncoderRankMethodIndex);
                 }
                 default -> {
                     // Loads right side of comparator
@@ -363,9 +392,11 @@ public class RecordComparatorCompiler {
      * method signatures in constant pool in bytecode.
      */
     private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns) {
-        asm.startMethod(nameIndex, descIndex, 3, 2);
+        int maxStack = symbolColumnIndices.size() == 0 ? 3 : 4;
+        asm.startMethod(nameIndex, descIndex, maxStack, 2);
         int fieldIndex = 0;
         int accessorIndex = 0;
+        int symbolIdx = 0;
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
@@ -377,6 +408,27 @@ public class RecordComparatorCompiler {
                 }
                 case RECORD_TYPE_DECIMAL256 -> {
                     fieldIndex = instrumentSetLeftMethodDecimal256(columnIndex, fieldIndex);
+                }
+                case RECORD_TYPE_SYMBOL_RANKED -> {
+                    // this.f_i = SortKeyEncoder.rank(this.rm_j, record.getInt(colIdx))
+                    int rmFieldIndex = symbolRankMapFieldIndices.getQuick(symbolIdx++);
+                    // stack: []
+                    asm.aload(0);
+                    // stack: [this]
+                    asm.aload(0);
+                    // stack: [this, this]
+                    asm.getfield(rmFieldIndex);
+                    // stack: [this, Object(rankMap)]
+                    asm.aload(1);
+                    // stack: [this, Object(rankMap), record]
+                    asm.iconst(columnIndex);
+                    // stack: [this, Object(rankMap), record, colIdx]
+                    asm.invokeInterface(fieldRecordAccessorIndicesLeft.getQuick(accessorIndex++), 1);
+                    // stack: [this, Object(rankMap), int]
+                    asm.invokeStatic(sortKeyEncoderRankMethodIndex);
+                    // stack: [this, int]
+                    asm.putfield(fieldIndices.getQuick(fieldIndex++));
+                    // stack: []
                 }
                 default -> {
                     int accessorCount = fieldRecordAccessorCount.getQuick(i);
@@ -481,6 +533,31 @@ public class RecordComparatorCompiler {
         return fieldIndex;
     }
 
+    private void instrumentSetRankMapsMethod(int nameIndex, int descIndex) {
+        // void setRankMaps(ObjList rankMaps)
+        // max stack = 3: [this, ObjList, index] before invokeVirtual
+        asm.startMethod(nameIndex, descIndex, 3, 2);
+        for (int i = 0, n = symbolRankMapFieldIndices.size(); i < n; i++) {
+            int rmFieldIndex = symbolRankMapFieldIndices.getQuick(i);
+            // stack: []
+            asm.aload(0);
+            // stack: [this]
+            asm.aload(1);
+            // stack: [this, ObjList]
+            asm.iconst(symbolColumnIndices.getQuick(i));
+            // stack: [this, ObjList, colIdx]
+            asm.invokeVirtual(objListGetQuickMethodIndex);
+            // stack: [this, Object]
+            asm.putfield(rmFieldIndex);
+            // stack: []
+        }
+        asm.return_();
+        asm.endMethodCode();
+        asm.putShort(0);
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
     private void poolDecimals() {
         if (decimal128FieldIndex != -1) {
             decimal128ClassIndex = asm.poolClass(Decimal128.class);
@@ -515,7 +592,7 @@ public class RecordComparatorCompiler {
             int compareMethodIndex,
             int thisClassIndex,
             int recordClassIndex,
-            ColumnTypes columnTypes,
+            RecordMetadata metadata,
             IntList keyColumnIndices
     ) throws SqlException {
         typeMap.clear();
@@ -531,6 +608,8 @@ public class RecordComparatorCompiler {
         decimal128FieldIndex = -1;
         decimal256FieldIndex = -1;
         fieldRecordTypes.clear();
+        symbolColumnIndices.clear();
+        symbolRankMapFieldIndices.clear();
 
         // define names and types
         for (int i = 0, n = keyColumnIndices.size(); i < n; i++) {
@@ -548,7 +627,7 @@ public class RecordComparatorCompiler {
 
             int fieldCount = 1;
 
-            int columnType = columnTypes.getColumnType(index);
+            int columnType = metadata.getColumnType(index);
             int getterSigIndex;
             byte fieldRecordType = RECORD_TYPE_NORMAL;
             switch (ColumnType.tagOf(columnType)) {
@@ -712,12 +791,25 @@ public class RecordComparatorCompiler {
                     }
                     break;
                 case ColumnType.SYMBOL:
-                    // SYMBOL
-                    getterSigIndex = asm.poolUtf8("(I)Ljava/lang/CharSequence;");
-                    poolFieldRecordObjectAccessor(recordClassIndex, getterSigIndex, "getSym");
-                    fieldType = "Ljava/lang/CharSequence;";
-                    comparatorClass = Chars.class;
-                    comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
+                    if (metadata != null && metadata.isSymbolTableStatic(index)) {
+                        fieldType = "I";
+                        poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)I"), "getInt");
+                        comparatorClass = Integer.class;
+                        fieldRecordType = RECORD_TYPE_SYMBOL_RANKED;
+                        int symbolIdx = symbolColumnIndices.size();
+                        symbolColumnIndices.add(index);
+                        int rmTypeIndex = registerType("Ljava/lang/Object;");
+                        int rmNameIndex = asm.poolUtf8().putAscii("rm_").put(symbolIdx).$();
+                        fieldTypeIndices.add(rmTypeIndex);
+                        fieldNameIndices.add(rmNameIndex);
+                        symbolRankMapFieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(rmNameIndex, rmTypeIndex)));
+                    } else {
+                        getterSigIndex = asm.poolUtf8("(I)Ljava/lang/CharSequence;");
+                        poolFieldRecordObjectAccessor(recordClassIndex, getterSigIndex, "getSym");
+                        fieldType = "Ljava/lang/CharSequence;";
+                        comparatorClass = Chars.class;
+                        comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
+                    }
                     break;
                 default:
                     throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
@@ -773,6 +865,17 @@ public class RecordComparatorCompiler {
         methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex);
         methodMap.putIfAbsent(getterName, methodIndex);
         fieldRecordAccessorIndicesRight.add(methodIndex);
+    }
+
+    private void poolSymbolRankArtifacts() {
+        int sortKeyEncoderClassIndex = asm.poolClass(SortKeyEncoder.class);
+        sortKeyEncoderRankMethodIndex = asm.poolMethod(
+                sortKeyEncoderClassIndex, "rank", "(Ljava/lang/Object;I)I"
+        );
+        int objListClassIndex = asm.poolClass(ObjList.class);
+        objListGetQuickMethodIndex = asm.poolMethod(
+                objListClassIndex, "getQuick", "(I)Ljava/lang/Object;"
+        );
     }
 
     private int registerType(CharSequence typeName) {

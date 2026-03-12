@@ -52,9 +52,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -118,6 +120,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private long count = 1;
         private long lastRecordOffset;
         private long rank;
+        private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
         private RecordSink recordSink;
         private SingleRecordSink singleRecordSinkA;
@@ -134,6 +137,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(singleRecordSinkA);
             Misc.free(singleRecordSinkB);
+            Misc.freeObjList(rankMaps);
         }
 
         @Override
@@ -167,6 +171,12 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+        }
+
+        @Override
         public void initRecordComparator(SqlCodeGenerator sqlGenerator,
                                          RecordMetadata metadata,
                                          ArrayColumnTypes chainTypes,
@@ -192,7 +202,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 if (orderIndices == null) {
                     orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
                 }
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, orderIndices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             }
         }
 
@@ -225,6 +236,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reset() {
             count = 1;
+            Misc.freeObjListAndKeepObjects(rankMaps);
         }
 
         @Override
@@ -333,6 +345,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private int columnIndex;
         private Map map;
         private long rank;
+        private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
         private RecordValueSink recordValueSink;
 
@@ -355,6 +368,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(map);
             Misc.freeObjList(partitionByRecord.getFunctions());
+            Misc.freeObjList(rankMaps);
         }
 
         @Override
@@ -399,6 +413,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
         }
 
         @Override
@@ -421,7 +436,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 chainTypeIndex = metadata.getColumnCount();
                 entityColumnFilter.of(chainTypeIndex);
                 recordValueSink = RecordValueSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, entityColumnFilter);
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, orderIndices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
                 chainTypes.add(ColumnType.LONG);
                 chainTypes.add(ColumnType.LONG);
                 this.map = MapFactory.createUnorderedMap(
@@ -435,7 +451,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                         keyColumnTypes,
                         RANK_COLUMN_TYPES
                 );
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, orderIndices);
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, orderIndices);
+                this.rankMaps = SortKeyEncoder.createRankMaps(metadata, orderIndices);
             }
         }
 
@@ -476,6 +493,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reset() {
             Misc.free(map);
+            Misc.freeObjListAndKeepObjects(rankMaps);
             rank = 0;
         }
 

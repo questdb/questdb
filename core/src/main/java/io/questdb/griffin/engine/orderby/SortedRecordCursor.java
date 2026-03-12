@@ -30,25 +30,33 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
+    private final RecordComparator comparator;
+    private final ObjList<DirectIntList> rankMaps;
     private RecordCursor baseCursor;
     private RecordTreeChain.TreeCursor chainCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isChainBuilt;
     private boolean isOpen;
 
-    public SortedRecordCursor(RecordTreeChain chain) {
+    public SortedRecordCursor(RecordTreeChain chain, RecordComparator comparator, ObjList<DirectIntList> rankMaps) {
         this.chain = chain;
+        this.comparator = comparator;
         this.isOpen = true;
+        this.rankMaps = rankMaps;
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
+            Misc.freeObjListAndKeepObjects(rankMaps);
             chainCursor = Misc.free(chainCursor);
             baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
@@ -91,9 +99,15 @@ class SortedRecordCursor implements DelegatingRecordCursor {
             isOpen = true;
             chain.reopen();
         }
+        SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         chainCursor = chain.getCursor(baseCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return chain.size();
     }
 
     @Override
@@ -104,11 +118,6 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public long size() {
         return baseCursor.size();
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return chain.size();
     }
 
     @Override

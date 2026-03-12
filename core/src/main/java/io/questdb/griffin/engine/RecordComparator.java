@@ -25,9 +25,14 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.ObjList;
 
 public interface RecordComparator {
     int compare(Record record);
 
     void setLeft(Record record);
+
+    default void setRankMaps(ObjList<DirectIntList> rankMaps) {
+    }
 }
