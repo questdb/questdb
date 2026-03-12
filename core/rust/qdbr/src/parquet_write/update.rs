@@ -420,14 +420,14 @@ mod tests {
                 alloc_state.allocator(),
                 reader,
                 file_len,
-                None,                                   // sorting_columns
-                true,                                    // write_statistics
-                false,                                   // raw_array_encoding
-                CompressionOptions::Zstd(None),          // compression
-                None,                                    // row_group_size
-                None,                                    // data_page_size
-                DEFAULT_BLOOM_FILTER_FPP,                // bloom_filter_fpp
-                100.0,                                   // min_compression_ratio (impossibly high)
+                None,                           // sorting_columns
+                true,                           // write_statistics
+                false,                          // raw_array_encoding
+                CompressionOptions::Zstd(None), // compression
+                None,                           // row_group_size
+                None,                           // data_page_size
+                DEFAULT_BLOOM_FILTER_FPP,       // bloom_filter_fpp
+                100.0,                          // min_compression_ratio (impossibly high)
             )?;
 
             updater.append_row_group(&new_partition)?;

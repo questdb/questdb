@@ -2571,14 +2571,7 @@ mod tests {
             .build()
             .expect("builder");
 
-        let expected: Vec<Option<i32>> = vec![
-            Some(1),
-            Some(2),
-            Some(3),
-            Some(4),
-            Some(5),
-            Some(6),
-        ];
+        let expected: Vec<Option<i32>> = vec![Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)];
         for batch in parquet_reader.flatten() {
             let arr = batch
                 .column(0)
