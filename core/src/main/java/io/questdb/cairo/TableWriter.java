@@ -191,11 +191,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
-    // todo: check OSS AlterOperation instances
-    //  SqlCompiler has ent version which creates EntAlterOperation instead
-    //  TableWriter should be fine because this alterOp is used only for the async queue
-    //  which is for non-WAL tables, and non-WAL tables cannot have a storage policy
-    //  currently EntAlterOperation deals with storage policy only
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
     private final DirectIntList bloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_TABLE_WRITER, true);
