@@ -1304,6 +1304,50 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutDecimalColumn_Decimal256ToDecimal128_Overflow() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(38, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec_to_dec128_ovf", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            // Wire format: [scale: 1 byte][values: rowCount * 32 bytes, big-endian]
+            int dataLength = 1 + rowCount * 32;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
+                // 256-bit value with hl=1 overflows 128-bit decimal
+                long offset = 1;
+                Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(0L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, Long.reverseBytes(1L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(0L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12345L));
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL256, false);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putDecimal256Column(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("decimal value overflows"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testPutDecimalColumn_Decimal256ToDecimal64() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(18, 2);
@@ -1417,6 +1461,46 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutDecimalColumn_Decimal64ToDecimal16_Overflow() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(4, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec_to_dec16_ovf", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            // Wire format: [scale: 1 byte][values: rowCount * 8 bytes, big-endian]
+            int dataLength = 1 + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
+                // Value: 40_000 overflows short range for DECIMAL16
+                Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(40_000L));
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL64, false);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putDecimal64Column(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("decimal value overflows"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testPutDecimalColumn_Decimal64ToDecimal16_WithNulls() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL16: precision 4 (2 bytes storage), scale 2
@@ -1468,6 +1552,45 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                         "value\n\n12.34\n\n-99.99\n",
                         "SELECT value FROM test_dec64_to_dec16_nulls ORDER BY ts"
                 );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutDecimalColumn_Decimal64ToDecimal32_Overflow() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(9, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec_to_dec32_ovf", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int dataLength = 1 + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
+                // Value: 3_000_000_000 overflows int range for DECIMAL32
+                Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(3_000_000_000L));
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL64, false);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putDecimal64Column(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("decimal value overflows"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -3661,6 +3784,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFloatToDecimal8Column_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(2, 1), "test_float_dec8_nonf",
+                1.5, 2.5, "value\n\n1.5\n\n2.5\n"
+        );
+    }
+
+    @Test
     public void testPutFloatToDecimal8Column_PrecisionError() throws Exception {
         assertMemoryLeak(() -> {
             // precision=2, scale=1 -> max value 9.9; 12.5 exceeds precision
@@ -3814,6 +3945,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFloatToDecimal16Column_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(4, 2), "test_float_dec16_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+        );
+    }
+
+    @Test
     public void testPutFloatToDecimal16Column_PrecisionError() throws Exception {
         assertMemoryLeak(() -> {
             // precision=4, scale=2 -> max value 99.99; 123.5 exceeds precision
@@ -3910,6 +4049,30 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFloatToDecimal32Column_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(9, 2), "test_float_dec32_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+        );
+    }
+
+    @Test
+    public void testPutFloatToDecimal128Column_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(38, 2), "test_float_dec128_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+        );
+    }
+
+    @Test
+    public void testPutFloatToDecimal256Column_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(76, 2), "test_float_dec256_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+        );
+    }
+
+    @Test
     public void testPutFloatToDecimalColumn_NoNulls() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(10, 2);
@@ -3963,6 +4126,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testPutFloatToDecimalColumn_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(18, 2), "test_float_dec_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+        );
     }
 
     @Test
@@ -5088,6 +5259,105 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     fail("Expected CairoException");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().contains("cannot parse boolean from string [value=x, column=value]"));
+                }
+                appender.cancelColumnarWrite();
+            }
+        });
+    }
+
+    @Test
+    public void testPutStringToDecimal8Column_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec8_nulls", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            String[] values = {"1.5", null, "2.5", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "value\n1.5\n\n2.5\n\n",
+                    "SELECT value FROM test_str_dec8_nulls ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToDecimal16Column_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(4, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec16_nulls", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            String[] values = {"1.50", null, "2.25", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "value\n1.50\n\n2.25\n\n",
+                    "SELECT value FROM test_str_dec16_nulls ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testPutStringToDecimal128Column_ParseError() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(38, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec128_err", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            String[] values = {"not_a_number"};
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                try {
+                    appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
+                    fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot parse decimal from string"));
                 }
                 appender.cancelColumnarWrite();
             }
@@ -6661,6 +6931,55 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 assertEquals("Wire lo should match", expectedLo, Unsafe.getUnsafe().getLong(cursor.getValuesAddress()));
                 assertEquals("Wire hi should match", expectedHi, Unsafe.getUnsafe().getLong(cursor.getValuesAddress() + 8));
 
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private void assertPutFloatToDecimalNonFinite(
+            int columnType,
+            String tableName,
+            double validValue1,
+            double validValue2,
+            String expectedResult
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            // [NaN, valid1, +Infinity, valid2] — non-finite values should become NULL
+            double[] values = {Double.NaN, validValue1, Double.POSITIVE_INFINITY, validValue2};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(expectedResult, "SELECT value FROM " + tableName + " ORDER BY ts");
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
