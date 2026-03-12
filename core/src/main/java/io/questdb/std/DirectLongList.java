@@ -24,15 +24,12 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
-
-import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectLongList implements Mutable, Closeable, Reopenable {
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
