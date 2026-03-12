@@ -387,7 +387,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         rowGroupSize,
                                         metadataPosition,
                                         mergeDstBufs,
-                                        tableToParquetIdx
+                                        tableToParquetIdx,
+                                        nullBufs,
+                                        srcPtrs
                                 );
                                 final int numOutputRGs = (int) (mergeResult >>> 32);
                                 final long mergeDuplicates = mergeResult & 0xFFFFFFFFL;
@@ -1994,7 +1996,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int maxRowGroupSize,
             int metadataPosition,
             LongList mergeDstBufs,
-            int[] tableToParquetIdx
+            int[] tableToParquetIdx,
+            LongList nullBufs,
+            LongList srcPtrs
     ) {
         // Build the decode list: only columns present in the parquet file.
         // Also build activeToDecodeIdx mapping: for each active column position,
@@ -2149,12 +2153,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
         final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
 
-        // Column-top null source buffers (per-merge, not reusable across merges
-        // because they depend on the specific row group's size and column-top status).
-        // Sized by activeColCount (one entry per active table column).
-        final long[] nullBufs = new long[activeColCount * 4];
-        // Effective source data/aux pointers after column-top override.
-        final long[] srcPtrs = new long[activeColCount * 2];
+        // Re-zero per-row-group buffers. The getters already zero them for the
+        // first call, but mergeRowGroup is called in a loop (once per MERGE action),
+        // so subsequent calls need stale values from the previous row group cleared.
+        nullBufs.fill(0, activeColCount * 4, 0);
+        srcPtrs.fill(0, activeColCount * 2, 0);
 
         try {
             // Phase 1: Ensure destination buffers in mergeDstBufs are large enough

@@ -461,7 +461,7 @@ impl ParquetUpdater {
 
             qdb_meta
                 .schema
-                .push(QdbMetaCol { column_type, column_top: 0, format });
+                .push(QdbMetaCol { column_type, column_top: 0, format, ascii: None });
         }
 
         self.target_qdb_meta = Some(qdb_meta);
