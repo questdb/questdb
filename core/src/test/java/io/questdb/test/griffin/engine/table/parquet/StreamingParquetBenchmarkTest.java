@@ -335,9 +335,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         if (!symbolTable.containsNullValue()) {
                             symbolColumnType |= 1 << 31;
                         }
-                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
+                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (symbolColumnType & 0xFFFFFFFFL));
                     } else {
-                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
+                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (columnType & 0xFFFFFFFFL));
                     }
                 }
 
