@@ -492,6 +492,46 @@ class WalEventWriter implements Closeable {
         }
     }
 
+    /**
+     * Rewrites the last data record in the event file. This is used when a symbol
+     * column is added after the event was already written (e.g., during segment roll
+     * in addColumn). The method jumps back to the start of the last event, resets
+     * the index entry, and rewrites the event so that the updated symbolMapNullFlags
+     * are included in the symbol map diffs.
+     */
+    int rewriteLastDataRecord(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        // Jump back to the start of the last event and write the -1 sentinel
+        // so that appendData finds it at the expected position.
+        eventMem.jumpTo(startOffset);
+        eventMem.putInt(-1);
+
+        // Remove the last index entry (one long) so appendData can re-add it.
+        eventIndexMem.jumpTo(eventIndexMem.getAppendOffset() - Long.BYTES);
+
+        // Decrement txn because appendData will increment it.
+        txn--;
+
+        return appendData(
+                txnType, startRowID, endRowID,
+                minTimestamp, maxTimestamp, outOfOrder,
+                lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi,
+                replaceRangeLowTs, replaceRangeHiTs, dedupMode
+        );
+    }
+
     int truncate() {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);

@@ -2037,9 +2037,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 long uncommittedRows = getUncommittedRowCount();
+                boolean rollWroteEvent = false;
                 if (currentTxnStartRowNum > 0) {
                     // Roll last transaction to new segment
                     rollUncommittedToNewSegment(-1, -1);
+                    rollWroteEvent = lastSegmentTxn >= 0;
                 }
 
                 if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
@@ -2074,6 +2076,29 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     // as part of rolling to a new segment
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
+                        if (ColumnType.isSymbol(columnType)) {
+                            symbolMapNullFlagsChanged.set(columnIndex, true);
+                            symbolMapNullFlags.set(columnIndex, true);
+                            // If the roll wrote a WAL event (isCommittingData was true),
+                            // rewrite it now so the symbol null flag is included.
+                            if (rollWroteEvent) {
+                                lastSegmentTxn = events.rewriteLastDataRecord(
+                                        lastTxnType,
+                                        0,
+                                        WalWriter.this.segmentRowCount,
+                                        txnMinTimestamp,
+                                        txnMaxTimestamp,
+                                        txnOutOfOrder,
+                                        lastMatViewRefreshBaseTxn,
+                                        lastMatViewRefreshTimestamp,
+                                        lastMatViewPeriodHi,
+                                        lastReplaceRangeLowTs,
+                                        lastReplaceRangeHiTs,
+                                        lastDedupMode
+                                );
+                                events.sync();
+                            }
+                        }
                     }
 
                     if (securityContext != null) {

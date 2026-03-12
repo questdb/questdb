@@ -1660,17 +1660,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
-        LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
-        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
-
         final long originalSize = getPartitionSize(partitionIndex);
-
-        // The parquet encoder materializes NULLs for the column-top region, so
-        // columns with 0 < column_top < partitionRowCount now cover all rows
-        // in the parquet file.  Zero those column tops.  Columns that did not
-        // exist (getColumnTop == -1) or have column_top == partitionRowCount
-        // keep column_top = partitionRowCount in the parquet and the decoder
-        // skips them, so do NOT zero those.
+        // Before updating column top, check and re-build inexes
+        // copyOrRebuildColumnIndexes() should be called before zeroColumnTopsAfterParquetRewrite()
+        // and use the same logic that zeros the column top to re-write indexes
+        copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), originalSize);
         zeroColumnTopsAfterParquetRewrite(partitionTimestamp, originalSize, false);
         columnVersionWriter.commit();
         // used to update txn and bump recordStructureVersion
@@ -1725,7 +1719,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        final int partitionDirLen = path.size();
         // set the parquet file full path
         setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         if (!ff.exists(path.$())) {
@@ -1866,8 +1859,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         }
 
-        LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
-        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+        LOG.info().$("rebuilding index files after parquet decode [path=").$substr(pathRootSize, other).I$();
+        rebuildPartitionIndexFiles(partitionTimestamp, newPartitionDirLen, parquetRowCount);
 
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
@@ -4369,55 +4362,81 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return res;
     }
 
-    private void copyPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+    /**
+     * Copies or rebuilds bitmap index files for indexed symbol columns from the
+     * old partition directory ({@code path}) to the new one ({@code other}).
+     * For columns whose column top will be zeroed, the index is rebuilt with
+     * explicit NULL entries for {@code [0, columnTop)}.  For other indexed
+     * columns the existing {@code .k}/{@code .v} files are hard-linked.
+     *
+     * @param partitionTimestamp  partition timestamp
+     * @param newPartitionNameTxn name txn of the new (destination) partition directory
+     * @param partitionRowCount   total row count of the partition
+     */
+    private void copyOrRebuildColumnIndexes(long partitionTimestamp, long newPartitionNameTxn, long partitionRowCount) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final long oldPartitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
+        final int srcDirLen = path.size();
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        final int dstDirLen = other.size();
+
+        BitmapIndexWriter indexWriter = null;
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
+                    continue;
+                }
+                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (colTop == -1) {
+                    continue; // column does not exist in this partition
+                }
+
                 final String columnName = metadata.getColumnName(columnIndex);
-                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
-                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                    // no data in partition for this column
-                    if (columnTop == -1) {
-                        continue;
+                if (colTop > 0 && colTop < partitionRowCount) {
+                    if (indexWriter == null) {
+                        indexWriter = new BitmapIndexWriter(configuration);
                     }
 
-                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                    // Column top will be zeroed: rebuild index with explicit NULL
+                    // entries for [0, colTop).  After zeroing, BitmapIndexFwdReader
+                    // no longer synthesizes those NULLs.
+                    final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+                    final long dataSize = (partitionRowCount - colTop) * Integer.BYTES;
+                    final long dataAddr = TableUtils.mapRO(ff, dFile(path.trimTo(srcDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    try {
+                        indexWriter.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
 
-                    BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.keyFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.copy(path.$(), other.$()) < 0) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not copy index key file [table=")
-                                .put(tableToken.getTableName())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
+                        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                        for (long row = 0; row < colTop; row++) {
+                            indexWriter.add(nullKey, row);
+                        }
+                        for (long row = colTop; row < partitionRowCount; row++) {
+                            final int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - colTop) * Integer.BYTES));
+                            indexWriter.add(key, row);
+                        }
+                        indexWriter.setMaxValue(partitionRowCount - 1);
+                    } finally {
+                        indexWriter.close();
+                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
                     }
-
-                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.copy(path.$(), other.$()) < 0) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not copy index value file [table=")
-                                .put(tableToken.getTableName())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    }
+                } else {
+                    // No column top change: hard link existing index files.
+                    linkFile(ff,
+                            keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                            keyFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
+                    );
+                    linkFile(ff,
+                            valueFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                            valueFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
+                    );
                 }
             }
-        } catch (CairoException e) {
-            LOG.error().$("could not copy index files [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .$(", error=").$safe(e.getMessage()).I$();
-
-            // rollback
-            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove partition dir [path=").$(other).I$();
-            }
-            throw e;
         } finally {
+            Misc.free(indexWriter);
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
@@ -5521,16 +5540,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private int findParquetColumnIndex(PartitionDecoder.Metadata parquetMetadata, int metadataColumnIndex) {
-        final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
-        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-            if (parquetMetadata.getColumnId(idx) == writerIndex) {
-                return idx;
-            }
-        }
-        return -1;
-    }
-
     private long findMinSplitPartitionTimestamp() {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -5539,6 +5548,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return Long.MAX_VALUE;
+    }
+
+    private int findParquetColumnIndex(PartitionDecoder.Metadata parquetMetadata, int metadataColumnIndex) {
+        final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
+        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+            if (parquetMetadata.getColumnId(idx) == writerIndex) {
+                return idx;
+            }
+        }
+        return -1;
     }
 
     private void finishColumnPurge() {
@@ -6128,7 +6147,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
     }
-
 
     private void lock() {
         try {
@@ -9282,6 +9300,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
+    /**
+     * Rebuild bitmap index files for indexed symbol columns from the data
+     * files in {@code other}.  Both the data files (.d) and the newly
+     * created index files (.k, .v) reside in the same directory whose
+     * length on {@code other} is {@code dirLen}.
+     */
+    private void rebuildPartitionIndexFiles(long partitionTimestamp, int dirLen, long partitionRowCount) {
+        try (BitmapIndexWriter indexWriter = new BitmapIndexWriter(configuration)) {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                    if (columnTop == -1 || columnTop >= partitionRowCount) {
+                        continue;
+                    }
+
+                    final String columnName = metadata.getColumnName(columnIndex);
+                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+
+                    // Map data file for reading
+                    final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
+                    final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    try {
+                        // Create new index from scratch in the same directory
+                        indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
+                        for (long row = columnTop; row < partitionRowCount; row++) {
+                            int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - columnTop) * Integer.BYTES));
+                            indexWriter.add(key, row);
+                        }
+                        indexWriter.setMaxValue(partitionRowCount - 1);
+                    } finally {
+                        indexWriter.close();
+                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not rebuild index files [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", error=").$safe(e.getMessage()).I$();
+            throw e;
+        } finally {
+            other.trimTo(pathSize);
+        }
+    }
+
     private boolean reconcileOptimisticPartitions() {
         if (txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1) > txWriter.getMaxTimestamp()) {
             int maxTimestampPartitionIndex = txWriter.getPartitionIndex(txWriter.getMaxTimestamp());
@@ -10823,7 +10888,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int columnCount = metadata.getColumnCount();
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
-                long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
+                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
                 if (zeroAllColumns ? (colTop != 0) : (colTop > 0 && colTop < partitionRowCount)) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
                 }
