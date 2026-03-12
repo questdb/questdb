@@ -165,8 +165,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
         final AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
         alterOperation.command = this.command;
-        alterOperation.tableToken = this.tableToken;
-        alterOperation.tableNamePosition = this.tableNamePosition;
         alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
         alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
         return alterOperation;
