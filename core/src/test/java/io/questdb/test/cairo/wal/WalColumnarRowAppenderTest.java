@@ -4857,6 +4857,36 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutStringToBooleanColumn_InvalidSingleChar() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_bool_bad", PartitionBy.HOUR)
+                    .col("value", ColumnType.BOOLEAN)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            String[] values = {"x"};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                try {
+                    appender.putStringToBooleanColumn(0, wireFormat.cursor, rowCount);
+                    fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot parse boolean from string [value=x, column=value]"));
+                }
+                appender.cancelColumnarWrite();
+            }
+        });
+    }
+
+    @Test
     public void testPutStringToDecimalColumn_NoNulls() throws Exception {
         assertMemoryLeak(() -> {
             int columnType = ColumnType.getDecimalType(10, 2);
