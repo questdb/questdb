@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -38,6 +40,7 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -181,6 +184,31 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                 // Close the connection
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete")
                         .get(5, TimeUnit.SECONDS);
+            }
+        });
+    }
+
+    @Test
+    public void testWebSocketInternalErrorOnMissingTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("nonexistent_table_xyz")
+                            .longColumn("value", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    try {
+                        sender.flush();
+                        Assert.fail("Expected LineSenderException for missing table");
+                    } catch (LineSenderException e) {
+                        // Server returns INTERNAL_ERROR because table does not exist
+                        // and auto-creation is disabled
+                    }
+                }
             }
         });
     }
@@ -436,6 +464,31 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
 
                     // Small delay between reconnects
                     Thread.sleep(100);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWebSocketSecurityErrorOnReadonlyServer() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
+                    PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("readonly_test_table")
+                            .longColumn("value", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    try {
+                        sender.flush();
+                        Assert.fail("Expected LineSenderException for readonly server");
+                    } catch (LineSenderException e) {
+                        // Server returns SECURITY_ERROR because ReadOnlySecurityContext
+                        // denies authorizeTableCreate/authorizeInsert
+                    }
                 }
             }
         });
