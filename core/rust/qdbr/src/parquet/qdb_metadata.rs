@@ -115,6 +115,10 @@ pub struct QdbMetaCol {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<QdbMetaColFormat>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub ascii: Option<bool>,
 }
 
 /// The id stored in the parquet schema.
@@ -189,11 +193,19 @@ mod tests {
                     column_type: ColumnTypeTag::Symbol.into_type(),
                     column_top: 0,
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
+                    ascii: None,
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Int.into_type(),
                     column_top: 256,
                     format: None,
+                    ascii: None,
+                },
+                QdbMetaCol {
+                    column_type: ColumnTypeTag::Varchar.into_type(),
+                    column_top: 0,
+                    format: None,
+                    ascii: Some(true),
                 },
             ],
             unused_bytes: 0,
@@ -210,6 +222,11 @@ mod tests {
                 {
                     "column_type": 5,
                     "column_top": 256
+                },
+                {
+                    "column_type": 26,
+                    "column_top": 0,
+                    "ascii": true
                 }
             ]
         });
@@ -236,6 +253,7 @@ mod tests {
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
+                ascii: None,
             }],
             unused_bytes: 4096,
         };
@@ -279,6 +297,7 @@ mod tests {
                 column_type: ColumnTypeTag::Int.into_type(),
                 column_top: 0,
                 format: None,
+                ascii: None,
             }],
             unused_bytes: 0,
         };

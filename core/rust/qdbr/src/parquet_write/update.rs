@@ -376,6 +376,9 @@ impl ParquetUpdater {
                 if let Some(ref mut idx_offset) = meta.index_page_offset {
                     *idx_offset += offset_delta;
                 }
+                if let Some(ref mut bf_offset) = meta.bloom_filter_offset {
+                    *bf_offset += offset_delta;
+                }
             }
             // Column/offset indexes are not copied with the row group data,
             // so clear their references to avoid dangling pointers into the old file.
@@ -1110,6 +1113,293 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+        Ok(())
+    }
+
+    /// Verify that copy_row_group produces stale bloom_filter_offset
+    /// when the copied row group lands at a different file offset.
+    #[test]
+    fn copy_row_group_stale_bloom_filter_offset() -> Result<(), Box<dyn Error>> {
+        use std::io::{Read as _, Seek, SeekFrom};
+
+        // Step 1: Create a parquet file with 2 row groups and bloom filters on col1.
+        let col1_rg0 = [1i32, 2, 3, 4];
+        let col2_rg0 = [0.5f32, 0.001, 3.15, 2.72];
+        let col1_rg1 = [5i32, 6, 7, 8];
+        let col2_rg1 = [1.1f32, 2.2, 3.3, 4.4];
+
+        let col1_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_rg0);
+        let col2_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_rg0);
+
+        let partition_rg0 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w, col2_w],
+        };
+        let col1_w2 = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_rg1);
+        let col2_w2 = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_rg1);
+        let partition_rg1 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w2, col2_w2],
+        };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let (schema, _) = crate::parquet_write::schema::to_parquet_schema(&partition_rg0, false)?;
+        let encodings = to_encodings(&partition_rg0);
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0usize); // bloom filter on col1
+
+        let foptions = WriteOptions {
+            write_statistics: true,
+            compression: CompressionOptions::Uncompressed,
+            version: Version::V1,
+            row_group_size: None,
+            data_page_size: None,
+            raw_array_encoding: false,
+            bloom_filter_columns: bloom_cols.clone(),
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+        };
+
+        let options = write::WriteOptions {
+            write_statistics: true,
+            version: Version::V1,
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+        };
+
+        // Write RG0
+        let (rg0, bloom0) = create_row_group(
+            &partition_rg0,
+            0,
+            col1_rg0.len(),
+            schema.fields(),
+            &encodings,
+            foptions.clone(),
+            false,
+        )?;
+        // Write RG1
+        let (rg1, bloom1) = create_row_group(
+            &partition_rg1,
+            0,
+            col1_rg1.len(),
+            schema.fields(),
+            &encodings,
+            foptions.clone(),
+            false,
+        )?;
+
+        let mut pf = ParquetFile::with_sorting_columns(
+            &mut buf,
+            schema.clone(),
+            options,
+            Some("test".to_string()),
+            None,
+        );
+        pf.write(rg0, &bloom0)?;
+        pf.write(rg1, &bloom1)?;
+        // Add QDB metadata so ParquetUpdater::new doesn't reject the file.
+        let mut qdb_meta = crate::parquet::qdb_metadata::QdbMeta::new(2);
+        qdb_meta
+            .schema
+            .push(crate::parquet::qdb_metadata::QdbMetaCol {
+                column_type: ColumnTypeTag::Int.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            });
+        qdb_meta
+            .schema
+            .push(crate::parquet::qdb_metadata::QdbMetaCol {
+                column_type: ColumnTypeTag::Float.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            });
+        let qdb_json = qdb_meta.serialize().expect("serialize qdb meta");
+        let kv = parquet2::metadata::KeyValue {
+            key: crate::parquet::qdb_metadata::QDB_META_KEY.to_string(),
+            value: Some(qdb_json),
+        };
+        pf.end(Some(vec![kv]))?;
+
+        let orig_data = buf.into_inner();
+        let orig_len = orig_data.len() as u64;
+
+        // Step 2: Read metadata, verify bloom filters exist.
+        let mut reader_cursor = Cursor::new(&orig_data[..]);
+        let metadata = read_metadata_with_size(&mut reader_cursor, orig_len)?;
+        assert_eq!(metadata.row_groups.len(), 2);
+
+        let rg0_col0_bf = metadata.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        let rg1_col0_bf = metadata.row_groups[1].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        assert!(
+            rg0_col0_bf.is_some(),
+            "RG0 col0 should have bloom filter offset"
+        );
+        assert!(
+            rg1_col0_bf.is_some(),
+            "RG1 col0 should have bloom filter offset"
+        );
+
+        eprintln!(
+            "Original file: rg0_col0_bf={:?}, rg1_col0_bf={:?}, file_len={}",
+            rg0_col0_bf, rg1_col0_bf, orig_len
+        );
+        for (rg_idx, rg) in metadata.row_groups.iter().enumerate() {
+            for (col_idx, col) in rg.columns().iter().enumerate() {
+                let (start, len) = col.byte_range();
+                eprintln!(
+                    "  rg={} col={} page_start={} page_len={} bf_offset={:?}",
+                    rg_idx,
+                    col_idx,
+                    start,
+                    len,
+                    col.metadata().bloom_filter_offset
+                );
+            }
+        }
+
+        // Step 3: Simulate a REWRITE by creating a new file.
+        // Write a DIFFERENT row group first (to shift offsets), then copy RG1.
+        let col1_new = [100i32, 200, 300, 400, 500]; // 5 values = different size
+        let col2_new = [9.9f32, 8.8, 7.7, 6.6, 5.5];
+        let col1_new_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_new);
+        let col2_new_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_new);
+        let partition_new = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_new_w, col2_new_w],
+        };
+        let (rg_new, bloom_new) = create_row_group(
+            &partition_new,
+            0,
+            col1_new.len(),
+            schema.fields(),
+            &to_encodings(&partition_new),
+            foptions.clone(),
+            false,
+        )?;
+
+        // Write new file: [PAR1][rg_new][copied_rg1][footer]
+        let mut new_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let mut new_pf = ParquetFile::with_sorting_columns(
+            &mut new_buf,
+            schema.clone(),
+            options,
+            Some("test".to_string()),
+            None,
+        );
+        // Write the new row group first
+        new_pf.write(rg_new, &bloom_new)?;
+
+        // Now copy RG1 from the old file using copy_row_group logic
+        new_pf.ensure_started()?;
+        let old_rg1 = &metadata.row_groups[1];
+        let columns_meta = old_rg1.columns();
+
+        let mut rg_start = u64::MAX;
+        let mut rg_end = 0u64;
+        for col in columns_meta {
+            let (start, len) = col.byte_range();
+            rg_start = rg_start.min(start);
+            rg_end = rg_end.max(start + len);
+        }
+
+        let raw_len = (rg_end - rg_start) as usize;
+        let mut raw_bytes = vec![0u8; raw_len];
+        let mut reader_cursor2 = Cursor::new(&orig_data[..]);
+        reader_cursor2.seek(SeekFrom::Start(rg_start))?;
+        reader_cursor2.read_exact(&mut raw_bytes)?;
+
+        let new_offset = new_pf.current_offset();
+        let offset_delta = new_offset as i64 - rg_start as i64;
+
+        eprintln!(
+            "Copy RG1: rg_start={}, new_offset={}, offset_delta={}",
+            rg_start, new_offset, offset_delta
+        );
+
+        let mut thrift_rg = old_rg1.clone().into_thrift();
+        for col_chunk in &mut thrift_rg.columns {
+            if let Some(ref mut meta) = col_chunk.meta_data {
+                meta.data_page_offset += offset_delta;
+                if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
+                    *dict_offset += offset_delta;
+                }
+                if let Some(ref mut idx_offset) = meta.index_page_offset {
+                    *idx_offset += offset_delta;
+                }
+                // BUG: bloom_filter_offset is NOT adjusted
+            }
+            col_chunk.column_index_offset = None;
+            col_chunk.column_index_length = None;
+            col_chunk.offset_index_offset = None;
+            col_chunk.offset_index_length = None;
+        }
+
+        new_pf.write_raw_row_group(&raw_bytes, thrift_rg)?;
+        new_pf.end(None)?;
+
+        // Step 4: Read the new file and check bloom_filter_offset.
+        let new_data = new_buf.into_inner();
+        let new_len = new_data.len() as u64;
+        let mut new_reader = Cursor::new(&new_data[..]);
+        let new_metadata = read_metadata_with_size(&mut new_reader, new_len)?;
+
+        eprintln!("New file: len={}", new_len);
+        for (rg_idx, rg) in new_metadata.row_groups.iter().enumerate() {
+            for (col_idx, col) in rg.columns().iter().enumerate() {
+                let (start, len) = col.byte_range();
+                eprintln!(
+                    "  rg={} col={} page_start={} page_len={} bf_offset={:?}",
+                    rg_idx,
+                    col_idx,
+                    start,
+                    len,
+                    col.metadata().bloom_filter_offset
+                );
+            }
+        }
+
+        // The copied RG1 should have stale bloom_filter_offset (pointing to
+        // the OLD position, not adjusted by offset_delta).
+        let copied_rg = &new_metadata.row_groups[1]; // second row group = copied RG1
+        let col0_bf = copied_rg.columns()[0].metadata().bloom_filter_offset;
+        assert!(
+            col0_bf.is_some(),
+            "copied RG should still have bloom_filter_offset"
+        );
+
+        let old_bf_offset = rg1_col0_bf.unwrap();
+        let new_bf_offset = col0_bf.unwrap();
+        assert_eq!(
+            new_bf_offset, old_bf_offset,
+            "BUG: bloom_filter_offset was NOT adjusted — still points to old position"
+        );
+
+        // Verify it's actually stale (doesn't match expected position in new file)
+        let (new_page_start, new_page_len) = copied_rg.columns()[0].byte_range();
+        let expected_bf_start = new_page_start + new_page_len;
+        assert_ne!(
+            new_bf_offset as u64, expected_bf_start,
+            "bloom_filter_offset should NOT equal page_start + page_len \
+             (that would mean offset_delta==0, undermining this test)"
+        );
+
+        // Verify that reading the bloom filter from the stale offset fails
+        // (or reads garbage).
+        let read_result =
+            parquet2::bloom_filter::read_from_slice(&copied_rg.columns()[0], &new_data);
+        eprintln!("read_from_slice at stale offset: {:?}", read_result.is_ok());
+        if let Ok(bf_data) = &read_result {
+            eprintln!("  bf_data len: {}", bf_data.len());
+        }
+        if let Err(e) = &read_result {
+            eprintln!("  error: {}", e);
+        }
+
         Ok(())
     }
 }

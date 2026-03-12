@@ -39,9 +39,11 @@ steps:
   # profraw files. The CoverageReports stage merges them with Java runs.
   - bash: |
       set -eux
+      find . -name '*.profraw' -delete
+      rm -rf $(Build.SourcesDirectory)/rust-lint-profraw
       mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
       export RUSTFLAGS="-C instrument-coverage -D warnings"
-      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-core-%p-%m.profraw"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-core-%m.profraw"
       cd core/rust/qdb-core
       cargo test --all-targets --no-fail-fast
     displayName: "qdb-core: cargo test (coverage)"
@@ -49,9 +51,8 @@ steps:
 
   - bash: |
       set -eux
-      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
       export RUSTFLAGS="-C instrument-coverage -D warnings"
-      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdbr-%p-%m.profraw"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdbr-%m.profraw"
       cd core/rust/qdbr
       cargo test --all-targets --no-fail-fast
     displayName: "qdbr: cargo test (coverage)"
@@ -59,9 +60,8 @@ steps:
 
   - bash: |
       set -eux
-      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
       export RUSTFLAGS="-C instrument-coverage -D warnings"
-      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%p-%m.profraw"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%m.profraw"
       export PARQUET2_IGNORE_PYARROW_TESTS=1
       git submodule update --init core/rust/qdbr/parquet2/testing/parquet-testing
       cd core/rust/qdbr/parquet2
@@ -81,8 +81,8 @@ steps:
 
       # ── Helper: merge profraw → profdata → LCOV for a single crate ──
       generate_lcov() {
-        local CRATE=$1 TARGET_DIR=$2 PREFIX=$3
-        mapfile -t PROFRAW < <(find "$PROFRAW_DIR" -name "${PREFIX}-*.profraw" | sort)
+        local CRATE=$1 TARGET_DIR=$2
+        mapfile -t PROFRAW < <(find "$PROFRAW_DIR" -name "${CRATE}-*.profraw" | sort)
         if [ ${#PROFRAW[@]} -eq 0 ]; then
           echo "No $CRATE profraw files found, skipping"
           return
@@ -104,12 +104,12 @@ steps:
         echo "Generated $CRATE.lcov"
       }
 
-      generate_lcov qdb-core core/rust/qdb-core/target/debug qdb-core
-      generate_lcov qdbr     core/rust/qdbr/target/debug       qdbr
-      generate_lcov parquet2 core/rust/qdbr/parquet2/target/debug parquet2
+      generate_lcov qdb-core core/rust/qdb-core/target/debug
+      generate_lcov qdbr     core/rust/qdbr/target/debug
+      generate_lcov parquet2 core/rust/qdbr/parquet2/target/debug
 
-      # Remove intermediate files so only *.lcov files are uploaded.
-      rm -f "$PROFRAW_DIR"/*.profdata "$PROFRAW_DIR"/*.profraw
+      # Remove intermediate profraw files, keep profdata and lcov for upload.
+      rm -f "$PROFRAW_DIR"/*.profraw
     displayName: "qdb-core/parquet2: create coverage reports (LCOV)"
     condition: ${{ parameters.shouldRun }}
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
@@ -96,30 +97,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static AlterOperation deepCloneOf(AlterOperation other) {
-        LongList extraInfo = new LongList(other.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
-        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
-        }
-
-        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
-        alterOperation.command = other.command;
-        alterOperation.tableToken = other.tableToken;
-        alterOperation.tableNamePosition = other.tableNamePosition;
-
-        if (other.activeExtraStrInfo == other.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
-        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
-
-        return alterOperation;
-    }
-
     public static long getFlags(boolean indexed, boolean dedupKey) {
         long flags = 0;
         if (indexed) {
@@ -135,7 +112,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     //     "structural changes" doesn't cover is as "add column" is supported
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        final QueryRegistry queryRegistry = sqlExecutionContext != null ? getCairoEngine().getQueryRegistry() : null;
         keepMatViewsValid = false;
         long queryId = -1;
         try {
@@ -270,6 +247,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         clearCommandCorrelationId();
     }
 
+    public AlterOperation deepClone() {
+        final LongList extraInfo = new LongList(this.extraInfo);
+        final ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.activeExtraStrInfo.size());
+        for (int i = 0, n = this.activeExtraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.activeExtraStrInfo.getStrA(i)));
+        }
+
+        final AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
+        alterOperation.command = this.command;
+        alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
+        alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
+        return alterOperation;
+    }
+
     @Override
     public AlterOperation deserialize(TableWriterTask event) {
         clear();
@@ -326,6 +317,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    @Override
     public boolean isForceWalBypass() {
         return command == FORCE_DROP_PARTITION;
     }
@@ -561,7 +553,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            svc.removeColumn(activeExtraStrInfo.getStrA(i));
+            removeColumn(svc, activeExtraStrInfo.getStrA(i));
         }
     }
 
@@ -751,7 +743,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.squashPartitions();
     }
 
-    interface CharSequenceList extends Mutable {
+    private CairoEngine getCairoEngine() {
+        assert sqlExecutionContext != null;
+        return sqlExecutionContext.getCairoEngine();
+    }
+
+    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
+    private void removeColumn(MetadataService svc, CharSequence columnName) {
+        svc.removeColumn(columnName, securityContext);
+    }
+
+    private interface CharSequenceList extends Mutable {
         CharSequence getStrA(int i);
 
         CharSequence getStrB(int i);

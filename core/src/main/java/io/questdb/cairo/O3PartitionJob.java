@@ -341,6 +341,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Buffers grow as needed and are freed after all actions complete.
                 final int colCount = tableWriterMetadata.getColumnCount();
                 final LongList mergeDstBufs = ctx.getMergeDstBufs(colCount);
+                final LongList nullBufs = ctx.getNullBufs(colCount);
+                final LongList srcPtrs = ctx.getSrcPtrs(colCount);
                 final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
                 int metadataPosition = 0;
                 try {
@@ -455,6 +457,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 } finally {
                     chunkDescriptor.clear();
+                    partitionDescriptor.clear();
                     for (int bufIdx = 0; bufIdx < colCount; bufIdx++) {
                         int bi4 = bufIdx * 4;
                         for (int slot = 0; slot < 4; slot += 2) {
@@ -2175,20 +2178,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long nullAuxBuf = Unsafe.malloc(nullAuxSize, MemoryTag.NATIVE_O3);
                         ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
                         columnAuxPtr = nullAuxBuf;
-                        nullBufs[bi4] = nullAuxBuf;
-                        nullBufs[bi4 + 1] = nullAuxSize;
+                        nullBufs.setQuick(bi4, nullAuxBuf);
+                        nullBufs.setQuick(bi4 + 1, nullAuxSize);
 
                         long nullDataSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
                         if (nullDataSize > 0) {
                             long nullDataBuf = Unsafe.malloc(nullDataSize, MemoryTag.NATIVE_O3);
                             ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
                             columnDataPtr = nullDataBuf;
-                            nullBufs[bi4 + 2] = nullDataBuf;
-                            nullBufs[bi4 + 3] = nullDataSize;
+                            nullBufs.setQuick(bi4 + 2, nullDataBuf);
+                            nullBufs.setQuick(bi4 + 3, nullDataSize);
                         }
                     }
-                    srcPtrs[bi2] = columnDataPtr;
-                    srcPtrs[bi2 + 1] = columnAuxPtr;
+                    srcPtrs.setQuick(bi2, columnDataPtr);
+                    srcPtrs.setQuick(bi2 + 1, columnAuxPtr);
 
                     final int columnOffset = getPrimaryColumnIndex(columnIndex);
                     final long srcOooFixAddr = oooColumns.getQuick(columnOffset + 1).addressOf(0);
@@ -2221,10 +2224,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long nullFixBuf = Unsafe.malloc(nullFixSize, MemoryTag.NATIVE_O3);
                         TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
                         columnDataPtr = nullFixBuf;
-                        nullBufs[bi4] = nullFixBuf;
-                        nullBufs[bi4 + 1] = nullFixSize;
+                        nullBufs.setQuick(bi4, nullFixBuf);
+                        nullBufs.setQuick(bi4 + 1, nullFixSize);
                     }
-                    srcPtrs[bi2] = columnDataPtr;
+                    srcPtrs.setQuick(bi2, columnDataPtr);
 
                     // Fixed-size buffer: bounded by maxChunkSize across all merges.
                     long neededFixSize = maxChunkSize * ColumnType.sizeOf(columnType);
@@ -2280,8 +2283,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 columnType,
                                 chunkMergeIndexAddr,
                                 chunkRowCount,
-                                srcPtrs[bi2 + 1], // columnAuxPtr
-                                srcPtrs[bi2],      // columnDataPtr
+                                srcPtrs.getQuick(bi2 + 1), // columnAuxPtr
+                                srcPtrs.getQuick(bi2),      // columnDataPtr
                                 srcOooFixAddr,
                                 srcOooVarAddr,
                                 dstAuxAddr,
@@ -2313,7 +2316,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 chunkMergeIndexAddr,
                                 chunkRowCount,
-                                srcPtrs[bi2], // columnDataPtr
+                                srcPtrs.getQuick(bi2), // columnDataPtr
                                 0,
                                 srcOooFixAddr,
                                 0,
@@ -2380,8 +2383,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             for (int ai = 0; ai < activeColCount; ai++) {
                 int bi4 = ai * 4;
                 for (int slot = 0; slot < 4; slot += 2) {
-                    if (nullBufs[bi4 + slot] != 0) {
-                        Unsafe.free(nullBufs[bi4 + slot], nullBufs[bi4 + slot + 1], MemoryTag.NATIVE_O3);
+                    if (nullBufs.getQuick(bi4 + slot) != 0) {
+                        Unsafe.free(nullBufs.getQuick(bi4 + slot), nullBufs.getQuick(bi4 + slot + 1), MemoryTag.NATIVE_O3);
                     }
                 }
             }

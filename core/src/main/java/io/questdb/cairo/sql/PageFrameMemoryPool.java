@@ -338,7 +338,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int columnWriterIndex = columnMapping.getWriterIndex(i);
             final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
             if (parquetIdx >= 0) {
-                final int columnType = addressCache.getColumnTypes().getQuick(i);
+                int columnType = addressCache.getColumnTypes().getQuick(i);
+                if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
+                    columnType = ColumnType.VARCHAR_SLICE;
+                }
                 parquetColumns.add(parquetIdx);
                 fromParquetColumnIndexes.setQuick(parquetIdx, i);
                 parquetColumns.add(columnType);
@@ -362,7 +365,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int columnWriterIndex = columnMapping.getWriterIndex(i);
                 final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
                 if (parquetIdx >= 0) {
-                    final int columnType = addressCache.getColumnTypes().getQuick(i);
+                    int columnType = addressCache.getColumnTypes().getQuick(i);
+                    if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
+                        columnType = ColumnType.VARCHAR_SLICE;
+                    }
                     parquetColumns.add(parquetIdx);
                     fromParquetColumnIndexes.setQuick(parquetIdx, i);
                     parquetColumns.add(columnType);

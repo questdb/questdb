@@ -170,6 +170,14 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - bash: find . -name '*.profraw' -delete
+    displayName: "Clean stale profraw files"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
   - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
@@ -261,35 +269,25 @@ steps:
       set -eux
       export PATH=$LLVM_TOOLS_PATH:$PATH
       # List profraw files for debugging purposes
-      find . -name '*.profraw'
-      mapfile -t PROFRAW_FILES < <(find core -type f \( -name 'questdbr-cargo-test*.profraw' -o -name 'questdbr-junit*.profraw' \) | sort)
-      if [ ${#PROFRAW_FILES[@]} -eq 0 ]; then
-        echo "LLVM profiling files not found"
+      find . -name \*.profraw
+      PROFRAW="core/questdbr-junit.profraw"
+      if [ ! -f "$PROFRAW" ]; then
+        echo "LLVM profiling file not found: $PROFRAW"
         exit -1
       fi
-      printf 'Merging profile files:\n%s\n' "${PROFRAW_FILES[@]}"
-      llvm-profdata merge -sparse -o $(testset).profdata "${PROFRAW_FILES[@]}"
+      llvm-profdata merge -sparse -o $(testset).profdata "$PROFRAW"
 
-      # Generate LCOV using both object files:
-      # 1. The cargo target dir binary (matches cargo-test profraw counters)
-      # 2. The classes dir binary loaded by JVM via Os.java (matches JNI profraw counters)
-      # cargo test may relink the dylib, changing counter hashes, so the binary
-      # in the cargo target dir no longer matches the JNI profraw recorded earlier.
-      RUST_TARGET_DIR=core/target/rust-maven-plugin/qdbr/debug
-      OBJECT_ARGS=(--object "$RUST_TARGET_DIR/libquestdbr.so")
-      JNI_LIB=$(find core/target/classes/io/questdb/bin -name 'libquestdbr.so' -print -quit 2>/dev/null)
-      if [ -n "$JNI_LIB" ] && [ "$JNI_LIB" != "$RUST_TARGET_DIR/libquestdbr.so" ]; then
-        echo "Adding JNI-loaded binary as second object: $JNI_LIB"
-        OBJECT_ARGS+=(--object "$JNI_LIB")
-      fi
+      IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
+      OBJECTS="--object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so"
+
       llvm-cov export \
         --format=lcov \
-        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-        "${OBJECT_ARGS[@]}" \
+        --ignore-filename-regex="$IGNORE_RE" \
+        $OBJECTS \
         --instr-profile=$(testset).profdata \
         > $(testset).lcov
-      echo "Generated $(testset).lcov ($(wc -l < $(testset).lcov) lines)"
-    displayName: "Create Rust coverage report (LCOV)"
+      echo "Generated $(testset).lcov"
+    displayName: "Create partial Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -297,7 +295,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust coverage LCOV"
+    displayName: "Upload partial Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),

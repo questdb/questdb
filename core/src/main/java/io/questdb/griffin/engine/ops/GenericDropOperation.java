@@ -1,5 +1,6 @@
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -11,7 +12,6 @@ import org.jetbrains.annotations.Nullable;
 public class GenericDropOperation implements Operation {
     private final String entityName;
     private final int entityNamePosition;
-    private final DoneOperationFuture future = new DoneOperationFuture();
     private final boolean ifExists;
     private final int operationCode;
     private final String sqlText;
@@ -36,10 +36,13 @@ public class GenericDropOperation implements Operation {
 
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
-            compiler.execute(this, sqlExecutionContext);
+        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            if (compiler.execute(this, sqlExecutionContext)) {
+                engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(entityName);
+            }
         }
-        return future;
+        return ImmutableDoneOperationFuture.INSTANCE;
     }
 
     public String getEntityName() {
@@ -57,7 +60,7 @@ public class GenericDropOperation implements Operation {
 
     @Override
     public OperationFuture getOperationFuture() {
-        return future;
+        return ImmutableDoneOperationFuture.INSTANCE;
     }
 
     public String getSqlText() {

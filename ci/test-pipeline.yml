@@ -183,7 +183,6 @@ stages:
     dependsOn:
       - CheckChanges
       - SelfHostedRunTestsCoverageBranches
-      - JavaAndRustLint
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"
@@ -243,30 +242,22 @@ stages:
           - bash: |
               set -eux
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              ls -al "$COVERAGE_DIR"
+              ls -al $COVERAGE_DIR
 
-              # Concatenate all LCOV files: per-job coverage from Maven test runs
-              # and cargo test coverage from the lint job.
-              # Each coverage job generates LCOV against its own libquestdbr.so,
-              # avoiding counter hash mismatches across independently compiled binaries.
-              > questdbr.lcov.dat
-              for LCOV_FILE in "$COVERAGE_DIR"/*.lcov; do
-                [ -f "$LCOV_FILE" ] || continue
-                cat "$LCOV_FILE" >> questdbr.lcov.dat
-                echo "Appended $(basename "$LCOV_FILE") ($(wc -l < "$LCOV_FILE") lines)"
-              done
-
-              if [ ! -s questdbr.lcov.dat ]; then
-                echo "##vso[task.logissue type=error]No LCOV files found in artifact"
+              # Concatenate all partial LCOV files into a single file
+              LCOV_FILES=$(find "$COVERAGE_DIR" -name '*.lcov' -type f)
+              if [ -z "$LCOV_FILES" ]; then
+                echo "No LCOV files found in $COVERAGE_DIR"
                 exit 1
               fi
+              cat $LCOV_FILES > questdbr-combined.lcov.dat
 
-              # Normalize CI-specific paths and merge duplicate entries
-              python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
+              # Merge LCOV coverage results, normalizing paths from different build agents
+              python3 ./ci/merge_lcov_paths.py questdbr-combined.lcov.dat questdbr-patched.lcov.dat
 
               # Convert LCOV coverage results to Cobertura XML format
               python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
-            displayName: "Merge Rust coverage reports"
+            displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
           - task: PublishBuildArtifacts@1

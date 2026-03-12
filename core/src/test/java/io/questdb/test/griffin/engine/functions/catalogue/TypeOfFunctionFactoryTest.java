@@ -86,6 +86,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                     || i == ColumnType.PARAMETER
                     || i == ColumnType.ARRAY
                     || ColumnType.isDecimal(i)
+                    || i == ColumnType.VARCHAR_SLICE
             ) {
                 continue;
             }

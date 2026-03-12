@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -710,10 +710,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            if (securityContext != null) {
-                ddlListener.onColumnAdded(securityContext, tableToken, columnName);
-            }
-
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
@@ -721,6 +717,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw err;
         } catch (Throwable th) {
             throwDistressException(th);
+        }
+
+        if (securityContext != null) {
+            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
     }
 
@@ -2765,7 +2765,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence name) {
+    public void removeColumn(@NotNull CharSequence name, SecurityContext securityContext) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -2794,6 +2794,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         rewriteAndSwapMetadata(metadata);
 
+        boolean committed = false;
         try {
             // remove column objects
             freeColumnMemory(index);
@@ -2811,6 +2812,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // remove column files
             removeColumnFiles(index, columnName, type, isIndexed);
             clearTodoAndCommitMetaStructureVersion();
+            committed = true;
 
             finishColumnPurge();
 
@@ -2822,6 +2824,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw err;
         } catch (Throwable th) {
             throwDistressException(th);
+        } finally {
+            if (committed && securityContext != null) {
+                ddlListener.onColumnDropped(tableToken, columnName);
+            }
         }
     }
 
@@ -2883,46 +2889,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         commit();
 
+        boolean committed = false;
         String newColumnName = null;
-
         try {
-            metadata.renameColumn(columnName, newName);
-            newColumnName = metadata.getColumnName(index);
-            rewriteAndSwapMetadata(metadata);
+            try {
+                metadata.renameColumn(columnName, newName);
+                newColumnName = metadata.getColumnName(index);
+                rewriteAndSwapMetadata(metadata);
 
-            // rename column files has to be done before _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
+                // rename column files has to be done before _todo is removed
+                hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
 
-            // commit to _txn file
-            bumpMetadataAndColumnStructureVersion();
-        } catch (CairoException e) {
-            throwDistressException(e);
-        }
-
-        // remove _todo as last step, after the commit.
-        // if anything fails before the commit, meta file will be reverted
-        clearTodoLog();
-
-        try {
-
-            // Call finish purge to remove old column files before renaming them in metadata
-            finishColumnPurge();
-
-            if (index == metadata.getTimestampIndex()) {
-                designatedTimestampColumnName = newColumnName;
+                // commit to _txn file
+                bumpMetadataAndColumnStructureVersion();
+            } catch (CairoException e) {
+                throwDistressException(e);
             }
+            committed = true;
 
-            if (securityContext != null) {
-                ddlListener.onColumnRenamed(securityContext, tableToken, columnName, newColumnName);
+            // remove _todo as last step, after the commit.
+            // if anything fails before the commit, meta file will be reverted
+            clearTodoLog();
+
+            try {
+                // Call finish purge to remove old column files before renaming them in metadata
+                finishColumnPurge();
+
+                if (index == metadata.getTimestampIndex()) {
+                    designatedTimestampColumnName = newColumnName;
+                }
+
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.hydrateTable(metadata);
+                }
+
+                LOG.info().$("RENAMED column '").$safe(columnName).$("' to '").$safe(newColumnName).$("' from ").$substr(pathRootSize, path).$();
+            } catch (Throwable e) {
+                handleHousekeepingException(e);
             }
-
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(metadata);
+        } finally {
+            if (committed && securityContext != null) {
+                ddlListener.onColumnRenamed(tableToken, columnName, newColumnName);
             }
-
-            LOG.info().$("RENAMED column '").$safe(columnName).$("' to '").$safe(newColumnName).$("' from ").$substr(pathRootSize, path).$();
-        } catch (Throwable e) {
-            handleHousekeepingException(e);
         }
     }
 
