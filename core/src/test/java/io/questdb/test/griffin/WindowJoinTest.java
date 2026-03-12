@@ -6013,6 +6013,113 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Verifies INCLUDE PREVAILING with the non-vectorized fast (symbol-keyed) variant.
+     * Uses max(concat(...)) to force the non-vectorized code path.
+     * When no right row matches the window start exactly, the prevailing row
+     * (strictly before the window) is included as an extra row.
+     */
+    @Test
+    public void testFastNonVectorizedPrevailingWithWindowMatches() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            execute("""
+                    CREATE TABLE left_t (
+                        ts TIMESTAMP,
+                        sym SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    CREATE TABLE right_t (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // Left row at 09:05 with sym=A. Window = [09:03, 09:07].
+            execute("INSERT INTO left_t VALUES ('2023-01-01T09:05:00.000000Z', 'A')");
+
+            // Right rows for sym=A: 09:01 (before window), 09:04 (in window), 09:06 (in window).
+            // No row at 09:03 (window start), so prevailing = 09:01 (strictly before window).
+            // Prevailing val=99 is the max; without prevailing, max would be "30".
+            execute("""
+                    INSERT INTO right_t VALUES
+                    ('2023-01-01T09:01:00.000000Z', 'A', 99),
+                    ('2023-01-01T09:04:00.000000Z', 'A', 20),
+                    ('2023-01-01T09:06:00.000000Z', 'A', 30)
+                    """);
+
+            // max(concat(r.val, '')) forces non-vectorized path.
+            // With prevailing: vals are 99, 20, 30 -> max("99") = "99".
+            // Without prevailing (bug): vals are 20, 30 -> max("30") = "30".
+            assertQueryAndPlan(
+                    """
+                            ts\tsym\tf
+                            2023-01-01T09:05:00.000000Z\tA\t99
+                            """,
+                    """
+                            Window Fast Join
+                              vectorized: false
+                              symbol: sym=sym
+                              window lo: 120000000 preceding (include prevailing)
+                              window hi: 120000000 following
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: left_t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: right_t
+                            """,
+                    """
+                            SELECT l.ts, l.sym, max(concat(r.val, '')) AS f
+                            FROM left_t l
+                            WINDOW JOIN right_t r ON (l.sym = r.sym)
+                            RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
+                            INCLUDE PREVAILING
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Cross-check with vectorized count(*): 3 rows (prevailing + 2 window).
+            assertQueryAndPlan(
+                    """
+                            ts\tsym\tcnt
+                            2023-01-01T09:05:00.000000Z\tA\t3
+                            """,
+                    """
+                            Window Fast Join
+                              vectorized: true
+                              symbol: sym=sym
+                              window lo: 120000000 preceding (include prevailing)
+                              window hi: 120000000 following
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: left_t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: right_t
+                            """,
+                    """
+                            SELECT l.ts, l.sym, count(*) AS cnt
+                            FROM left_t l
+                            WINDOW JOIN right_t r ON (l.sym = r.sym)
+                            RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
+                            INCLUDE PREVAILING
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
     private void prepareTable() throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +
