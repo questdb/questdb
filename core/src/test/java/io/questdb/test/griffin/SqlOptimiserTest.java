@@ -4818,14 +4818,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertSql(shouldSucceedResult, shouldSucceedParallel);
 
             assertPlanNoLeakCheck(shouldSucceedSequential, """
-                    Sample By
-                      fill: null
-                      range: ('2017-12-20',)
-                      values: [avg(x),sum(x)]
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: fromto
-                              intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
+                    Sort
+                      keys: [ts]
+                        Fill Range
+                          range: ('2017-12-20',)
+                          stride: '5d'
+                          values: [null,null]
+                            Async Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                              values: [avg(x),sum(x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: fromto
+                                      intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
                     """);
             assertSql(shouldSucceedResult, shouldSucceedSequential);
         });
@@ -4980,12 +4987,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String result = """
                     ts\tavg
                     2017-12-20T00:00:00.000000Z\tnull
-                    2017-12-27T00:00:00.000000Z\tnull
-                    2017-12-27T10:00:00.000000Z\t58.5
-                    2018-01-03T00:00:00.000000Z\tnull
-                    2018-01-03T10:00:00.000000Z\t284.5
-                    2018-01-10T00:00:00.000000Z\tnull
-                    2018-01-10T10:00:00.000000Z\t466.5
+                    2017-12-27T00:00:00.000000Z\t48.5
+                    2018-01-03T00:00:00.000000Z\t264.5
+                    2018-01-10T00:00:00.000000Z\t456.5
                     2018-01-17T00:00:00.000000Z\tnull
                     2018-01-24T00:00:00.000000Z\tnull
                     """;

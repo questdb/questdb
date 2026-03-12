@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 
 
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -419,6 +420,13 @@ public class SqlOptimiser implements Mutable {
         return countDistinctExpr.rhs.type == LITERAL
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token) != null
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token).getColumnType() == ColumnType.SYMBOL;
+    }
+
+    private static boolean isSubDayUnit(char unit) {
+        return switch (unit) {
+            case 'h', 'm', 's', 'T', 'U', 'n' -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -2308,6 +2316,17 @@ public class SqlOptimiser implements Mutable {
                 model.getAliasSequenceMap(),
                 false
         );
+    }
+
+    private ExpressionNode createToUtcCall(ExpressionNode value, ExpressionNode timezone) {
+        ExpressionNode call = expressionNodePool.next();
+        call.token = ToUTCTimestampFunctionFactory.NAME;
+        call.type = FUNCTION;
+        call.paramCount = 2;
+        call.position = value.position;
+        call.rhs = timezone;
+        call.lhs = value;
+        return call;
     }
 
     // use only if input is a column literal!
@@ -7838,7 +7857,9 @@ public class SqlOptimiser implements Mutable {
                 tsFloorTsParam.paramCount = 0;
                 tsFloorTsParam.type = LITERAL;
 
-                if (sampleByTimezoneName != null) {
+                boolean isSubDay = sampleBy.token.length() > 0 && isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+
+                if (sampleByTimezoneName != null && !(isSubDay && sampleByFrom != null)) {
                     tsFloorFunc.args.add(sampleByTimezoneName);
                 } else {
                     final ExpressionNode nullTimezone = expressionNodePool.next();
@@ -7847,12 +7868,26 @@ public class SqlOptimiser implements Mutable {
                     nullTimezone.precedence = 0;
                     tsFloorFunc.args.add(nullTimezone);
                 }
-                tsFloorFunc.args.add(sampleByOffset);
+                // FROM already anchors the buckets, so the offset is redundant
+                // and must be elided.
+                if (sampleByFrom != null) {
+                    final ExpressionNode zeroOffset = expressionNodePool.next();
+                    zeroOffset.type = CONSTANT;
+                    zeroOffset.token = "'00:00'";
+                    zeroOffset.precedence = 0;
+                    tsFloorFunc.args.add(zeroOffset);
+                } else {
+                    tsFloorFunc.args.add(sampleByOffset);
+                }
                 // If SAMPLE BY FROM ... is present, we need to include it in the timestamp_floor() call.
                 // This value is populated from the FROM clause and anchors the calendar-aligned buckets
                 // to an offset other than the unix epoch.
                 if (sampleByFrom != null) {
-                    tsFloorFunc.args.add(sampleByFrom);
+                    if (isSubDay && sampleByTimezoneName != null) {
+                        tsFloorFunc.args.add(createToUtcCall(sampleByFrom, sampleByTimezoneName));
+                    } else {
+                        tsFloorFunc.args.add(sampleByFrom);
+                    }
                 } else {
                     final ExpressionNode nullExpr = expressionNodePool.next();
                     nullExpr.type = CONSTANT;
@@ -7990,6 +8025,17 @@ public class SqlOptimiser implements Mutable {
 
         sampleFrom = fromToModel.getSampleByFrom();
         sampleTo = fromToModel.getSampleByTo();
+
+        // interpret FROM/TO as local time in the specified timezone
+        ExpressionNode timezoneName = fromToModel.getSampleByTimezoneName();
+        if (timezoneName != null && !isUTC(timezoneName.token)) {
+            if (sampleFrom != null) {
+                sampleFrom = createToUtcCall(sampleFrom, timezoneName);
+            }
+            if (sampleTo != null) {
+                sampleTo = createToUtcCall(sampleTo, timezoneName);
+            }
+        }
 
         // if from-to is present
         if (sampleFrom != null || sampleTo != null) {
