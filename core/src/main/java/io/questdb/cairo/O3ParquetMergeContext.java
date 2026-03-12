@@ -42,6 +42,7 @@ public class O3ParquetMergeContext implements Closeable {
     private PartitionDescriptor chunkDescriptor;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
+    private LongList nullBufs;
     private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private DirectIntList parquetColumns;
     private PartitionDecoder partitionDecoder;
@@ -51,11 +52,13 @@ public class O3ParquetMergeContext implements Closeable {
     private RowGroupBuffers rowGroupBuffers;
     private LongList rowGroupBounds;
     private RowGroupStatBuffers rowGroupStatBuffers;
+    private LongList srcPtrs;
 
     public O3ParquetMergeContext() {
         chunkDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
         mergeDstBufs = new LongList();
+        nullBufs = new LongList();
         actionsBuf = new ObjList<>();
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         partitionDecoder = new PartitionDecoder();
@@ -65,16 +68,19 @@ public class O3ParquetMergeContext implements Closeable {
         rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         rowGroupBounds = new LongList();
         rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+        srcPtrs = new LongList();
     }
 
     public void clear() {
         chunkDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
+        nullBufs.clear();
         parquetColumns.clear();
         partitionDescriptor.clear();
         rgO3Ranges.clear();
         rowGroupBounds.clear();
+        srcPtrs.clear();
     }
 
     @Override
@@ -82,6 +88,7 @@ public class O3ParquetMergeContext implements Closeable {
         chunkDescriptor = Misc.free(chunkDescriptor);
         gapO3Ranges = null;
         mergeDstBufs = null;
+        nullBufs = null;
         actionsBuf = null;
         parquetColumns = Misc.free(parquetColumns);
         partitionDecoder = Misc.free(partitionDecoder);
@@ -91,6 +98,7 @@ public class O3ParquetMergeContext implements Closeable {
         rowGroupBuffers = Misc.free(rowGroupBuffers);
         rowGroupBounds = null;
         rowGroupStatBuffers = Misc.free(rowGroupStatBuffers);
+        srcPtrs = null;
     }
 
     public PartitionDescriptor getChunkDescriptor() {
@@ -110,6 +118,13 @@ public class O3ParquetMergeContext implements Closeable {
         mergeDstBufs.setPos(requiredLen);
         mergeDstBufs.fill(0, requiredLen, 0);
         return mergeDstBufs;
+    }
+
+    public LongList getNullBufs(int colCount) {
+        final int requiredLen = colCount * 4;
+        nullBufs.setPos(requiredLen);
+        nullBufs.fill(0, requiredLen, 0);
+        return nullBufs;
     }
 
     public DirectIntList getParquetColumns() {
@@ -142,5 +157,12 @@ public class O3ParquetMergeContext implements Closeable {
 
     public RowGroupStatBuffers getRowGroupStatBuffers() {
         return rowGroupStatBuffers;
+    }
+
+    public LongList getSrcPtrs(int colCount) {
+        final int requiredLen = colCount * 2;
+        srcPtrs.setPos(requiredLen);
+        srcPtrs.fill(0, requiredLen, 0);
+        return srcPtrs;
     }
 }
