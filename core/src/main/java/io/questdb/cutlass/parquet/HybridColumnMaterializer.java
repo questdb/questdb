@@ -409,6 +409,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         int adjustedType = columnType;
         if (ColumnType.isSymbol(columnType)) {
             adjustedType = ColumnType.STRING;
+        } else if (columnType == ColumnType.VARCHAR_SLICE) {
+            adjustedType = ColumnType.VARCHAR;
         }
 
         computedBufferIdx.setQuick(i, computedCount);
@@ -532,7 +534,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             case ColumnType.FLOAT -> dataBuf.putFloat(record.getFloat(col));
             case ColumnType.DOUBLE -> dataBuf.putDouble(record.getDouble(col));
             case ColumnType.STRING -> StringTypeDriver.appendValue(auxBuf, dataBuf, record.getStrA(col));
-            case ColumnType.VARCHAR -> VarcharTypeDriver.appendValue(auxBuf, dataBuf, record.getVarcharA(col));
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
+                    VarcharTypeDriver.appendValue(auxBuf, dataBuf, record.getVarcharA(col));
             case ColumnType.SYMBOL -> {
                 // Symbols get converted to STRING in adjusted metadata
                 CharSequence sym = record.getSymA(col);

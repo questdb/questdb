@@ -62,11 +62,12 @@ pub enum ColumnTypeTag {
     Decimal64 = 31,
     Decimal128 = 32,
     Decimal256 = 33,
+    VarcharSlice = 40,
 }
 
 impl ColumnTypeTag {
     #[cfg(test)]
-    const VALUES: [Self; 29] = [
+    const VALUES: [Self; 30] = [
         Self::Boolean,
         Self::Byte,
         Self::Short,
@@ -96,6 +97,7 @@ impl ColumnTypeTag {
         Self::Decimal64,
         Self::Decimal128,
         Self::Decimal256,
+        Self::VarcharSlice,
     ];
 
     /// If true, the column is encoded with both data and aux vectors.
@@ -171,6 +173,7 @@ impl ColumnTypeTag {
             ColumnTypeTag::Decimal64 => "decimal64",
             ColumnTypeTag::Decimal128 => "decimal128",
             ColumnTypeTag::Decimal256 => "decimal256",
+            ColumnTypeTag::VarcharSlice => "varchar_slice",
         }
     }
 
@@ -217,6 +220,7 @@ impl TryFrom<u8> for ColumnTypeTag {
             31 => Ok(ColumnTypeTag::Decimal64),
             32 => Ok(ColumnTypeTag::Decimal128),
             33 => Ok(ColumnTypeTag::Decimal256),
+            40 => Ok(ColumnTypeTag::VarcharSlice),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
