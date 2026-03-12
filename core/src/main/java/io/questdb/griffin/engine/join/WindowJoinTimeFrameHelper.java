@@ -124,6 +124,22 @@ public class WindowJoinTimeFrameHelper {
         if (bookmarkedFrameIndex != -1) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
             timeFrameCursor.open();
+            if (recordPrevailing) {
+                // Set prevailing candidate so findPrevailingForMasterRow can
+                // scan backward if the window starts at the frame boundary.
+                // linearScan/binarySearch will refine this if they find a
+                // closer candidate within the frame.
+                if (bookmarkedRowIndex > timeFrame.getRowLo()) {
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowIndex = bookmarkedRowIndex - 1;
+                } else {
+                    // Bookmark is at frame start; prevailing is in a prior frame.
+                    // Setting rowIndex < rowLo causes findPrevailingForMasterRow
+                    // to skip to previousFrame().
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowIndex = timeFrame.getRowLo() - 1;
+                }
+            }
             rowLo = bookmarkedRowIndex;
         } else {
             // First lookup: use seekEstimate to skip to the target's vicinity,
