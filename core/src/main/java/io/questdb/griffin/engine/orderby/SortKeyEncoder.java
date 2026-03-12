@@ -338,7 +338,8 @@ public class SortKeyEncoder implements QuietCloseable {
         long key;
         if (isSymbol[0]) {
             int symKey = record.getInt(colIdx);
-            int rank = (symKey < 0) ? 0 : rankMaps.getQuick(0).get(symKey);
+            DirectIntList rankMap = rankMaps.getQuick(0);
+            int rank = (symKey < 0 || symKey >= rankMap.size()) ? 0 : rankMap.get(symKey);
             key = Integer.toUnsignedLong(desc ? ~rank : rank) << shift;
             Unsafe.getUnsafe().putLong(destAddr, key);
             Unsafe.getUnsafe().putLong(destAddr + 8, rowId);
@@ -399,7 +400,7 @@ public class SortKeyEncoder implements QuietCloseable {
             if (isSymbol[i]) {
                 int key = record.getInt(colIdx);
                 DirectIntList rankMap = rankMaps.getQuick(i);
-                int rank = (key < 0) ? 0 : rankMap.get(key);
+                int rank = (key < 0 || key >= rankMap.size()) ? 0 : rankMap.get(key);
                 encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
             } else {
                 switch (columnTypes[i]) {

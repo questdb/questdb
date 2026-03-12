@@ -55,6 +55,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     private long currentAddr;
     private long endAddr;
     private int entrySize;
+    private boolean isOpen;
     private boolean isSorted;
     private SortKeyType keyType;
     private int longsPerEntry;
@@ -80,6 +81,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     configuration.getSqlSortValuePageSize(),
                     configuration.getSqlSortValueMaxPages()
             );
+            this.isOpen = true;
         } catch (Throwable th) {
             close();
             throw th;
@@ -88,10 +90,13 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void close() {
-        Misc.free(entryMem);
-        Misc.free(encoder);
-        Misc.free(recordChain);
-        baseCursor = Misc.free(baseCursor);
+        if (isOpen) {
+            isOpen = false;
+            Misc.free(entryMem);
+            Misc.free(encoder);
+            Misc.free(recordChain);
+            baseCursor = Misc.free(baseCursor);
+        }
     }
 
     @Override
@@ -132,8 +137,11 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         this.baseCursor = baseCursor;
+        if (!isOpen) {
+            isOpen = true;
+            entryMem.reopen();
+        }
         recordChain.setSymbolTableResolver(baseCursor);
-        entryMem.reopen();
         keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
         entrySize = keyType.entrySize();
@@ -166,44 +174,40 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
-        try {
-            long estimatedSize = baseCursor.size();
-            long maxEntries = maxEntryMemBytes / entrySize;
-            if (estimatedSize > 0) {
-                if (estimatedSize > maxEntries) {
+        long estimatedSize = baseCursor.size();
+        long maxEntries = maxEntryMemBytes / entrySize;
+        if (estimatedSize > 0) {
+            if (estimatedSize > maxEntries) {
+                throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+            }
+            entryMem.setCapacity(estimatedSize * longsPerEntry);
+        }
+
+        entryMem.clear();
+        count = 0;
+        Record record = baseCursor.getRecord();
+        if (estimatedSize > 0) {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                long chainOffset = recordChain.put(record, -1L);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(record, addr, chainOffset);
+                entryMem.skip(longsPerEntry);
+                count++;
+            }
+        } else {
+            while (baseCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (count >= maxEntries) {
                     throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
                 }
-                entryMem.setCapacity(estimatedSize * longsPerEntry);
+                long chainOffset = recordChain.put(record, -1L);
+                entryMem.ensureCapacity(longsPerEntry);
+                long addr = entryMem.getAppendAddress();
+                encoder.encode(record, addr, chainOffset);
+                entryMem.skip(longsPerEntry);
+                count++;
             }
-
-            entryMem.clear();
-            count = 0;
-            Record record = baseCursor.getRecord();
-            if (estimatedSize > 0) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    long chainOffset = recordChain.put(record, -1L);
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(record, addr, chainOffset);
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
-            } else {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    if (count >= maxEntries) {
-                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
-                    }
-                    long chainOffset = recordChain.put(record, -1L);
-                    entryMem.ensureCapacity(longsPerEntry);
-                    long addr = entryMem.getAppendAddress();
-                    encoder.encode(record, addr, chainOffset);
-                    entryMem.skip(longsPerEntry);
-                    count++;
-                }
-            }
-        } finally {
-            Misc.free(encoder);
         }
 
         if (count <= 1) {

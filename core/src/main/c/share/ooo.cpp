@@ -1464,7 +1464,7 @@ void ska_sort_entries(T *arr, int64_t count) {
     constexpr int ENTRY_LONGS = static_cast<int>(sizeof(T) / sizeof(uint64_t));
     constexpr int maxWordIndex = ENTRY_LONGS - 1;
 
-    if (count < 1024 * 1024) {
+    if (count < 100 * 1024) {
         msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
         return;
     }
@@ -1572,10 +1572,9 @@ void ska_sort_entries(T *arr, int64_t count) {
     }
 
     std::atomic<int> nextIdx(0);
-    std::vector<std::thread> threads;
-    threads.reserve(numThreads);
+    std::thread threads[256];
     for (int t = 0; t < numThreads; t++) {
-        threads.emplace_back([&]() {
+        threads[t] = std::thread([&]() {
             for (;;) {
                 int idx = nextIdx.fetch_add(1, std::memory_order_relaxed);
                 if (idx >= numWork) break;
@@ -1584,7 +1583,7 @@ void ska_sort_entries(T *arr, int64_t count) {
             }
         });
     }
-    for (auto &t : threads) t.join();
+    for (int t = 0; t < numThreads; t++) threads[t].join();
 }
 
 // vergesort_entries: adaptive sort with jump-sampling run detection.
