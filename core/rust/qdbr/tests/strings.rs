@@ -189,3 +189,6 @@ fn test_string_plain() {
 fn test_string_delta_length_byte_array() {
     run_string_test("String", Encoding::DeltaLengthByteArray);
 }
+
+// Note: String type only supports Plain and DeltaLengthByteArray encodings.
+// RleDictionary and DeltaByteArray are not implemented for String decode.

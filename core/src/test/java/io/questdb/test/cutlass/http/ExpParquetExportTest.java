@@ -2046,6 +2046,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // fires, causing the server to disconnect rather than send an error.
                     try {
                         testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
+                    } catch (AssertionError ae) {
+                        // Depending on timing, the exporter may detect the timeout and cancel the query, resulting in a different error message.  Accept either.
+                        TestUtils.assertContains(ae.getMessage(), "cancelled by user");
                     } catch (HttpClientException e) {
                         String msg = e.getMessage();
                         Assert.assertTrue(
