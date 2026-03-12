@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -433,6 +434,7 @@ public class SortKeyEncoder implements QuietCloseable {
                         encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
                         encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
                     }
+                    default -> throw CairoException.nonCritical().put("unexpected type in encodeGeneric: ").put(ColumnType.nameOf(columnTypes[i]));
                 }
             }
         }

@@ -226,9 +226,9 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
-            if ((capacity >>> 3) > MAX_SAFE_INT_POW_2) {
-                throw CairoException.nonCritical().put("long list capacity overflow");
-            }
+//            if ((capacity >>> 3) > MAX_SAFE_INT_POW_2) {
+//                throw CairoException.nonCritical().put("long list capacity overflow");
+//            }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
             final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
