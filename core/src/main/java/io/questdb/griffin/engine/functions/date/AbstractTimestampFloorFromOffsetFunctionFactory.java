@@ -47,7 +47,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -306,14 +309,40 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     // in a DST gap (non-existing time from a forward clock shift). In that case
     // the timestamp is moved back by the gap duration and re-floored to produce a
     // valid local time and avoid duplicate bucket keys.
-    private static long floorWithTz(long timestamp, TimeZoneRules tzRules, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long from, long offset, boolean returnUtc) {
-        final long tzOff = tzRules.getOffset(timestamp);
-        final long localTimestamp = timestamp + tzOff;
+
+    private static final long BP_TS = MicrosFormatUtils.parseTimestamp("2021-03-28T01:01:00.000000Z");
+
+    public static String microsToString(long micros) {
+        StringSink sink = Misc.getThreadLocalSink();
+        MicrosFormatUtils.appendDateTime(sink, micros);
+        return sink.toString();
+    }
+
+    private static long floorWithTz(long timestamp, TimeZoneRules tzRules, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long from, long offset, boolean returnUtc, char unit) {
         if (returnUtc) {
+            if (CommonUtils.isSubDayUnit(unit)) {
+                // Sub-day strides have fixed duration, so DST-aware local time
+                // conversion would cause non-uniform bucket jumps at transitions.
+                // Use the standard (non-DST) offset for consistent bucketing.
+                final long stdOff = tzRules.getStandardOffset();
+                final long localTimestamp = timestamp + stdOff;
+                final long effectiveFrom = from != 0 ? from : stdOff;
+                final long result = floorFunc.floor(localTimestamp, stride, effectiveFrom);
+                return result - stdOff + offset;
+            }
+            final long tzOff = tzRules.getOffset(timestamp);
+            final long localTimestamp = timestamp + tzOff;
             long result = floorFunc.floor(localTimestamp, stride, from);
+
+            long gapDuration = tzRules.getDstGapOffset(result);
+            if (gapDuration != 0) {
+                result = floorFunc.floor(result - gapDuration, stride, from);
+            }
             final long resultTzOff = tzRules.getOffset(result - tzOff);
             return result - resultTzOff + offset;
         }
+        final long tzOff = tzRules.getOffset(timestamp);
+        final long localTimestamp = timestamp + tzOff;
         long result = floorFunc.floor(localTimestamp, stride, from + offset);
         // Move the timestamp to the bucket if it belongs to a DST gap, i.e. non-existing
         // time interval that occur due to a forward clock shift.
@@ -399,7 +428,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
-                return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc);
+                return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc, unit);
             }
             return Numbers.LONG_NULL;
         }
@@ -551,7 +580,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
-                return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc);
+                return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc, unit);
             }
             return Numbers.LONG_NULL;
         }
@@ -641,7 +670,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 if (tzRules != null) {
-                    return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc);
+                    return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc, unit);
                 }
                 final long localTimestamp = timestamp + tzOffset;
                 long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);
@@ -766,7 +795,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 if (tzRules != null) {
-                    return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc);
+                    return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc, unit);
                 }
                 final long localTimestamp = timestamp + tzOffset;
                 long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);
@@ -879,7 +908,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
-                return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc);
+                return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc, unit);
             }
             return Numbers.LONG_NULL;
         }
@@ -1080,7 +1109,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 if (tzRules != null) {
-                    return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc);
+                    return floorWithTz(timestamp, tzRules, floorFunc, stride, from, effectiveOffset - from, returnUtc, unit);
                 }
                 final long localTimestamp = timestamp + tzOffset;
                 long result = floorFunc.floor(localTimestamp, stride, effectiveOffset);

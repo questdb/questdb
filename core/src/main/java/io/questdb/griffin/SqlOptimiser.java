@@ -57,7 +57,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
-
+import io.questdb.std.datetime.CommonUtils;
 
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -422,12 +422,6 @@ public class SqlOptimiser implements Mutable {
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token).getColumnType() == ColumnType.SYMBOL;
     }
 
-    private static boolean isSubDayUnit(char unit) {
-        return switch (unit) {
-            case 'h', 'm', 's', 'T', 'U', 'n' -> true;
-            default -> false;
-        };
-    }
 
     /**
      * Checks if the token is a time function that returns the current time.
@@ -7857,7 +7851,7 @@ public class SqlOptimiser implements Mutable {
                 tsFloorTsParam.paramCount = 0;
                 tsFloorTsParam.type = LITERAL;
 
-                boolean isSubDay = sampleBy.token.length() > 0 && isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+                boolean isSubDay = sampleBy.token.length() > 0 && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
 
                 if (sampleByTimezoneName != null && !(isSubDay && sampleByFrom != null)) {
                     tsFloorFunc.args.add(sampleByTimezoneName);

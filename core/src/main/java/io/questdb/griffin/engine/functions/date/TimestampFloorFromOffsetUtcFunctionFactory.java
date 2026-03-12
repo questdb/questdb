@@ -45,6 +45,11 @@ public class TimestampFloorFromOffsetUtcFunctionFactory extends AbstractTimestam
 
     @Override
     public String getSignature() {
+        // s = stride string constant (e.g. '1h', '15m')
+        // N = input timestamp to floor (variable)
+        // n = epoch reference timestamp constant (origin for stride alignment)
+        // S = offset string (e.g. '+02:00')
+        // S = timezone string (e.g. 'Europe/Berlin')
         return NAME + "(sNnSS)";
     }
 

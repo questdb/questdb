@@ -191,6 +191,13 @@ public class CommonUtils {
         }
     }
 
+    public static boolean isSubDayUnit(char unit) {
+        return switch (unit) {
+            case 'h', 'm', 's', 'T', 'U', 'n' -> true;
+            default -> false;
+        };
+    }
+
     public static int getWeeks(int y) {
         if (Micros.getDayOfTheWeekOfEndOfYear(y) == 4 || Micros.getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
             return 53;

@@ -50,5 +50,12 @@ public interface TimeZoneRules {
 
     long getOffset(long utcEpoch, int year);
 
+    /**
+     * Returns the standard (non-DST) UTC offset for this timezone. This is
+     * the base offset without any daylight saving adjustment, i.e. the
+     * "winter time" offset for most timezones.
+     */
+    long getStandardOffset();
+
     boolean hasFixedOffset();
 }
