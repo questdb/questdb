@@ -422,7 +422,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonJoinRecord,
                     groupByMapFragment,
                     groupByMapSink,
-                    functionUpdater
+                    functionUpdater,
+                    circuitBreaker
             );
         } finally {
             frameMemoryPool.releaseParquetBuffers();
@@ -458,7 +459,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             HorizonJoinRecord horizonJoinRecord,
             GroupByMapFragment groupByMapFragment,
             RecordSink groupByMapSink,
-            GroupByFunctionsUpdater functionUpdater
+            GroupByFunctionsUpdater functionUpdater,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         atom.resetLocalStats(groupByMapFragment.slotId);
 
@@ -480,6 +482,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final long masterTsScale = atom.getMasterTimestampScale();
 
         while (horizonIterator.next()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
@@ -633,7 +636,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     horizonJoinRecord,
                     groupByMapFragment,
                     groupByMapSink,
-                    functionUpdater
+                    functionUpdater,
+                    circuitBreaker
             );
         } finally {
             frameMemoryPool.releaseParquetBuffers();

@@ -381,6 +381,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
             // Next, iterate through the master rows looking into the index we've built.
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -534,6 +535,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
             // Next, iterate through the master rows looking into the index we've built.
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
 
                 rows.ensureCapacity(valueSizeInLongs);
@@ -693,6 +695,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             }
 
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
 
                 rows.ensureCapacity(valueSizeInLongs);
@@ -884,6 +887,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             }
 
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -1066,6 +1070,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             }
 
             for (long r = 0; r < frameRowCount; r++) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.setRowIndex(r);
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
@@ -1341,6 +1346,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                 // Process filtered master rows
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
@@ -1489,6 +1495,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -1643,6 +1650,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
 
@@ -1830,6 +1838,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
                 }
 
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
@@ -2008,6 +2017,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
 
                 // Process filtered master rows
                 for (long p = 0; p < filteredRowCount; p++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     long r = rows.get(p);
                     record.setRowIndex(r);
                     rows.ensureCapacity(valueSizeInLongs);
