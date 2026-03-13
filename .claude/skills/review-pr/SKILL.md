@@ -59,7 +59,27 @@ Launch the following agents in parallel. Each agent receives the full PR diff an
 
 **Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`, `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper error propagation. Flag every potential panic site.
 
-Combine all agent findings into a single deduplicated report at the end.
+Combine all agent findings into a single deduplicated **draft** report. Do NOT present this draft to the user yet — it goes straight into verification.
+
+## Step 3b: Verify every finding against source code
+
+The parallel review agents work from the diff alone and frequently produce false positives — especially around memory ownership, polymorphic dispatch, Rust control-flow guarantees, and JNI lifecycle conventions. Every finding MUST be verified before it is reported.
+
+For each finding in the draft report:
+
+1. **Read the actual source code** at the exact lines cited. Do not rely on the agent's description alone.
+2. **Trace the full code path**: follow callers, inheritance hierarchies, and runtime types. A method called on a base-class reference may dispatch to a subclass override (e.g., `PartitionDescriptor.clear()` vs `OwnedMemoryPartitionDescriptor.clear()`).
+3. **Check both sides of JNI/FFI boundaries**: if a finding involves Java↔Rust interaction, read both the Java caller and the Rust JNI function. Verify ownership transfer, error propagation, and cleanup on both sides.
+4. **For resource leak claims**: trace every allocation to its corresponding free/close on ALL code paths (happy path, error path, finally blocks). Check for polymorphic `close()`/`clear()` overrides.
+5. **For Rust panic claims**: verify whether the panic site is actually reachable. Trace control flow backwards — a preceding guard or early return may make it unreachable.
+6. **Classify each finding** as:
+   - **CONFIRMED** — the bug is real and reproducible via the traced code path
+   - **FALSE POSITIVE** — the code is actually correct (explain why)
+   - **CONFIRMED with nuance** — the issue exists but is less severe than stated (explain)
+
+**Move false positives to a separate "Downgraded" section** at the end of the report. For each, give a one-line explanation of why it was dismissed. This lets the PR author verify the reasoning and catch verification mistakes.
+
+Launch verification agents in parallel where findings are independent. Each verification agent should read surrounding source files, not just the diff.
 
 ## Review checklists
 
@@ -127,10 +147,13 @@ Review the diff for:
 
 ## Step 4: Output
 
-Structure findings as:
+Present ONLY verified findings (false positives are excluded). Structure as:
 
 ### Critical
-Issues that must be fixed before merge.
+Issues that must be fixed before merge. Each must include:
+- Exact file path and line numbers
+- Code path trace showing why the bug is real
+- Suggested fix
 
 ### Moderate
 Issues worth addressing but not blocking.
@@ -138,6 +161,12 @@ Issues worth addressing but not blocking.
 ### Minor
 Style nits and suggestions.
 
+### Downgraded (false positives)
+Findings from the initial review that were dismissed after source code verification. For each, state:
+- The original claim (one line)
+- Why it was dismissed (one line, citing the specific code that disproves it)
+
 ### Summary
 - One-line verdict: approve, request changes, or needs discussion
 - Highlight any regressions or tradeoffs
+- State how many draft findings were verified vs dropped as false positives (e.g., "8 findings verified, 4 false positives removed")
