@@ -33,6 +33,8 @@ public interface RecordComparator {
 
     void setLeft(Record record);
 
+    @SuppressWarnings("unused")
+    // this is bytecode generated method and bytecode generate implementations
     default void setRankMaps(ObjList<DirectIntList> rankMaps) {
     }
 }

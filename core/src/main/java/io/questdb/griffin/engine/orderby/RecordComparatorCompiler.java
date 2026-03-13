@@ -403,12 +403,8 @@ public class RecordComparatorCompiler {
             int columnIndex = (index > 0 ? index : -index) - 1;
             int recordType = fieldRecordTypes.getQuick(i);
             switch (recordType) {
-                case RECORD_TYPE_DECIMAL128 -> {
-                    fieldIndex = instrumentSetLeftMethodDecimal128(columnIndex, fieldIndex);
-                }
-                case RECORD_TYPE_DECIMAL256 -> {
-                    fieldIndex = instrumentSetLeftMethodDecimal256(columnIndex, fieldIndex);
-                }
+                case RECORD_TYPE_DECIMAL128 -> fieldIndex = instrumentSetLeftMethodDecimal128(columnIndex, fieldIndex);
+                case RECORD_TYPE_DECIMAL256 -> fieldIndex = instrumentSetLeftMethodDecimal256(columnIndex, fieldIndex);
                 case RECORD_TYPE_SYMBOL_RANKED -> {
                     // this.f_i = SortKeyEncoder.rank(this.rm_j, record.getInt(colIdx))
                     int rmFieldIndex = symbolRankMapFieldIndices.getQuick(symbolIdx++);
@@ -791,7 +787,7 @@ public class RecordComparatorCompiler {
                     }
                     break;
                 case ColumnType.SYMBOL:
-                    if (metadata != null && metadata.isSymbolTableStatic(index)) {
+                    if (metadata.isSymbolTableStatic(index)) {
                         fieldType = "I";
                         poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)I"), "getInt");
                         comparatorClass = Integer.class;

@@ -297,6 +297,10 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
+            toSink0(sink, partitionByRecord);
+        }
+
+        static void toSink0(PlanSink sink, VirtualRecord partitionByRecord) {
             sink.val("()");
             if (partitionByRecord != null) {
                 sink.val(" over (");

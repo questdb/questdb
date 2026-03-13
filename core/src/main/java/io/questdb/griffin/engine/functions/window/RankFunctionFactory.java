@@ -321,15 +321,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
-            sink.val("()");
-            if (partitionByRecord != null) {
-                sink.val(" over (");
-                sink.val("partition by ");
-                sink.val(partitionByRecord.getFunctions());
-                sink.val(')');
-            } else {
-                sink.val(" over ()");
-            }
+            PercentRankFunctionFactory.PercentRankNoOrderFunction.toSink0(sink, partitionByRecord);
         }
     }
 
