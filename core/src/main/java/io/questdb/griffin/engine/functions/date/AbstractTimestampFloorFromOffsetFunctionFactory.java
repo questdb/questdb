@@ -332,12 +332,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             }
             final long tzOff = tzRules.getOffset(timestamp);
             final long localTimestamp = timestamp + tzOff;
-            long result = floorFunc.floor(localTimestamp, stride, from);
-
-            long gapDuration = tzRules.getDstGapOffset(result);
-            if (gapDuration != 0) {
-                result = floorFunc.floor(result - gapDuration, stride, from);
-            }
+            final long result = floorFunc.floor(localTimestamp, stride, from);
             final long resultTzOff = tzRules.getOffset(result - tzOff);
             return result - resultTzOff + offset;
         }
