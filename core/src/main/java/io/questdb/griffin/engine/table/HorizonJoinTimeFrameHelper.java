@@ -221,9 +221,7 @@ public class HorizonJoinTimeFrameHelper {
      * @return rowId if found, Long.MIN_VALUE otherwise
      */
     public long findAsOfRow(long targetTimestamp) {
-
         if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
-
             return cachedAsOfRowId;
         }
         cachedAsOfRowId = Long.MIN_VALUE;
@@ -259,7 +257,6 @@ public class HorizonJoinTimeFrameHelper {
                                 timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
                                 final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
                                 if (nextRowTs > targetTimestamp) {
-
                                     final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
                                     cachedAsOfRowId = result;
                                     cachedNextRowTs = nextRowTs;
@@ -332,9 +329,7 @@ public class HorizonJoinTimeFrameHelper {
             if (rowLo == Long.MIN_VALUE) {
                 // Navigate through remaining frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
-
                     final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
-
                     if (frameEstimateHi <= targetTimestamp) {
                         // Frame is entirely before target, record as candidate
                         if (timeFrameCursor.open() > 0) {
@@ -371,20 +366,17 @@ public class HorizonJoinTimeFrameHelper {
 
                         // Frame is entirely after target, return best found so far
                         if (bestRowIndex != Long.MIN_VALUE) {
-
                             bookmarkedFrameIndex = bestFrameIndex;
                             bookmarkedRowIndex = bestRowIndex;
                             return Rows.toRowID(bestFrameIndex, bestRowIndex);
                         }
                         // Bookmark current frame so subsequent searches with larger timestamps can find it
                         bookmarkCurrentFrame(0);
-
                         return Long.MIN_VALUE;
                     }
 
                     // Frame is entirely after target
                     if (bestRowIndex != Long.MIN_VALUE) {
-
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
                         return Rows.toRowID(bestFrameIndex, bestRowIndex);

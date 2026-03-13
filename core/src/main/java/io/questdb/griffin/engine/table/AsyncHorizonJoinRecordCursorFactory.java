@@ -80,6 +80,7 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * Factory for parallel horizon join query execution.
  */
 public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final long BWD_SCAN_ABSOLUTE_THRESHOLD = 131_072;
     private static final long MIN_GAP = 1_024;
     private static final long SWITCH_FACTOR = 8;
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
