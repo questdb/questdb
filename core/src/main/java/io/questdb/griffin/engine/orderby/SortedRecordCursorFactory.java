@@ -62,7 +62,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                 configuration.getSqlSortValueMaxPages()
         );
         this.base = base;
-        this.cursor = new SortedRecordCursor(chain);
+        this.cursor = new SortedRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
         this.sortColumnFilter = sortColumnFilter;
     }
 

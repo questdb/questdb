@@ -22,19 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.std.DirectIntList;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public interface RecordComparator {
-    int compare(Record record);
+public class ArgMaxCharTimestampGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "arg_max(AN)";
+    }
 
-    void setLeft(Record record);
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    @SuppressWarnings("unused")
-    // this is bytecode generated method and bytecode generate implementations
-    default void setRankMaps(ObjList<DirectIntList> rankMaps) {
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new ArgMaxCharTimestampGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }

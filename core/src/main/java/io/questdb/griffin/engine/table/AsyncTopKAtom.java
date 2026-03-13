@@ -42,7 +42,9 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -61,6 +63,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final ObjList<RecordComparator> perWorkerComparators;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<PageFrameMemoryRecord> perWorkerRecordsB;
+    private final ObjList<DirectIntList> rankMaps;
     private final int workerCount;
 
     public AsyncTopKAtom(
@@ -94,6 +97,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                     2
             );
 
+            this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, orderByFilter);
             final Class<RecordComparator> clazz = recordComparatorCompiler.compile(orderByMetadata, orderByFilter);
             this.ownerComparator = recordComparatorCompiler.newInstance(clazz);
             this.ownerRecordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
@@ -135,6 +139,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     @Override
     public void clear() {
+        Misc.freeObjListAndKeepObjects(rankMaps);
         Misc.free(ownerChain);
         Misc.free(ownerRecordA);
         Misc.free(ownerRecordB);
@@ -207,6 +212,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         filterCtx.initFilters(symbolTableSource, executionContext);
+        buildRankMaps(symbolTableSource);
 
         ownerRecordA.of(symbolTableSource);
         ownerRecordB.of(symbolTableSource);
@@ -244,5 +250,14 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @Override
     public void toPlan(PlanSink sink) {
         filterCtx.toPlan(sink);
+    }
+
+    private void buildRankMaps(SymbolTableSource symbolTableSource) {
+        SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, ownerComparator);
+        if (rankMaps != null) {
+            for (int w = 0; w < workerCount; w++) {
+                perWorkerComparators.getQuick(w).setRankMaps(rankMaps);
+            }
+        }
     }
 }
