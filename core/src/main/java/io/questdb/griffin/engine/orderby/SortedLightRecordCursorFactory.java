@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
 public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -48,15 +49,22 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
-        LongTreeChain chain = new LongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
-        );
         this.base = base;
-        this.cursor = new SortedLightRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
         this.sortColumnFilter = sortColumnFilter;
+        LongTreeChain chain = null;
+        try {
+            chain = new LongTreeChain(
+                    configuration.getSqlSortKeyPageSize(),
+                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortLightValuePageSize(),
+                    configuration.getSqlSortLightValueMaxPages()
+            );
+            this.cursor = new SortedLightRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
+        } catch (Throwable th) {
+            Misc.free(chain);
+            close();
+            throw th;
+        }
     }
 
     public static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
@@ -111,7 +119,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 }
