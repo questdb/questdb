@@ -44,7 +44,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class IlpAndPgWireInsertSelectBenchmark {
     public static final int COOLDOWN_PERIOD_SECONDS = 30;
-    private static final int INSERT_BATCH_SIZE = 100;
+    private static final int INSERT_BATCH_SIZE = 1_000;
     private static final int N_INSERTERS = 1;
     private static final int N_SELECTORS = 1;
     private static final long RUNTIME_SECONDS = 10;
@@ -121,7 +121,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     if (useIlp) {
-                        try (Sender sender = Sender.fromConfig("ws::addr=localhost:9000;in_flight_window=1")) {
+                        try (Sender sender = Sender.fromConfig("ws::addr=localhost:9000;")) {
                             for (long i = 1; ; i++) {
                                 sender.table("tango")
                                         .longColumn("n", 0)
