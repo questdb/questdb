@@ -4281,7 +4281,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     hasDroppedAny = true;
-                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
                 } catch (Exception e) {
                     LOG.error().$("Error while dropping table, view or materialized view [").$(tableName).$(", error=").$(e).I$();
                     dropAllTablesFailures.put(tableName, e.getMessage());

@@ -1,6 +1,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -37,9 +38,11 @@ public class GenericDropOperation implements Operation {
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        final TableToken tableToken = engine.getTableTokenIfExists(entityName);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             if (compiler.execute(this, sqlExecutionContext)) {
-                engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(entityName);
+                assert tableToken != null;
+                engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(tableToken);
             }
         }
         return ImmutableDoneOperationFuture.INSTANCE;

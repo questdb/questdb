@@ -47,7 +47,7 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableOrViewOrMatViewDropped(String tableName) {
+    public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
     }
 
     @Override

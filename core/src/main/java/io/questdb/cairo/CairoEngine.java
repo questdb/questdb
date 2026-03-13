@@ -2138,7 +2138,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             struct.onCreated(this, tableToken);
         } catch (Throwable th) {
-            ddlListener.onTableOrViewOrMatViewDropped(tableToken.getTableName());
+            ddlListener.onTableOrViewOrMatViewDropped(tableToken);
             throw th;
         }
     }
