@@ -12846,7 +12846,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         139.22127942393962\t2\t44.80468966861358\t94.41658975532606\t1970-01-03T13:30:00.000000000Z
                         94.55893004802432\t1\t94.55893004802432\t94.55893004802432\t1970-01-03T14:00:00.000000000Z
                         """,
-                "select sum(a), count(), min(a), max(a), k from x sample by 30m fill(20.56, null, prev, prev, linear)",
+                "select sum(a), count(), min(a), max(a), k from x sample by 30m fill(20.56, null, prev, prev)",
                 "create table x as " +
                         "(" +
                         "select" +
