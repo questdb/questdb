@@ -183,12 +183,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // They must be distinct OS fds even when pointing to the same file,
                 // because the reader and writer maintain independent cursor positions.
                 // Rust closes both fds when the ParquetUpdater is dropped.
-                final int readerFdRaw, writerFdRaw;
+                int readerFdOs = -1, writerFdOs = -1;
                 long readerFd = -1, writerFd = -1;
                 final long writeFileSize;
                 try {
                     readerFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                    readerFdRaw = Files.detach(readerFd);
+                    readerFdOs = Files.detach(readerFd);
+                    readerFd = -1;
                     if (isRewrite) {
                         // Rewrite mode: write to a new partition directory named by txn.
                         // The old directory (srcNameTxn) is left intact and queued for removal on commit.
@@ -197,20 +198,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
                         writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
-                        writerFdRaw = Files.detach(writerFd);
+                        writerFdOs = Files.detach(writerFd);
+                        writerFd = -1;
                         writeFileSize = 0;
                     } else {
                         writerFd = TableUtils.openRW(ff, path.$(), LOG, opts);
-                        writerFdRaw = Files.detach(writerFd);
+                        writerFdOs = Files.detach(writerFd);
+                        writerFd = -1;
                         writeFileSize = parquetSize;
                     }
                 } catch (Throwable e) {
                     if (readerFd != -1) {
                         ff.close(readerFd);
                     }
+                    if (readerFdOs != -1) {
+                        Files.closeDetached(readerFdOs);
+                    }
                     if (writerFd != -1) {
                         ff.close(writerFd);
                     }
+                    // writerFdOs is not closed on error because in this catch is always -1;
+                    //noinspection ConstantValue
+                    assert writerFdOs == -1;
                     throw e;
                 }
 
@@ -219,9 +228,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // (via File drop). Skip Java-side close once ownership transfers.
                 partitionUpdater.of(
                         path.$(),
-                        readerFdRaw,
+                        readerFdOs,
                         parquetSize,
-                        writerFdRaw,
+                        writerFdOs,
                         writeFileSize,
                         timestampIndex,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
