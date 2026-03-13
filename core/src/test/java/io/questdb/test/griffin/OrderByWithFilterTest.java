@@ -345,7 +345,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [address]
                             VirtualRecord
                               functions: [timestamp_floor('minute',ts),concat([address,workspace]),address]
@@ -392,7 +392,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [ts, month, method_id]
                             VirtualRecord
                               functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]
@@ -439,7 +439,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     SelectedRecord
-                        Sort
+                        Encode sort
                           keys: [ts desc]
                             VirtualRecord
                               functions: [timestamp_floor('minute',ts),ts1,concat([address,workspace]),ts]
@@ -502,7 +502,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [mta_tax]
                             SelectedRecord
                                 Async JIT Filter workers: 1
@@ -552,7 +552,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     SelectedRecord
-                        Sort
+                        Encode sort
                           keys: [mta_tax]
                             SelectedRecord
                                 Hash Join Light

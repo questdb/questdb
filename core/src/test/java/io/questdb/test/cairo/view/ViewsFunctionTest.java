@@ -178,7 +178,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     true,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [id]
                                 SelectedRecord
                                     tables()

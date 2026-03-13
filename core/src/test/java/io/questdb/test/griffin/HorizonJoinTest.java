@@ -3188,7 +3188,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Verify the query plan
             assertPlanNoLeakCheck(
                     sql,
-                    "Radix sort light\n" +
+                    "Encode sort light\n" +
                             "  keys: [sec_offs]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sec_offs,avg]\n" +

@@ -1,0 +1,143 @@
+---
+name: review-pr
+description: Review a GitHub pull request against QuestDB coding standards
+argument-hint: [PR number or URL]
+allowed-tools: Bash(gh *), Read, Grep, Glob, Agent
+---
+
+Review the pull request `$ARGUMENTS`.
+
+## Review mindset
+
+You are a senior QuestDB engineer performing a blocking code review. QuestDB is mission-critical software deployed on spacecraft — bugs can cause data loss or system failures that cannot be patched after deployment. There is zero tolerance for correctness issues, resource leaks, or undefined behavior. Be critical, thorough, and opinionated. Your job is to catch problems before they ship, not to be nice.
+
+- **Assume nothing is correct until you've verified it.** Read surrounding code to understand context — don't just look at the diff in isolation.
+- **Flag every issue you find**, no matter how small. Do not soften language or hedge. Say "this is wrong" not "this might be an issue".
+- **Do not praise the code.** Skip "looks good", "nice work", "clever approach". Focus entirely on problems and risks.
+- **Think adversarially.** For each change, ask: what inputs break this? What happens under concurrent access? What if this runs on a 10-billion-row table? What if the column is NULL? What if the partition is empty?
+- **Check what's missing**, not just what's there. Missing tests, missing error handling, missing edge cases, missing documentation for non-obvious behavior.
+- **Verify every claim.** If the PR title says "fix", verify the bug actually existed and the fix is correct. If it says "improve performance", look for benchmarks or reason about the algorithmic change — does it actually improve things, or could it regress in other cases? If it says "simplify", verify the new code is actually simpler and doesn't drop behavior. Treat the PR description as an unverified hypothesis, not a statement of fact.
+- **Read the full context of changed files** when the diff alone is ambiguous. Use Read/Grep/Glob to inspect the surrounding code, callers, and related tests.
+
+## Step 1: Gather PR context
+
+Fetch PR metadata, diff, and any review comments:
+
+```bash
+gh pr view $ARGUMENTS --json number,title,body,labels,state
+gh pr diff $ARGUMENTS
+gh pr view $ARGUMENTS --comments
+```
+
+## Step 2: PR title and description
+
+Check against CLAUDE.md conventions:
+- Title follows Conventional Commits: `type(scope): description`
+- Description repeats the verb (e.g., `fix(sql): fix ...` not `fix(sql): DECIMAL ...`)
+- Description speaks to end-user impact, not implementation internals
+- If fixing an issue, `Fixes #NNN` is at the top of the body
+- Tone is level-headed and analytical, no superlatives or bold emphasis on numbers
+- Labels match the PR scope (SQL, Performance, Core, etc.)
+
+## Step 3: Parallel review
+
+Launch the following agents in parallel. Each agent receives the full PR diff and should read surrounding source files as needed for context.
+
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths.
+
+**Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures.
+
+**Agent 3 — Performance & allocations:** Regressions, zero-GC violations, `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths, SIMD opportunities.
+
+**Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management.
+
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage.
+
+**Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies.
+
+**Agent 7 — PR metadata & conventions:** Title format, description quality, commit messages, labels, SQL style in tests.
+
+**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`, `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper error propagation. Flag every potential panic site.
+
+Combine all agent findings into a single deduplicated report at the end.
+
+## Review checklists
+
+Review the diff for:
+
+### Correctness & bugs
+- NULL handling: distinguish sentinel NULL vs actual NULL
+- Edge cases and error paths
+- SqlException positions point at the offending character, not the expression start
+- Logic errors, off-by-one, incorrect bounds, wrong operator precedence
+
+### Concurrency
+- Race conditions: unsynchronized shared mutable state, missing volatile, unsafe publication
+- Lock ordering issues that could cause deadlocks
+- Thread-safety of data structures used across threads
+
+### Performance
+- Performance regressions: changes that make hot paths slower or increase complexity
+- Unnecessary allocations on data paths (zero-GC requirement)
+- Use of `java.util.*` collections (HashMap, ArrayList, etc.) instead of QuestDB's own zero-GC collections in `io.questdb.std`
+- String creation or concatenation on hot paths (use CharSink, StringSink, or direct char[] instead)
+- Capturing lambdas on hot paths — lambdas that capture local variables or instance fields allocate a new object on every invocation. Non-capturing lambdas (static method refs, no closed-over state) are safe as the JVM caches them. Flag any capturing lambda on a data path.
+- Autoboxing on hot paths — primitive-to-wrapper conversions (`int` → `Integer`, `long` → `Long`, etc.) allocate silently. Watch for primitives passed to generic methods, stored in `java.util.*` collections, or returned from methods with wrapper return types.
+- Missing SIMD or vectorization opportunities
+- Inefficient algorithms where QuestDB already provides optimized alternatives
+
+### Code quality
+- Code smell: overly complex methods, deep nesting, unclear intent, dead code
+- No third-party Java dependencies on data paths
+
+### QuestDB coding standards
+- Class members grouped by kind (static vs instance) and visibility, sorted alphabetically
+- Boolean names use `is...` / `has...` prefix
+- Modern Java features: enhanced switch, multiline strings, pattern variables in instanceof
+
+### Resource management
+- Resources properly closed in all code paths (especially error paths)
+- try-with-resources used where applicable
+- Native memory freed correctly
+
+### SQL conventions (if tests or SQL involved)
+- Keywords in UPPERCASE
+- `expr::TYPE` cast syntax preferred over CAST()
+- Underscores in numbers >= 5 digits (e.g., 1_000_000)
+- Multiline strings for complex queries
+- No DELETE statements (suggest DROP PARTITION or soft delete)
+- Tests use `assertMemoryLeak()`, `assertQueryNoLeakCheck()`, `execute()` for DDL
+- Single INSERT for multiple rows
+
+### Test review
+- **Coverage gaps:** For every new or changed code path, verify a corresponding test exists. If not, flag it explicitly as "missing test for X".
+- **Error path coverage:** Are failure cases, exceptions, and edge conditions tested — not just the happy path?
+- **NULL tests:** Are NULL inputs, NULL columns, and NULL expression results tested?
+- **Boundary conditions:** Empty tables, empty partitions, single-row tables, max-value inputs, zero-length strings.
+- **Concurrency tests:** If the code touches shared state, are there tests that exercise concurrent access?
+- **Resource leak tests:** Tests must use `assertMemoryLeak()` for anything that allocates native memory.
+- **Test quality:** Are tests actually asserting the right thing? Watch for tests that pass trivially, assert on wrong values, or test implementation details instead of behavior.
+- **Regression tests:** If this PR fixes a bug, is there a test that reproduces the original bug and would fail without the fix?
+- Use Grep/Glob to find existing test files for the changed classes and verify they cover the new behavior.
+
+### Commit messages
+- Plain English titles (no Conventional Commits prefix), under 50 chars
+- Full long-form body description
+- Active voice, naming the acting subject
+
+## Step 4: Output
+
+Structure findings as:
+
+### Critical
+Issues that must be fixed before merge.
+
+### Moderate
+Issues worth addressing but not blocking.
+
+### Minor
+Style nits and suggestions.
+
+### Summary
+- One-line verdict: approve, request changes, or needs discussion
+- Highlight any regressions or tradeoffs
