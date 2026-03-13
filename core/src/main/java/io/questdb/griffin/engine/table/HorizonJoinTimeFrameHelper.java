@@ -52,6 +52,8 @@ public class HorizonJoinTimeFrameHelper {
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
+    // Backward scan row counter, used by the adaptive switching logic in AsyncHorizonJoinRecordCursorFactory
+    private long backwardScanRows;
     // Backward watermark: lowest rowId we've backward-scanned (inclusive)
     private long backwardWatermark = Long.MAX_VALUE;
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
@@ -60,15 +62,6 @@ public class HorizonJoinTimeFrameHelper {
     // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
     private long cachedAsOfRowId = Long.MIN_VALUE;
     private long cachedNextRowTs = Long.MIN_VALUE;
-    // Diagnostic counters (reset per frame via toTop)
-    long backwardScanRows;
-    long findAsOfBookmarkHits;
-    long findAsOfCacheHits;
-    long findAsOfCalls;
-    long findAsOfFrameScans;
-    long findAsOfMisses;
-    long findAsOfSearchHits;
-    long forwardScanRows;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
     private Record record;
@@ -228,9 +221,9 @@ public class HorizonJoinTimeFrameHelper {
      * @return rowId if found, Long.MIN_VALUE otherwise
      */
     public long findAsOfRow(long targetTimestamp) {
-        findAsOfCalls++;
+
         if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
-            findAsOfCacheHits++;
+
             return cachedAsOfRowId;
         }
         cachedAsOfRowId = Long.MIN_VALUE;
@@ -266,7 +259,7 @@ public class HorizonJoinTimeFrameHelper {
                                 timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
                                 final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
                                 if (nextRowTs > targetTimestamp) {
-                                    findAsOfBookmarkHits++;
+
                                     final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
                                     cachedAsOfRowId = result;
                                     cachedNextRowTs = nextRowTs;
@@ -339,7 +332,7 @@ public class HorizonJoinTimeFrameHelper {
             if (rowLo == Long.MIN_VALUE) {
                 // Navigate through remaining frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
-                    findAsOfFrameScans++;
+
                     final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
 
                     if (frameEstimateHi <= targetTimestamp) {
@@ -378,39 +371,36 @@ public class HorizonJoinTimeFrameHelper {
 
                         // Frame is entirely after target, return best found so far
                         if (bestRowIndex != Long.MIN_VALUE) {
-                            findAsOfSearchHits++;
+
                             bookmarkedFrameIndex = bestFrameIndex;
                             bookmarkedRowIndex = bestRowIndex;
                             return Rows.toRowID(bestFrameIndex, bestRowIndex);
                         }
                         // Bookmark current frame so subsequent searches with larger timestamps can find it
                         bookmarkCurrentFrame(0);
-                        findAsOfMisses++;
+
                         return Long.MIN_VALUE;
                     }
 
                     // Frame is entirely after target
                     if (bestRowIndex != Long.MIN_VALUE) {
-                        findAsOfSearchHits++;
+
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
                         return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     // Bookmark current frame so subsequent searches with larger timestamps can find it
                     bookmarkCurrentFrame(0);
-                    findAsOfMisses++;
                     return Long.MIN_VALUE;
                 }
 
                 if (rowLo == Long.MIN_VALUE) {
                     // No more frames, return best found
                     if (bestRowIndex != Long.MIN_VALUE) {
-                        findAsOfSearchHits++;
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
                         return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
-                    findAsOfMisses++;
                     return Long.MIN_VALUE;
                 }
             }
@@ -423,17 +413,14 @@ public class HorizonJoinTimeFrameHelper {
         // Try linear scan first
         long scanResult = linearScanAsOf(targetTimestamp, rowLo);
         if (scanResult >= 0) {
-            findAsOfSearchHits++;
             return bookmarkAndCache(scanResult);
         } else if (scanResult == Long.MIN_VALUE) {
             // All rows in scan range are > target, check if we have a previous best
             if (bestRowIndex != Long.MIN_VALUE) {
-                findAsOfSearchHits++;
                 bookmarkedFrameIndex = bestFrameIndex;
                 bookmarkedRowIndex = bestRowIndex;
                 return Rows.toRowID(bestFrameIndex, bestRowIndex);
             }
-            findAsOfMisses++;
             return Long.MIN_VALUE;
         }
 
@@ -441,14 +428,12 @@ public class HorizonJoinTimeFrameHelper {
         final long searchStart = -scanResult - 1;
         final long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
         if (searchResult != Long.MIN_VALUE) {
-            findAsOfSearchHits++;
             return bookmarkAndCache(searchResult);
         }
 
         // Binary search found no rows <= target from searchStart onward.
         // The linear scan confirmed all rows in [rowLo, searchStart) were <= target,
         // so the ASOF match is the last one: searchStart - 1.
-        findAsOfSearchHits++;
         return bookmarkAndCache(searchStart - 1);
     }
 
@@ -533,7 +518,6 @@ public class HorizonJoinTimeFrameHelper {
 
         while (true) {
             long currentRowId = Rows.toRowID(frameIndex, rowIndex);
-            forwardScanRows++;
 
             // Check if we've reached the target
             if (currentRowId > targetRowId) {
@@ -575,6 +559,10 @@ public class HorizonJoinTimeFrameHelper {
                 timeFrameCursor.recordAt(record, frameIndex, rowIndex);
             }
         }
+    }
+
+    public long getBackwardScanRows() {
+        return backwardScanRows;
     }
 
     /**
@@ -641,31 +629,7 @@ public class HorizonJoinTimeFrameHelper {
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
-        // Reset diagnostic counters
         backwardScanRows = 0;
-        findAsOfBookmarkHits = 0;
-        findAsOfCacheHits = 0;
-        findAsOfCalls = 0;
-        findAsOfFrameScans = 0;
-        findAsOfMisses = 0;
-        findAsOfSearchHits = 0;
-        forwardScanRows = 0;
-    }
-
-    /**
-     * Bookmark the result row and populate the ASOF cache for the ultra-fast path.
-     * Reads the next row's timestamp to determine how long the cached result stays valid.
-     */
-    private long bookmarkAndCache(long resultRowIndex) {
-        bookmarkCurrentFrame(resultRowIndex);
-        final long result = Rows.toRowID(timeFrame.getFrameIndex(), resultRowIndex);
-        final long nextRow = resultRowIndex + 1;
-        if (nextRow < timeFrame.getRowHi()) {
-            timeFrameCursor.recordAtRowIndex(record, nextRow);
-            cachedAsOfRowId = result;
-            cachedNextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-        }
-        return result;
     }
 
     /**
@@ -700,6 +664,22 @@ public class HorizonJoinTimeFrameHelper {
             }
         }
 
+        return result;
+    }
+
+    /**
+     * Bookmark the result row and populate the ASOF cache for the ultra-fast path.
+     * Reads the next row's timestamp to determine how long the cached result stays valid.
+     */
+    private long bookmarkAndCache(long resultRowIndex) {
+        bookmarkCurrentFrame(resultRowIndex);
+        final long result = Rows.toRowID(timeFrame.getFrameIndex(), resultRowIndex);
+        final long nextRow = resultRowIndex + 1;
+        if (nextRow < timeFrame.getRowHi()) {
+            timeFrameCursor.recordAtRowIndex(record, nextRow);
+            cachedAsOfRowId = result;
+            cachedNextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+        }
         return result;
     }
 
