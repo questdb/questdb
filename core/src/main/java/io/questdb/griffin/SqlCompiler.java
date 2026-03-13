@@ -51,10 +51,11 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      *
      * @param op               the operation to execute
      * @param executionContext the context, required for logging and also for recompiling the operation's SQL text
+     * @return true if the operation was performed, false if it was a no-op (e.g. IF EXISTS on a missing entity, or IF NOT EXISTS on an existing one)
      * @throws SqlException   in case of known, typically validation, errors
      * @throws CairoException in case of unexpected, typically runtime, errors
      */
-    void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
+    boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 

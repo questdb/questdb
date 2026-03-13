@@ -99,7 +99,7 @@ public class ArgMaxDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
                                 sink,
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
                                               keys: [sym]

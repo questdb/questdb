@@ -336,7 +336,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
             case ColumnType.STRING -> STRING_HEADER_TYPE;
             case ColumnType.BINARY -> BINARY_HEADER_TYPE;
-            case ColumnType.VARCHAR -> VARCHAR_HEADER_TYPE;
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VARCHAR_HEADER_TYPE;
             default -> UNDEFINED_CODE;
         };
     }
