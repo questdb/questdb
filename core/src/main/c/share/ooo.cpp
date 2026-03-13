@@ -1455,16 +1455,17 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
 }
 
 // ska_sort_entries: MSD radix sort entry point.
-// For large arrays (>= 100K entries), performs the first radix pass
+// For large arrays (>= parallelThreshold), performs the first radix pass
 // single-threaded, then sorts each resulting bucket in parallel across
 // all available cores. This is safe because buckets occupy disjoint
-// memory regions.
+// memory regions. The threshold is configurable from Java via
+// cairo.sql.sort.encoded.parallel.threshold (default: 1,024,000).
 template <typename T>
-void ska_sort_entries(T *arr, int64_t count) {
+void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
     constexpr int ENTRY_LONGS = static_cast<int>(sizeof(T) / sizeof(uint64_t));
     constexpr int maxWordIndex = ENTRY_LONGS - 1;
 
-    if (count < 100 * 1024) {
+    if (count < parallelThreshold) {
         msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
         return;
     }
@@ -1597,9 +1598,9 @@ void ska_sort_entries(T *arr, int64_t count) {
 //
 // O(n) for already-sorted data, O(n log n) for random data.
 template <typename T>
-void vergesort_entries(T *arr, int64_t count) {
+void vergesort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
     if (count < 128) {
-        ska_sort_entries<T>(arr, count);
+        ska_sort_entries<T>(arr, count, parallelThreshold);
         return;
     }
 
@@ -1640,7 +1641,7 @@ void vergesort_entries(T *arr, int64_t count) {
                     begin_unstable = begin_range;
                 if (begin_unstable >= 0) {
                     ska_sort_entries<T>(arr + begin_unstable,
-                                        lo - begin_unstable);
+                                        lo - begin_unstable, parallelThreshold);
                     if (numBounds < MAX_BOUNDS - 2)
                         bounds[numBounds++] = begin_unstable;
                     begin_unstable = -1;
@@ -1661,7 +1662,7 @@ void vergesort_entries(T *arr, int64_t count) {
                     begin_unstable = begin_range;
                 if (begin_unstable >= 0) {
                     ska_sort_entries<T>(arr + begin_unstable,
-                                        lo - begin_unstable);
+                                        lo - begin_unstable, parallelThreshold);
                     if (numBounds < MAX_BOUNDS - 2)
                         bounds[numBounds++] = begin_unstable;
                     begin_unstable = -1;
@@ -1677,7 +1678,7 @@ void vergesort_entries(T *arr, int64_t count) {
 
     // Sort remaining unstable region
     if (begin_unstable >= 0 && begin_unstable < count) {
-        ska_sort_entries<T>(arr + begin_unstable, count - begin_unstable);
+        ska_sort_entries<T>(arr + begin_unstable, count - begin_unstable, parallelThreshold);
         if (numBounds == 0 || bounds[numBounds - 1] != begin_unstable)
             bounds[numBounds++] = begin_unstable;
     }
@@ -1687,35 +1688,36 @@ void vergesort_entries(T *arr, int64_t count) {
 
     // Multiple sorted runs detected. Fall back to radix sort on the
     // entire array instead of std::inplace_merge, which may heap-allocate.
-    ska_sort_entries<T>(arr, count);
+    ska_sort_entries<T>(arr, count, parallelThreshold);
 }
 
 template <int ENTRY_LONGS>
-void sort_encoded_impl(uint8_t *addr, int64_t count) {
+void sort_encoded_impl(uint8_t *addr, int64_t count, int64_t parallelThreshold) {
     if (count <= 1) return;
 
     using T = typename entry_traits<ENTRY_LONGS>::type;
-    vergesort_entries<T>(reinterpret_cast<T *>(addr), count);
+    vergesort_entries<T>(reinterpret_cast<T *>(addr), count, parallelThreshold);
 }
 
 extern "C" {
 
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntries(
-    JNIEnv *env, jclass cl, jlong addr, jlong count, jint keyLongs) {
+    JNIEnv *env, jclass cl, jlong addr, jlong count, jint keyLongs,
+    jlong parallelThreshold) {
     auto *base = reinterpret_cast<uint8_t *>(addr);
 
     switch (keyLongs) {
         case 1:
-            sort_encoded_impl<2>(base, count);
+            sort_encoded_impl<2>(base, count, parallelThreshold);
             break;
         case 2:
-            sort_encoded_impl<3>(base, count);
+            sort_encoded_impl<3>(base, count, parallelThreshold);
             break;
         case 3:
-            sort_encoded_impl<4>(base, count);
+            sort_encoded_impl<4>(base, count, parallelThreshold);
             break;
         case 4:
-            sort_encoded_impl<5>(base, count);
+            sort_encoded_impl<5>(base, count, parallelThreshold);
             break;
         default:
             assert(false && "unsupported keyLongs");

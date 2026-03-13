@@ -103,6 +103,8 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                     if (selected.size() == 0) {
                         continue;
                     }
+                    long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                    node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
                     StringSink orderByClause = buildOrderByClause(rnd, selected);
                     assertSortMatch(orderByClause, "SELECT * FROM fuzz_sort ORDER BY ", targetMax, "light");
                 }
@@ -115,6 +117,8 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
                     if (selected.size() == 0) {
                         continue;
                     }
+                    long parallelThreshold = rnd.nextLong(rowCount * 2L + 1);
+                    node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, parallelThreshold);
                     StringSink orderByClause = buildOrderByClause(rnd, selected);
                     assertSortMatch(
                             orderByClause,
