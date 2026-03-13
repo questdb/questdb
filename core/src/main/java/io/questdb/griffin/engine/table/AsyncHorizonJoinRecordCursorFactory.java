@@ -447,10 +447,12 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
      * positions, populating the key map. Cost = O(gap). Wins when K is large or rare keys
      * cause deep backward scans.
      * <p>
-     * Each frame starts in backward-only mode. If the backward scan cost at a position
-     * exceeds gap * SWITCH_FACTOR, the algorithm switches to forward scan mode for the
-     * remainder of the frame. This avoids expensive backward scans for high-cardinality
-     * key spaces or data with rare/infrequent keys.
+     * Each frame starts in backward-only mode. The algorithm switches to forward scan mode
+     * for the remainder of the frame when either: (a) backward scan cost at a position exceeds
+     * gap * SWITCH_FACTOR (relative check, within a partition), or (b) backward scan cost
+     * exceeds BWD_SCAN_ABSOLUTE_THRESHOLD (absolute check, handles cross-partition boundaries
+     * where the relative check cannot trigger). This avoids expensive backward scans for
+     * high-cardinality key spaces or data with rare/infrequent keys.
      */
     private static void processHorizonTimestamps(
             AsyncHorizonJoinAtom atom,
@@ -517,9 +519,11 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                             if (prevAsOfRowId != Long.MIN_VALUE) {
                                 // Gap is exact when both rowIds are in the same frame (frame-index
                                 // bits cancel out). For cross-frame changes it overestimates massively
-                                // (>=2^44), so the switch condition safely won't trigger.
+                                // (>=2^44), so the relative check safely won't trigger. The absolute
+                                // threshold handles that case (e.g., deep scans for rare keys right
+                                // before a partition boundary).
                                 long gap = asOfRowId - prevAsOfRowId;
-                                if (gap > MIN_GAP && bwdScanCost > gap * SWITCH_FACTOR) {
+                                if ((gap > MIN_GAP && bwdScanCost > gap * SWITCH_FACTOR) || bwdScanCost > BWD_SCAN_ABSOLUTE_THRESHOLD) {
                                     isForwardScanMode = true;
                                     slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
                                 }
