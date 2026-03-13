@@ -98,7 +98,8 @@ offending character, not the start of the expression.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
-  message body (not just the title).
+  message body (not just the title). Lines in the description can be longer than
+  in the commit title: up to 72 characters.
 - In PR test plans, use plain bullet points (`-`), not check marks or
   checkboxes.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
