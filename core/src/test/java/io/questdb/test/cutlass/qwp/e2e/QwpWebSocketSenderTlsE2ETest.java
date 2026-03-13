@@ -65,7 +65,7 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", tlsPort, true)) {
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", tlsPort, true)) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("tls_async")
                                 .longColumn("id", i)

@@ -80,7 +80,7 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // Don't call flush() - close() should flush automatically
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort, false)) {
                     for (int i = 0; i < 25; i++) {
                         sender.table("async_auto_flush")
                                 .longColumn("id", i)
@@ -103,7 +103,7 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort, false)) {
                     for (int i = 0; i < 25_000_000; i++) {
                         sender.table("async_large")
                                 .longColumn("id", i)
@@ -127,7 +127,7 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort, false)) {
                     for (int i = 0; i < 200000; i++) {
                         sender.table("async_multi")
                                 .longColumn("id", i)
@@ -150,7 +150,7 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort, false)) {
                     sender.table("async_single")
                             .longColumn("value", 42L)
                             .at(1000000000000L, ChronoUnit.MICROS);
@@ -179,11 +179,13 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // Configure to flush every 2 rows - creates many small batches
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         2, // autoFlushRows - very small to force many batches
                         1024 * 1024, // autoFlushBytes
-                        100_000_000L // autoFlushIntervalNanos
+                        100_000_000L, // autoFlushIntervalNanos
+                        QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
+                        null
                 )) {
                     // 200 rows / 2 per batch = 100 batches
                     for (int i = 0; i < 200; i++) {
@@ -208,7 +210,7 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort, false)) {
                     for (int i = 0; i < 50; i++) {
                         // Interleave writes to two tables
                         sender.table("async_table_a")
@@ -238,11 +240,13 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // Configure to flush every 10 rows
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         10, // autoFlushRows
                         1024 * 1024, // autoFlushBytes
-                        100_000_000L // autoFlushIntervalNanos
+                        100_000_000L, // autoFlushIntervalNanos
+                        QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
+                        null
                 )) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("async_row_flush")
@@ -2046,11 +2050,13 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 for (int s = 0; s < senderCount; s++) {
                     final int senderIdx = s;
                     threads[s] = new Thread(() -> {
-                        try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                                 "localhost", httpPort, false,
                                 autoFlushRows,
                                 1024 * 1024,
-                                100_000_000L
+                                100_000_000L,
+                                QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
+                                null
                         )) {
                             barrier.await();
                             for (int i = 0; i < rowsPerSender; i++) {
@@ -2101,11 +2107,13 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 for (int s = 0; s < senderCount; s++) {
                     final int senderIdx = s;
                     threads[s] = new Thread(() -> {
-                        try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                                 "localhost", httpPort, false,
                                 autoFlushRows,
                                 1024 * 1024,
-                                100_000_000L
+                                100_000_000L,
+                                QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
+                                null
                         )) {
                             barrier.await();
                             for (int i = 0; i < rowsPerSender; i++) {
@@ -2163,11 +2171,13 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 for (int s = 0; s < senderCount; s++) {
                     final int senderIdx = s;
                     threads[s] = new Thread(() -> {
-                        try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                                 "localhost", httpPort, false,
                                 autoFlushRows,
                                 1024 * 1024,
-                                100_000_000L
+                                100_000_000L,
+                                QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
+                                null
                         )) {
                             barrier.await();
                             for (int i = 0; i < rowsPerSender; i++) {

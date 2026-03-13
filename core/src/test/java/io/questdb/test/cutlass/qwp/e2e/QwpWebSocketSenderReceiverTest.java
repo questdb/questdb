@@ -647,12 +647,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // 1024 byte threshold; row-count and interval triggers disabled
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         Integer.MAX_VALUE,                      // autoFlushRows: disabled
                         1024,                                   // autoFlushBytes: 1 KB
                         TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                        windowSize
+                        windowSize,
+                        null
                 )) {
                     // ~200 bytes per row; 20 rows = ~4 KB >> 1 KB threshold
                     String largePayload = "A".repeat(180);
@@ -698,12 +699,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 // 50 ms interval; row-count and byte triggers disabled
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         Integer.MAX_VALUE,                      // autoFlushRows: disabled
                         Integer.MAX_VALUE,                      // autoFlushBytes: disabled
                         TimeUnit.MILLISECONDS.toNanos(50),      // autoFlushInterval: 50 ms
-                        windowSize
+                        windowSize,
+                        null
                 )) {
                     // Send first row — stays buffered (interval hasn't elapsed yet)
                     sender.table("ws_autoflush_interval")
@@ -1494,12 +1496,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         5,                              // autoFlushRows = 5: small batches
                         Integer.MAX_VALUE,              // autoFlushBytes: disabled
                         TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                        10                              // inFlightWindow
+                        10,                             // inFlightWindow
+                        null
                 )) {
                     // Send multiple small batches
                     for (int batch = 0; batch < 10; batch++) {
@@ -2209,12 +2212,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 // immediately, window=8. The sender has no cached schema for
                 // "ws_async_multi_err", so it cannot detect the type mismatch.
                 boolean errorCaught = false;
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         1,                              // autoFlushRows: every row
                         Integer.MAX_VALUE,              // autoFlushBytes: disabled
                         TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                        windowSize
+                        windowSize,
+                        null
                 )) {
                     // Good rows to a separate table — auto-flushed, no ACK wait
                     for (int i = 1; i <= 3; i++) {
@@ -2902,12 +2906,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int totalRows = 10000;
 
                 // Create sender with high in-flight window
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                         "localhost", httpPort, false,
                         10,                             // autoFlushRows = 10: batch every 10 rows
                         Integer.MAX_VALUE,              // autoFlushBytes: disabled
                         TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                        inFlightWindowSize
+                        inFlightWindowSize,
+                        null
                 )) {
                     for (int i = 0; i < totalRows; i++) {
                         sender.table("ws_ack_test")
@@ -5585,14 +5590,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
      * Window=1 gives sync behavior, window>1 gives async behavior.
      */
     private QwpWebSocketSender createSender(int port) {
-        if (windowSize == 1) {
-            return QwpWebSocketSender.connect("localhost", port);
-        } else {
-            return QwpWebSocketSender.connectAsync("localhost", port, false,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    windowSize);
-        }
+        return QwpWebSocketSender.connect("localhost", port, false,
+                QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
+                QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
+                QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
+                windowSize,
+                null);
     }
 }

@@ -51,9 +51,9 @@ public class IlpAndPgWireInsertSelectBenchmark {
     private static boolean useIlp;
 
     public static void main(String[] args) throws Exception {
-        useIlp = false;
-        runBenchmark();
-        Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
+//        useIlp = false;
+//        runBenchmark();
+//        Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
         useIlp = true;
         runBenchmark();
     }
@@ -121,7 +121,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     if (useIlp) {
-                        try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;auto_flush=off;")) {
+                        try (Sender sender = Sender.fromConfig("ws::addr=localhost:9000;in_flight_window=1")) {
                             for (long i = 1; ; i++) {
                                 sender.table("tango")
                                         .longColumn("n", 0)
@@ -131,6 +131,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
                                     inserterProgress.lazySet(taskId, i);
                                 }
                                 if (System.nanoTime() > deadline) {
+                                    sender.flush();
                                     inserterProgress.set(taskId, i);
                                     break;
                                 }
