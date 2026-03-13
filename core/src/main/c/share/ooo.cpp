@@ -28,6 +28,9 @@
 #include "simd.h"
 #include "ooo_dispatch.h"
 #include <algorithm>
+#include <thread>
+#include <atomic>
+#include <vector>
 #include "ooo_radix.h"
 #include "pdqsort/pdqsort.h"
 
@@ -1452,13 +1455,137 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
 }
 
 // ska_sort_entries: MSD radix sort entry point.
-// Starts from the most significant byte (shift=56) of the first key word
-// and radix-sorts across all words including rowId
+// For large arrays (>= 100K entries), performs the first radix pass
+// single-threaded, then sorts each resulting bucket in parallel across
+// all available cores. This is safe because buckets occupy disjoint
+// memory regions.
 template <typename T>
 void ska_sort_entries(T *arr, int64_t count) {
-    constexpr int maxWordIndex =
-        static_cast<int>(sizeof(T) / sizeof(uint64_t)) - 1;
-    msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
+    constexpr int ENTRY_LONGS = static_cast<int>(sizeof(T) / sizeof(uint64_t));
+    constexpr int maxWordIndex = ENTRY_LONGS - 1;
+
+    if (count < 100 * 1024) {
+        msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
+        return;
+    }
+
+    // --- First pass: count + cycle sort by MSB (single-threaded) ---
+    int64_t counts[256];
+    memset(counts, 0, sizeof(counts));
+    for (int64_t i = 0; i < count; i++) {
+        counts[(entry_word(arr[i], 0) >> 56) & 0xFF]++;
+    }
+
+    // Find first non-uniform byte position to partition on. Skip uniform
+    // bytes iteratively to reach a byte that actually splits the data.
+    int shift = 56;
+    int wordIndex = 0;
+    for (;;) {
+        int sole_bucket = -1;
+        for (int v = 0; v < 256; v++) {
+            if (counts[v] > 0) {
+                if (sole_bucket >= 0) { sole_bucket = -1; break; }
+                sole_bucket = v;
+            }
+        }
+        if (sole_bucket < 0) break; // found a byte that splits
+
+        // Uniform byte: advance to the next byte position
+        if (shift > 0) {
+            shift -= 8;
+        } else if (wordIndex < maxWordIndex) {
+            shift = 56;
+            wordIndex++;
+        } else {
+            return; // all bytes identical, nothing to sort
+        }
+        memset(counts, 0, sizeof(counts));
+        for (int64_t i = 0; i < count; i++) {
+            counts[(entry_word(arr[i], wordIndex) >> shift) & 0xFF]++;
+        }
+    }
+
+    // In-place cycle sort for the first non-uniform byte
+    int64_t offsets[256];
+    int64_t ends[256];
+    int64_t sum = 0;
+    for (int v = 0; v < 256; v++) {
+        offsets[v] = sum;
+        sum += counts[v];
+        ends[v] = sum;
+    }
+    for (int v = 0; v < 256; v++) {
+        while (offsets[v] < ends[v]) {
+            auto bv = static_cast<uint8_t>(
+                (entry_word(arr[offsets[v]], wordIndex) >> shift) & 0xFF);
+            if (bv == v) { offsets[v]++; continue; }
+            T elem = arr[offsets[v]];
+            do {
+                std::swap(elem, arr[offsets[bv]++]);
+                bv = static_cast<uint8_t>(
+                    (entry_word(elem, wordIndex) >> shift) & 0xFF);
+            } while (bv != v);
+            arr[offsets[v]++] = elem;
+        }
+    }
+
+    // Compute next shift/wordIndex for recursive sorts
+    int nextShift;
+    int nextWordIndex;
+    if (shift > 0) {
+        nextShift = shift - 8;
+        nextWordIndex = wordIndex;
+    } else if (wordIndex < maxWordIndex) {
+        nextShift = 56;
+        nextWordIndex = wordIndex + 1;
+    } else {
+        return; // last byte was the final one
+    }
+
+    // --- Parallel sort of buckets ---
+    // Collect non-trivial buckets (count > 1) with their positions.
+    struct Bucket { T *ptr; int64_t count; };
+    Bucket work[256];
+    int numWork = 0;
+    sum = 0;
+    for (int v = 0; v < 256; v++) {
+        if (counts[v] > 1) {
+            work[numWork++] = {arr + sum, counts[v]};
+        }
+        sum += counts[v];
+    }
+
+    if (numWork == 0) return;
+
+    static int cachedHw = [] {
+        unsigned hw = std::thread::hardware_concurrency();
+        return (hw > 2) ? static_cast<int>(hw) : 2;
+    }();
+    int numThreads = cachedHw;
+    if (numThreads > numWork) numThreads = numWork;
+
+    if (numThreads < 2) {
+        // Single bucket or single core: sort sequentially
+        for (int i = 0; i < numWork; i++) {
+            msd_radix_byte<T>(work[i].ptr, work[i].count,
+                              nextShift, nextWordIndex, maxWordIndex);
+        }
+        return;
+    }
+
+    std::atomic<int> nextIdx(0);
+    std::thread threads[256];
+    for (int t = 0; t < numThreads; t++) {
+        threads[t] = std::thread([&]() {
+            for (;;) {
+                int idx = nextIdx.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= numWork) break;
+                msd_radix_byte<T>(work[idx].ptr, work[idx].count,
+                                  nextShift, nextWordIndex, maxWordIndex);
+            }
+        });
+    }
+    for (int t = 0; t < numThreads; t++) threads[t].join();
 }
 
 // vergesort_entries: adaptive sort with jump-sampling run detection.
@@ -1558,20 +1685,9 @@ void vergesort_entries(T *arr, int64_t count) {
 
     if (numBounds <= 2) return;
 
-    // Merge runs pairwise using std::inplace_merge.
-    while (numBounds > 2) {
-        int newNum = 0;
-        for (int b = 0; b + 2 < numBounds; b += 2) {
-            std::inplace_merge(arr + bounds[b], arr + bounds[b + 1],
-                               arr + bounds[b + 2], encoded_less{});
-            bounds[newNum++] = bounds[b];
-        }
-        if ((numBounds - 1) % 2 == 1) {
-            bounds[newNum++] = bounds[numBounds - 2];
-        }
-        bounds[newNum++] = count;
-        numBounds = newNum;
-    }
+    // Multiple sorted runs detected. Fall back to radix sort on the
+    // entire array instead of std::inplace_merge, which may heap-allocate.
+    ska_sort_entries<T>(arr, count);
 }
 
 template <int ENTRY_LONGS>

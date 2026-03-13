@@ -5560,8 +5560,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ObjList<ExpressionNode> nodes = model.getOrderBy();
                         int position = 0;
                         for (int j = 0, y = nodes.size(); j < y; j++) {
-                            if (Chars.equals(column, nodes.getQuick(i).token)) {
-                                position = nodes.getQuick(i).position;
+                            if (Chars.equals(column, nodes.getQuick(j).token)) {
+                                position = nodes.getQuick(j).position;
                                 break;
                             }
                         }

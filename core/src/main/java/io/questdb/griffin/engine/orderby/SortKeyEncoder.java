@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -61,6 +62,7 @@ public class SortKeyEncoder implements QuietCloseable {
     private final boolean[] isSymbol;
     private final int[] offsets;
     private final ObjList<DirectIntList> rankMaps;
+    private final int[] rankMapSizes;
     private SortKeyType keyType;
     private long padMask;
 
@@ -72,6 +74,7 @@ public class SortKeyEncoder implements QuietCloseable {
         this.isSymbol = new boolean[n];
         this.offsets = new int[n];
         this.columnByteWidths = new int[n];
+        this.rankMapSizes = new int[n];
         boolean hasDecimal128 = false;
         boolean hasDecimal256 = false;
         this.rankMaps = new ObjList<>(n);
@@ -214,6 +217,7 @@ public class SortKeyEncoder implements QuietCloseable {
                 StaticSymbolTable sst = getStaticSymbolTable(baseCursor.getSymbolTable(columnIndices[i]));
                 int symbolCount = sst.getSymbolCount();
                 buildRankMap(sst, rankMaps.getQuick(i));
+                rankMapSizes[i] = symbolCount;
 
                 if (symbolCount <= 0xFF) {
                     columnByteWidths[i] = 1;
@@ -237,8 +241,8 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
             case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
             case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32 -> 4;
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE,
-                 ColumnType.GEOLONG, ColumnType.DECIMAL64 -> 8;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE, ColumnType.GEOLONG,
+                 ColumnType.DECIMAL64 -> 8;
             case ColumnType.DECIMAL128 -> 16;
             case ColumnType.DECIMAL256 -> 32;
             case ColumnType.SYMBOL -> {
@@ -379,7 +383,7 @@ public class SortKeyEncoder implements QuietCloseable {
         long key;
         if (isSymbol[0]) {
             int symKey = record.getInt(colIdx);
-            int rank = (symKey < 0) ? 0 : rankMaps.getQuick(0).get(symKey);
+            int rank = (symKey < 0 || symKey >= rankMapSizes[0]) ? 0 : rankMaps.getQuick(0).get(symKey);
             key = Integer.toUnsignedLong(desc ? ~rank : rank) << shift;
             Unsafe.getUnsafe().putLong(destAddr, key);
             Unsafe.getUnsafe().putLong(destAddr + 8, rowId);
@@ -439,8 +443,7 @@ public class SortKeyEncoder implements QuietCloseable {
 
             if (isSymbol[i]) {
                 int key = record.getInt(colIdx);
-                DirectIntList rankMap = rankMaps.getQuick(i);
-                int rank = (key < 0) ? 0 : rankMap.get(key);
+                int rank = (key < 0 || key >= rankMapSizes[i]) ? 0 : rankMaps.getQuick(i).get(key);
                 encodeUnsignedRank(addr, rank, columnByteWidths[i], desc);
             } else {
                 switch (columnTypes[i]) {
@@ -475,6 +478,8 @@ public class SortKeyEncoder implements QuietCloseable {
                         encodeUnsignedLong(addr + 16, decimal256Sink.getLh(), desc);
                         encodeUnsignedLong(addr + 24, decimal256Sink.getLl(), desc);
                     }
+                    default ->
+                            throw CairoException.nonCritical().put("unexpected type in encodeGeneric: ").put(ColumnType.nameOf(columnTypes[i]));
                 }
             }
         }
