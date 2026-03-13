@@ -208,15 +208,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         writeFileSize = parquetSize;
                     }
                 } catch (Throwable e) {
-                    if (readerFd != -1) {
-                        ff.close(readerFd);
-                    }
+                    O3Utils.close(ff, readerFd);
                     if (readerFdOs != -1) {
                         Files.closeDetached(readerFdOs);
                     }
-                    if (writerFd != -1) {
-                        ff.close(writerFd);
-                    }
+                    O3Utils.close(ff, writerFd);
                     // writerFdOs is not closed on error because in this catch is always -1;
                     //noinspection ConstantValue
                     assert writerFdOs == -1;
@@ -3035,6 +3031,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                         indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
+                        vFd = kFd = -1;
 
                         final long columnTop = tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
@@ -3074,6 +3071,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         indexWriter.commit();
                     } finally {
                         Misc.free(indexWriter);
+                        O3Utils.close(ff, kFd);
+                        O3Utils.close(ff, vFd);
                     }
                 }
             }
