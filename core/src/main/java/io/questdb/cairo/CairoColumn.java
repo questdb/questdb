@@ -191,7 +191,7 @@ public class CairoColumn implements Sinkable {
             } else {
                 sink.put(ParquetCompression.getCompressionName(compression - 1));
                 if (level > 0) {
-                    sink.put(' ').put(level);
+                    sink.put(' ').put(level - 1);
                 }
             }
             sink.put(", ");

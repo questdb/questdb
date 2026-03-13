@@ -785,6 +785,8 @@ public final class TableUtils {
 
     /**
      * Extracts the compression level (bits 16-23) from a packed Parquet config.
+     * The raw value uses +1 encoding: 0 = not set, 1 = level 0, 2 = level 1, etc.
+     * Callers that display the level to the user should subtract 1 from non-zero values.
      */
     public static int getParquetConfigCompressionLevel(int packed) {
         return (packed >> PARQUET_CONFIG_LEVEL_SHIFT) & PARQUET_CONFIG_LEVEL_MASK;
@@ -812,10 +814,12 @@ public final class TableUtils {
      * <ul>
      *   <li>bits 0-7: encoding id ({@code ParquetEncoding.ENCODING_*})</li>
      *   <li>bits 8-15: compression codec id ({@code ParquetCompression} constants)</li>
-     *   <li>bits 16-23: compression level (codec-specific)</li>
+     *   <li>bits 16-23: compression level with +1 encoding (0 = not set, 1 = level 0, 2 = level 1, etc.)</li>
      *   <li>bit 24: explicit flag (always set by this method)</li>
      * </ul>
      * A packed value of 0 means "use defaults for everything".
+     * Both compression and level use +1 encoding so that 0 can serve as a "not set" sentinel
+     * while still allowing the user to specify level 0 (e.g., gzip store mode).
      */
     public static int packParquetConfig(int encoding, int compression, int level) {
         return (encoding & PARQUET_CONFIG_ENCODING_MASK)

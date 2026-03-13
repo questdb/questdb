@@ -1632,7 +1632,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET(encoding [, compression[(level)]])
         int encoding = ParquetEncoding.ENCODING_DEFAULT;
         int compression = -1;
-        int level = 0;
+        int level = -1;
 
         CharSequence tok = expectToken(lexer, "'('");
         if (!Chars.equals(tok, '(')) {
@@ -1691,7 +1691,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // In packed form, compression is shifted +1 (0=default, 1=uncompressed, 2=snappy, etc.)
         // to distinguish "not set" from "explicitly uncompressed".
         int packedCompression = compression >= 0 ? compression + 1 : 0;
-        int parquetEncodingConfig = TableUtils.packParquetConfig(encoding, packedCompression, level);
+        // Level is also shifted +1 (0=not set, 1=level 0, 2=level 1, etc.)
+        int packedLevel = level >= 0 ? level + 1 : 0;
+        int parquetEncodingConfig = TableUtils.packParquetConfig(encoding, packedCompression, packedLevel);
         alterOperationBuilder.ofSetParquetEncoding(
                 tableNamePosition,
                 tableToken,

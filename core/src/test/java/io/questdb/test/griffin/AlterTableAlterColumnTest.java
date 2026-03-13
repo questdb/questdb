@@ -194,7 +194,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertEquals(0, TableUtils.getParquetConfigEncoding(config));
                 // compression = ZSTD (4) + 1 = 5 in packed form
                 Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
             }
         });
     }
@@ -224,7 +224,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
                 Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
             }
         });
     }
@@ -246,7 +246,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
                 Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
             }
         });
     }
@@ -467,7 +467,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 // compression = ZSTD (4) + 1 = 5 in packed form
                 Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
             }
         });
     }
@@ -518,7 +518,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
                 Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
             }
         });
     }
