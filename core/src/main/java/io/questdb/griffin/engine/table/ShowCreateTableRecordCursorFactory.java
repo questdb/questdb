@@ -269,7 +269,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 if (compression > 0) {
                     sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
                     if (level > 0) {
-                        sink.putAscii('(').put(level).putAscii(')');
+                        sink.putAscii('(').put(level - 1).putAscii(')');
                     }
                 }
                 sink.putAscii(')');

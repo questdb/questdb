@@ -580,13 +580,16 @@ impl ParquetEncodingConfig {
         Self(raw)
     }
 
-    /// Build an explicit config from encoding, compression, and level IDs.
+    /// Build an explicit config from encoding, compression, and semantic level.
+    /// The level is packed with +1 offset (0 = not set sentinel, 1 = level 0, etc.),
+    /// matching the Java packing convention. Pass -1 for "no level specified".
     #[cfg(test)]
     pub fn new(encoding: i32, compression: i32, level: i32) -> Self {
+        let packed_level = if level >= 0 { (level + 1) as u32 } else { 0u32 };
         Self(
             ((encoding as u32 & ENCODING_MASK)
                 | ((compression as u32 & COMPRESSION_MASK) << COMPRESSION_SHIFT)
-                | ((level as u32 & LEVEL_MASK) << LEVEL_SHIFT)
+                | ((packed_level & LEVEL_MASK) << LEVEL_SHIFT)
                 | EXPLICIT_FLAG) as i32,
         )
     }
@@ -632,15 +635,24 @@ impl ParquetEncodingConfig {
             1 => Some(CompressionOptions::Uncompressed),
             2 => Some(CompressionOptions::Snappy),
             3 => Some(CompressionOptions::Gzip(
-                parquet2::compression::GzipLevel::try_new(if level > 0 { level as u8 } else { 6 })
-                    .ok(),
+                parquet2::compression::GzipLevel::try_new(if level > 0 {
+                    (level - 1) as u8
+                } else {
+                    6
+                })
+                .ok(),
             )),
             4 => Some(CompressionOptions::Brotli(
-                parquet2::compression::BrotliLevel::try_new(if level > 0 { level } else { 1 }).ok(),
+                parquet2::compression::BrotliLevel::try_new(if level > 0 { level - 1 } else { 1 })
+                    .ok(),
             )),
             5 => Some(CompressionOptions::Zstd(
-                parquet2::compression::ZstdLevel::try_new(if level > 0 { level as i32 } else { 1 })
-                    .ok(),
+                parquet2::compression::ZstdLevel::try_new(if level > 0 {
+                    (level - 1) as i32
+                } else {
+                    1
+                })
+                .ok(),
             )),
             6 => Some(CompressionOptions::Lz4Raw),
             _ => None,
@@ -682,7 +694,7 @@ mod tests {
     #[test]
     fn test_encoding_plain() {
         assert_eq!(
-            ParquetEncodingConfig::new(1, 0, 0).encoding(),
+            ParquetEncodingConfig::new(1, 0, -1).encoding(),
             Some(Encoding::Plain)
         );
     }
@@ -690,7 +702,7 @@ mod tests {
     #[test]
     fn test_encoding_rle_dictionary() {
         assert_eq!(
-            ParquetEncodingConfig::new(2, 0, 0).encoding(),
+            ParquetEncodingConfig::new(2, 0, -1).encoding(),
             Some(Encoding::RleDictionary)
         );
     }
@@ -698,7 +710,7 @@ mod tests {
     #[test]
     fn test_encoding_delta_length_byte_array() {
         assert_eq!(
-            ParquetEncodingConfig::new(3, 0, 0).encoding(),
+            ParquetEncodingConfig::new(3, 0, -1).encoding(),
             Some(Encoding::DeltaLengthByteArray)
         );
     }
@@ -706,7 +718,7 @@ mod tests {
     #[test]
     fn test_encoding_delta_binary_packed() {
         assert_eq!(
-            ParquetEncodingConfig::new(4, 0, 0).encoding(),
+            ParquetEncodingConfig::new(4, 0, -1).encoding(),
             Some(Encoding::DeltaBinaryPacked)
         );
     }
@@ -714,7 +726,7 @@ mod tests {
     #[test]
     fn test_encoding_byte_stream_split() {
         assert_eq!(
-            ParquetEncodingConfig::new(5, 0, 0).encoding(),
+            ParquetEncodingConfig::new(5, 0, -1).encoding(),
             Some(Encoding::ByteStreamSplit)
         );
     }
@@ -722,12 +734,12 @@ mod tests {
     #[test]
     fn test_encoding_zero_explicit() {
         // explicit flag set but encoding is 0 -> use default
-        assert_eq!(ParquetEncodingConfig::new(0, 0, 0).encoding(), None);
+        assert_eq!(ParquetEncodingConfig::new(0, 0, -1).encoding(), None);
     }
 
     #[test]
     fn test_encoding_unknown_id() {
-        assert_eq!(ParquetEncodingConfig::new(99, 0, 0).encoding(), None);
+        assert_eq!(ParquetEncodingConfig::new(99, 0, -1).encoding(), None);
     }
 
     #[test]
@@ -742,25 +754,25 @@ mod tests {
 
     #[test]
     fn test_compression_uncompressed() {
-        let c = ParquetEncodingConfig::new(0, 1, 0).compression();
+        let c = ParquetEncodingConfig::new(0, 1, -1).compression();
         assert_eq!(c, Some(CompressionOptions::Uncompressed));
     }
 
     #[test]
     fn test_compression_snappy() {
-        let c = ParquetEncodingConfig::new(0, 2, 0).compression();
+        let c = ParquetEncodingConfig::new(0, 2, -1).compression();
         assert_eq!(c, Some(CompressionOptions::Snappy));
     }
 
     #[test]
     fn test_compression_lz4_raw() {
-        let c = ParquetEncodingConfig::new(0, 6, 0).compression();
+        let c = ParquetEncodingConfig::new(0, 6, -1).compression();
         assert_eq!(c, Some(CompressionOptions::Lz4Raw));
     }
 
     #[test]
     fn test_compression_zstd_default_level() {
-        let c = ParquetEncodingConfig::new(0, 5, 0).compression();
+        let c = ParquetEncodingConfig::new(0, 5, -1).compression();
         match c {
             Some(CompressionOptions::Zstd(_)) => {}
             other => panic!("expected Zstd, got {:?}", other),
@@ -778,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_compression_gzip() {
-        let c = ParquetEncodingConfig::new(0, 3, 0).compression();
+        let c = ParquetEncodingConfig::new(0, 3, -1).compression();
         match c {
             Some(CompressionOptions::Gzip(_)) => {}
             other => panic!("expected Gzip, got {:?}", other),
@@ -787,7 +799,7 @@ mod tests {
 
     #[test]
     fn test_compression_brotli() {
-        let c = ParquetEncodingConfig::new(0, 4, 0).compression();
+        let c = ParquetEncodingConfig::new(0, 4, -1).compression();
         match c {
             Some(CompressionOptions::Brotli(_)) => {}
             other => panic!("expected Brotli, got {:?}", other),
@@ -795,8 +807,35 @@ mod tests {
     }
 
     #[test]
+    fn test_compression_gzip_level_zero() {
+        // level 0 = "store without compression", must not become default (6)
+        let c = ParquetEncodingConfig::new(0, 3, 0).compression();
+        match c {
+            Some(CompressionOptions::Gzip(Some(level))) => {
+                assert_eq!(level, parquet2::compression::GzipLevel::try_new(0).unwrap());
+            }
+            other => panic!("expected Gzip(Some(GzipLevel(0))), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compression_brotli_level_zero() {
+        // level 0 is a valid Brotli level, must not become default (1)
+        let c = ParquetEncodingConfig::new(0, 4, 0).compression();
+        match c {
+            Some(CompressionOptions::Brotli(Some(level))) => {
+                assert_eq!(
+                    level,
+                    parquet2::compression::BrotliLevel::try_new(0).unwrap()
+                );
+            }
+            other => panic!("expected Brotli(Some(BrotliLevel(0))), got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_compression_unknown_codec() {
-        assert_eq!(ParquetEncodingConfig::new(0, 99, 0).compression(), None);
+        assert_eq!(ParquetEncodingConfig::new(0, 99, -1).compression(), None);
     }
 
     #[test]
@@ -812,7 +851,7 @@ mod tests {
     #[test]
     fn test_compression_codec_zero_explicit() {
         // explicit flag set, compression codec is 0 -> use global default
-        assert_eq!(ParquetEncodingConfig::new(1, 0, 0).compression(), None);
+        assert_eq!(ParquetEncodingConfig::new(1, 0, -1).compression(), None);
     }
 
     fn col_type(tag: ColumnTypeTag) -> ColumnType {
