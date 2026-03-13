@@ -228,18 +228,22 @@ pub fn binary_to_dict_pages(
     let byte_slices: Vec<Option<&[u8]>> = offsets
         .iter()
         .map(|offset| {
-            let offset =
-                usize::try_from(*offset).expect("invalid offset value in binary aux column");
+            let offset = usize::try_from(*offset).map_err(|_| {
+                fmt_err!(
+                    Layout,
+                    "invalid offset value in binary aux column: {offset}"
+                )
+            })?;
             let len = types::decode::<i64>(&data[offset..offset + size_of_header]);
             if len < 0 {
                 null_count += 1;
-                None
+                Ok(None)
             } else {
                 let value_offset = offset + size_of_header;
-                Some(&data[value_offset..value_offset + len as usize])
+                Ok(Some(&data[value_offset..value_offset + len as usize]))
             }
         })
-        .collect();
+        .collect::<ParquetResult<Vec<_>>>()?;
 
     // Build dictionary
     let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
