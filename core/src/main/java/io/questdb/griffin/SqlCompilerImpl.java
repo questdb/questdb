@@ -3161,6 +3161,65 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofSet();
     }
 
+    private void compilePersist(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // PERSIST TABLE source TO target [IN VOLUME 'vol']
+        QueryProgress.logStart(-1, sqlText, executionContext, false);
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isTableKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected 'TABLE'");
+        }
+
+        tok = expectToken(lexer, "source table name");
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        int sourcePos = lexer.lastTokenPosition();
+        String sourceTable = GenericLexer.unquote(tok).toString();
+
+        tok = expectToken(lexer, "'TO'");
+        if (!isToKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected 'TO'");
+        }
+
+        tok = expectToken(lexer, "target table name");
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        String targetTable = GenericLexer.unquote(tok).toString();
+
+        // Optional IN VOLUME
+        String volume = null;
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && isInKeyword(tok)) {
+            tok = expectToken(lexer, "'VOLUME'");
+            if (!SqlKeywords.isVolumeKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected 'VOLUME'");
+            }
+            tok = expectToken(lexer, "volume alias");
+            volume = GenericLexer.unquote(tok).toString();
+            tok = SqlUtil.fetchNext(lexer);
+        }
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+        }
+
+        // Verify source table exists
+        TableToken sourceToken = executionContext.getTableTokenIfExists(sourceTable);
+        if (sourceToken == null) {
+            throw SqlException.$(sourcePos, "table does not exist [table=").put(sourceTable).put(']');
+        }
+
+        // Execute: CREATE TABLE target AS (SELECT * FROM source) [IN VOLUME 'vol']
+        StringBuilder createSql = new StringBuilder();
+        createSql.append("CREATE TABLE \"").append(targetTable).append("\" AS (SELECT * FROM \"").append(sourceTable).append("\")");
+        if (volume != null) {
+            createSql.append(" IN VOLUME '").append(volume).append("'");
+        }
+        engine.execute(createSql, executionContext);
+
+        // Drop the source memory table
+        engine.execute("DROP TABLE \"" + sourceTable + "\"", executionContext);
+
+        compiledQuery.ofEmpty();
+    }
+
     private void compileRefresh(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = expectToken(lexer, "'materialized'");
         if (!isMaterializedKeyword(tok)) {
@@ -4976,6 +5035,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("unlisten", compileNoOp);
         keywordBasedExecutors.put("reset", compileNoOp);
         keywordBasedExecutors.put("drop", this::compileDrop);
+        keywordBasedExecutors.put("persist", this::compilePersist);
         keywordBasedExecutors.put("vacuum", this::compileVacuum);
         keywordBasedExecutors.put("checkpoint", this::compileCheckpoint);
         keywordBasedExecutors.put("snapshot", this::compileLegacyCheckpoint);

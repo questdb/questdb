@@ -61,6 +61,9 @@ public class RoutingFilesFacade implements FilesFacade {
     private final LongObjHashMap<MergedFindState> mergedFinders = new LongObjHashMap<>();
     private long nextMergedFindPtr = Long.MIN_VALUE + 1; // negative range to avoid collisions
 
+    // Find pointers opened via MemFdFilesFacade, so findName/findNext route correctly.
+    private final LongHashSet memoryFindPtrs = new LongHashSet();
+
     // Database root path, for detecting root-level directory listings.
     private String dbRoot;
 
@@ -324,9 +327,21 @@ public class RoutingFilesFacade implements FilesFacade {
             return mergedFindFirst(path);
         }
         if (isMemoryPathStr(p)) {
-            return memFf.findFirst(path);
+            long ptr = memFf.findFirst(path);
+            if (ptr > 0) {
+                synchronized (this) {
+                    memoryFindPtrs.add(ptr);
+                }
+            }
+            return ptr;
         }
         return diskFf.findFirst(path);
+    }
+
+    private boolean isMemoryFindPtr(long findPtr) {
+        synchronized (this) {
+            return memoryFindPtrs.contains(findPtr);
+        }
     }
 
     @Override
@@ -337,12 +352,10 @@ public class RoutingFilesFacade implements FilesFacade {
                 return mergedFinders.valueAt(idx).nameBuf;
             }
         }
-        // Not a merged find — could be from either facade. Since disk fds are
-        // positive and memFf uses positive auto-increment, we need to track which
-        // facade owns this ptr. For simplicity, try disk first then memFf.
-        long name = diskFf.findName(findPtr);
-        if (name != 0) return name;
-        return memFf.findName(findPtr);
+        if (isMemoryFindPtr(findPtr)) {
+            return memFf.findName(findPtr);
+        }
+        return diskFf.findName(findPtr);
     }
 
     @Override
@@ -360,10 +373,10 @@ public class RoutingFilesFacade implements FilesFacade {
                 return 1;
             }
         }
-        // Delegate to the owning facade.
-        int r = diskFf.findNext(findPtr);
-        if (r != 0) return r;
-        return memFf.findNext(findPtr);
+        if (isMemoryFindPtr(findPtr)) {
+            return memFf.findNext(findPtr);
+        }
+        return diskFf.findNext(findPtr);
     }
 
     @Override
@@ -375,9 +388,10 @@ public class RoutingFilesFacade implements FilesFacade {
                 return state.types.get(state.index);
             }
         }
-        int type = diskFf.findType(findPtr);
-        if (type != Files.DT_UNKNOWN) return type;
-        return memFf.findType(findPtr);
+        if (isMemoryFindPtr(findPtr)) {
+            return memFf.findType(findPtr);
+        }
+        return diskFf.findType(findPtr);
     }
 
     @Override
@@ -390,9 +404,13 @@ public class RoutingFilesFacade implements FilesFacade {
                 return 0;
             }
         }
-        diskFf.findClose(findPtr);
-        memFf.findClose(findPtr);
-        return 0;
+        if (isMemoryFindPtr(findPtr)) {
+            synchronized (this) {
+                memoryFindPtrs.remove(findPtr);
+            }
+            return memFf.findClose(findPtr);
+        }
+        return diskFf.findClose(findPtr);
     }
 
     private long mergedFindFirst(LPSZ path) {

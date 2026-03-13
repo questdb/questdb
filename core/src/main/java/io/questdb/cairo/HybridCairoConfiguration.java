@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemFdFilesFacade;
 import io.questdb.std.RoutingFilesFacade;
 import org.jetbrains.annotations.NotNull;
@@ -42,24 +43,41 @@ import org.jetbrains.annotations.NotNull;
  */
 public class HybridCairoConfiguration extends DefaultCairoConfiguration {
 
+    // Initialized via static holder so it is available during super() constructor
+    // call, which invokes getFilesFacade() through virtual dispatch before the
+    // subclass field assignment executes.
+    private static final ThreadLocal<RoutingFilesFacade> INIT_FF = new ThreadLocal<>();
+
     private final RoutingFilesFacade routingFf;
 
     public HybridCairoConfiguration(CharSequence dbRoot) {
         this(dbRoot, new RoutingFilesFacade(
-                io.questdb.std.FilesFacadeImpl.INSTANCE,
+                FilesFacadeImpl.INSTANCE,
                 MemFdFilesFacade.INSTANCE
         ));
     }
 
     public HybridCairoConfiguration(CharSequence dbRoot, RoutingFilesFacade routingFf) {
-        super(dbRoot);
-        this.routingFf = routingFf;
+        // Store in thread-local before super() so getFilesFacade() can find it.
+        super(initAndReturn(dbRoot, routingFf));
+        this.routingFf = INIT_FF.get();
+        INIT_FF.remove();
+    }
+
+    private static CharSequence initAndReturn(CharSequence dbRoot, RoutingFilesFacade routingFf) {
         routingFf.setDbRoot(dbRoot);
+        INIT_FF.set(routingFf);
+        return dbRoot;
     }
 
     @Override
     public @NotNull FilesFacade getFilesFacade() {
-        return routingFf;
+        // During super() construction, routingFf is still null — use thread-local.
+        RoutingFilesFacade ff = routingFf;
+        if (ff == null) {
+            ff = INIT_FF.get();
+        }
+        return ff;
     }
 
     /**
