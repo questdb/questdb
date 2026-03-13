@@ -5238,6 +5238,46 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTimestampOnlyRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ts_only_ws (ts TIMESTAMP, val LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    // Row with user-supplied timestamp, no other columns
+                    sender.table("ts_only_ws").at(1_000_000L, ChronoUnit.MICROS);
+                    // Row with server-assigned timestamp, no other columns
+                    sender.table("ts_only_ws").atNow();
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ts_only_ws");
+
+                // The user-supplied row carries epoch+1s, which is the earliest in the table;
+                // both rows have null for the val column since no value was provided
+                serverMain.assertSql(
+                        "SELECT ts, val FROM ts_only_ws ORDER BY ts LIMIT 1",
+                        """
+                                ts\tval
+                                1970-01-01T00:00:01.000000Z\tnull
+                                """
+                );
+                serverMain.assertSql(
+                        "SELECT count(), count() - count(val) AS null_count FROM ts_only_ws",
+                        """
+                                count\tnull_count
+                                2\t2
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
     public void testUnicodeInString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(

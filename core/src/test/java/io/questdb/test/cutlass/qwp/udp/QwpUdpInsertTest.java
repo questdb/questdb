@@ -49,30 +49,8 @@ import java.util.concurrent.TimeUnit;
 @RunWith(Parameterized.class)
 public class QwpUdpInsertTest extends AbstractCairoTest {
 
-    @FunctionalInterface
-    interface ReceiverFactory {
-        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
-    }
-
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19002;
-
-    private final ReceiverFactory receiverFactory;
-
-    public QwpUdpInsertTest(String label, ReceiverFactory factory) {
-        this.receiverFactory = factory;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        List<Object[]> params = new ArrayList<>();
-        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
-        if (Os.isLinux()) {
-            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
-        }
-        return params;
-    }
-
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -89,7 +67,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             return false;
         }
     };
-
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -106,6 +83,21 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             return false;
         }
     };
+    private final ReceiverFactory receiverFactory;
+
+    public QwpUdpInsertTest(String label, ReceiverFactory factory) {
+        this.receiverFactory = factory;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> params = new ArrayList<>();
+        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
+        if (Os.isLinux()) {
+            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
+        }
+        return params;
+    }
 
     @Test
     public void testAutoFlushManyColumnTypes() throws Exception {
@@ -169,6 +161,22 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoFlushSingleRowExceedsMtu() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpSender sender = newSender(100)) {
+                sender.table("exceed_mtu")
+                        .stringColumn("big", "x".repeat(200));
+                try {
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("expected LineSenderException");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue(e.getMessage().contains("single row exceeds maximum datagram size"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAutoFlushSingleRowExceedsMtuAfterReplay() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpSender sender = newSender(200)) {
@@ -187,22 +195,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                         .stringColumn("big", "x".repeat(200));
                 try {
                     sender.at(3_000_000L, ChronoUnit.MICROS);
-                    Assert.fail("expected LineSenderException");
-                } catch (LineSenderException e) {
-                    Assert.assertTrue(e.getMessage().contains("single row exceeds maximum datagram size"));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testAutoFlushSingleRowExceedsMtu() throws Exception {
-        assertMemoryLeak(() -> {
-            try (QwpUdpSender sender = newSender(100)) {
-                sender.table("exceed_mtu")
-                        .stringColumn("big", "x".repeat(200));
-                try {
-                    sender.at(1_000_000L, ChronoUnit.MICROS);
                     Assert.fail("expected LineSenderException");
                 } catch (LineSenderException e) {
                     Assert.assertTrue(e.getMessage().contains("single row exceeds maximum datagram size"));
@@ -958,5 +950,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
     private static QwpUdpSender newSender(int maxDatagramSize) {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0, maxDatagramSize);
+    }
+
+    @FunctionalInterface
+    interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }
