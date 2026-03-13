@@ -560,7 +560,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, x, first(v) as v from test sample by 1s",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,x]
@@ -590,7 +590,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t8
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -613,7 +613,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t6
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -636,7 +636,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t20
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -659,7 +659,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t41.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -684,7 +684,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1320.0\t25.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,array_sum]
@@ -709,7 +709,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t510.0\t25.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,dot_product]
@@ -732,7 +732,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1045.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]

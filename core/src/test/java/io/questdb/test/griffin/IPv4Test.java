@@ -2528,7 +2528,7 @@ public class IPv4Test extends AbstractCairoTest {
         assertQuery(
                 """
                         QUERY PLAN
-                        Radix sort light
+                        Encode sort light
                           keys: [ip desc]
                             PageFrame
                                 Row forward scan

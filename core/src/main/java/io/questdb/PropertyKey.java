@@ -138,6 +138,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY("cairo.sql.with.clause.model.pool.capacity"),
     CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY("cairo.sql.compile.view.model.pool.capacity"),
     CAIRO_SQL_ORDER_BY_SORT_ENABLED("cairo.sql.orderby.sort.enabled"),
+    @Deprecated
     CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD("cairo.sql.orderby.radix.sort.threshold"),
     CAIRO_SQL_COPIER_CHUNKED("cairo.sql.copier.chunked"),
     CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY("cairo.sql.insert.model.pool.capacity"),
