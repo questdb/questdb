@@ -1276,7 +1276,8 @@ public class VectFuzzTest {
             long long1 = 0x0123_4567_89AB_CDEFL;
             int elementBytes = 2 * Long.BYTES; // 16 bytes per long_128bit
             int maxOffset = 48;
-            long buffSize = (long) sizes[sizes.length - 1] * elementBytes + maxOffset;
+            // +1 element for overflow sentinel
+            long buffSize = (long) (sizes[sizes.length - 1] + 1) * elementBytes + maxOffset;
             long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
             try {
@@ -1284,8 +1285,9 @@ public class VectFuzzTest {
                     long addr = buffer + offset;
                     for (int size : sizes) {
                         // Pre-fill with a poison pattern so we can detect unfilled holes
+                        // and overflow past the filled region (+1 sentinel element)
                         long poison = 0xBADB_ADBA_DBAD_BAD0L;
-                        for (int i = 0; i < size; i++) {
+                        for (int i = 0; i <= size; i++) {
                             Unsafe.getUnsafe().putLong(addr + (long) i * elementBytes, poison);
                             Unsafe.getUnsafe().putLong(addr + (long) i * elementBytes + Long.BYTES, poison);
                         }
@@ -1300,6 +1302,18 @@ public class VectFuzzTest {
                                         + " (offset=" + offset + ")"
                                         + ": expected [0x" + Long.toHexString(long0) + ", 0x" + Long.toHexString(long1)
                                         + "] but got [0x" + Long.toHexString(actualLo) + ", 0x" + Long.toHexString(actualHi) + "]");
+                            }
+                        }
+
+                        // Verify no overflow past the filled region
+                        if (size > 0) {
+                            long overflowLo = Unsafe.getUnsafe().getLong(addr + (long) size * elementBytes);
+                            long overflowHi = Unsafe.getUnsafe().getLong(addr + (long) size * elementBytes + Long.BYTES);
+                            if (overflowLo != poison || overflowHi != poison) {
+                                Assert.fail("setMemoryLong128 overflow at element " + size + " of " + size
+                                        + " (offset=" + offset + ")"
+                                        + ": sentinel was corrupted [0x" + Long.toHexString(overflowLo)
+                                        + ", 0x" + Long.toHexString(overflowHi) + "]");
                             }
                         }
                     }
@@ -1317,7 +1331,7 @@ public class VectFuzzTest {
         // elements (64 bytes / 32 bytes each). The loop advances by 8, leaving
         // 6 out of every 8 elements untouched.
         TestUtils.assertMemoryLeak(() -> {
-            int[] sizes = new int[]{0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1024, 10_000};
+            int[] sizes = new int[]{0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1024, 10_000};
             // Byte offsets: 0 = aligned, 32 = one long_256bit element into a cache line.
             int[] offsetBytes = new int[]{0, 32};
             long long0 = 0xDEAD_BEEF_CAFE_BABEL;
@@ -1326,7 +1340,8 @@ public class VectFuzzTest {
             long long3 = 0xAAAA_BBBB_CCCC_DDDDL;
             int elementBytes = 4 * Long.BYTES; // 32 bytes per long_256bit
             int maxOffset = 32;
-            long buffSize = (long) sizes[sizes.length - 1] * elementBytes + maxOffset;
+            // +1 element for overflow sentinel
+            long buffSize = (long) (sizes[sizes.length - 1] + 1) * elementBytes + maxOffset;
             long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
             try {
@@ -1334,8 +1349,9 @@ public class VectFuzzTest {
                     long addr = buffer + offset;
                     for (int size : sizes) {
                         // Pre-fill with poison so holes are detectable
+                        // and overflow past the filled region (+1 sentinel element)
                         long poison = 0xBADB_ADBA_DBAD_BAD0L;
-                        for (int i = 0; i < size; i++) {
+                        for (int i = 0; i <= size; i++) {
                             long base = addr + (long) i * elementBytes;
                             Unsafe.getUnsafe().putLong(base, poison);
                             Unsafe.getUnsafe().putLong(base + Long.BYTES, poison);
@@ -1362,6 +1378,23 @@ public class VectFuzzTest {
                                         + ", 0x" + Long.toHexString(a1)
                                         + ", 0x" + Long.toHexString(a2)
                                         + ", 0x" + Long.toHexString(a3) + "]");
+                            }
+                        }
+
+                        // Verify no overflow past the filled region
+                        if (size > 0) {
+                            long base = addr + (long) size * elementBytes;
+                            long o0 = Unsafe.getUnsafe().getLong(base);
+                            long o1 = Unsafe.getUnsafe().getLong(base + Long.BYTES);
+                            long o2 = Unsafe.getUnsafe().getLong(base + 2 * Long.BYTES);
+                            long o3 = Unsafe.getUnsafe().getLong(base + 3 * Long.BYTES);
+                            if (o0 != poison || o1 != poison || o2 != poison || o3 != poison) {
+                                Assert.fail("setMemoryLong256 overflow at element " + size + " of " + size
+                                        + " (offset=" + offset + ")"
+                                        + ": sentinel was corrupted [0x" + Long.toHexString(o0)
+                                        + ", 0x" + Long.toHexString(o1)
+                                        + ", 0x" + Long.toHexString(o2)
+                                        + ", 0x" + Long.toHexString(o3) + "]");
                             }
                         }
                     }
