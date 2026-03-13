@@ -304,7 +304,7 @@ public class AggregateTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Encode sort light\n" +
                             "  keys: [account_uuid]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [account_uuid]\n" +
@@ -356,7 +356,7 @@ public class AggregateTest extends AbstractCairoTest {
             if (enableParallelGroupBy) {
                 assertPlanNoLeakCheck(
                         query,
-                        "Sort light\n" +
+                        "Encode sort light\n" +
                                 "  keys: [account_uuid]\n" +
                                 "    GroupBy vectorized: true workers: 1\n" +
                                 "      keys: [account_uuid]\n" +
@@ -408,7 +408,7 @@ public class AggregateTest extends AbstractCairoTest {
 
             final String plan;
             if (enableParallelGroupBy) {
-                plan = "Sort light\n" +
+                plan = "Encode sort light\n" +
                         "  keys: [org_uuid]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
@@ -421,7 +421,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
                                 : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n");
             } else {
-                plan = "Sort light\n" +
+                plan = "Encode sort light\n" +
                         "  keys: [org_uuid]\n" +
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
