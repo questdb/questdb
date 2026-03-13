@@ -338,7 +338,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     assertSql(
                             """
                                     QUERY PLAN
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp]

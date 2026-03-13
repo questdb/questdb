@@ -55,7 +55,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
                 configuration.getSqlSortLightValueMaxPages()
         );
         this.base = base;
-        this.cursor = new SortedLightRecordCursor(chain, comparator);
+        this.cursor = new SortedLightRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
         this.sortColumnFilter = sortColumnFilter;
     }
 

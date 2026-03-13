@@ -36,7 +36,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -49,6 +51,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private final Function hiFunction;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
+    private final ObjList<DirectIntList> rankMaps;
     private final int timestampIndex;
     // factory does not own the chain, just keeps the reference to enable updating of the limits
     private LimitedSizeLongTreeChain chain;
@@ -77,6 +80,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
+        this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
     }
 
     @Override
@@ -135,9 +139,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         );
 
         if (timestampIndex == -1 || !isFirstN) {
-            this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator);
+            this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, rankMaps);
         } else {
-            this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex);
+            this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex, rankMaps);
         }
         chain.updateLimits(isFirstN, limit);
         ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
@@ -259,7 +263,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 configuration.getSqlSortLightValuePageSize(),
                 configuration.getSqlSortLightValueMaxPages()
         );
-        this.cursor = new SortedLightRecordCursor(chain, comparator);
+        this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);
     }
 
     private boolean isInitialized() {
