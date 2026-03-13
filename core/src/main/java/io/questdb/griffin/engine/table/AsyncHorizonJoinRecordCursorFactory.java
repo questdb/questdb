@@ -69,7 +69,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -84,8 +83,8 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  */
 public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinRecordCursorFactory.class);
-    private static final long MIN_GAP = 64;
-    private static final long SWITCH_FACTOR = 2;
+    private static final long MIN_GAP = 1_024;
+    private static final long SWITCH_FACTOR = 8;
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinRecordCursorFactory::reduce;
     private final AsyncHorizonJoinRecordCursor cursor;
