@@ -272,7 +272,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             if (i > 0) {
                 ref.append(" UNION ALL ");
             }
-            ref.append("SELECT cast(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
             if (keyed) {
                 ref.append(", t.sym");
             }
@@ -404,7 +404,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             if (i > 0) {
                 ref.append(" UNION ALL ");
             }
-            ref.append("SELECT cast(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
             ref.append(", t.sym, p.bid, p.ask");
             ref.append(" FROM (SELECT * FROM (SELECT dateadd('u', ")
                     .append(offsetsMicros[i])

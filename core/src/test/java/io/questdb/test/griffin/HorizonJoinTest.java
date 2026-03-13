@@ -896,6 +896,80 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedAdaptiveScanSwitchCrossPartition() throws Exception {
+        // Tests the absolute threshold path that triggers the adaptive switch
+        // when ASOF positions cross partition boundaries. When prevAsOfRowId and
+        // asOfRowId are in different partitions, the gap overestimates (>=2^44),
+        // so the relative check (bwdScanCost > gap * SWITCH_FACTOR) won't trigger.
+        // The absolute threshold (bwdScanCost > BWD_SCAN_ABSOLUTE_THRESHOLD) handles
+        // this case.
+        assertMemoryLeak(() -> {
+            // Set a low absolute threshold so it triggers with modest backward scan cost.
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 64);
+            // Set high min gap and switch factor so the relative check won't trigger.
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, Long.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, Long.MAX_VALUE);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // 500 price rows per hour across 3 hours (1,500 total).
+            // RARE key appears only once at the very beginning; A everywhere else.
+            // Timestamps 1s apart within each hour partition.
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('s', ((x - 1) % 500)::int, dateadd('h', ((x - 1) / 500)::int, '2024-01-01T00:00:00.000000Z')),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(1500)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            // Trades span across partition boundaries.
+            // The RARE key lookups trigger expensive backward scans that accumulate
+            // cost across partitions, eventually exceeding the absolute threshold.
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T00:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T01:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T01:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T02:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T02:08:00.000000Z', 'RARE', 1.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tn\tavg_price
+                            A\t3\t1.0
+                            RARE\t3\t100.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedMissingSymbolsMultipleOffsets() throws Exception {
         // Mixed existing and missing symbols with multiple horizon offsets.
         // Ensures forward/backward scan state isn't corrupted by missing symbols.
