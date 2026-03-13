@@ -137,7 +137,7 @@ public class WindowJoinTimeFrameHelper {
                     // Setting rowIndex < rowLo causes findPrevailingForMasterRow
                     // to skip to previousFrame().
                     prevailingFrameIndex = timeFrame.getFrameIndex();
-                    prevailingRowIndex = timeFrame.getRowLo() - 1;
+                    prevailingRowIndex = -1; // signal to scan the previous frame
                 }
             }
             rowLo = bookmarkedRowIndex;
