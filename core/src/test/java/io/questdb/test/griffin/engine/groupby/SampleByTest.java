@@ -6579,7 +6579,6 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
-    // temporarily broken, pending rewrite as group by
     @Test
     public void testSampleByFromToFillLinearWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
@@ -6603,7 +6602,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertSql(
                     """
                             ts\tsum
-                            2026-01-01T00:00:00.000000Z\t10.0I
+                            2026-01-01T00:00:00.000000Z\t10.0
                             2026-01-01T00:00:10.000000Z\t20.0
                             2026-01-01T00:00:20.000000Z\t30.0
                             2026-01-01T00:00:30.000000Z\t40.0
@@ -6639,36 +6638,6 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
-    // temporarily broken, pending rewrite as group by
-    @Test
-    public void testSampleByFromToFillLinearWithTimezoneData() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE gaps (
-                      ts TIMESTAMP,
-                      val DOUBLE
-                    ) timestamp(ts)
-                    """);
-            execute("""
-                    INSERT INTO gaps VALUES
-                    ('2026-01-01T00:00:00', 10.0),
-                    ('2026-01-01T00:00:10', 20.0),
-                    ('2026-01-01T00:00:30', 40.0)
-                    """);
-            drainWalQueue();
-
-            assertQueryNoLeakCheck(
-                    "SHOW ME",
-                    "SELECT ts, timestamp_floor_utc('10s', ts, to_utc('2026-01-01T00:59:55','Europe/Berlin'), '00:00', null) bucket, val " +
-                            "FROM gaps ORDER BY ts",
-                    "ts",
-                    true,
-                    false
-            );
-        });
-    }
-
-    // temporarily broken, pending rewrite as group by
     @Test
     public void testSampleByFromToFillLinearWithTimezoneDst() throws Exception {
         assertMemoryLeak(() -> {
@@ -6706,7 +6675,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             SELECT ts, sum(val) FROM dst_data
                             SAMPLE BY 1h
-                            FROM '2026-03-28T22:00:00' TO '2026-03-29T04:00:00'
+                            FROM '2026-03-28T23:00:00' TO '2026-03-29T06:00:00'
                             FILL(LINEAR)
                             ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
                             """
