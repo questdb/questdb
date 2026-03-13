@@ -46,6 +46,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
+    private final long parallelThreshold;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -73,6 +74,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                             + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
                     MAX_HEAP_SIZE_LIMIT
             );
+            this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } catch (Throwable th) {
             close();
@@ -167,38 +169,42 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
 
     private void buildAndSort() {
         // Pre-allocate if size is known
-        long estimatedSize = baseCursor.size();
-        long maxEntries = maxEntryMemBytes / entrySize;
-        if (estimatedSize > 0) {
-            if (estimatedSize > maxEntries) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
-            }
-            entryMem.setCapacity(estimatedSize * longsPerEntry);
-        }
-
-        // Collect (key, rowId) entries
-        entryMem.clear();
-        count = 0;
-        if (estimatedSize > 0) {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                long addr = entryMem.getAppendAddress();
-                encoder.encode(baseRecord, addr, baseRecord.getRowId());
-                entryMem.skip(longsPerEntry);
-                count++;
-            }
-        } else {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                if (count >= maxEntries) {
+        try {
+            long estimatedSize = baseCursor.size();
+            long maxEntries = maxEntryMemBytes / entrySize;
+            if (estimatedSize > 0) {
+                if (estimatedSize > maxEntries) {
                     throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
                 }
-                entryMem.ensureCapacity(longsPerEntry);
-                long addr = entryMem.getAppendAddress();
-                encoder.encode(baseRecord, addr, baseRecord.getRowId());
-                entryMem.skip(longsPerEntry);
-                count++;
+                entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
+
+            // Collect (key, rowId) entries
+            entryMem.clear();
+            count = 0;
+            if (estimatedSize > 0) {
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                }
+            } else {
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (count >= maxEntries) {
+                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                    }
+                    entryMem.ensureCapacity(longsPerEntry);
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(baseRecord, addr, baseRecord.getRowId());
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                }
+            }
+        } finally {
+            Misc.free(encoder);
         }
 
         if (count <= 1) {
@@ -207,7 +213,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             return;
         }
 
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES);
+        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
     }

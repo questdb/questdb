@@ -425,7 +425,7 @@ public final class Vect {
             long tgtAuxAdd
     );
 
-    public static native void sortEncodedEntries(long addr, long count, int keyLongs);
+    public static native void sortEncodedEntries(long addr, long count, int keyLongs, long parallelThreshold);
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 

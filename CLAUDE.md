@@ -20,11 +20,14 @@ Never insert `// ===` or `// ---` banner comments as section headings in any
 Java file — not in production code, not in test code. Methods are sorted
 alphabetically and will not stay grouped by category.
 
-Use modern Java features:
+Use the modern Java 17 features:
 
 - enhanced switch
 - multiline string literal
 - pattern variables in instanceof checks
+
+However, the java-questdb-client module targets Java 11. When writing code in
+the client module, use only legacy Java features.
 
 Whenever dealing with column data, results of expressions, SQL statements, etc.,
 always consider what the behavior should be when something is NULL. Be careful
@@ -34,10 +37,10 @@ NULL value.
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
 
-**Log messages must use strictly ASCII characters.** QuestDB's log infrastructure
-does not reliably render non-ASCII (e.g., em dashes, curly quotes, Unicode
-symbols). Use only plain ASCII punctuation in all `LOG.info()`, `LOG.error()`,
-etc. calls.
+**Log messages must use strictly ASCII characters.** QuestDB's log
+infrastructure does not reliably render non-ASCII (e.g., em dashes, curly
+quotes, Unicode symbols). Use only plain ASCII punctuation in all `LOG.info()`,
+`LOG.error()`, etc. calls.
 
 ### Tests
 
@@ -95,7 +98,8 @@ offending character, not the start of the expression.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
-  message body (not just the title).
+  message body (not just the title). Lines in the description can be longer than
+  in the commit title: up to 72 characters.
 - In PR test plans, use plain bullet points (`-`), not check marks or
   checkboxes.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
