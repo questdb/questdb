@@ -1112,6 +1112,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlSortEncodedParallelThreshold() {
+        return getDelegate().getSqlSortEncodedParallelThreshold();
+    }
+
+    @Override
     public int getSqlSortKeyMaterializationThreshold() {
         return getDelegate().getSqlSortKeyMaterializationThreshold();
     }

@@ -47,6 +47,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
+    private final long parallelThreshold;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -74,6 +75,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                             + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
                     MAX_HEAP_SIZE_LIMIT
             );
+            this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
         } catch (Throwable th) {
             close();
@@ -212,7 +214,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             return;
         }
 
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES);
+        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
     }
