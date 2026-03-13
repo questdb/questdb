@@ -517,13 +517,14 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         if (!isForwardScanMode) {
                             long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
                             if (prevAsOfRowId != Long.MIN_VALUE) {
-                                // Gap is exact when both rowIds are in the same frame (frame-index
-                                // bits cancel out). For cross-frame changes it overestimates massively
-                                // (>=2^44), so the relative check safely won't trigger. The absolute
-                                // threshold handles that case (e.g., deep scans for rare keys right
-                                // before a partition boundary).
                                 long gap = asOfRowId - prevAsOfRowId;
-                                if ((gap > bwdScanMinGap && bwdScanCost > gap * bwdScanSwitchFactor) || bwdScanCost > bwdScanAbsoluteThreshold) {
+                                if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
+                                        bwdScanCost,
+                                        gap,
+                                        bwdScanMinGap,
+                                        bwdScanSwitchFactor,
+                                        bwdScanAbsoluteThreshold
+                                )) {
                                     isForwardScanMode = true;
                                     slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
                                 }

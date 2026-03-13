@@ -68,10 +68,35 @@ public class HorizonJoinTimeFrameHelper {
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
-
     public HorizonJoinTimeFrameHelper(long lookahead, long slaveTsScale) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
+    }
+
+    /**
+     * Decides whether backward scan cost justifies switching to forward scan mode.
+     * Uses a relative check (cost vs gap * factor) with overflow protection via
+     * {@link Math#multiplyExact}, plus an absolute threshold for cross-frame gaps
+     * where the relative check can't trigger (gap encodes frame index bits, >= 2^44).
+     *
+     * @return true if forward scan mode should be activated
+     */
+    public static boolean shouldSwitchToForwardScan(
+            long bwdScanCost,
+            long gap,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor,
+            long bwdScanAbsoluteThreshold
+    ) {
+        boolean relativeSwitch = false;
+        if (gap > bwdScanMinGap) {
+            try {
+                relativeSwitch = bwdScanCost > Math.multiplyExact(gap, bwdScanSwitchFactor);
+            } catch (ArithmeticException ignore) {
+                // overflow: gap is huge, relative switch won't help
+            }
+        }
+        return relativeSwitch || bwdScanCost > bwdScanAbsoluteThreshold;
     }
 
     /**

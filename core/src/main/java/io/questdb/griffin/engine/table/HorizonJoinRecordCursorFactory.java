@@ -452,7 +452,13 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                                 long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
                                 if (prevAsOfRowId != Long.MIN_VALUE) {
                                     long gap = asOfRowId - prevAsOfRowId;
-                                    if ((gap > bwdScanMinGap && bwdScanCost > gap * bwdScanSwitchFactor) || bwdScanCost > bwdScanAbsoluteThreshold) {
+                                    if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
+                                            bwdScanCost,
+                                            gap,
+                                            bwdScanMinGap,
+                                            bwdScanSwitchFactor,
+                                            bwdScanAbsoluteThreshold
+                                    )) {
                                         isForwardScanMode = true;
                                         slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
                                     }
