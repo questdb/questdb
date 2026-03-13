@@ -466,7 +466,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
-    private final int sqlOrderByRadixSortThreshold;
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
@@ -1962,7 +1961,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
-            this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
             this.copierType = getInt(properties, env, PropertyKey.DEBUG_CAIRO_COPIER_TYPE, 0);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
@@ -2902,6 +2900,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
             registerObsolete("cairo.sql.asof.join.fast");
+            registerObsolete("cairo.sql.orderby.radix.sort.threshold");
             registerObsolete("shared.worker.affinity", PropertyKey.SHARED_NETWORK_WORKER_AFFINITY, PropertyKey.SHARED_QUERY_WORKER_AFFINITY, PropertyKey.SHARED_WRITE_WORKER_AFFINITY);
 
             registerDeprecated(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT);
@@ -4197,11 +4196,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlModelPoolCapacity() {
             return sqlModelPoolCapacity;
-        }
-
-        @Override
-        public int getSqlOrderByRadixSortThreshold() {
-            return sqlOrderByRadixSortThreshold;
         }
 
         @Override

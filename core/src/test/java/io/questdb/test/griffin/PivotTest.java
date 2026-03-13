@@ -252,7 +252,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
@@ -292,7 +292,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
@@ -451,7 +451,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort
+                        Encode sort
                           keys: [2000]
                             GroupBy vectorized: false
                               values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
@@ -592,7 +592,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(pivotQuery, """
-                    Sort light
+                    Encode sort light
                       keys: [side]
                         GroupBy vectorized: false
                           keys: [side]
@@ -1698,7 +1698,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                 SelectedRecord
                                     AsOf Join Light
                                       condition: B.vehicle_id=A.vehicle_id
-                                        Sort light
+                                        Encode sort light
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
@@ -1710,7 +1710,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
-                                        Sort light
+                                        Encode sort light
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
@@ -2239,7 +2239,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [2000_sum]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -2353,7 +2353,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
@@ -2851,7 +2851,7 @@ public class PivotTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [timestamp]
                                 GroupBy vectorized: false
                                   keys: [timestamp]
@@ -2859,7 +2859,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                     GroupBy vectorized: false
                                       keys: [timestamp,symbol,side]
                                       values: [sum(price)]
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [timestamp]
                                             Async JIT Group By workers: 1
                                               keys: [timestamp,symbol,side]
@@ -2938,7 +2938,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [2000]
                             GroupBy vectorized: false
                               keys: [country]
@@ -3022,7 +3022,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [symbol]
                             GroupBy vectorized: false
                               keys: [symbol]
@@ -3030,7 +3030,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [symbol,side]
                                   values: [sum(last)]
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [timestamp]
                                         Async JIT Group By workers: 1
                                           keys: [symbol,side,timestamp]
@@ -3203,7 +3203,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [timestamp]
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3286,7 +3286,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [timestamp]
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3330,7 +3330,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [timestamp desc]
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3479,7 +3479,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp,symbol,side]
@@ -3528,7 +3528,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
-                                Radix sort light
+                                Encode sort light
                                   keys: [timestamp]
                                     Async Group By workers: 1
                                       keys: [timestamp,symbol,side]
