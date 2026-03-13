@@ -46,9 +46,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -62,10 +64,9 @@ import io.questdb.std.Unsafe;
 public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final String NAME = "percent_rank";
-    private static final String SIGNATURE = NAME + "()";
-
     // Column types for partition-based functions: offset, rank, count
     private static final ArrayColumnTypes PERCENT_RANK_COLUMN_TYPES;
+    private static final String SIGNATURE = NAME + "()";
 
     @Override
     public String getSignature() {
@@ -110,6 +111,126 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             // percent_rank() over ([partition by xxx | ]), without ORDER BY, all rows are peers.
             // All rows have rank 1, so percent_rank = (1-1)/(n-1) = 0
             return new PercentRankNoOrderFunction(windowContext.getPartitionByRecord());
+        }
+    }
+
+    // percent_rank() over (order by xxx) - no partition by
+    static class PercentRankFunction extends DoubleFunction implements Function, WindowFunction, Reopenable {
+
+        private int columnIndex;
+        private long count = 1;
+        private long lastRecordOffset;
+        private ObjList<ExpressionNode> orderBy;
+        private long rank;
+        private ObjList<DirectIntList> rankMaps;
+        private RecordComparator recordComparator;
+        private long totalRows;
+
+        public PercentRankFunction() {
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.freeObjList(rankMaps);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+        }
+
+        @Override
+        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+                                         RecordMetadata metadata,
+                                         ArrayColumnTypes chainTypes,
+                                         IntList orderIndices,
+                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderByDirection) throws SqlException {
+            IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
+            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
+            this.orderBy = orderBy;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (count == 1) {
+                rank = 1;
+            } else {
+                recordComparator.setLeft(record);
+                if (recordComparator.compare(spi.getRecordAt(lastRecordOffset)) != 0) {
+                    rank = count;
+                }
+            }
+            lastRecordOffset = recordOffset;
+            // Store rank temporarily in the output column (as long)
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            count++;
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            // Read rank stored in pass1
+            long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            // Calculate percent_rank = (rank - 1) / (total_rows - 1)
+            double percentRank;
+            if (totalRows <= 1) {
+                percentRank = 0.0;
+            } else {
+                percentRank = (double) (storedRank - 1) / (double) (totalRows - 1);
+            }
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), percentRank);
+        }
+
+        @Override
+        public void preparePass2() {
+            totalRows = count - 1; // count was incremented after each row
+        }
+
+        @Override
+        public void reopen() {
+            count = 1;
+        }
+
+        @Override
+        public void reset() {
+            count = 1;
+            totalRows = 0;
+            Misc.freeObjListAndKeepObjects(rankMaps);
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val("()");
+            sink.val(" over (");
+            sink.val("order by ");
+            sink.val(orderBy);
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            count = 1;
+            totalRows = 0;
+            super.toTop();
         }
     }
 
@@ -176,6 +297,10 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
+            toSink0(sink, partitionByRecord);
+        }
+
+        static void toSink0(PlanSink sink, VirtualRecord partitionByRecord) {
             sink.val("()");
             if (partitionByRecord != null) {
                 sink.val(" over (");
@@ -185,116 +310,6 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 sink.val(" over ()");
             }
-        }
-    }
-
-    // percent_rank() over (order by xxx) - no partition by
-    static class PercentRankFunction extends DoubleFunction implements Function, WindowFunction, Reopenable {
-
-        private int columnIndex;
-        private long count = 1;
-        private long lastRecordOffset;
-        private ObjList<ExpressionNode> orderBy;
-        private long rank;
-        private RecordComparator recordComparator;
-        private long totalRows;
-
-        public PercentRankFunction() {
-        }
-
-        @Override
-        public void close() {
-            super.close();
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
-                                         RecordMetadata metadata,
-                                         ArrayColumnTypes chainTypes,
-                                         IntList orderIndices,
-                                         ObjList<ExpressionNode> orderBy,
-                                         IntList orderByDirection) throws SqlException {
-            IntList indices = orderIndices != null ? orderIndices : sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, indices);
-            this.orderBy = orderBy;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            if (count == 1) {
-                rank = 1;
-            } else {
-                recordComparator.setLeft(record);
-                if (recordComparator.compare(spi.getRecordAt(lastRecordOffset)) != 0) {
-                    rank = count;
-                }
-            }
-            lastRecordOffset = recordOffset;
-            // Store rank temporarily in the output column (as long)
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
-            count++;
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            // Read rank stored in pass1
-            long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
-            // Calculate percent_rank = (rank - 1) / (total_rows - 1)
-            double percentRank;
-            if (totalRows <= 1) {
-                percentRank = 0.0;
-            } else {
-                percentRank = (double) (storedRank - 1) / (double) (totalRows - 1);
-            }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), percentRank);
-        }
-
-        @Override
-        public void preparePass2() {
-            totalRows = count - 1; // count was incremented after each row
-        }
-
-        @Override
-        public void reopen() {
-            count = 1;
-        }
-
-        @Override
-        public void reset() {
-            count = 1;
-            totalRows = 0;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val("()");
-            sink.val(" over (");
-            sink.val("order by ");
-            sink.val(orderBy);
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            count = 1;
-            totalRows = 0;
-            super.toTop();
         }
     }
 
@@ -308,6 +323,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         private int columnIndex;
         private Map map;
         private ObjList<ExpressionNode> orderBy;
+        private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
 
         public PercentRankOverPartitionFunction(
@@ -327,6 +343,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(map);
             Misc.freeObjList(partitionByRecord.getFunctions());
+            Misc.freeObjList(rankMaps);
         }
 
         @Override
@@ -343,6 +360,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
         }
 
         @Override
@@ -358,7 +376,8 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
                     keyColumnTypes,
                     PERCENT_RANK_COLUMN_TYPES
             );
-            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(chainTypes, indices);
+            this.recordComparator = sqlGenerator.getRecordComparatorCompiler().newInstance(metadata, indices);
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, indices);
             this.orderBy = orderBy;
         }
 
@@ -428,6 +447,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reset() {
             Misc.free(map);
+            Misc.freeObjListAndKeepObjects(rankMaps);
         }
 
         @Override

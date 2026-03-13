@@ -7634,7 +7634,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.newInstance(chainTypes, e.key));
+                windowComparators.add(recordComparatorCompiler.newInstance(chainMetadata, e.key));
                 functionGroups.add(e.value);
                 keys.add(e.key);
             }
