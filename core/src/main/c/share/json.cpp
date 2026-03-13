@@ -641,6 +641,61 @@ static void extract_for_column_bulk(
     }
 }
 
+// Shared extraction loop used by both extractAllArrayElements and
+// queryAndExtractArray. Iterates array elements and populates the
+// pre-sized results matrix.
+static void extract_array_elements(
+        simdjson::ondemand::array arr,
+        bool is_object_array,
+        column_desc_t *descs,
+        column_result_t *results,
+        jint column_count,
+        jint element_count,
+        bool json_is_ascii,
+        questdb_byte_sink_t *string_sink
+) {
+    jint elem_idx = 0;
+    for (auto element : arr) {
+        if (elem_idx >= element_count) break;
+        column_result_t *row = &results[elem_idx * column_count];
+
+        if (is_object_array) {
+            for (jint j = 0; j < column_count; j++) {
+                row[j] = {0, static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD), 0, 0, 0};
+            }
+
+            auto obj = element.get_object();
+            if (!obj.error()) {
+                jint found_count = 0;
+                for (auto field: obj.value_unsafe()) {
+                    if (found_count >= column_count) break;
+
+                    auto key_res = field.unescaped_key();
+                    if (key_res.error()) continue;
+                    auto key = key_res.value_unsafe();
+
+                    for (jint j = 0; j < column_count; j++) {
+                        if (row[j].error != static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD)) {
+                            continue;
+                        }
+                        if (key.length() == static_cast<size_t>(descs[j].field_name_len) &&
+                            std::memcmp(key.data(), descs[j].field_name, key.length()) == 0) {
+                            auto field_val = field.value();
+                            extract_for_column_bulk(field_val, descs[j], row[j], json_is_ascii, string_sink);
+                            found_count++;
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            extract_for_column_bulk(element, descs[0], row[0], json_is_ascii, string_sink);
+        }
+
+        elem_idx++;
+    }
+}
+
 extern "C" {
 
 JNIEXPORT jint JNICALL
@@ -1021,48 +1076,92 @@ Java_io_questdb_std_json_SimdJsonParser_extractAllArrayElements(
         return;
     }
 
-    jint elem_idx = 0;
-    for (auto element : arr.value_unsafe()) {
-        if (elem_idx >= element_count) break;
-        column_result_t *row = &results[elem_idx * column_count];
+    extract_array_elements(arr.value_unsafe(), is_object_array, descs, results, column_count, element_count, json_is_ascii, string_sink);
+}
 
-        if (is_object_array) {
-            // Initialize all columns as "not found"
-            for (jint j = 0; j < column_count; j++) {
-                row[j] = {0, static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD), 0, 0, 0};
-            }
+// Combined: queries array info and extracts all elements in a single parse.
+// For single-column UNNEST, auto-detects object vs scalar array from the
+// first non-null element. For multi-column, always uses object mode.
+//
+// Returns:
+//   > 0: element count, extraction complete (results buffer was large enough)
+//   < 0: negated element count, extraction skipped (caller must grow buffer and retry)
+//     0: empty/invalid array (check result->error)
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_json_SimdJsonParser_queryAndExtractArray(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
+        size_t json_len,
+        size_t tail_padding,
+        jboolean json_is_ascii,
+        json_result *result,
+        column_desc_t *descs,
+        column_result_t *results,
+        jint column_count,
+        jint results_capacity,
+        questdb_byte_sink_t *string_sink
+) {
+    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
 
-            auto obj = element.get_object();
-            if (!obj.error()) {
-                jint found_count = 0;
-                for (auto field: obj.value_unsafe()) {
-                    if (found_count >= column_count) break;
-
-                    auto key_res = field.unescaped_key();
-                    if (key_res.error()) continue;
-                    auto key = key_res.value_unsafe();
-
-                    for (jint j = 0; j < column_count; j++) {
-                        if (row[j].error != static_cast<int32_t>(simdjson::error_code::NO_SUCH_FIELD)) {
-                            continue;
-                        }
-                        if (key.length() == static_cast<size_t>(descs[j].field_name_len) &&
-                            std::memcmp(key.data(), descs[j].field_name, key.length()) == 0) {
-                            auto val = field.value();
-                            extract_for_column_bulk(val, descs[j], row[j], json_is_ascii, string_sink);
-                            found_count++;
-                            break;
-                        }
-                    }
-                }
-            }
-        } else {
-            // Scalar array: extract element directly for the single column
-            extract_for_column_bulk(element, descs[0], row[0], json_is_ascii, string_sink);
-        }
-
-        elem_idx++;
+    auto doc = parser->iterate(json_buf);
+    auto val = doc.get_value();
+    if (!result->from(val)) { return 0; }
+    auto arr = val.get_array();
+    if (!result->set_error(arr)) { return 0; }
+    auto count = arr.count_elements();
+    if (!result->set_error(count)) { return 0; }
+    const auto count_value = count.value_unsafe();
+    if (count_value > static_cast<size_t>(std::numeric_limits<jint>::max())) {
+        result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+        return 0;
     }
+    if (count_value == 0) {
+        result->error = simdjson::error_code::SUCCESS;
+        result->type = simdjson::ondemand::json_type::null;
+        return 0;
+    }
+
+    const jint element_count = static_cast<jint>(count_value);
+
+    // Determine object vs scalar. For multi-column, always object.
+    // For single-column, peek at the first non-null element's type.
+    bool is_object_array;
+    if (column_count == 1) {
+        result->type = simdjson::ondemand::json_type::null;
+        for (auto element : arr) {
+            auto type_result = element.type();
+            if (type_result.error()) continue;
+            auto t = type_result.value_unsafe();
+            if (t != simdjson::ondemand::json_type::null) {
+                result->type = t;
+                break;
+            }
+        }
+        is_object_array = (result->type == simdjson::ondemand::json_type::object);
+    } else {
+        is_object_array = true;
+        result->type = simdjson::ondemand::json_type::object;
+    }
+    result->error = simdjson::error_code::SUCCESS;
+
+    // If buffer is too small, return negative count so Java can reallocate.
+    if (results == nullptr || element_count > results_capacity) {
+        return -element_count;
+    }
+
+    // Rewind the document and re-navigate to the array for extraction.
+    doc.rewind();
+    auto arr2 = doc.get_array();
+    if (arr2.error()) {
+        result->error = arr2.error();
+        return 0;
+    }
+
+    extract_array_elements(arr2.value_unsafe(), is_object_array, descs, results, column_count, element_count, json_is_ascii, string_sink);
+
+    return element_count;
 }
 
 } // extern "C"

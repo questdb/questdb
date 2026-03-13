@@ -100,21 +100,36 @@ public class SimdJsonParser implements QuietCloseable {
     }
 
     /**
-     * Get array length and first non-null element type in a single parse.
-     * The result's type field indicates the first non-null element type
-     * (OBJECT, STRING, NUMBER, etc.), or NULL if all elements are null.
+     * Combined array info query and extraction in a single parse. Counts
+     * elements, determines object vs scalar type, and if the results buffer
+     * is large enough, extracts all elements in one JNI call.
+     *
+     * @return positive element count if extraction succeeded,
+     * negative element count if the buffer was too small (caller
+     * should grow the buffer and retry), or 0 for empty/invalid arrays
      */
-    public int queryArrayInfo(
+    public int queryAndExtractArray(
             DirectUtf8Sequence json,
-            SimdJsonResult result
+            SimdJsonResult result,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount,
+            int resultsCapacity,
+            long stringSinkPtr
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryArrayInfo(
+        return queryAndExtractArray(
                 impl,
                 json.ptr(),
                 json.size(),
                 json.tailPadding(),
-                result.ptr()
+                json.isAscii(),
+                result.ptr(),
+                descsPtr,
+                resultsPtr,
+                columnCount,
+                resultsCapacity,
+                stringSinkPtr
         );
     }
 
@@ -291,12 +306,18 @@ public class SimdJsonParser implements QuietCloseable {
 
     private native static int getSimdJsonPadding();
 
-    private static native int queryArrayInfo(
+    private static native int queryAndExtractArray(
             long impl,
             long jsonPtr,
             long jsonLen,
             long jsonTailPadding,
-            long resultPtr
+            boolean jsonIsAscii,
+            long resultPtr,
+            long descsPtr,
+            long resultsPtr,
+            int columnCount,
+            int resultsCapacity,
+            long stringSinkPtr
     );
 
     private static native boolean queryPointerBoolean(

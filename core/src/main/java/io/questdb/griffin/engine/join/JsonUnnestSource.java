@@ -148,6 +148,11 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 Unsafe.getUnsafe().putInt(base + COLUMN_DESC_MAX_SIZE_OFFSET, maxJsonValueSize);
                 Unsafe.getUnsafe().putLong(base + COLUMN_DESC_SINK_OFFSET, 0);
             }
+            // Pre-allocate bulk results buffer for common small arrays.
+            this.bulkResultsPtr = Unsafe.calloc(
+                    16L * columnCount * COLUMN_RESULT_SIZE, MemoryTag.NATIVE_DEFAULT
+            );
+            this.bulkResultsCapacity = 16;
         } catch (Throwable th) {
             close();
             throw th;
@@ -339,6 +344,10 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         if (error != SimdJsonError.SUCCESS) {
             return null;
         }
+        int type = Unsafe.getUnsafe().getInt(resultBase + COLUMN_RESULT_TYPE_OFFSET);
+        if (type == SimdJsonType.NULL) {
+            return null;
+        }
         int truncated = Unsafe.getUnsafe().getInt(resultBase + COLUMN_RESULT_TRUNCATED_OFFSET);
         if (truncated != 0) {
             throw overflowError(sourceCol, elementIndex);
@@ -359,6 +368,10 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         long resultBase = bulkResultBase(sourceCol, elementIndex);
         int error = Unsafe.getUnsafe().getInt(resultBase + COLUMN_RESULT_ERROR_OFFSET);
         if (error != SimdJsonError.SUCCESS) {
+            return null;
+        }
+        int type = Unsafe.getUnsafe().getInt(resultBase + COLUMN_RESULT_TYPE_OFFSET);
+        if (type == SimdJsonType.NULL) {
             return null;
         }
         int truncated = Unsafe.getUnsafe().getInt(resultBase + COLUMN_RESULT_TRUNCATED_OFFSET);
@@ -388,39 +401,46 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             return 0;
         }
         initPaddedJson(json);
-        int len = parser.queryArrayInfo(jsonSeq, result);
-        if (result.getError() != SimdJsonError.SUCCESS) {
-            this.jsonSeq = null;
-            this.currentElementCount = 0;
-            return 0;
-        }
-        if (len == 0) {
-            this.currentElementCount = 0;
-            return 0;
-        }
-        // queryArrayInfo sets result type to the first non-null element's
-        // type, or NULL if all elements are null. For all-null arrays,
-        // both scalar and object paths produce identical NULL results.
-        boolean isObjectArray;
-        if (columnNames.size() == 1) {
-            isObjectArray = result.getType() == SimdJsonType.OBJECT;
-        } else {
-            isObjectArray = true;
-        }
 
-        // Ensure the bulk results buffer can hold len * columnCount results.
-        ensureBulkResultsCapacity(len);
-
-        // Clear the shared string buffer and extract all elements in one parse.
+        // Combined call: counts elements, determines object vs scalar type,
+        // and extracts all elements in a single parse when the buffer is
+        // large enough. Returns negative count if buffer needs to grow.
         stringBuf.clear();
-        try (NativeByteSink nativeSink = stringBuf.borrowDirectByteSink()) {
-            parser.extractAllArrayElements(
-                    jsonSeq, isObjectArray, descsPtr, bulkResultsPtr,
-                    columnCount, len, nativeSink.ptr()
+        NativeByteSink nativeSink = stringBuf.borrowDirectByteSink();
+        try {
+            int len = parser.queryAndExtractArray(
+                    jsonSeq, result, descsPtr, bulkResultsPtr,
+                    columnCount, bulkResultsCapacity, nativeSink.ptr()
             );
+            if (result.getError() != SimdJsonError.SUCCESS) {
+                this.jsonSeq = null;
+                this.currentElementCount = 0;
+                return 0;
+            }
+            if (len == 0) {
+                this.currentElementCount = 0;
+                return 0;
+            }
+            if (len < 0) {
+                // Buffer too small — grow and fall back to extraction-only
+                // call (second parse) since we can't reuse the borrow.
+                len = -len;
+                ensureBulkResultsCapacity(len);
+                boolean isObjectArray = columnCount > 1
+                        || result.getType() == SimdJsonType.OBJECT;
+                nativeSink.close();
+                stringBuf.clear();
+                nativeSink = stringBuf.borrowDirectByteSink();
+                parser.extractAllArrayElements(
+                        jsonSeq, isObjectArray, descsPtr, bulkResultsPtr,
+                        columnCount, len, nativeSink.ptr()
+                );
+            }
+            this.currentElementCount = len;
+            return len;
+        } finally {
+            nativeSink.close();
         }
-        this.currentElementCount = len;
-        return len;
     }
 
     private long bulkResultBase(int sourceCol, int elementIndex) {
@@ -435,6 +455,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                         (long) bulkResultsCapacity * columnCount * COLUMN_RESULT_SIZE,
                         MemoryTag.NATIVE_DEFAULT
                 );
+                bulkResultsPtr = 0;
+                bulkResultsCapacity = 0;
             }
             bulkResultsPtr = Unsafe.calloc(
                     (long) elementCount * columnCount * COLUMN_RESULT_SIZE,

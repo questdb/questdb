@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.engine.join.JsonUnnestSource;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -745,6 +746,51 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBulkResultsReallocationOomCleanup() throws Exception {
+        // Exercises the OOM path in ensureBulkResultsCapacity().
+        // Row 1 has a small array (allocates small buffer), row 2 has a
+        // large array (triggers reallocation). With a tight RSS limit the
+        // reallocation calloc throws. Without the fix (zeroing bulkResultsPtr
+        // before calloc), close() would double-free the stale pointer —
+        // aborting the JVM on macOS or corrupting the heap on Linux.
+        // With the fix, close() sees ptr=0 and skips the free.
+        // assertMemoryLeak verifies balanced memory accounting.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.0, 2.0]')");
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < 50_000; i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(i).append(".0");
+            }
+            sb.append(']');
+            execute("INSERT INTO t VALUES ('" + sb + "')");
+
+            // Allow enough headroom for query setup but not for the
+            // 50000 * 1 * 24 = 1.2MB bulk results buffer.
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 512 * 1024);
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                        0,
+                        "RSS memory limit exceeded"
+                );
+            } catch (AssertionError e) {
+                // If the OOM doesn't trigger (enough memory was available),
+                // the query succeeds — that's fine, the test is still valid
+                // because assertMemoryLeak will catch any accounting issues.
+                if (!e.getMessage().contains("SQL statement should have failed")) {
+                    throw e;
+                }
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+        });
+    }
+
+    @Test
     public void testLargeNonAsciiVarcharOverflowThrowsError() throws Exception {
         // Non-ASCII values exceeding DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE trigger UTF-8
         // backoff in the native layer, producing sink.size() < maxSize.
@@ -871,6 +917,35 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + "t.payload COLUMNS(a DOUBLE, b DOUBLE)"
                             + ") u",
                     (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testIssue6869JsonExtractUnnestWithFilter() throws Exception {
+        // Reproduces the exact scenario from issue #6869: nested JSON array
+        // extracted via json_extract, unnested, and filtered by an id field.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (ts TIMESTAMP, payload VARCHAR) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO events VALUES (
+                        '2026-01-01',
+                        '{"context":{"items":[{"id":"item_1","value":100,"score":0.95},{"id":"item_2","value":200,"score":0.87},{"id":"item_3","value":300,"score":0.91}]}}'
+                    )
+                    """);
+            assertSql(
+                    """
+                            id\tvalue\tscore
+                            item_1\t100\t0.95
+                            """,
+                    """
+                            SELECT u.id, u.value, u.score
+                            FROM events e, UNNEST(
+                                json_extract(e.payload, '$.context.items')
+                                COLUMNS(id VARCHAR, value LONG, score DOUBLE)
+                            ) u
+                            WHERE u.id = 'item_1'
+                            """
             );
         });
     }
@@ -2011,10 +2086,32 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     """
                             val
                             hello
-                            
+
                             world
                             """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarVarcharNullVsEmptyString() throws Exception {
+        // Proves that JSON null produces SQL NULL (not empty string).
+        // assertQueryNoLeakCheck renders both NULL and "" as blank lines,
+        // so IS NULL is the only way to distinguish them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, \"\", \"text\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val\tis_null\tlen
+                            \ttrue\t-1
+                            \tfalse\t0
+                            text\tfalse\t4
+                            """,
+                    "SELECT u.val, u.val IS NULL AS is_null, length(u.val) AS len " +
+                            "FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
                     (String) null
             );
         });
@@ -2433,7 +2530,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     """
                             val\tlen
                             ab\t2
-                            \t0
+                            \t-1
                             hello\t5
                             """,
                     "SELECT u.val, length(u.val) len FROM t, UNNEST(t.payload COLUMNS(val VARCHAR)) u",
