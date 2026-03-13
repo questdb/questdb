@@ -43,7 +43,7 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
-    public void copyRowGroup(short rowGroupIndex) {
+    public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
         copyRowGroup(ptr, rowGroupIndex);
     }
@@ -61,7 +61,7 @@ public class PartitionUpdater implements QuietCloseable {
         return updateFileMetadata(ptr);
     }
 
-    public void addRowGroup(short position, PartitionDescriptor descriptor) {
+    public void addRowGroup(int position, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -119,7 +119,7 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
+    public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -145,7 +145,7 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void copyRowGroup(
             long impl,
-            short rowGroupIndex
+            int rowGroupIndex
     ) throws CairoException;
 
     private static native long create(
@@ -173,7 +173,7 @@ public class PartitionUpdater implements QuietCloseable {
             long impl,
             int tableNameLen,
             long tableNamePtr,
-            short position,
+            int position,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,
@@ -190,7 +190,7 @@ public class PartitionUpdater implements QuietCloseable {
             long impl,
             int tableNameLen,
             long tableNamePtr,
-            short rowGroupId,
+            int rowGroupId,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,

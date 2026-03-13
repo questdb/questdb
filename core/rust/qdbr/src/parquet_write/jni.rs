@@ -14,7 +14,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -25,7 +25,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
-    rg_index: jshort,
+    rg_index: jint,
 ) {
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
@@ -195,7 +195,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_updater: *mut ParquetUpdater,
     table_name_len: u32,
     table_name_ptr: *const u8,
-    row_group_id: jshort,
+    row_group_id: jint,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -249,7 +249,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_updater: *mut ParquetUpdater,
     table_name_len: u32,
     table_name_ptr: *const u8,
-    position: jshort,
+    position: jint,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,

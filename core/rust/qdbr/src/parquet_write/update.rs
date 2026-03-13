@@ -224,7 +224,7 @@ impl ParquetUpdater {
     pub fn replace_row_group(
         &mut self,
         partition: &Partition,
-        row_group_id: i16,
+        row_group_id: i32,
     ) -> ParquetResult<()> {
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
@@ -265,7 +265,7 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn insert_row_group(&mut self, partition: &Partition, position: i16) -> ParquetResult<()> {
+    pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
             partition,
@@ -290,7 +290,7 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn copy_row_group(&mut self, rg_index: i16) -> ParquetResult<()> {
+    pub fn copy_row_group(&mut self, rg_index: i32) -> ParquetResult<()> {
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
             return Err(fmt_err!(
@@ -334,14 +334,16 @@ impl ParquetUpdater {
             let bf_total =
                 parquet2::bloom_filter::total_size(&columns_meta[last_col_idx], &mut self.reader)
                     .with_context(|_| {
-                        format!(
-                            "copy_row_group: failed to read bloom filter header for col {} in rg {}",
-                            last_col_idx, rg_idx,
-                        )
-                    })?;
+                    format!(
+                        "copy_row_group: failed to read bloom filter header for col {} in rg {}",
+                        last_col_idx, rg_idx,
+                    )
+                })?;
             if bf_total > 0 {
-                let bf_offset =
-                    columns_meta[last_col_idx].metadata().bloom_filter_offset.unwrap() as u64;
+                let bf_offset = columns_meta[last_col_idx]
+                    .metadata()
+                    .bloom_filter_offset
+                    .unwrap() as u64;
                 rg_end = rg_end.max(bf_offset + bf_total);
             }
         }
@@ -794,11 +796,17 @@ mod tests {
 
         let old_rg1 = &metadata.row_groups[1];
         assert!(
-            old_rg1.columns()[0].metadata().bloom_filter_offset.is_none(),
+            old_rg1.columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_none(),
             "col0 should NOT have bloom filter"
         );
         assert!(
-            old_rg1.columns()[1].metadata().bloom_filter_offset.is_some(),
+            old_rg1.columns()[1]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
             "col1 (last col) should have bloom filter"
         );
 
@@ -876,8 +884,10 @@ mod tests {
                 parquet2::bloom_filter::total_size(&columns_meta[last_col_idx], &mut bf_reader)
                     .expect("read bloom filter total size");
             if bf_total > 0 {
-                let bf_offset =
-                    columns_meta[last_col_idx].metadata().bloom_filter_offset.unwrap() as u64;
+                let bf_offset = columns_meta[last_col_idx]
+                    .metadata()
+                    .bloom_filter_offset
+                    .unwrap() as u64;
                 rg_end = rg_end.max(bf_offset + bf_total);
             }
         }
@@ -890,7 +900,10 @@ mod tests {
 
         let new_offset = new_pf.current_offset();
         let offset_delta = new_offset as i64 - rg_start as i64;
-        assert_ne!(offset_delta, 0, "offset_delta must be non-zero for this test");
+        assert_ne!(
+            offset_delta, 0,
+            "offset_delta must be non-zero for this test"
+        );
 
         // Apply the SAME offset adjustments as the production code.
         let mut thrift_rg = old_rg1.clone().into_thrift();
@@ -924,7 +937,10 @@ mod tests {
 
         let copied_rg = &new_metadata.row_groups[1];
         assert!(
-            copied_rg.columns()[1].metadata().bloom_filter_offset.is_some(),
+            copied_rg.columns()[1]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
             "copied column should preserve bloom filter offset"
         );
 

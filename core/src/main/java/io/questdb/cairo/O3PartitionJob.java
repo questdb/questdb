@@ -145,20 +145,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;
-                // Row group indices are passed as i16 through JNI to Rust. The Parquet
-                // format itself supports i32 row group counts, but having more than 32K
-                // row groups per partition degrades read performance (large footer,
-                // excessive metadata overhead). If this limit is hit, the fix is to
-                // increase cairo.partition.encoder.parquet.row.group.size rather than
-                // widening the index type.
-                if (rowGroupCount > Short.MAX_VALUE) {
-                    throw CairoException.critical(0)
-                            .put("too many row groups in parquet partition for O3 merge [rowGroupCount=")
-                            .put(rowGroupCount)
-                            .put(", max=")
-                            .put((int) Short.MAX_VALUE)
-                            .put(']');
-                }
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
                 final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
                 assert ColumnType.isTimestamp(timestampColumnType);
@@ -290,14 +276,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int metadataPosition = 0;
                 try {
                     for (int i = 0; i < actionCount; i++) {
-                        if (metadataPosition > Short.MAX_VALUE) {
-                            throw CairoException.critical(0)
-                                    .put("too many output row groups in parquet O3 merge [count=")
-                                    .put(metadataPosition)
-                                    .put(", max=")
-                                    .put((int) Short.MAX_VALUE)
-                                    .put(']');
-                        }
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE: {
@@ -357,7 +335,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", rgMin=").$ts(O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, action.rowGroupIndex))
                                             .$(", rgMax=").$ts(O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, action.rowGroupIndex))
                                             .I$();
-                                    partitionUpdater.copyRowGroup((short) action.rowGroupIndex);
+                                    partitionUpdater.copyRowGroup(action.rowGroupIndex);
                                     tableWriter.addPhysicallyWrittenRows(rgSize);
                                 }
                                 // Update mode: full row groups stay in place, nothing to do.
@@ -382,7 +360,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         action.o3Lo,
                                         action.o3Hi,
                                         tableWriterMetadata,
-                                        (short) metadataPosition
+                                        metadataPosition
                                 );
                                 tableWriter.addPhysicallyWrittenRows(action.o3Hi - action.o3Lo + 1);
                                 metadataPosition++;
@@ -1432,7 +1410,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3Lo,
             long o3Hi,
             TableRecordMetadata tableWriterMetadata,
-            short metadataPosition
+            int metadataPosition
     ) {
         final long rowCount = o3Hi - o3Lo + 1;
         // Use the sorted timestamps directly as merge index.
@@ -2226,9 +2204,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (chunk == 0) {
-                    partitionUpdater.updateRowGroup((short) rowGroupIndex, chunkDescriptor);
+                    partitionUpdater.updateRowGroup(rowGroupIndex, chunkDescriptor);
                 } else {
-                    partitionUpdater.addRowGroup((short) (metadataPosition + chunk), chunkDescriptor);
+                    partitionUpdater.addRowGroup(metadataPosition + chunk, chunkDescriptor);
                 }
                 chunkLo += chunkRowCount;
             }
