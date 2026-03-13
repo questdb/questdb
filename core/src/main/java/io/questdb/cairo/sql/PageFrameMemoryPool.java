@@ -315,7 +315,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final int parquetColumnCount = parquetMetadata.getColumnCount();
         columnIdToParquetIdx.clear();
         for (int i = 0; i < parquetColumnCount; i++) {
-            columnIdToParquetIdx.put(parquetMetadata.getColumnId(i), i);
+            final int id = parquetMetadata.getColumnId(i);
+            // External parquet files may not have field IDs (all -1).
+            // Fall back to positional index so the lookup in openParquet() works.
+            columnIdToParquetIdx.put(id < 0 ? i : id, i);
         }
 
         parquetColumns.reopen();
