@@ -660,6 +660,8 @@ public interface CairoConfiguration {
 
     int getSqlSmallPageFrameMinRows();
 
+    long getSqlSortEncodedParallelThreshold();
+
     int getSqlSortKeyMaterializationThreshold();
 
     int getSqlSortKeyMaxPages();

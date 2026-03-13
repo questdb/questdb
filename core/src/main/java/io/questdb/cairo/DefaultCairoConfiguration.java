@@ -1132,6 +1132,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlSortEncodedParallelThreshold() {
+        return 1_024_000;
+    }
+
+    @Override
     public int getSqlSortKeyMaterializationThreshold() {
         return 3;
     }
