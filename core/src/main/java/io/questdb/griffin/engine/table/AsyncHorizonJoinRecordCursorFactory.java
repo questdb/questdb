@@ -80,9 +80,6 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * Factory for parallel horizon join query execution.
  */
 public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final long BWD_SCAN_ABSOLUTE_THRESHOLD = 131_072;
-    private static final long MIN_GAP = 1_024;
-    private static final long SWITCH_FACTOR = 8;
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinRecordCursorFactory::reduce;
     private final AsyncHorizonJoinRecordCursor cursor;
@@ -488,6 +485,9 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
+        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
+        final long bwdScanMinGap = atom.getBwdScanMinGap();
+        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
         long prevAsOfRowId = Long.MIN_VALUE;
         boolean isForwardScanMode = false;
         long bwdScanRowsAtPositionStart = 0;
@@ -523,7 +523,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                                 // threshold handles that case (e.g., deep scans for rare keys right
                                 // before a partition boundary).
                                 long gap = asOfRowId - prevAsOfRowId;
-                                if ((gap > MIN_GAP && bwdScanCost > gap * SWITCH_FACTOR) || bwdScanCost > BWD_SCAN_ABSOLUTE_THRESHOLD) {
+                                if ((gap > bwdScanMinGap && bwdScanCost > gap * bwdScanSwitchFactor) || bwdScanCost > bwdScanAbsoluteThreshold) {
                                     isForwardScanMode = true;
                                     slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
                                 }

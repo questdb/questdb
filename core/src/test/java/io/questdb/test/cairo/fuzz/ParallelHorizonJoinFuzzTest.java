@@ -70,6 +70,10 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(1000));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(enableParallelHorizonJoin));
+        // Randomize adaptive backward-to-forward scan switch thresholds.
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1 + rnd.nextLong(262_144));
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1 + rnd.nextLong(2_048));
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 1 + rnd.nextLong(16));
         super.setUp();
     }
 
