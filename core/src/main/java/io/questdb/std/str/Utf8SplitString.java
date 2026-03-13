@@ -30,6 +30,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
@@ -150,6 +151,20 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public long zeroPaddedSixPrefix() {
-        return Unsafe.getUnsafe().getLong(prefixLo) & VARCHAR_INLINED_PREFIX_MASK;
+        // We need at least Long.BYTES (8) readable bytes from prefixLo to safely
+        // use getLong. For VarcharSlice, tailPadding is 0, so strings of 6-7 bytes
+        // would overread past the buffer boundary. Use byte-by-byte for those cases.
+        if (size + tailPadding() >= Long.BYTES) {
+            return Unsafe.getUnsafe().getLong(prefixLo) & VARCHAR_INLINED_PREFIX_MASK;
+        }
+        // Construct the prefix byte-by-byte for short strings or strings without
+        // enough tail padding (e.g., VarcharSlice format where adjacent strings
+        // follow immediately with no zero padding).
+        long prefix = 0;
+        int n = Math.min(size, VARCHAR_INLINED_PREFIX_BYTES);
+        for (int i = 0; i < n; i++) {
+            prefix |= (Unsafe.getUnsafe().getByte(prefixLo + i) & 0xFFL) << (i * 8);
+        }
+        return prefix;
     }
 }

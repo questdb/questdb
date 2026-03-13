@@ -66,6 +66,33 @@ import org.junit.Test;
 public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testGeomeanAgainstExpAvgLnFormula() throws SqlException {
+        // Verify that geomean(x) = exp(avg(ln(x))) for positive values
+        execute("create table tab as (" +
+                "select " +
+                "  rnd_symbol('A','B','C') sym, " +
+                "  abs(rnd_double()) + 0.001 value " +
+                "from long_sequence(1000))");
+
+        assertSql(
+                """
+                        sym\tis_equal
+                        A\ttrue
+                        B\ttrue
+                        C\ttrue
+                        """,
+                """
+                        select
+                            sym,
+                            abs(geomean(value) - exp(avg(ln(value)))) < 0.0000001 as is_equal
+                        from tab
+                        group by sym
+                        order by sym
+                        """
+        );
+    }
+
+    @Test
     public void testGeomeanAllNull() throws SqlException {
         execute("create table tab (value double)");
 
@@ -79,6 +106,50 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         null
                         """,
                 "select geomean(value) from tab"
+        );
+    }
+
+    @Test
+    public void testGeomeanConstantArgument() throws SqlException {
+        // When the argument is a constant, the factory returns DoubleConstant directly
+        // geomean(c) = c for any positive constant c
+        execute("create table tab (x int)");
+        execute("insert into tab values (1), (2), (3)");
+
+        // Verify the result is correct: geomean(5.0) = 5.0
+        assertSql(
+                """
+                        geomean
+                        5.0
+                        """,
+                "select geomean(5.0) from tab"
+        );
+
+        // Verify with negative constant - should return null (NaN)
+        assertSql(
+                """
+                        geomean
+                        null
+                        """,
+                "select geomean(-5.0) from tab"
+        );
+
+        // Verify with zero constant - should return null (NaN)
+        assertSql(
+                """
+                        geomean
+                        null
+                        """,
+                "select geomean(0.0) from tab"
+        );
+
+        // Verify with null constant
+        assertSql(
+                """
+                        geomean
+                        null
+                        """,
+                "select geomean(null) from tab"
         );
     }
 
@@ -163,7 +234,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 sink,
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
                                               keys: [sym]
@@ -241,7 +312,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 sink,
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [sym]
                                             Async Group By workers: 4
                                               keys: [sym]
@@ -504,77 +575,6 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         null
                         """,
                 "select geomean(value) from tab"
-        );
-    }
-
-    @Test
-    public void testGeomeanAgainstExpAvgLnFormula() throws SqlException {
-        // Verify that geomean(x) = exp(avg(ln(x))) for positive values
-        execute("create table tab as (" +
-                "select " +
-                "  rnd_symbol('A','B','C') sym, " +
-                "  abs(rnd_double()) + 0.001 value " +
-                "from long_sequence(1000))");
-
-        assertSql(
-                """
-                        sym\tis_equal
-                        A\ttrue
-                        B\ttrue
-                        C\ttrue
-                        """,
-                """
-                        select
-                            sym,
-                            abs(geomean(value) - exp(avg(ln(value)))) < 0.0000001 as is_equal
-                        from tab
-                        group by sym
-                        order by sym
-                        """
-        );
-    }
-
-    @Test
-    public void testGeomeanConstantArgument() throws SqlException {
-        // When the argument is a constant, the factory returns DoubleConstant directly
-        // geomean(c) = c for any positive constant c
-        execute("create table tab (x int)");
-        execute("insert into tab values (1), (2), (3)");
-
-        // Verify the result is correct: geomean(5.0) = 5.0
-        assertSql(
-                """
-                        geomean
-                        5.0
-                        """,
-                "select geomean(5.0) from tab"
-        );
-
-        // Verify with negative constant - should return null (NaN)
-        assertSql(
-                """
-                        geomean
-                        null
-                        """,
-                "select geomean(-5.0) from tab"
-        );
-
-        // Verify with zero constant - should return null (NaN)
-        assertSql(
-                """
-                        geomean
-                        null
-                        """,
-                "select geomean(0.0) from tab"
-        );
-
-        // Verify with null constant
-        assertSql(
-                """
-                        geomean
-                        null
-                        """,
-                "select geomean(null) from tab"
         );
     }
 }

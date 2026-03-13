@@ -725,6 +725,9 @@ public class RecordToRowCopierUtils {
                 final int toColumnType = toMetadata.getColumnType(toColumnIndex);
                 final int fromColumnType = fromTypes.getColumnType(i);
                 int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
+                if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
+                    fromColumnTypeTag = ColumnType.VARCHAR;
+                }
                 final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
                 final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
@@ -744,7 +747,7 @@ public class RecordToRowCopierUtils {
                 // Generate bytecode for this column (same logic as single-method approach)
                 // Build stack for this column
                 if (toColumnTypeTag == ColumnType.ARRAY &&
-                        (ColumnType.tagOf(fromColumnType) == ColumnType.STRING || ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)) {
+                        (fromColumnTypeTag == ColumnType.STRING || fromColumnTypeTag == ColumnType.VARCHAR)) {
                     asm.aload(3);
                     asm.iconst(toColumnWriterIndex);
                     asm.aload(0);
@@ -1852,6 +1855,9 @@ public class RecordToRowCopierUtils {
             final int toColumnType = toMetadata.getColumnType(toColumnIndex);
             final int fromColumnType = fromTypes.getColumnType(i);
             int fromColumnTypeTag = ColumnType.tagOf(fromColumnType);
+            if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
+                fromColumnTypeTag = ColumnType.VARCHAR;
+            }
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
@@ -1873,7 +1879,7 @@ public class RecordToRowCopierUtils {
             // todo: this branch is not great, but we need parser
             // inside the stack building block, not sure how to do it better
             if (toColumnTypeTag == ColumnType.ARRAY &&
-                    (ColumnType.tagOf(fromColumnType) == ColumnType.STRING || ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)
+                    (fromColumnTypeTag == ColumnType.STRING || fromColumnTypeTag == ColumnType.VARCHAR)
             ) {
                 // Build stack with parser in the right position
                 asm.aload(3);
@@ -2859,8 +2865,12 @@ public class RecordToRowCopierUtils {
             int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
             int toColumnType = toMetadata.getColumnType(toColumnIndex);
             int fromColumnType = fromTypes.getColumnType(i);
+            int fromTag = ColumnType.tagOf(fromColumnType);
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = ColumnType.VARCHAR;
+            }
             if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    (ColumnType.tagOf(fromColumnType) == ColumnType.STRING || ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)
+                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)
             ) {
                 return true;
             }
