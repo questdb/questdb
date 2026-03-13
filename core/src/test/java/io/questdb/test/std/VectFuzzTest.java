@@ -1260,6 +1260,119 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testSetMemoryVanillaLong128() throws Exception {
+        // Reproducer for SIMD bulk-fill bug in set_memory_vanilla_int128.
+        // Vec8uq::size() returns 8 (number of 64-bit lanes), but one 512-bit store
+        // only covers 4 long_128bit elements (64 bytes / 16 bytes each). The loop
+        // advances by 8 elements, leaving holes every other group of 4.
+        TestUtils.assertMemoryLeak(() -> {
+            // Sizes chosen to exercise: scalar-only path (< 8), bulk path entry (8, 9, 16),
+            // and large buffers where the bug is most visible.
+            int[] sizes = new int[]{0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1024, 10_000};
+            // Byte offsets into the allocation to exercise the alignment head path.
+            // 0 = naturally aligned, 16/32/48 = 1/2/3 elements into a 64-byte cache line.
+            int[] offsetBytes = new int[]{0, 16, 32, 48};
+            long long0 = 0xDEAD_BEEF_CAFE_BABEL;
+            long long1 = 0x0123_4567_89AB_CDEFL;
+            int elementBytes = 2 * Long.BYTES; // 16 bytes per long_128bit
+            int maxOffset = 48;
+            long buffSize = (long) sizes[sizes.length - 1] * elementBytes + maxOffset;
+            long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+
+            try {
+                for (int offset : offsetBytes) {
+                    long addr = buffer + offset;
+                    for (int size : sizes) {
+                        // Pre-fill with a poison pattern so we can detect unfilled holes
+                        long poison = 0xBADB_ADBA_DBAD_BAD0L;
+                        for (int i = 0; i < size; i++) {
+                            Unsafe.getUnsafe().putLong(addr + (long) i * elementBytes, poison);
+                            Unsafe.getUnsafe().putLong(addr + (long) i * elementBytes + Long.BYTES, poison);
+                        }
+
+                        Vect.setMemoryLong128(addr, long0, long1, size);
+
+                        for (int i = 0; i < size; i++) {
+                            long actualLo = Unsafe.getUnsafe().getLong(addr + (long) i * elementBytes);
+                            long actualHi = Unsafe.getUnsafe().getLong(addr + (long) i * elementBytes + Long.BYTES);
+                            if (actualLo != long0 || actualHi != long1) {
+                                Assert.fail("setMemoryLong128 failed at element " + i + " of " + size
+                                        + " (offset=" + offset + ")"
+                                        + ": expected [0x" + Long.toHexString(long0) + ", 0x" + Long.toHexString(long1)
+                                        + "] but got [0x" + Long.toHexString(actualLo) + ", 0x" + Long.toHexString(actualHi) + "]");
+                            }
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testSetMemoryVanillaLong256() throws Exception {
+        // Reproducer for SIMD bulk-fill bug in set_memory_vanilla_int256.
+        // Vec8uq::size() returns 8, but one 512-bit store only covers 2 long_256bit
+        // elements (64 bytes / 32 bytes each). The loop advances by 8, leaving
+        // 6 out of every 8 elements untouched.
+        TestUtils.assertMemoryLeak(() -> {
+            int[] sizes = new int[]{0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1024, 10_000};
+            // Byte offsets: 0 = aligned, 32 = one long_256bit element into a cache line.
+            int[] offsetBytes = new int[]{0, 32};
+            long long0 = 0xDEAD_BEEF_CAFE_BABEL;
+            long long1 = 0x0123_4567_89AB_CDEFL;
+            long long2 = 0xFEDC_BA98_7654_3210L;
+            long long3 = 0xAAAA_BBBB_CCCC_DDDDL;
+            int elementBytes = 4 * Long.BYTES; // 32 bytes per long_256bit
+            int maxOffset = 32;
+            long buffSize = (long) sizes[sizes.length - 1] * elementBytes + maxOffset;
+            long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+
+            try {
+                for (int offset : offsetBytes) {
+                    long addr = buffer + offset;
+                    for (int size : sizes) {
+                        // Pre-fill with poison so holes are detectable
+                        long poison = 0xBADB_ADBA_DBAD_BAD0L;
+                        for (int i = 0; i < size; i++) {
+                            long base = addr + (long) i * elementBytes;
+                            Unsafe.getUnsafe().putLong(base, poison);
+                            Unsafe.getUnsafe().putLong(base + Long.BYTES, poison);
+                            Unsafe.getUnsafe().putLong(base + 2 * Long.BYTES, poison);
+                            Unsafe.getUnsafe().putLong(base + 3 * Long.BYTES, poison);
+                        }
+
+                        Vect.setMemoryLong256(addr, long0, long1, long2, long3, size);
+
+                        for (int i = 0; i < size; i++) {
+                            long base = addr + (long) i * elementBytes;
+                            long a0 = Unsafe.getUnsafe().getLong(base);
+                            long a1 = Unsafe.getUnsafe().getLong(base + Long.BYTES);
+                            long a2 = Unsafe.getUnsafe().getLong(base + 2 * Long.BYTES);
+                            long a3 = Unsafe.getUnsafe().getLong(base + 3 * Long.BYTES);
+                            if (a0 != long0 || a1 != long1 || a2 != long2 || a3 != long3) {
+                                Assert.fail("setMemoryLong256 failed at element " + i + " of " + size
+                                        + " (offset=" + offset + ")"
+                                        + ": expected [0x" + Long.toHexString(long0)
+                                        + ", 0x" + Long.toHexString(long1)
+                                        + ", 0x" + Long.toHexString(long2)
+                                        + ", 0x" + Long.toHexString(long3)
+                                        + "] but got [0x" + Long.toHexString(a0)
+                                        + ", 0x" + Long.toHexString(a1)
+                                        + ", 0x" + Long.toHexString(a2)
+                                        + ", 0x" + Long.toHexString(a3) + "]");
+                            }
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testSetMemoryVanillaShort() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int[] sizes = new int[]{1, 3, 4, 5, 6, 7, 8, 10, 12, 15, 19, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
