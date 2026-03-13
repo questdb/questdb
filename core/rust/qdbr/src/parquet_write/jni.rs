@@ -64,6 +64,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     bloom_filter_fpp: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
+        // Take ownership of fds immediately so Rust closes them on any error
+        // path below. The Java caller must set its fd locals to -1 before this
+        // JNI call so that it never double-closes on the exception path.
+        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
+        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
+
         // reader_fd and writer_fd must be distinct OS file descriptors.
         // Both are closed by Rust when ParquetUpdater is dropped.
         // Passing the same fd would cause a double-close bug.
@@ -102,9 +108,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
-            unsafe { File::from_raw_fd_i32(reader_fd) },
+            reader_file,
             read_file_size,
-            unsafe { File::from_raw_fd_i32(writer_fd) },
+            writer_file,
             write_file_size,
             sorting_columns,
             statistics_enabled,

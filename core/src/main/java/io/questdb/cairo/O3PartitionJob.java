@@ -197,10 +197,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // They must be distinct OS fds even when pointing to the same file,
                 // because the reader and writer maintain independent cursor positions.
                 // Rust closes both fds when the ParquetUpdater is dropped.
-                int readerFd = -1;
-                int writerFd = -1;
+                final int readerFdRaw, writerFdRaw;
+                long readerFd = -1, writerFd = -1;
+                final long writeFileSize;
                 try {
-                    final long writeFileSize;
+                    readerFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    readerFdRaw = Files.detach(readerFd);
                     if (isRewrite) {
                         // Rewrite mode: write to a new partition directory named by txn.
                         // The old directory (srcNameTxn) is left intact and queued for removal on commit.
@@ -208,31 +210,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
                         ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
-                        readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
-                        writerFd = Files.detach(TableUtils.openRW(ff, newPath.$(), LOG, opts));
+                        writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                        writerFdRaw = Files.detach(writerFd);
                         writeFileSize = 0;
                     } else {
-                        readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
-                        writerFd = Files.detach(TableUtils.openRW(ff, path.$(), LOG, opts));
+                        writerFd = TableUtils.openRW(ff, path.$(), LOG, opts);
+                        writerFdRaw = Files.detach(writerFd);
                         writeFileSize = parquetSize;
                     }
-
-                    // partitionUpdater.of() transfers fd ownership to Rust.
-                    // After this call succeeds, Rust closes both fds on destroy.
-                    partitionUpdater.of(
-                            path.$(),
-                            readerFd,
-                            parquetSize,
-                            writerFd,
-                            writeFileSize,
-                            timestampIndex,
-                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                            statisticsEnabled,
-                            rawArrayEncoding,
-                            rowGroupSize,
-                            dataPageSize,
-                            bloomFilterFpp
-                    );
                 } catch (Throwable e) {
                     if (readerFd != -1) {
                         ff.close(readerFd);
@@ -242,6 +227,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     throw e;
                 }
+
+                // partitionUpdater.of() transfers fd ownership to Rust.
+                // Rust closes both fds on success (via destroy) and on error
+                // (via File drop). Skip Java-side close once ownership transfers.
+                partitionUpdater.of(
+                        path.$(),
+                        readerFdRaw,
+                        parquetSize,
+                        writerFdRaw,
+                        writeFileSize,
+                        timestampIndex,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        bloomFilterFpp
+                );
 
                 // Build row group bounds for merge strategy computation
                 final LongList rowGroupBounds = ctx.getRowGroupBounds();
