@@ -68,6 +68,7 @@ public class HorizonJoinTimeFrameHelper {
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
+
     public HorizonJoinTimeFrameHelper(long lookahead, long slaveTsScale) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
