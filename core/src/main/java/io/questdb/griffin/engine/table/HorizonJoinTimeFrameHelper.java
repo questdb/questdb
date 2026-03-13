@@ -229,7 +229,6 @@ public class HorizonJoinTimeFrameHelper {
      */
     public long findAsOfRow(long targetTimestamp) {
         findAsOfCalls++;
-        // Ultra-fast path: cached result is still valid (no frame navigation needed)
         if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
             findAsOfCacheHits++;
             return cachedAsOfRowId;

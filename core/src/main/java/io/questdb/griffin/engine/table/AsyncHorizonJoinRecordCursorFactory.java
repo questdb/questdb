@@ -69,6 +69,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -83,6 +84,8 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  */
 public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinRecordCursorFactory.class);
+    private static final long MIN_GAP = 64;
+    private static final long SWITCH_FACTOR = 2;
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinRecordCursorFactory::reduce;
     private final AsyncHorizonJoinRecordCursor cursor;
@@ -434,20 +437,23 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     /**
-     * Process all horizon timestamps in sorted order using backward scanning.
+     * Process all horizon timestamps in sorted order using adaptive scanning.
      * <p>
      * This method iterates through pre-sorted (horizonTs, masterRowIdx, offsetIdx) tuples.
-     * For keyed ASOF JOINs, it uses backward scanning from each ASOF position:
+     * For keyed ASOF JOINs, it adaptively chooses between two strategies:
      * <p>
-     * 1. When the ASOF position changes (new slave row range), clear the key cache
-     * and reset the backward watermark, then backward-scan from the new position.
-     * 2. When the ASOF position is the same as the previous tuple (common due to
-     * high ASOF cache hit rate), reuse the cached key-to-rowId map directly.
+     * 1. <b>Backward-only mode</b> (default): when the ASOF position changes, clear the
+     * key cache and reset the backward watermark. Each position change costs ~K backward
+     * scan rows for K distinct keys. Wins when K is small.
      * <p>
-     * With K distinct keys, each ASOF position change costs at most K rows of backward
-     * scanning to populate the cache. Since most tuples share an ASOF position (85%+ cache
-     * hit rate), the total scan volume is dramatically lower than forward-scanning all
-     * slave rows between consecutive ASOF positions.
+     * 2. <b>Forward scan mode</b>: forward-scan all slave rows between consecutive ASOF
+     * positions, populating the key map. Cost = O(gap). Wins when K is large or rare keys
+     * cause deep backward scans.
+     * <p>
+     * Each frame starts in backward-only mode. If the backward scan cost at a position
+     * exceeds gap * SWITCH_FACTOR, the algorithm switches to forward scan mode for the
+     * remainder of the frame. This avoids expensive backward scans for high-cardinality
+     * key spaces or data with rare/infrequent keys.
      */
     private static void processHorizonTimestamps(
             AsyncHorizonJoinAtom atom,
@@ -490,7 +496,11 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         long prevAsOfRowId = Long.MIN_VALUE;
         long tFindAsof = 0;
         long tBwdScan = 0;
+        long tFwdScan = 0;
         long tAggregate = 0;
+        boolean isForwardScanMode = false;
+        long bwdScanRowsAtPositionStart = 0;
+        long forwardSwitchCount = 0;
 
         while (horizonIterator.next()) {
             tupleCount++;
@@ -518,36 +528,47 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
-                // Keyed ASOF JOIN with per-ASOF-position backward scanning.
-                // When the ASOF position changes, clear the key cache and backward-scan
-                // from the new position (~K rows for K distinct keys). When it stays the same
-                // (85%+ of tuples due to ASOF cache hits), reuse the cached key→rowId map.
                 if (asOfRowId != Long.MIN_VALUE) {
                     if (asOfRowId != prevAsOfRowId) {
-                        // ASOF position changed - invalidate key cache and reset backward watermark
-                        asOfJoinMap.clear();
-                        slaveTimeFrameHelper.resetBackwardWatermark();
+                        // ASOF position changed — decide scanning strategy
+                        if (!isForwardScanMode) {
+                            long bwdScanCost = slaveTimeFrameHelper.backwardScanRows - bwdScanRowsAtPositionStart;
+                            if (prevAsOfRowId != Long.MIN_VALUE) {
+                                // Gap is exact when both rowIds are in the same frame (frame-index
+                                // bits cancel out). For cross-frame changes it overestimates massively
+                                // (>=2^44), so the switch condition safely won't trigger.
+                                long gap = asOfRowId - prevAsOfRowId;
+                                if (gap > MIN_GAP && bwdScanCost > gap * SWITCH_FACTOR) {
+                                    isForwardScanMode = true;
+                                    slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
+                                    forwardSwitchCount++;
+                                }
+                            }
+                            if (!isForwardScanMode) {
+                                // Stay in backward-only: clear map, reset watermark
+                                asOfJoinMap.clear();
+                                slaveTimeFrameHelper.resetBackwardWatermark();
+                                bwdScanRowsAtPositionStart = slaveTimeFrameHelper.backwardScanRows;
+                            }
+                        }
+                        if (isForwardScanMode) {
+                            t1 = System.nanoTime();
+                            slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
+                            tFwdScan += System.nanoTime() - t1;
+                        }
                         prevAsOfRowId = asOfRowId;
                     }
-                    // Check key cache first (populated by backward scans at this ASOF position)
-                    MapKey cacheKey = asOfJoinMap.withKey();
-                    cacheKey.put(masterKeyRecord, masterAsOfJoinMapSink);
-                    MapValue cacheValue = cacheKey.findValue();
-                    if (cacheValue != null) {
-                        matchRowId = cacheValue.getLong(0);
-                    } else {
-                        // Cache miss: backward scan from ASOF position
-                        t1 = System.nanoTime();
-                        matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                asOfRowId,
-                                masterKeyRecord,
-                                masterAsOfJoinMapSink,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap,
-                                symbolTranslatingRecord
-                        );
-                        tBwdScan += System.nanoTime() - t1;
-                    }
+                    // Look up key in map; backward scan on miss
+                    t1 = System.nanoTime();
+                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
+                            asOfRowId,
+                            masterKeyRecord,
+                            masterAsOfJoinMapSink,
+                            slaveAsOfJoinMapSink,
+                            asOfJoinMap,
+                            symbolTranslatingRecord
+                    );
+                    tBwdScan += System.nanoTime() - t1;
                 }
             } else {
                 // Timestamp-only ASOF JOIN: ASOF row IS the match
@@ -571,19 +592,22 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         final long elapsed = System.nanoTime() - t0;
-        final long tOther = elapsed - tFindAsof - tBwdScan - tAggregate;
+        final long tOther = elapsed - tFindAsof - tBwdScan - tFwdScan - tAggregate;
         LOG.info()
                 .$("horizon join frame done [slot=").$(groupByMapFragment.slotId)
                 .$(", tuples=").$(tupleCount)
                 .$(", elapsedMs=").$(elapsed / 1_000_000)
                 .$(", findAsofMs=").$(tFindAsof / 1_000_000)
                 .$(", bwdScanMs=").$(tBwdScan / 1_000_000)
+                .$(", fwdScanMs=").$(tFwdScan / 1_000_000)
                 .$(", aggregateMs=").$(tAggregate / 1_000_000)
                 .$(", otherMs=").$(tOther / 1_000_000)
                 .$(", masterTsScale=").$(masterTsScale)
                 .$(", horizonTsLo=").$(firstScaledHorizonTs)
                 .$(", horizonTsHi=").$(lastScaledHorizonTs)
                 .$(", bwdScanRows=").$(slaveTimeFrameHelper.backwardScanRows)
+                .$(", fwdScanRows=").$(slaveTimeFrameHelper.forwardScanRows)
+                .$(", fwdSwitches=").$(forwardSwitchCount)
                 .$(", asofCalls=").$(slaveTimeFrameHelper.findAsOfCalls)
                 .$(", asofCacheHits=").$(slaveTimeFrameHelper.findAsOfCacheHits)
                 .$(", asofBookmarkHits=").$(slaveTimeFrameHelper.findAsOfBookmarkHits)
