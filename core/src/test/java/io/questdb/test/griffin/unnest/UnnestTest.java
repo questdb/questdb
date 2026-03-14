@@ -1300,6 +1300,33 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnnestOnTableWithDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE t ("
+                            + "ts TIMESTAMP, sym SYMBOL, arr DOUBLE[]"
+                            + ") TIMESTAMP(ts)"
+            );
+            execute(
+                    "INSERT INTO t VALUES "
+                            + "('2025-01-01T00:00:00.000000Z', 'A', ARRAY[1.0, 2.0]),"
+                            + "('2025-01-02T00:00:00.000000Z', 'B', ARRAY[3.0])"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tval
+                            2025-01-01T00:00:00.000000Z\tA\t1.0
+                            2025-01-01T00:00:00.000000Z\tA\t2.0
+                            2025-01-02T00:00:00.000000Z\tB\t3.0
+                            """,
+                    "SELECT t.ts, t.sym, u.val FROM t, UNNEST(t.arr) u(val)",
+                    "ts",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testUnnest2DArrayEmpty() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (arr DOUBLE[][])");

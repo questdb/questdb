@@ -4312,11 +4312,6 @@ public class SqlParser {
                                         "',' or ')' expected");
                     }
                 } while (true);
-                if (colNames.size() == 0) {
-                    throw SqlException
-                            .$(lexer.lastTokenPosition(),
-                                    "COLUMNS requires at least one column");
-                }
                 unnestModel.getUnnestJsonColumnNames().add(colNames);
                 unnestModel.getUnnestJsonColumnTypes().add(colTypes);
                 tok = tok(lexer, "',' or ')'");

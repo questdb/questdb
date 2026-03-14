@@ -13024,6 +13024,205 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUnnestAsAlias() throws Exception {
+        assertQuery(
+                "select-choose u.val val from (select [arr] from t, unnest(t.arr) u(val))",
+                "SELECT u.val FROM t, UNNEST(t.arr) AS u(val)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestBadExpressionSeparator() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr JUNK) u(val)",
+                34,
+                "',' or ')' expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestColumnsMalformedSeparator() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE JUNK)) u",
+                57,
+                "',' or ')' expected",
+                modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestColumnsUnknownType() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val FOOBAR)) u",
+                50,
+                "unknown type",
+                modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestColumnsUnsupportedType() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val FLOAT)) u",
+                50,
+                "unsupported type for JSON UNNEST",
+                modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestJsonMultipleColumns() throws Exception {
+        assertQuery(
+                "select-choose u.price price, u.name name from (select [payload] from t, unnest(t.payload columns(price DOUBLE, name VARCHAR)) u)",
+                "SELECT u.price, u.name FROM t, UNNEST(t.payload COLUMNS(price DOUBLE, name VARCHAR)) u",
+                modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestJsonNoAlias() throws Exception {
+        assertQuery(
+                "select-choose val from (select [payload] from t, unnest(t.payload columns(val DOUBLE)) _xQdbA1)",
+                "SELECT val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE))",
+                modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestJsonSingleColumn() throws Exception {
+        assertQuery(
+                "select-choose u.val val from (select [payload] from t, unnest(t.payload columns(val DOUBLE)) u)",
+                "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE)) u",
+                modelOf("t").col("payload", ColumnType.VARCHAR)
+        );
+    }
+
+    @Test
+    public void testUnnestMixedJsonAndArray() throws Exception {
+        assertQuery(
+                "select-choose u.tag tag, u.score score from (select [tags, scores] from t, unnest(t.tags columns(tag VARCHAR), t.scores) u(tag, score))",
+                "SELECT u.tag, u.score FROM t, UNNEST(t.tags COLUMNS(tag VARCHAR), t.scores) u(tag, score)",
+                modelOf("t")
+                        .col("tags", ColumnType.VARCHAR)
+                        .col("scores", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestNoAliasColumnAliasesOnly() throws Exception {
+        assertQuery(
+                "select-choose val from (select [arr] from t, unnest(t.arr) _xQdbA1(val))",
+                "SELECT val FROM t, UNNEST(t.arr)(val)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestNoAliasFollowedByWhere() throws Exception {
+        assertQuery(
+                "select-choose val from (select [arr] from t, unnest(t.arr) _xQdbA1(val)) _xQdbA1 where val > 1.0",
+                "SELECT val FROM t, UNNEST(t.arr)(val) WHERE val > 1.0",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestNoAliasNoColumnAliases() throws Exception {
+        assertQuery(
+                "select-choose value from (select [arr] from t, unnest(t.arr) _xQdbA1) order by value",
+                "SELECT value FROM t, UNNEST(t.arr) ORDER BY value",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestTypedArray() throws Exception {
+        assertQuery(
+                "select-choose u.val val from (select [arr] from t, unnest(t.arr) u(val))",
+                "SELECT u.val FROM t, UNNEST(t.arr) u(val)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinality() throws Exception {
+        assertQuery(
+                "select-choose u.val val, u.ord ord from (select [arr] from t, unnest(t.arr) with ordinality u(val, ord))",
+                "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH ORDINALITY u(val, ord)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityCamelCase() throws Exception {
+        assertQuery(
+                "select-choose u.val val, u.ord ord from (select [arr] from t, unnest(t.arr) with ordinality u(val, ord))",
+                "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH Ordinality u(val, ord)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityLowerCase() throws Exception {
+        assertQuery(
+                "select-choose u.val val, u.ord ord from (select [arr] from t, unnest(t.arr) with ordinality u(val, ord))",
+                "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH ordinality u(val, ord)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityMisspelled() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr) WITH ordinalit u(val)",
+                40,
+                "'ordinality' expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityMixedCase() throws Exception {
+        assertQuery(
+                "select-choose u.val val, u.ord ord from (select [arr] from t, unnest(t.arr) with ordinality u(val, ord))",
+                "SELECT u.val, u.ord FROM t, UNNEST(t.arr) WITH OrDiNaLiTy u(val, ord)",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityTooLong() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr) WITH ordinalityy u(val)",
+                40,
+                "'ordinality' expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityWrongLastChar() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr) WITH ordinalitx u(val)",
+                40,
+                "'ordinality' expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestWithOrdinalityWrongWord() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr) WITH JUNK u(val)",
+                40,
+                "'ordinality' expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
     public void testUtfStringConstants() throws SqlException {
         assertQuery(
                 "select-virtual rnd_str('Raphaël', 'Léo') rnd_str from (long_sequence(200))",
