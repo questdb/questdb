@@ -590,6 +590,567 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testOrderByLongRadixSort() throws Exception {
+        // Single ORDER BY on a long column should use radix sort (Radix sort light).
+        assertMemoryLeak(() -> {
+            final long rows = 100;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long," +
+                    " rnd_str(4,4,4,2) AS a_str" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // In serial mode, the parquet cursor now supports random access,
+                // so the code generator picks LongSortedLightRecordCursorFactory (radix sort).
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_long",
+                            """
+                                    Radix sort light
+                                      keys: [a_long]
+                                        parquet file sequential scan
+                                          columns: id,a_long,a_str
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByLongDesc() throws Exception {
+        // ORDER BY ... DESC should also use radix sort and produce correct results.
+        assertMemoryLeak(() -> {
+            final long rows = 50;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_long DESC",
+                            """
+                                    Radix sort light
+                                      keys: [a_long desc]
+                                        parquet file sequential scan
+                                          columns: id,a_long
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long DESC");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long DESC");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByIntRadixSort() throws Exception {
+        // Single ORDER BY on an int column should use radix sort.
+        assertMemoryLeak(() -> {
+            final long rows = 100;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() AS a_int," +
+                    " rnd_str(4,4,4,2) AS a_str" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_int",
+                            """
+                                    Radix sort light
+                                      keys: [a_int]
+                                        parquet file sequential scan
+                                          columns: a_int,a_str
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_int");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_int");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByTimestampRadixSort() throws Exception {
+        // Single ORDER BY on a non-designated timestamp should use radix sort.
+        assertMemoryLeak(() -> {
+            final long rows = 100;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_timestamp('2015','2016',2) AS a_ts" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_ts",
+                            """
+                                    Radix sort light
+                                      keys: [a_ts]
+                                        parquet file sequential scan
+                                          columns: id,a_ts
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_ts");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_ts");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByWithExpression() throws Exception {
+        // ORDER BY on a VirtualRecord-wrapped parquet cursor (expression in SELECT).
+        assertMemoryLeak(() -> {
+            final long rows = 50;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT id + 1 AS id_plus, a_long FROM read_parquet('x.parquet') ORDER BY a_long",
+                            """
+                                    Radix sort light
+                                      keys: [a_long]
+                                        VirtualRecord
+                                          functions: [id+1,a_long]
+                                            parquet file sequential scan
+                                              columns: id,a_long
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT id + 1 AS id_plus, a_long FROM read_parquet('x.parquet') ORDER BY a_long");
+                assertSqlCursors0("SELECT id + 1 AS id_plus, a_long FROM x ORDER BY a_long");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByMultipleRowGroups() throws Exception {
+        // Random access across multiple row groups.
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long," +
+                    " rnd_str(4,4,4,2) AS a_str" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                // Encode with small row group size (1000 rows) to get 5 row groups.
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1
+                );
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByMultipleRowGroupsDesc() throws Exception {
+        // DESC across multiple row groups.
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1
+                );
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long DESC");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long DESC");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByWithLimit() throws Exception {
+        // ORDER BY + LIMIT should work correctly with radix sort on parquet.
+        assertMemoryLeak(() -> {
+            final long rows = 1000;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long LIMIT 10");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long LIMIT 10");
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long LIMIT 10, 20");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long LIMIT 10, 20");
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long DESC LIMIT 5");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long DESC LIMIT 5");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByWithNulls() throws Exception {
+        // ORDER BY should handle null values correctly.
+        assertMemoryLeak(() -> {
+            final long rows = 100;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE rnd_long() END AS a_long" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByDateRadixSort() throws Exception {
+        // Single ORDER BY on a date column should use radix sort.
+        assertMemoryLeak(() -> {
+            final long rows = 50;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " CAST(rnd_timestamp('2015','2016',2) AS DATE) AS a_date" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_date",
+                            """
+                                    Radix sort light
+                                      keys: [a_date]
+                                        parquet file sequential scan
+                                          columns: id,a_date
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_date");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_date");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByIPv4RadixSort() throws Exception {
+        // Single ORDER BY on an IPv4 column should use radix sort.
+        assertMemoryLeak(() -> {
+            final long rows = 50;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_ipv4() AS a_ip" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_ip",
+                            """
+                                    Radix sort light
+                                      keys: [a_ip]
+                                        parquet file sequential scan
+                                          columns: id,a_ip
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_ip");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_ip");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByVarcharFallback() throws Exception {
+        // ORDER BY on varchar (unsupported type for radix) should fall back gracefully.
+        assertMemoryLeak(() -> {
+            final long rows = 50;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('aaa','bbb','ccc','ddd') AS a_varchar" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                // Varchar is not supported by radix sort — falls back to Sort (red-black tree).
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_varchar",
+                            """
+                                    Sort
+                                      keys: [a_varchar]
+                                        parquet file sequential scan
+                                          columns: id,a_varchar
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_varchar");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_varchar");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByMultiColumnsFallback() throws Exception {
+        // ORDER BY on multiple columns is not eligible for single-column radix sort.
+        assertMemoryLeak(() -> {
+            final long rows = 50;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_long() AS a_long," +
+                    " rnd_int() AS a_int" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                // Multi-column ORDER BY falls back to full sort.
+                if (!parallel) {
+                    assertPlanNoLeakCheck(
+                            "SELECT * FROM read_parquet('x.parquet') ORDER BY a_long, a_int",
+                            """
+                                    Sort
+                                      keys: [a_long, a_int]
+                                        parquet file sequential scan
+                                          columns: id,a_long,a_int
+                                    """
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long, a_int");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long, a_int");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByAllColumnTypes() throws Exception {
+        // End-to-end correctness: sort on long, verify all column types survive the round trip.
+        assertMemoryLeak(() -> {
+            final long rows = 200;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_long() AS a_long," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_int() END AS a_int," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_str(4,4,4,2) END AS a_str," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_varchar(1, 20, 1) END AS a_varchar," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_double() END AS a_double," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_float() END AS a_float," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_boolean() END AS a_boolean," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_short() END AS a_short," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_byte() END AS a_byte," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_char() END AS a_char," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_uuid4() END AS a_uuid," +
+                    " rnd_ipv4() AS a_ip," +
+                    " CAST(rnd_timestamp('2015','2016',2) AS DATE) AS a_date," +
+                    " rnd_timestamp('2015','2016',2) AS a_ts," +
+                    " rnd_bin(10, 20, 2) AS a_bin" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByMultipleRowGroupsAllTypes() throws Exception {
+        // Sort across multiple row groups with all column types.
+        assertMemoryLeak(() -> {
+            final long rows = 3000;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_long() AS a_long," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_int() END AS a_int," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_str(4,4,4,2) END AS a_str," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_varchar(1, 20, 1) END AS a_varchar," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_double() END AS a_double," +
+                    " rnd_timestamp('2015','2016',2) AS a_ts" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        500,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1
+                );
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY a_long");
+                assertSqlCursors0("SELECT * FROM x ORDER BY a_long");
+            }
+        });
+    }
+
     private static void assertSqlCursors0(CharSequence expectedSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(

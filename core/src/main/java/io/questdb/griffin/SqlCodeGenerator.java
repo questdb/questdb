@@ -120,6 +120,7 @@ import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
@@ -166,6 +167,7 @@ import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -5742,6 +5744,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
 
+                // Try to enable random access on parquet cursors to use radix sort
+                // instead of the expensive SortedRecordCursorFactory (red-black tree).
+                // Two-pass optimization: during the sort's sequential scan, only the sort
+                // column is decoded from parquet; full row group decode is deferred to
+                // the first recordAt() call.
+                if (orderByColumnNames.size() == 1) {
+                    final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
+                    if (LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)) {
+                        ReadParquetRecordCursorFactory pqf = unwrapParquetFactory(recordCursorFactory);
+                        if (pqf != null) {
+                            int parquetSortCol = resolveParquetSortColumn(
+                                    recordCursorFactory, firstOrderByColumnIndex
+                            );
+                            pqf.enableRandomAccess(parquetSortCol);
+                            if (recordCursorFactory instanceof VirtualRecordCursorFactory vrf) {
+                                vrf.setRandomAccessEnabled(true);
+                            }
+                            return new LongSortedLightRecordCursorFactory(
+                                    configuration,
+                                    orderedMetadata,
+                                    recordCursorFactory,
+                                    listColumnFilterA.copy()
+                            );
+                        }
+                    }
+                }
+
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
                 return new SortedRecordCursorFactory(
                         configuration,
@@ -8920,6 +8949,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         limit.implemented = true;
 
         return limitFunc;
+    }
+
+    private static int resolveParquetSortColumn(RecordCursorFactory factory, int sortColumnIndex) {
+        if (factory instanceof VirtualRecordCursorFactory vrf) {
+            Function f = vrf.getFunctions().getQuick(sortColumnIndex);
+            if (f instanceof ColumnFunction cf) {
+                return cf.getColumnIndex();
+            }
+            return -1; // computed expression — can't do two-pass
+        }
+        return sortColumnIndex;
+    }
+
+    private static ReadParquetRecordCursorFactory unwrapParquetFactory(RecordCursorFactory factory) {
+        if (factory instanceof ReadParquetRecordCursorFactory pqf) {
+            return pqf;
+        }
+        if (factory instanceof VirtualRecordCursorFactory vrf) {
+            RecordCursorFactory base = vrf.getBaseFactory();
+            if (base instanceof ReadParquetRecordCursorFactory pqf) {
+                return pqf;
+            }
+        }
+        return null;
     }
 
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {

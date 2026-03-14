@@ -41,30 +41,56 @@ import io.questdb.std.str.Path;
 public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
+    private boolean randomAccessEnabled;
+    private int sortColumnIndex = -1;
+    private SortedReadParquetCursor sortedCursor;
 
     public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
         this.path = new Path().of(path);
     }
 
+    /**
+     * @param sortColumnIndex metadata column index for two-pass decode, or -1
+     *                        to eagerly decode all columns
+     */
+    public void enableRandomAccess(int sortColumnIndex) {
+        this.randomAccessEnabled = true;
+        this.sortColumnIndex = sortColumnIndex;
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (cursor == null) {
-            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
-            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata());
-        }
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
         try {
-            cursor.of(path.$());
-            return cursor;
+            if (sortColumnIndex >= 0) {
+                if (sortedCursor == null) {
+                    sortedCursor = new SortedReadParquetCursor(
+                            configuration.getFilesFacade(), getMetadata(), sortColumnIndex
+                    );
+                }
+                sortedCursor.of(path.$());
+                return sortedCursor;
+            } else {
+                if (cursor == null) {
+                    cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata());
+                    if (randomAccessEnabled) {
+                        cursor.enableRandomAccess();
+                    }
+                }
+                cursor.of(path.$());
+                return cursor;
+            }
         } catch (Throwable th) {
-            cursor.close();
+            Misc.free(cursor);
+            Misc.free(sortedCursor);
             throw th;
         }
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return randomAccessEnabled;
     }
 
     @Override
@@ -76,6 +102,7 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     @Override
     protected void _close() {
         cursor = Misc.free(cursor);
+        sortedCursor = Misc.free(sortedCursor);
         path = Misc.free(path);
     }
 }
