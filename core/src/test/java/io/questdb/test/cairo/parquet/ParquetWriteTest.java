@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
@@ -44,6 +43,134 @@ import org.junit.Test;
  * </ul>
  */
 public class ParquetWriteTest extends AbstractCairoTest {
+
+    @Test
+    public void testCopyRowGroupPreservesBloomFilterOffset() throws Exception {
+        // Small row group size to produce 3 row groups.
+        // Set absolute threshold low so the second O3 triggers a rewrite.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Insert 12 rows → 3 row groups (RG0, RG1, RG2) of 4 rows each.
+            // Values chosen so the bloom filter is the only way to skip
+            // the copied row group for specific query values.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z'),
+                            (9, '2020-01-01T08:00:00.000Z'),
+                            (10, '2020-01-01T09:00:00.000Z'),
+                            (11, '2020-01-01T10:00:00.000Z'),
+                            (12, '2020-01-01T11:00:00.000Z')
+                            """
+            );
+            // Extra row in a different partition so 2020-01-01 is not the last.
+            execute("INSERT INTO x(x, ts) VALUES (1000, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // Convert with bloom filters on the 'x' column.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01' WITH (bloom_filter_columns = 'x')");
+            drainWalQueue();
+
+            // First O3: UPDATE mode. Inserts into RG0's time range.
+            // This replaces RG0, appending the new RG0' at the end of the file,
+            // leaving dead RG0 data at the original position near the file start.
+            // RG0' values: {1, 100, 2, 101, 3, 4} → min=1, max=101
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (100, '2020-01-01T00:30:00.000Z'),
+                            (101, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Second O3: targets RG1's time range (different from the first O3).
+            // accumulated unused_bytes > 100 → REWRITE mode.
+            // In the REWRITE, RG0' (appended at the end of the old file) is
+            // raw-copied to the beginning of the new file via copy_row_group,
+            // creating a large offset_delta. copy_row_group must adjust
+            // bloom_filter_offset by the same delta as data_page_offset.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (200, '2020-01-01T04:30:00.000Z'),
+                            (201, '2020-01-01T05:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // After REWRITE, the parquet partition has 3 row groups:
+            //   RG0' (copied): x in {1, 100, 2, 101, 3, 4} → min=1, max=101
+            //   RG1' (merged): x in {5, 200, 6, 201, 7, 8} → min=5, max=201
+            //   RG2  (copied): x in {9, 10, 11, 12}         → min=9, max=12
+            //
+            // Query: WHERE x = 50
+            //   RG0': 50 in [1,101] → can't skip by min/max → bloom filter needed
+            //         50 NOT in {1,100,2,101,3,4} → bloom SHOULD skip
+            //   RG1': 50 in [5,201] → can't skip by min/max → bloom filter needed
+            //         50 NOT in {5,200,6,201,7,8} → bloom SHOULD skip
+            //   RG2:  50 > 12 → skipped by min/max alone
+            //
+            // If bloom_filter_offset is stale on copied RG0', its bloom filter
+            // read fails silently → RG0' is NOT skipped → fewer skips.
+            // Verify data correctness.
+            assertSql(
+                    """
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            100\t2020-01-01T00:30:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            101\t2020-01-01T01:30:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            200\t2020-01-01T04:30:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            201\t2020-01-01T05:30:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            9\t2020-01-01T08:00:00.000000Z
+                            10\t2020-01-01T09:00:00.000000Z
+                            11\t2020-01-01T10:00:00.000000Z
+                            12\t2020-01-01T11:00:00.000000Z
+                            1000\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // Bloom filter skip check. assertSql runs a single query execution,
+            // so the counter reflects exactly one scan of the 3 row groups.
+            // Query: WHERE x = 50
+            //   RG0' (copied): 50 in [1,101] → needs bloom filter → should skip
+            //   RG1' (merged): 50 in [5,201] → needs bloom filter → should skip
+            //   RG2  (copied): 50 > 12       → skipped by min/max
+            // All 3 row groups should be skipped → counter = 3.
+            // With stale bloom_filter_offset on copied RG0', bloom filter read
+            // fails silently → RG0' NOT skipped → counter = 2.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertSql("x\n", "SELECT x FROM x WHERE x = 50");
+            Assert.assertEquals(
+                    "bloom filter should skip all 3 row groups (2 by bloom, 1 by min/max)",
+                    3,
+                    ParquetRowGroupFilter.getRowGroupsSkipped()
+            );
+        });
+    }
 
     @Test
     public void testFooterCacheUsedInUpdateMode() throws Exception {
@@ -318,6 +445,92 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteAbsoluteUnusedBytesThreshold() throws Exception {
+        // Use small row group size to get multiple row groups.
+        // Disable ratio check (set to 1.0 = impossible to exceed).
+        // Set absolute threshold very low so the second O3 triggers a rewrite.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (1, 'a', 'foo', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', 'bar', '2020-01-01T01:00:00.000Z'),
+                            (3, 'a', 'baz', '2020-01-01T02:00:00.000Z'),
+                            (4, 'c', 'qux', '2020-01-01T03:00:00.000Z'),
+                            (5, 'b', 'abc', '2020-01-01T04:00:00.000Z'),
+                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z'),
+                            (7, 'c', 'ghi', '2020-01-01T06:00:00.000Z'),
+                            (8, 'b', 'jkl', '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows with row group size 4 → 2 row groups.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // First O3: unused_bytes = 0, multiple row groups → UPDATE mode.
+            // Replaces one row group, accumulating dead space.
+            execute(
+                    """
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (9, 'b', 'mno', '2020-01-01T00:30:00.000Z'),
+                            (10, 'c', 'pqr', '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            long partitionTs = parseFloorPartialTimestamp("2020-01-01");
+            long versionAfterUpdate = getPartitionNameTxn("x", partitionTs);
+
+            // Second O3: accumulated unused_bytes > 100 → REWRITE.
+            // Rewrite copies unchanged row groups (exercises copy_row_group
+            // with dictionary pages from SYMBOL columns).
+            execute(
+                    """
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (11, 'a', 'stu', '2020-01-01T04:30:00.000Z'),
+                            (12, 'c', 'vwx', '2020-01-01T05:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            long versionAfterRewrite = getPartitionNameTxn("x", partitionTs);
+            Assert.assertNotEquals("partition version should change on REWRITE", versionAfterUpdate, versionAfterRewrite);
+
+            assertSql(
+                    """
+                            x\ts\tv\tts
+                            1\ta\tfoo\t2020-01-01T00:00:00.000000Z
+                            9\tb\tmno\t2020-01-01T00:30:00.000000Z
+                            2\tb\tbar\t2020-01-01T01:00:00.000000Z
+                            10\tc\tpqr\t2020-01-01T01:30:00.000000Z
+                            3\ta\tbaz\t2020-01-01T02:00:00.000000Z
+                            4\tc\tqux\t2020-01-01T03:00:00.000000Z
+                            5\tb\tabc\t2020-01-01T04:00:00.000000Z
+                            11\ta\tstu\t2020-01-01T04:30:00.000000Z
+                            6\ta\tdef\t2020-01-01T05:00:00.000000Z
+                            12\tc\tvwx\t2020-01-01T05:30:00.000000Z
+                            7\tc\tghi\t2020-01-01T06:00:00.000000Z
+                            8\tb\tjkl\t2020-01-01T07:00:00.000000Z
+                            100\td\tend\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteResetsUnusedBytesToZero() throws Exception {
         // Use small row group size to get multiple row groups.
         // Set absolute threshold low so the second O3 triggers a rewrite.
@@ -414,92 +627,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\t2020-01-01T06:00:00.000000Z
                             8\t2020-01-01T07:00:00.000000Z
                             100\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testRewriteAbsoluteUnusedBytesThreshold() throws Exception {
-        // Use small row group size to get multiple row groups.
-        // Disable ratio check (set to 1.0 = impossible to exceed).
-        // Set absolute threshold very low so the second O3 triggers a rewrite.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(x, s, v, ts) VALUES
-                            (1, 'a', 'foo', '2020-01-01T00:00:00.000Z'),
-                            (2, 'b', 'bar', '2020-01-01T01:00:00.000Z'),
-                            (3, 'a', 'baz', '2020-01-01T02:00:00.000Z'),
-                            (4, 'c', 'qux', '2020-01-01T03:00:00.000Z'),
-                            (5, 'b', 'abc', '2020-01-01T04:00:00.000Z'),
-                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z'),
-                            (7, 'c', 'ghi', '2020-01-01T06:00:00.000Z'),
-                            (8, 'b', 'jkl', '2020-01-01T07:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            // 8 rows with row group size 4 → 2 row groups.
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // First O3: unused_bytes = 0, multiple row groups → UPDATE mode.
-            // Replaces one row group, accumulating dead space.
-            execute(
-                    """
-                            INSERT INTO x(x, s, v, ts) VALUES
-                            (9, 'b', 'mno', '2020-01-01T00:30:00.000Z'),
-                            (10, 'c', 'pqr', '2020-01-01T01:30:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            long partitionTs = parseFloorPartialTimestamp("2020-01-01");
-            long versionAfterUpdate = getPartitionNameTxn("x", partitionTs);
-
-            // Second O3: accumulated unused_bytes > 100 → REWRITE.
-            // Rewrite copies unchanged row groups (exercises copy_row_group
-            // with dictionary pages from SYMBOL columns).
-            execute(
-                    """
-                            INSERT INTO x(x, s, v, ts) VALUES
-                            (11, 'a', 'stu', '2020-01-01T04:30:00.000Z'),
-                            (12, 'c', 'vwx', '2020-01-01T05:30:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            long versionAfterRewrite = getPartitionNameTxn("x", partitionTs);
-            Assert.assertNotEquals("partition version should change on REWRITE", versionAfterUpdate, versionAfterRewrite);
-
-            assertSql(
-                    """
-                            x\ts\tv\tts
-                            1\ta\tfoo\t2020-01-01T00:00:00.000000Z
-                            9\tb\tmno\t2020-01-01T00:30:00.000000Z
-                            2\tb\tbar\t2020-01-01T01:00:00.000000Z
-                            10\tc\tpqr\t2020-01-01T01:30:00.000000Z
-                            3\ta\tbaz\t2020-01-01T02:00:00.000000Z
-                            4\tc\tqux\t2020-01-01T03:00:00.000000Z
-                            5\tb\tabc\t2020-01-01T04:00:00.000000Z
-                            11\ta\tstu\t2020-01-01T04:30:00.000000Z
-                            6\ta\tdef\t2020-01-01T05:00:00.000000Z
-                            12\tc\tvwx\t2020-01-01T05:30:00.000000Z
-                            7\tc\tghi\t2020-01-01T06:00:00.000000Z
-                            8\tb\tjkl\t2020-01-01T07:00:00.000000Z
-                            100\td\tend\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
             );
@@ -652,12 +779,20 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyRowGroupPreservesBloomFilterOffset() throws Exception {
-        // Small row group size to produce 3 row groups.
-        // Set absolute threshold low so the second O3 triggers a rewrite.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
+    public void testRewriteWithColumnTop() throws Exception {
+        // Regression test: after a rewrite-mode O3 merge on a partition with
+        // column_top > 0, stale column_top values in the Parquet QDB metadata
+        // caused the decoder to skip row groups that now contain actual data.
+        // The fix zeroes column_top in the rewritten file so the decoder reads
+        // the (null) pages instead of skipping them.
+        //
+        // Steps:
+        // 1. Create table, insert rows, add a new column (column_top > 0).
+        // 2. Insert more rows with the new column populated.
+        // 3. Convert to Parquet (single row group → rewrite is guaranteed).
+        // 4. O3 insert into the Parquet partition, triggering REWRITE.
+        // 5. Read back all data — without the fix, the decoder would return
+        //    wrong results for the new column in copied row group regions.
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -665,116 +800,71 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
-            // Insert 12 rows → 3 row groups (RG0, RG1, RG2) of 4 rows each.
-            // Values chosen so the bloom filter is the only way to skip
-            // the copied row group for specific query values.
+            // Insert 4 rows without the STRING column.
             execute(
                     """
                             INSERT INTO x(x, ts) VALUES
                             (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T01:00:00.000Z'),
-                            (3, '2020-01-01T02:00:00.000Z'),
-                            (4, '2020-01-01T03:00:00.000Z'),
-                            (5, '2020-01-01T04:00:00.000Z'),
-                            (6, '2020-01-01T05:00:00.000Z'),
-                            (7, '2020-01-01T06:00:00.000Z'),
-                            (8, '2020-01-01T07:00:00.000Z'),
-                            (9, '2020-01-01T08:00:00.000Z'),
-                            (10, '2020-01-01T09:00:00.000Z'),
-                            (11, '2020-01-01T10:00:00.000Z'),
-                            (12, '2020-01-01T11:00:00.000Z')
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
                             """
             );
-            // Extra row in a different partition so 2020-01-01 is not the last.
-            execute("INSERT INTO x(x, ts) VALUES (1000, '2020-01-02T00:00:00.000Z')");
+            // Second partition so 2020-01-01 is not the last.
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
-            // Convert with bloom filters on the 'x' column.
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01' WITH (bloom_filter_columns = 'x')");
+            // Add STRING column. column_top = 4 for the 2020-01-01 partition.
+            execute("ALTER TABLE x ADD COLUMN s STRING");
             drainWalQueue();
 
-            // First O3: UPDATE mode. Inserts into RG0's time range.
-            // This replaces RG0, appending the new RG0' at the end of the file,
-            // leaving dead RG0 data at the original position near the file start.
-            // RG0' values: {1, 100, 2, 101, 3, 4} → min=1, max=101
+            // Insert 2 rows with s values, still in the same partition.
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (100, '2020-01-01T00:30:00.000Z'),
-                            (101, '2020-01-01T01:30:00.000Z')
+                            INSERT INTO x(x, s, ts) VALUES
+                            (5, 'hello', '2020-01-01T20:00:00.000Z'),
+                            (6, 'world', '2020-01-01T22:00:00.000Z')
                             """
             );
             drainWalQueue();
 
-            // Second O3: targets RG1's time range (different from the first O3).
-            // accumulated unused_bytes > 100 → REWRITE mode.
-            // In the REWRITE, RG0' (appended at the end of the old file) is
-            // raw-copied to the beginning of the new file via copy_row_group,
-            // creating a large offset_delta. copy_row_group must adjust
-            // bloom_filter_offset by the same delta as data_page_offset.
+            // 6 rows, default row group size (1000) → single row group.
+            // column_top = 4: first 4 rows have s = NULL, last 2 have data.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            long partitionTs = parseFloorPartialTimestamp("2020-01-01");
+            long versionBeforeO3 = getPartitionNameTxn("x", partitionTs);
+
+            // O3 insert into the Parquet partition.
+            // Single row group always triggers a full REWRITE.
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (200, '2020-01-01T04:30:00.000Z'),
-                            (201, '2020-01-01T05:30:00.000Z')
+                            INSERT INTO x(x, s, ts) VALUES
+                            (7, 'mid', '2020-01-01T09:00:00.000Z')
                             """
             );
             drainWalQueue();
 
-            // After REWRITE, the parquet partition has 3 row groups:
-            //   RG0' (copied): x in {1, 100, 2, 101, 3, 4} → min=1, max=101
-            //   RG1' (merged): x in {5, 200, 6, 201, 7, 8} → min=5, max=201
-            //   RG2  (copied): x in {9, 10, 11, 12}         → min=9, max=12
-            //
-            // Query: WHERE x = 50
-            //   RG0': 50 in [1,101] → can't skip by min/max → bloom filter needed
-            //         50 NOT in {1,100,2,101,3,4} → bloom SHOULD skip
-            //   RG1': 50 in [5,201] → can't skip by min/max → bloom filter needed
-            //         50 NOT in {5,200,6,201,7,8} → bloom SHOULD skip
-            //   RG2:  50 > 12 → skipped by min/max alone
-            //
-            // If bloom_filter_offset is stale on copied RG0', its bloom filter
-            // read fails silently → RG0' is NOT skipped → fewer skips.
-            // Verify data correctness.
+            long versionAfterRewrite = getPartitionNameTxn("x", partitionTs);
+            Assert.assertNotEquals("partition version should change on REWRITE", versionBeforeO3, versionAfterRewrite);
+
+            // Verify all data is correct. Without the column_top fix, the
+            // decoder would see stale column_top and skip pages for 's',
+            // returning incorrect NULL values for rows that have actual data.
             assertSql(
                     """
-                            x\tts
-                            1\t2020-01-01T00:00:00.000000Z
-                            100\t2020-01-01T00:30:00.000000Z
-                            2\t2020-01-01T01:00:00.000000Z
-                            101\t2020-01-01T01:30:00.000000Z
-                            3\t2020-01-01T02:00:00.000000Z
-                            4\t2020-01-01T03:00:00.000000Z
-                            5\t2020-01-01T04:00:00.000000Z
-                            200\t2020-01-01T04:30:00.000000Z
-                            6\t2020-01-01T05:00:00.000000Z
-                            201\t2020-01-01T05:30:00.000000Z
-                            7\t2020-01-01T06:00:00.000000Z
-                            8\t2020-01-01T07:00:00.000000Z
-                            9\t2020-01-01T08:00:00.000000Z
-                            10\t2020-01-01T09:00:00.000000Z
-                            11\t2020-01-01T10:00:00.000000Z
-                            12\t2020-01-01T11:00:00.000000Z
-                            1000\t2020-01-02T00:00:00.000000Z
+                            x\tts\ts
+                            1\t2020-01-01T00:00:00.000000Z\t
+                            2\t2020-01-01T06:00:00.000000Z\t
+                            7\t2020-01-01T09:00:00.000000Z\tmid
+                            3\t2020-01-01T12:00:00.000000Z\t
+                            4\t2020-01-01T18:00:00.000000Z\t
+                            5\t2020-01-01T20:00:00.000000Z\thello
+                            6\t2020-01-01T22:00:00.000000Z\tworld
+                            100\t2020-01-02T00:00:00.000000Z\t
                             """,
                     "SELECT * FROM x"
-            );
-
-            // Bloom filter skip check. assertSql runs a single query execution,
-            // so the counter reflects exactly one scan of the 3 row groups.
-            // Query: WHERE x = 50
-            //   RG0' (copied): 50 in [1,101] → needs bloom filter → should skip
-            //   RG1' (merged): 50 in [5,201] → needs bloom filter → should skip
-            //   RG2  (copied): 50 > 12       → skipped by min/max
-            // All 3 row groups should be skipped → counter = 3.
-            // With stale bloom_filter_offset on copied RG0', bloom filter read
-            // fails silently → RG0' NOT skipped → counter = 2.
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertSql("x\n", "SELECT x FROM x WHERE x = 50");
-            Assert.assertEquals(
-                    "bloom filter should skip all 3 row groups (2 by bloom, 1 by min/max)",
-                    3,
-                    ParquetRowGroupFilter.getRowGroupsSkipped()
             );
         });
     }

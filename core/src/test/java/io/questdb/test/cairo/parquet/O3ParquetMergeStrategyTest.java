@@ -52,7 +52,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             long sortedTimestampsAddr = allocateSortedTimestamps(300);
             try {
                 // With threshold=4096, rg0 (5000 rows) is NOT small -> COPY_O3
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 0,
@@ -66,7 +66,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(2).type);
 
                 // With threshold=6000, rg0 (5000 rows) IS small -> MERGE
-                n = O3ParquetMergeStrategy.computeMergeActions(
+                n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 0,
@@ -379,7 +379,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data: [150] overlaps rg0, [300] in gap, [450] overlaps rg1, [600] in gap, [750] overlaps rg2
             long sortedTimestampsAddr = allocateSortedTimestamps(150, 300, 450, 600, 750);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 4,
@@ -431,7 +431,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [100, 200, 300]
             long sortedTimestampsAddr = allocateSortedTimestamps(100, 200, 300);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -461,7 +461,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [500, 600, 700] - all after rg0
             long sortedTimestampsAddr = allocateSortedTimestamps(500, 600, 700);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -495,7 +495,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [100, 200, 300] - all before rg0
             long sortedTimestampsAddr = allocateSortedTimestamps(100, 200, 300);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -536,7 +536,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // - 201 is just past rg0's max (200) -> should be in the gap
             long sortedTimestampsAddr = allocateSortedTimestamps(150, 201);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 1,
@@ -580,7 +580,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // - 100 equals rgMin -> should overlap with rg0
             long sortedTimestampsAddr = allocateSortedTimestamps(50, 100);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 1,
@@ -618,7 +618,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [250, 300, 350] - in gap between row groups
             long sortedTimestampsAddr = allocateSortedTimestamps(250, 300, 350);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -657,7 +657,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [250, 300, 350] - in gap, rg1 is small
             long sortedTimestampsAddr = allocateSortedTimestamps(250, 300, 350);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -694,7 +694,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [250, 300, 350] - in gap, but rg0 is small
             long sortedTimestampsAddr = allocateSortedTimestamps(250, 300, 350);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -748,7 +748,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Single O3 row at timestamp 550, within RG5's range [500..599]
             long sortedTimestampsAddr = allocateSortedTimestamps(550);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 0,
@@ -791,7 +791,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // O3 data with timestamps [150, 250, 350] - all within [100, 500]
             long sortedTimestampsAddr = allocateSortedTimestamps(150, 250, 350);
             try {
-                int n = O3ParquetMergeStrategy.computeMergeActions(
+                int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0, 2,
@@ -810,6 +810,47 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(sortedTimestampsAddr, 3);
             }
         });
+    }
+
+    private static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            ObjList<MergeAction> actionsBuf
+    ) {
+        return O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                O3ParquetMergeStrategy.DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
+                Integer.MAX_VALUE,
+                actionsBuf,
+                new LongList(),
+                new LongList()
+        );
+    }
+
+    private static int computeMergeActions(
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            int smallRowGroupThreshold,
+            ObjList<MergeAction> actionsBuf
+    ) {
+        return O3ParquetMergeStrategy.computeMergeActions(
+                rowGroupBounds,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                smallRowGroupThreshold,
+                Integer.MAX_VALUE,
+                actionsBuf,
+                new LongList(),
+                new LongList()
+        );
     }
 
     /**
