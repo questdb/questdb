@@ -914,6 +914,74 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testMoveClausesIncrementsPositionCounter() throws Exception {
+        // Regression test for a bug in SqlOptimiser.moveClauses() where the
+        // position counter 'p' was never incremented after matching a clause
+        // position. When swapJoinOrder0() called moveClauses() with multiple
+        // positions to steal, only the first clause was moved to the target
+        // context. The remaining clauses stayed in the source context, creating
+        // circular dependencies in the join graph and causing query compilation
+        // to fail.
+        //
+        // The query uses three comma-joined tables with WHERE conditions:
+        //   a.x = c.x AND b.y = c.y AND b.z = c.z
+        //
+        // After analyseEquals, model c gets all three clauses. During
+        // reorderTables, swapJoinOrder0 tries to steal the two clauses
+        // referencing table b (b.y=c.y and b.z=c.z) from model c. With the
+        // bug, only b.y=c.y is moved; b.z=c.z stays on c, creating a cycle
+        // between models b and c that makes topological sort fail.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab_a (x INT)");
+            execute("CREATE TABLE tab_b (y INT, z INT)");
+            execute("CREATE TABLE tab_c (x INT, y INT, z INT)");
+
+            execute("""
+                    INSERT INTO tab_a VALUES (1), (2), (3)
+                    """);
+            execute("""
+                    INSERT INTO tab_b VALUES (10, 100), (20, 200), (10, 200)
+                    """);
+            execute("""
+                    INSERT INTO tab_c VALUES (1, 10, 100), (2, 20, 200), (3, 10, 200), (1, 20, 200)
+                    """);
+
+            // Cross join with WHERE conditions -- triggers reorderTables and
+            // swapJoinOrder0 with multiple clausesToSteal entries.
+            String implicitJoinQuery = """
+                    SELECT tab_a.x, tab_b.y, tab_b.z, tab_c.x AS cx, tab_c.y AS cy, tab_c.z AS cz
+                    FROM tab_a
+                    CROSS JOIN tab_b
+                    CROSS JOIN tab_c
+                    WHERE tab_a.x = tab_c.x
+                      AND tab_b.y = tab_c.y
+                      AND tab_b.z = tab_c.z
+                    ORDER BY tab_a.x, tab_b.y, tab_b.z, tab_c.x
+                    """;
+
+            // Equivalent explicit join query for reference.
+            String explicitJoinQuery = """
+                    SELECT tab_a.x, tab_b.y, tab_b.z, tab_c.x AS cx, tab_c.y AS cy, tab_c.z AS cz
+                    FROM tab_a
+                    JOIN tab_c ON tab_a.x = tab_c.x
+                    JOIN tab_b ON tab_b.y = tab_c.y AND tab_b.z = tab_c.z
+                    ORDER BY tab_a.x, tab_b.y, tab_b.z, tab_c.x
+                    """;
+
+            String expected = """
+                    x\ty\tz\tcx\tcy\tcz
+                    1\t10\t100\t1\t10\t100
+                    1\t20\t200\t1\t20\t200
+                    2\t20\t200\t2\t20\t200
+                    3\t10\t200\t3\t10\t200
+                    """;
+
+            assertQueryNoLeakCheck(expected, explicitJoinQuery, null, true, false);
+            assertQueryNoLeakCheck(expected, implicitJoinQuery, null, true, false);
+        });
+    }
+
+    @Test
     public void testNestedFirstFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
