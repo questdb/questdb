@@ -323,9 +323,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_byte";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "b BYTE, " +
-                                   "ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "b BYTE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -389,8 +389,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_boolean";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_string BOOLEAN, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_string BOOLEAN, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -478,8 +478,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_byte";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_double BYTE, from_float BYTE, from_int BYTE, from_long BYTE, from_short BYTE, from_string BYTE, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_double BYTE, from_float BYTE, from_int BYTE, from_long BYTE, from_short BYTE, from_string BYTE, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -569,8 +569,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_char";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_string CHAR, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_string CHAR, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -652,8 +652,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_date";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte DATE, from_int DATE, from_long DATE, from_short DATE, from_string DATE, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte DATE, from_int DATE, from_long DATE, from_short DATE, from_string DATE, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -736,9 +736,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_decimal";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte DECIMAL(10,2), from_double DECIMAL(10,2), from_float DECIMAL(10,2), " +
-                                   "from_int DECIMAL(10,2), from_long DECIMAL(10,2), from_string DECIMAL(10,2), ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte DECIMAL(10,2), from_double DECIMAL(10,2), from_float DECIMAL(10,2), " +
+                        "from_int DECIMAL(10,2), from_long DECIMAL(10,2), from_string DECIMAL(10,2), ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -965,8 +965,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_double";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte DOUBLE, from_float DOUBLE, from_int DOUBLE, from_long DOUBLE, from_short DOUBLE, from_string DOUBLE, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte DOUBLE, from_float DOUBLE, from_int DOUBLE, from_long DOUBLE, from_short DOUBLE, from_string DOUBLE, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1066,8 +1066,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_float";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte FLOAT, from_double FLOAT, from_int FLOAT, from_long FLOAT, from_short FLOAT, from_string FLOAT, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte FLOAT, from_double FLOAT, from_int FLOAT, from_long FLOAT, from_short FLOAT, from_string FLOAT, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1136,8 +1136,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_geohash";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_string GEOHASH(5c), ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_string GEOHASH(5c), ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1222,8 +1222,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_int";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte INT, from_double INT, from_float INT, from_long INT, from_short INT, from_string INT, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte INT, from_double INT, from_float INT, from_long INT, from_short INT, from_string INT, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1307,8 +1307,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_long";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte LONG, from_double LONG, from_float LONG, from_int LONG, from_short LONG, from_string LONG, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte LONG, from_double LONG, from_float LONG, from_int LONG, from_short LONG, from_string LONG, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1344,8 +1344,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_long256";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_string LONG256, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_string LONG256, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1469,8 +1469,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_short";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte SHORT, from_double SHORT, from_float SHORT, from_int SHORT, from_long SHORT, from_string SHORT, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte SHORT, from_double SHORT, from_float SHORT, from_int SHORT, from_long SHORT, from_string SHORT, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1551,10 +1551,10 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_string";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_bool STRING, from_byte STRING, from_char STRING, from_decimal STRING, " +
-                                   "from_double STRING, from_float STRING, from_int STRING, from_long STRING, " +
-                                   "from_long256 STRING, from_symbol STRING, from_timestamp STRING, from_uuid STRING, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_bool STRING, from_byte STRING, from_char STRING, from_decimal STRING, " +
+                        "from_double STRING, from_float STRING, from_int STRING, from_long STRING, " +
+                        "from_long256 STRING, from_symbol STRING, from_timestamp STRING, from_uuid STRING, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                 long tsMicros = 1_645_747_200_000_000L;
@@ -1605,8 +1605,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_symbol";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte SYMBOL, from_double SYMBOL, from_float SYMBOL, from_int SYMBOL, from_long SYMBOL, from_short SYMBOL, from_string SYMBOL, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte SYMBOL, from_double SYMBOL, from_float SYMBOL, from_int SYMBOL, from_long SYMBOL, from_short SYMBOL, from_string SYMBOL, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1673,8 +1673,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_timestamp";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_byte TIMESTAMP, from_int TIMESTAMP, from_long TIMESTAMP, from_short TIMESTAMP, from_string TIMESTAMP, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_byte TIMESTAMP, from_int TIMESTAMP, from_long TIMESTAMP, from_short TIMESTAMP, from_string TIMESTAMP, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1754,8 +1754,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_timestamp_ns";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_string TIMESTAMP_NS, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_string TIMESTAMP_NS, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1807,8 +1807,8 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_uuid";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_string UUID, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_string UUID, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     sender.table(table)
@@ -1890,10 +1890,10 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_coerce_to_varchar";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "from_bool VARCHAR, from_byte VARCHAR, from_char VARCHAR, from_decimal VARCHAR, " +
-                                   "from_double VARCHAR, from_float VARCHAR, from_int VARCHAR, from_long VARCHAR, " +
-                                   "from_long256 VARCHAR, from_symbol VARCHAR, from_timestamp VARCHAR, from_uuid VARCHAR, from_string VARCHAR, ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "from_bool VARCHAR, from_byte VARCHAR, from_char VARCHAR, from_decimal VARCHAR, " +
+                        "from_double VARCHAR, from_float VARCHAR, from_int VARCHAR, from_long VARCHAR, " +
+                        "from_long256 VARCHAR, from_symbol VARCHAR, from_timestamp VARCHAR, from_uuid VARCHAR, from_string VARCHAR, ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
                 long tsMicros = 1_645_747_200_000_000L;
@@ -2168,9 +2168,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_decimal_rescale";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "d DECIMAL(10, 4), " +
-                                   "ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "d DECIMAL(10, 4), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     // Send with scale=2, but column expects scale=4 - should rescale
@@ -2510,9 +2510,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 // Create a table with TIMESTAMP (microsecond) designated timestamp
                 String table = "test_qwp_micro_table_nano_sender";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "value LONG, " +
-                                   "ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "value LONG, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     // Send nanosecond timestamp to microsecond table
@@ -2584,9 +2584,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
                 // Create a table with TIMESTAMP_NS (nanosecond) designated timestamp
                 String table = "test_qwp_nano_table_micro_sender";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "value LONG, " +
-                                   "ts TIMESTAMP_NS" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "value LONG, " +
+                        "ts TIMESTAMP_NS" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     // Send microsecond timestamp to nanosecond table
@@ -3450,9 +3450,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_timestamp_micros_to_nanos";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "ts_col TIMESTAMP_NS, " +
-                                   "ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts_col TIMESTAMP_NS, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     long tsMicros = 1_645_747_200_111_111L; // 2022-02-25T00:00:00Z
@@ -3509,9 +3509,9 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
 
                 String table = "test_qwp_timestamp_nanos_to_micros";
                 serverMain.execute("CREATE TABLE " + table + " (" +
-                                   "ts_col TIMESTAMP, " +
-                                   "ts TIMESTAMP" +
-                                   ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts_col TIMESTAMP, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     long tsNanos = 1_645_747_200_123_456_789L;
@@ -3643,7 +3643,7 @@ public class QwpSenderE2ETest extends AbstractBootstrapTest {
         } catch (LineSenderException e) {
             String msg = e.getMessage();
             Assert.assertTrue("Expected error containing '" + expectedMsgPart1 +
-                              "' and '" + expectedMsgPart2 + "' but got: " + msg,
+                            "' and '" + expectedMsgPart2 + "' but got: " + msg,
                     msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
         }
     }
