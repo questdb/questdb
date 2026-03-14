@@ -248,7 +248,10 @@ public class RoutingFilesFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        return Files.allocate(fd, size);
+        if (isMemoryFd(fd)) {
+            return memFf.allocate(fd, size);
+        }
+        return diskFf.allocate(fd, size);
     }
 
     @Override
@@ -711,7 +714,10 @@ public class RoutingFilesFacade implements FilesFacade {
 
     @Override
     public boolean truncate(long fd, long size) {
-        return Files.truncate(fd, size);
+        if (isMemoryFd(fd)) {
+            return memFf.truncate(fd, size);
+        }
+        return diskFf.truncate(fd, size);
     }
 
     @Override

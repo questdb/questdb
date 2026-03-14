@@ -1538,7 +1538,13 @@ public class SqlParser {
         if (isAtomicKeyword(tok)) {
             atomicSpecified = true;
             builder.setBatchSize(-1);
-            expectTok(lexer, "table");
+            tok = tok(lexer, "'memory' or 'table'");
+            if (isMemoryKeyword(tok)) {
+                builder.setVolumeAlias(":memory:", lexer.lastTokenPosition());
+                expectTok(lexer, "table");
+            } else if (!isTableKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'memory' or 'table' expected");
+            }
             tok = tok(lexer, "table name or 'if'");
         } else if (isBatchKeyword(tok)) {
             batchSpecified = true;
@@ -1550,11 +1556,17 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
 
-            tok = tok(lexer, "table or o3MaxLag");
+            tok = tok(lexer, "'memory' or 'table' or 'o3MaxLag'");
             if (isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
                 builder.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                tok = tok(lexer, "'memory' or 'table'");
+            }
+            if (isMemoryKeyword(tok)) {
+                builder.setVolumeAlias(":memory:", lexer.lastTokenPosition());
                 expectTok(lexer, "table");
+            } else if (!isTableKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'memory' or 'table' expected");
             }
             tok = tok(lexer, "table name or 'if'");
         } else if (isMemoryKeyword(tok)) {

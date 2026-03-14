@@ -49,6 +49,7 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
     private static final ThreadLocal<RoutingFilesFacade> INIT_FF = new ThreadLocal<>();
 
     private final RoutingFilesFacade routingFf;
+    private CharSequence sqlCopyInputRoot;
 
     public HybridCairoConfiguration(CharSequence dbRoot) {
         this(dbRoot, new RoutingFilesFacade(
@@ -80,10 +81,23 @@ public class HybridCairoConfiguration extends DefaultCairoConfiguration {
         return ff;
     }
 
+    @Override
+    public CharSequence getSqlCopyInputRoot() {
+        return sqlCopyInputRoot;
+    }
+
     /**
      * Returns the RoutingFilesFacade for direct memory-table registration.
      */
     public RoutingFilesFacade getRoutingFilesFacade() {
         return routingFf;
+    }
+
+    /**
+     * Enables {@code read_parquet()} by setting the allowed input root.
+     * Pass {@code "/"} to allow reading any absolute path.
+     */
+    public void setSqlCopyInputRoot(CharSequence root) {
+        this.sqlCopyInputRoot = root;
     }
 }

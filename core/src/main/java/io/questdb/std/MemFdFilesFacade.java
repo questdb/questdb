@@ -33,6 +33,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * FilesFacade backed entirely by anonymous memory-mapped file descriptors
@@ -54,6 +55,13 @@ public class MemFdFilesFacade implements FilesFacade {
     private static final long DIRECTORY_MARKER = Long.MIN_VALUE;
     private static final Log LOG = LogFactory.getLog(MemFdFilesFacade.class);
 
+    // Capacity limit in bytes (-1 = unlimited). Acts as a virtual "disk size"
+    // bounding the total RSS consumed by memfd-backed files.
+    private final long capacityBytes;
+
+    // Running total of bytes allocated across all primary memfds.
+    private final AtomicLong usedBytes = new AtomicLong(0);
+
     // Logical path → primary raw OS fd (or DIRECTORY_MARKER for directories).
     // Raw OS fds are NOT wrapped in Files.createUniqueFd() and are therefore
     // invisible to Files.getOpenCachedFileCount(). This mirrors the real
@@ -69,6 +77,22 @@ public class MemFdFilesFacade implements FilesFacade {
     private final LongObjHashMap<FindState> activeFinders = new LongObjHashMap<>();
 
     private long nextFindPtr = 1;
+
+    public MemFdFilesFacade() {
+        this(-1);
+    }
+
+    public MemFdFilesFacade(long capacityBytes) {
+        this.capacityBytes = capacityBytes;
+    }
+
+    public long getCapacityBytes() {
+        return capacityBytes;
+    }
+
+    public long getUsedBytes() {
+        return usedBytes.get();
+    }
 
     /**
      * Closes all primary fds and clears all internal state. After this call
@@ -86,6 +110,7 @@ public class MemFdFilesFacade implements FilesFacade {
         pathRegistry.clear();
         childFdToPath.clear();
         activeFinders.clear();
+        usedBytes.set(0);
         nextFindPtr = 1;
     }
 
@@ -112,7 +137,14 @@ public class MemFdFilesFacade implements FilesFacade {
             }
             pathRegistry.put(path, (long) osFd);
             if (size > 0) {
+                if (capacityBytes > 0 && usedBytes.get() + size > capacityBytes) {
+                    closePrimary(path);
+                    return -1;
+                }
                 Files.truncate(osFd, size);
+                if (capacityBytes > 0) {
+                    usedBytes.addAndGet(size);
+                }
             }
             return dupChild(path, osFd);
         }
@@ -157,6 +189,21 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
+        if (capacityBytes > 0) {
+            long currentSize = Files.length(fd);
+            if (currentSize < 0) {
+                currentSize = 0;
+            }
+            long delta = size - currentSize;
+            if (delta > 0 && usedBytes.get() + delta > capacityBytes) {
+                return false;
+            }
+            boolean result = Files.allocate(fd, size);
+            if (result && delta != 0) {
+                usedBytes.addAndGet(delta);
+            }
+            return result;
+        }
         return Files.allocate(fd, size);
     }
 
@@ -400,7 +447,10 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public long getDiskFreeSpace(LPSZ path) {
-        return Runtime.getRuntime().freeMemory();
+        if (capacityBytes > 0) {
+            return Math.max(0, capacityBytes - usedBytes.get());
+        }
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -816,6 +866,21 @@ public class MemFdFilesFacade implements FilesFacade {
 
     @Override
     public boolean truncate(long fd, long size) {
+        if (capacityBytes > 0) {
+            long currentSize = Files.length(fd);
+            if (currentSize < 0) {
+                currentSize = 0;
+            }
+            long delta = size - currentSize;
+            if (delta > 0 && usedBytes.get() + delta > capacityBytes) {
+                return false;
+            }
+            boolean result = Files.truncate(fd, size);
+            if (result && delta != 0) {
+                usedBytes.addAndGet(delta);
+            }
+            return result;
+        }
         return Files.truncate(fd, size);
     }
 
@@ -884,6 +949,12 @@ public class MemFdFilesFacade implements FilesFacade {
         long primaryOsFd = pathRegistry.valueAt(idx);
         pathRegistry.removeAt(idx);
         if (primaryOsFd != DIRECTORY_MARKER) {
+            if (capacityBytes > 0) {
+                long fileSize = Files.length((int) primaryOsFd);
+                if (fileSize > 0) {
+                    usedBytes.addAndGet(-fileSize);
+                }
+            }
             Files.close0((int) primaryOsFd);
         }
         return true;
