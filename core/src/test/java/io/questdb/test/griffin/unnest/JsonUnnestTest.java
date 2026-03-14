@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.griffin.unnest;
 
 import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.std.Unsafe;
