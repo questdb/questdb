@@ -74,6 +74,22 @@ import org.jetbrains.annotations.Nullable;
  * <b>Pass 2 ({@code recordAt})</b> — on the first call, all cached row groups
  * are re-decoded with the full column projection. From that point on, every
  * {@code recordAt()} is a direct pointer lookup.
+ * <p>
+ * <b>Performance characteristics:</b>
+ * <ul>
+ *   <li><b>Sort-phase memory:</b> ~8 bytes/row (one LONG/TIMESTAMP column) vs.
+ *       full row width with single-pass decode. For a 15-column table at 1M rows
+ *       this reduces sort-phase resident memory from ~100+ MB to ~8 MB.</li>
+ *   <li><b>Decode cost:</b> the sort column is decoded twice (once sort-only, once
+ *       in the full re-decode), so total decode work is ~(1 + 1/N) of a single
+ *       full decode, where N is the column count — negligible overhead.</li>
+ *   <li><b>Cache efficiency:</b> the radix sort operates on a tight 16-byte array
+ *       (value + rowId pairs) that fits L2/L3 much better when pass 1 does not
+ *       fill the cache with full-width row data.</li>
+ *   <li><b>LIMIT interaction:</b> with ORDER BY ... LIMIT, pass 2 could
+ *       selectively re-decode only the row groups containing the top-K rows
+ *       (not yet implemented but the infrastructure supports it).</li>
+ * </ul>
  */
 public class SortedReadParquetCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(SortedReadParquetCursor.class);
@@ -301,20 +317,15 @@ public class SortedReadParquetCursor implements RecordCursor {
             final int columnCount = metadata.getColumnCount();
 
             RowGroupBuffers rgBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            // TODO(perf): use sortOnlyColumns to decode only the sort column here.
-            // The Rust parquet decoder currently SIGABRTs when freeing RowGroupBuffers
-            // that were decoded with a column subset. Needs investigation in the
-            // native allocator. For now, decode all columns — the two-pass structure
-            // (SortedReadParquetCursor + decodeAllRowGroupsFully) is ready for when
-            // the native issue is fixed.
-            rowGroupRowCount = decoder.decodeRowGroup(rgBuffers, columns, rowGroupIndex, 0, rowGroupSize);
+            rowGroupRowCount = decoder.decodeRowGroup(rgBuffers, sortOnlyColumns, rowGroupIndex, 0, rowGroupSize);
 
             LongList groupDataPtrs = new LongList(columnCount);
             LongList groupAuxPtrs = new LongList(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                groupDataPtrs.add(rgBuffers.getChunkDataPtr(i));
-                groupAuxPtrs.add(rgBuffers.getChunkAuxPtr(i));
-            }
+            groupDataPtrs.setPos(columnCount);
+            groupAuxPtrs.setPos(columnCount);
+            // Sort column decoded at buffer index 0; map to metadata column index.
+            groupDataPtrs.setQuick(sortColumnIndex, rgBuffers.getChunkDataPtr(0));
+            groupAuxPtrs.setQuick(sortColumnIndex, rgBuffers.getChunkAuxPtr(0));
 
             cachedRowGroupBuffers.add(rgBuffers);
             cachedDataPtrs.add(groupDataPtrs);

@@ -8954,8 +8954,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static int resolveParquetSortColumn(RecordCursorFactory factory, int sortColumnIndex) {
         if (factory instanceof VirtualRecordCursorFactory vrf) {
             Function f = vrf.getFunctions().getQuick(sortColumnIndex);
-            if (f instanceof ColumnFunction cf) {
-                return cf.getColumnIndex();
+            if (f instanceof ColumnFunction) {
+                // ColumnFunction.getColumnIndex() returns the index in the VRF's
+                // delegate record, which may differ from the parquet metadata index
+                // (e.g., when parallel read adds extra system columns). Look up the
+                // column by name in the parquet factory's metadata instead.
+                CharSequence colName = factory.getMetadata().getColumnName(sortColumnIndex);
+                RecordCursorFactory base = vrf.getBaseFactory();
+                return base.getMetadata().getColumnIndexQuiet(colName);
             }
             return -1; // computed expression — can't do two-pass
         }
