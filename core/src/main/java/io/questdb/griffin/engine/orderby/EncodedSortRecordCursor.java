@@ -35,9 +35,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -48,6 +48,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
     private final long maxEntryMemBytes;
+    private final long parallelThreshold;
     private final RecordChain recordChain;
     private RecordCursor baseCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -75,6 +76,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages(),
                     MAX_HEAP_SIZE_LIMIT
             );
+            this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.recordChain = new RecordChain(
                     metadata,
                     recordSink,
@@ -174,40 +176,44 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildAndSort() {
-        long estimatedSize = baseCursor.size();
-        long maxEntries = maxEntryMemBytes / entrySize;
-        if (estimatedSize > 0) {
-            if (estimatedSize > maxEntries) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
-            }
-            entryMem.setCapacity(estimatedSize * longsPerEntry);
-        }
-
-        entryMem.clear();
-        count = 0;
-        Record record = baseCursor.getRecord();
-        if (estimatedSize > 0) {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                long chainOffset = recordChain.put(record, -1L);
-                long addr = entryMem.getAppendAddress();
-                encoder.encode(record, addr, chainOffset);
-                entryMem.skip(longsPerEntry);
-                count++;
-            }
-        } else {
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                if (count >= maxEntries) {
+        try {
+            long estimatedSize = baseCursor.size();
+            long maxEntries = maxEntryMemBytes / entrySize;
+            if (estimatedSize > 0) {
+                if (estimatedSize > maxEntries) {
                     throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
                 }
-                long chainOffset = recordChain.put(record, -1L);
-                entryMem.ensureCapacity(longsPerEntry);
-                long addr = entryMem.getAppendAddress();
-                encoder.encode(record, addr, chainOffset);
-                entryMem.skip(longsPerEntry);
-                count++;
+                entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
+
+            entryMem.clear();
+            count = 0;
+            Record record = baseCursor.getRecord();
+            if (estimatedSize > 0) {
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    long chainOffset = recordChain.put(record, -1L);
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(record, addr, chainOffset);
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                }
+            } else {
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    if (count >= maxEntries) {
+                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                    }
+                    long chainOffset = recordChain.put(record, -1L);
+                    entryMem.ensureCapacity(longsPerEntry);
+                    long addr = entryMem.getAppendAddress();
+                    encoder.encode(record, addr, chainOffset);
+                    entryMem.skip(longsPerEntry);
+                    count++;
+                }
+            }
+        } finally {
+            Misc.free(encoder);
         }
 
         if (count <= 1) {
@@ -216,7 +222,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             return;
         }
 
-        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES);
+        Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
     }
