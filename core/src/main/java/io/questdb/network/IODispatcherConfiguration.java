@@ -96,6 +96,10 @@ public interface IODispatcherConfiguration {
 
     NetworkFacade getNetworkFacade();
 
+    default String getOomResponse() {
+        return null;
+    }
+
     default boolean getPeerNoLinger() {
         return false;
     }
