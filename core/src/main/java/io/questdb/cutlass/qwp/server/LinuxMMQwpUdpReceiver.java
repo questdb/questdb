@@ -64,6 +64,7 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     @Override
     public boolean runSerially() {
         boolean ran = false;
+        boolean committed = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
             long p = msgVec;
@@ -83,13 +84,16 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
                 } catch (Throwable t) {
                     LOG.error().$("commit error: ").$(t.getMessage()).$();
                 }
+                committed = true;
                 break;
             }
         }
-        try {
-            tudCache.commitAll();
-        } catch (Throwable t) {
-            LOG.error().$("commit error: ").$(t.getMessage()).$();
+        if (!committed) {
+            try {
+                tudCache.commitAll();
+            } catch (Throwable t) {
+                LOG.error().$("commit error: ").$(t.getMessage()).$();
+            }
         }
         return ran;
     }

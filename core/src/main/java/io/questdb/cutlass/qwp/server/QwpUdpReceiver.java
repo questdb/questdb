@@ -301,6 +301,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         boolean ran = false;
+        boolean committed = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
@@ -314,13 +315,16 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 } catch (Throwable t) {
                     LOG.error().$("commit error: ").$(t.getMessage()).$();
                 }
+                committed = true;
                 break;
             }
         }
-        try {
-            tudCache.commitAll();
-        } catch (Throwable t) {
-            LOG.error().$("commit error: ").$(t.getMessage()).$();
+        if (!committed) {
+            try {
+                tudCache.commitAll();
+            } catch (Throwable t) {
+                LOG.error().$("commit error: ").$(t.getMessage()).$();
+            }
         }
         return ran;
     }
