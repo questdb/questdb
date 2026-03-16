@@ -5073,11 +5073,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
                 if (!isBoolean(filter.getType())) {
+                    Misc.free(filter);
                     throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
                 }
                 filter.init(null, executionContext);
                 if (filter.isConstant()) {
-                    if (!filter.getBool(null)) {
+                    boolean filterValue = filter.getBool(null);
+                    Misc.free(filter);
+                    if (!filterValue) {
                         // do not copy metadata here
                         // this would have been JoinRecordMetadata, which is new instance anyway
                         // we have to make sure that this metadata is safely transitioned
@@ -5837,15 +5840,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode sampleByUnits
     ) throws SqlException {
         final ExpressionNode timezoneName = model.getSampleByTimezoneName();
-        final Function timezoneNameFunc;
+        Function timezoneNameFunc = null;
         final int timezoneNameFuncPos;
         final ExpressionNode offset = model.getSampleByOffset();
-        final Function offsetFunc;
+        Function offsetFunc = null;
         final int offsetFuncPos;
-        final Function sampleFromFunc;
+        Function sampleFromFunc = null;
         final int sampleFromFuncPos;
-        final Function sampleToFunc;
+        Function sampleToFunc = null;
         final int sampleToFuncPos;
+
+        RecordCursorFactory factory = null;
+        try {
 
         if (timezoneName != null) {
             timezoneNameFunc = functionParser.parseFunction(
@@ -5872,8 +5878,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             offsetFunc = StrConstant.NULL;
             offsetFuncPos = 0;
         }
-
-        RecordCursorFactory factory = null;
         // We require timestamp with asc order.
         final int timestampIndex;
         // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
@@ -5889,6 +5893,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         } catch (Throwable e) {
             Misc.free(factory);
+            factory = null;
             throw e;
         } finally {
             executionContext.popTimestampRequiredFlag();
@@ -5948,7 +5953,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             fillCount = sampleByFill.size();
         }
 
-        try {
             if (sampleByUnits == null) {
                 timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, sampleByNode.token, sampleByNode.position);
             } else {
@@ -6298,6 +6302,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sampleToFuncPos
             );
         } catch (Throwable e) {
+            Misc.free(sampleFromFunc);
+            Misc.free(sampleToFunc);
+            Misc.free(timezoneNameFunc);
+            Misc.free(offsetFunc);
             Misc.free(factory);
             throw e;
         } finally {
