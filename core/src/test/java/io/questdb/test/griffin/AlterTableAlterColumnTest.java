@@ -376,7 +376,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
             execute("INSERT INTO x SELECT" +
                     " CASE WHEN x % 2 = 0 THEN rnd_int() ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             // seal the partition by inserting into the next day
@@ -552,7 +552,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
             execute("INSERT INTO x2 SELECT" +
                     " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             // seal the partition by inserting into the next day
@@ -789,7 +789,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
+                        " timestamp_sequence(0, 1_000_000_000) k," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
