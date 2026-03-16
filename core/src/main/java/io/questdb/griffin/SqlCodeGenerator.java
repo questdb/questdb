@@ -2874,6 +2874,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toType
                                 );
                         }
+                        break;
                     case BINARY:
                         castFunctions.add(BinColumn.newInstance(i));
                         break;
@@ -2944,7 +2945,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOBYTE:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(
-                                                GeoShortColumn.newInstance(i, toTag),
+                                                GeoByteColumn.newInstance(i, fromType),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -2952,7 +2953,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(
-                                                GeoShortColumn.newInstance(i, toTag),
+                                                GeoShortColumn.newInstance(i, fromType),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -2960,7 +2961,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(
-                                                GeoIntColumn.newInstance(i, toTag),
+                                                GeoIntColumn.newInstance(i, fromType),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -2968,7 +2969,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(
-                                                GeoLongColumn.newInstance(i, toTag),
+                                                GeoLongColumn.newInstance(i, fromType),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -3073,7 +3074,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                expr = fillValuesExprs.getQuick(0);
+                expr = fillValuesExprs.getQuick(i);
                 if (isNoneKeyword(expr.token)) {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
@@ -5155,11 +5156,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
                 if (!isBoolean(filter.getType())) {
+                    Misc.free(filter);
                     throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
                 }
                 filter.init(null, executionContext);
                 if (filter.isConstant()) {
-                    if (!filter.getBool(null)) {
+                    boolean filterValue = filter.getBool(null);
+                    Misc.free(filter);
+                    if (!filterValue) {
                         // do not copy metadata here
                         // this would have been JoinRecordMetadata, which is new instance anyway
                         // we have to make sure that this metadata is safely transitioned
@@ -5919,118 +5923,119 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode sampleByUnits
     ) throws SqlException {
         final ExpressionNode timezoneName = model.getSampleByTimezoneName();
-        final Function timezoneNameFunc;
+        Function timezoneNameFunc = null;
         final int timezoneNameFuncPos;
         final ExpressionNode offset = model.getSampleByOffset();
-        final Function offsetFunc;
+        Function offsetFunc = null;
         final int offsetFuncPos;
-        final Function sampleFromFunc;
+        Function sampleFromFunc = null;
         final int sampleFromFuncPos;
-        final Function sampleToFunc;
+        Function sampleToFunc = null;
         final int sampleToFuncPos;
 
-        if (timezoneName != null) {
-            timezoneNameFunc = functionParser.parseFunction(
-                    timezoneName,
-                    EmptyRecordMetadata.INSTANCE,
-                    executionContext
-            );
-            timezoneNameFuncPos = timezoneName.position;
-            coerceRuntimeConstantType(timezoneNameFunc, STRING, executionContext, "timezone must be a constant expression of STRING or CHAR type", timezoneNameFuncPos);
-        } else {
-            timezoneNameFunc = StrConstant.NULL;
-            timezoneNameFuncPos = 0;
-        }
-
-        if (offset != null) {
-            offsetFunc = functionParser.parseFunction(
-                    offset,
-                    EmptyRecordMetadata.INSTANCE,
-                    executionContext
-            );
-            offsetFuncPos = offset.position;
-            coerceRuntimeConstantType(offsetFunc, STRING, executionContext, "offset must be a constant expression of STRING or CHAR type", offsetFuncPos);
-        } else {
-            offsetFunc = StrConstant.NULL;
-            offsetFuncPos = 0;
-        }
-
         RecordCursorFactory factory = null;
-        // We require timestamp with asc order.
-        final int timestampIndex;
-        // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
-        executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
         try {
-            factory = generateSubQuery(model, executionContext);
-            timestampIndex = getTimestampIndex(model, factory);
-            if (timestampIndex == -1) {
-                throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
+
+            if (timezoneName != null) {
+                timezoneNameFunc = functionParser.parseFunction(
+                        timezoneName,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                timezoneNameFuncPos = timezoneName.position;
+                coerceRuntimeConstantType(timezoneNameFunc, STRING, executionContext, "timezone must be a constant expression of STRING or CHAR type", timezoneNameFuncPos);
+            } else {
+                timezoneNameFunc = StrConstant.NULL;
+                timezoneNameFuncPos = 0;
             }
-            if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+
+            if (offset != null) {
+                offsetFunc = functionParser.parseFunction(
+                        offset,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                offsetFuncPos = offset.position;
+                coerceRuntimeConstantType(offsetFunc, STRING, executionContext, "offset must be a constant expression of STRING or CHAR type", offsetFuncPos);
+            } else {
+                offsetFunc = StrConstant.NULL;
+                offsetFuncPos = 0;
             }
-        } catch (Throwable e) {
-            Misc.free(factory);
-            throw e;
-        } finally {
-            executionContext.popTimestampRequiredFlag();
-        }
+            // We require timestamp with asc order.
+            final int timestampIndex;
+            // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
+            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
+            try {
+                factory = generateSubQuery(model, executionContext);
+                timestampIndex = getTimestampIndex(model, factory);
+                if (timestampIndex == -1) {
+                    throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
+                }
+                if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+                }
+            } catch (Throwable e) {
+                Misc.free(factory);
+                factory = null;
+                throw e;
+            } finally {
+                executionContext.popTimestampRequiredFlag();
+            }
 
-        final RecordMetadata baseMetadata = factory.getMetadata();
-        ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
-        final int timestampType = baseMetadata.getColumnType(timestampIndex);
-        final TimestampDriver timestampDriver = getTimestampDriver(timestampType);
+            final RecordMetadata baseMetadata = factory.getMetadata();
+            ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+            final int timestampType = baseMetadata.getColumnType(timestampIndex);
+            final TimestampDriver timestampDriver = getTimestampDriver(timestampType);
 
-        if (model.getSampleByFrom() != null) {
-            sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleFromFuncPos = model.getSampleByFrom().position;
-            coerceRuntimeConstantType(sampleFromFunc, timestampType, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
-        } else {
-            sampleFromFunc = timestampDriver.getTimestampConstantNull();
-            sampleFromFuncPos = 0;
-        }
+            if (model.getSampleByFrom() != null) {
+                sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
+                sampleFromFuncPos = model.getSampleByFrom().position;
+                coerceRuntimeConstantType(sampleFromFunc, timestampType, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
+            } else {
+                sampleFromFunc = timestampDriver.getTimestampConstantNull();
+                sampleFromFuncPos = 0;
+            }
 
-        if (model.getSampleByTo() != null) {
-            sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleToFuncPos = model.getSampleByTo().position;
-            coerceRuntimeConstantType(sampleToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
-        } else {
-            sampleToFunc = timestampDriver.getTimestampConstantNull();
-            sampleToFuncPos = 0;
-        }
+            if (model.getSampleByTo() != null) {
+                sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
+                sampleToFuncPos = model.getSampleByTo().position;
+                coerceRuntimeConstantType(sampleToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
+            } else {
+                sampleToFunc = timestampDriver.getTimestampConstantNull();
+                sampleToFuncPos = 0;
+            }
 
-        final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
-        final TimestampSampler timestampSampler;
-        int fillCount = sampleByFill.size();
+            final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
+            final TimestampSampler timestampSampler;
+            int fillCount = sampleByFill.size();
 
-        // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
-        // but TopDownColumns may have different order and count with BottomUpColumns.
-        // Need to reorganize sampleByFill according to the position relationship between
-        // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
-        if (fillCount > 1 && model.getTopDownColumns().size() != 0) {
-            tempColumnsList.clear();
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-                if (!column.isWindowExpression()) {
-                    final ExpressionNode node = column.getAst();
-                    if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-                        tempColumnsList.add(column);
+            // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
+            // but TopDownColumns may have different order and count with BottomUpColumns.
+            // Need to reorganize sampleByFill according to the position relationship between
+            // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
+            if (fillCount > 1 && model.getTopDownColumns().size() != 0) {
+                tempColumnsList.clear();
+                for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                    final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+                    if (!column.isWindowExpression()) {
+                        final ExpressionNode node = column.getAst();
+                        if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                            tempColumnsList.add(column);
+                        }
                     }
                 }
-            }
 
-            tempExpressionNodeList.clear();
-            for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
-                int index = tempColumnsList.indexOf(model.getTopDownColumns().getQuick(i));
-                if (index != -1 && fillCount > index) {
-                    tempExpressionNodeList.add(sampleByFill.getQuick(index));
+                tempExpressionNodeList.clear();
+                for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
+                    int index = tempColumnsList.indexOf(model.getTopDownColumns().getQuick(i));
+                    if (index != -1 && fillCount > index) {
+                        tempExpressionNodeList.add(sampleByFill.getQuick(index));
+                    }
                 }
+                sampleByFill = tempExpressionNodeList;
+                fillCount = sampleByFill.size();
             }
-            sampleByFill = tempExpressionNodeList;
-            fillCount = sampleByFill.size();
-        }
 
-        try {
             if (sampleByUnits == null) {
                 timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, sampleByNode.token, sampleByNode.position);
             } else {
@@ -6380,6 +6385,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sampleToFuncPos
             );
         } catch (Throwable e) {
+            Misc.free(sampleFromFunc);
+            Misc.free(sampleToFunc);
+            Misc.free(timezoneNameFunc);
+            Misc.free(offsetFunc);
             Misc.free(factory);
             throw e;
         } finally {
