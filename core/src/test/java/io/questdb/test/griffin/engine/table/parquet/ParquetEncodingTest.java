@@ -68,39 +68,21 @@ public class ParquetEncodingTest {
     };
 
     @Test
+    public void testByteStreamSplitRejectedForAllTypes() {
+        for (int colType : COLUMN_TYPES) {
+            Assert.assertFalse(
+                    "BYTE_STREAM_SPLIT should be rejected for " + ColumnType.nameOf(colType),
+                    ParquetEncoding.isValidForColumnType(ENCODING_BYTE_STREAM_SPLIT, colType)
+            );
+        }
+    }
+
+    @Test
     public void testDefaultValidForAllTypes() {
         for (int colType : COLUMN_TYPES) {
             Assert.assertTrue(
                     "DEFAULT should be valid for " + ColumnType.nameOf(colType),
                     ParquetEncoding.isValidForColumnType(ENCODING_DEFAULT, colType)
-            );
-        }
-    }
-
-    @Test
-    public void testPlainValidForAllExceptSymbolAndVarchar() {
-        for (int colType : COLUMN_TYPES) {
-            int tag = ColumnType.tagOf(colType);
-            boolean expected = tag != ColumnType.SYMBOL && tag != ColumnType.VARCHAR;
-            Assert.assertEquals(
-                    "PLAIN for " + ColumnType.nameOf(colType),
-                    expected,
-                    ParquetEncoding.isValidForColumnType(ENCODING_PLAIN, colType)
-            );
-        }
-    }
-
-    @Test
-    public void testDeltaLengthByteArrayOnlyForStringBinaryVarchar() {
-        for (int colType : COLUMN_TYPES) {
-            int tag = ColumnType.tagOf(colType);
-            boolean expected = tag == ColumnType.STRING
-                    || tag == ColumnType.BINARY
-                    || tag == ColumnType.VARCHAR;
-            Assert.assertEquals(
-                    "DELTA_LENGTH_BYTE_ARRAY for " + ColumnType.nameOf(colType),
-                    expected,
-                    ParquetEncoding.isValidForColumnType(ENCODING_DELTA_LENGTH_BYTE_ARRAY, colType)
             );
         }
     }
@@ -130,11 +112,16 @@ public class ParquetEncodingTest {
     }
 
     @Test
-    public void testByteStreamSplitRejectedForAllTypes() {
+    public void testDeltaLengthByteArrayOnlyForStringBinaryVarchar() {
         for (int colType : COLUMN_TYPES) {
-            Assert.assertFalse(
-                    "BYTE_STREAM_SPLIT should be rejected for " + ColumnType.nameOf(colType),
-                    ParquetEncoding.isValidForColumnType(ENCODING_BYTE_STREAM_SPLIT, colType)
+            int tag = ColumnType.tagOf(colType);
+            boolean expected = tag == ColumnType.STRING
+                    || tag == ColumnType.BINARY
+                    || tag == ColumnType.VARCHAR;
+            Assert.assertEquals(
+                    "DELTA_LENGTH_BYTE_ARRAY for " + ColumnType.nameOf(colType),
+                    expected,
+                    ParquetEncoding.isValidForColumnType(ENCODING_DELTA_LENGTH_BYTE_ARRAY, colType)
             );
         }
     }
@@ -152,6 +139,30 @@ public class ParquetEncodingTest {
                 );
             }
         }
+    }
+
+    @Test
+    public void testPlainValidForAllExceptSymbolAndVarchar() {
+        for (int colType : COLUMN_TYPES) {
+            int tag = ColumnType.tagOf(colType);
+            boolean expected = tag != ColumnType.SYMBOL && tag != ColumnType.VARCHAR;
+            Assert.assertEquals(
+                    "PLAIN for " + ColumnType.nameOf(colType),
+                    expected,
+                    ParquetEncoding.isValidForColumnType(ENCODING_PLAIN, colType)
+            );
+        }
+    }
+
+    @Test
+    public void testUnknownEncoding() {
+        int unknownEncoding = 999;
+        Assert.assertEquals("unknown(" + unknownEncoding + ")", ParquetEncoding.getEncodingName(unknownEncoding));
+    }
+
+    private static String encodingName(int encoding) {
+        CharSequence name = ParquetEncoding.getEncodingName(encoding);
+        return name != null ? name.toString() : "DEFAULT";
     }
 
     private static boolean expectedValidity(int encoding, int columnType) {
@@ -177,10 +188,5 @@ public class ParquetEncodingTest {
                     || tag == ColumnType.GEOLONG;
             default -> false;
         };
-    }
-
-    private static String encodingName(int encoding) {
-        CharSequence name = ParquetEncoding.getEncodingName(encoding);
-        return name != null ? name.toString() : "DEFAULT";
     }
 }

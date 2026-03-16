@@ -72,7 +72,11 @@ public class ParquetCompression {
     }
 
     public static CharSequence getCompressionName(int codec) {
-        return codecToNameMap.get(codec);
+        CharSequence name = codecToNameMap.get(codec);
+        if (name != null) {
+            return name;
+        }
+        return "unknown(" + codec + ")";
     }
 
     public static long packCompressionCodecLevel(int codec, long level) {
