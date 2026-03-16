@@ -51,10 +51,12 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
             @Transient @NotNull ColumnTypes mapValueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
+        Map map = null;
         try {
-            Map map = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+            map = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
             cursor = new UnionRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
         } catch (Throwable th) {
+            Misc.free(map);
             close();
             throw th;
         }
