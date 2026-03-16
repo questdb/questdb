@@ -62,6 +62,13 @@ inline void run_vec_bulk(T *dest,
                          const lambda_iteration l_iteration,
                          const lambda_vec_iteration l_vec_iteration) {
 
+    // TVec::size() returns the number of lanes (e.g. 8 for Vec8uq), which equals
+    // the number of T elements per store ONLY when sizeof(lane) == sizeof(T).
+    // Mismatched types (e.g. Vec8uq with long_128bit) silently produce a wrong
+    // increment, leaving holes in the output. Fail at compile time instead.
+    static_assert(TVec::size() == sizeof(TVec) / sizeof(T),
+                  "TVec::size() does not match sizeof(TVec)/sizeof(T) — use set_memory_vanilla_vec for mismatched types");
+
     constexpr int64_t alignment = TVec::store_nt_alignment();
     const auto unaligned = ((uint64_t) dest) % alignment;
     constexpr int64_t iteration_increment = sizeof(T);
