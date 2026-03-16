@@ -431,18 +431,25 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     /**
-     * Process all horizon timestamps in sorted order using bidirectional scanning.
+     * Process all horizon timestamps in sorted order using adaptive scanning.
      * <p>
      * This method iterates through pre-sorted (horizonTs, masterRowIdx, offsetIdx) tuples.
-     * It uses a "dense ASOF" approach optimized for the common case where most keys
-     * appear in the "recent" slave rows:
+     * For keyed ASOF JOINs, it adaptively chooses between two strategies:
      * <p>
-     * 1. First tuple: Find ASOF position, backward scan until key match, set watermarks
-     * 2. Subsequent tuples: Forward scan to new ASOF position (caching keys),
-     * then lookup in cache. On cache miss, continue backward scan.
+     * 1. <b>Backward-only mode</b> (default): when the ASOF position changes, clear the
+     * key cache and reset the backward watermark. Each position change costs ~K backward
+     * scan rows for K distinct keys. Wins when K is small.
      * <p>
-     * Each slave row is scanned at most once per frame (either forward or backward).
-     * Watermarks are tracked internally by the helper and reset via toTop().
+     * 2. <b>Forward scan mode</b>: forward-scan all slave rows between consecutive ASOF
+     * positions, populating the key map. Cost = O(gap). Wins when K is large or rare keys
+     * cause deep backward scans.
+     * <p>
+     * Each frame starts in backward-only mode. The algorithm switches to forward scan mode
+     * for the remainder of the frame when either: (a) backward scan cost at a position exceeds
+     * gap * SWITCH_FACTOR (relative check, within a partition), or (b) backward scan cost
+     * exceeds BWD_SCAN_ABSOLUTE_THRESHOLD (absolute check, handles cross-partition boundaries
+     * where the relative check cannot trigger). This avoids expensive backward scans for
+     * high-cardinality key spaces or data with rare/infrequent keys.
      */
     private static void processHorizonTimestamps(
             AsyncHorizonJoinAtom atom,
@@ -478,6 +485,12 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
+        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
+        final long bwdScanMinGap = atom.getBwdScanMinGap();
+        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
+        long prevAsOfRowId = Long.MIN_VALUE;
+        boolean isForwardScanMode = false;
+        long bwdScanRowsAtPositionStart = 0;
 
         while (horizonIterator.next()) {
             // horizonTs is in master's resolution (master_ts + offset)
@@ -498,47 +511,45 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
-                // Keyed ASOF JOIN with bidirectional scanning
                 if (asOfRowId != Long.MIN_VALUE) {
-                    if (slaveTimeFrameHelper.getForwardWatermark() == Long.MIN_VALUE) {
-                        // First tuple: backward scan from ASOF position to find matching key
-                        matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                asOfRowId,
-                                masterKeyRecord,
-                                masterAsOfJoinMapSink,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap,
-                                symbolTranslatingRecord
-                        );
-                        // Initialize forward watermark to ASOF position for subsequent forward scans
-                        slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
-                    } else {
-                        // Subsequent tuples: forward scan first (updates internal watermark)
-                        slaveTimeFrameHelper.forwardScanToPosition(
-                                asOfRowId,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap
-                        );
-
-                        // Look up the key in the cache
-                        MapKey cacheKey = asOfJoinMap.withKey();
-                        cacheKey.put(masterKeyRecord, masterAsOfJoinMapSink);
-                        MapValue cacheValue = cacheKey.findValue();
-
-                        if (cacheValue != null) {
-                            matchRowId = cacheValue.getLong(0);
-                        } else {
-                            // Cache miss: continue backward scan (uses internal watermark)
-                            matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                    asOfRowId,
-                                    masterKeyRecord,
-                                    masterAsOfJoinMapSink,
-                                    slaveAsOfJoinMapSink,
-                                    asOfJoinMap,
-                                    symbolTranslatingRecord
-                            );
+                    if (asOfRowId != prevAsOfRowId) {
+                        // ASOF position changed — decide scanning strategy
+                        if (!isForwardScanMode) {
+                            long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
+                            if (prevAsOfRowId != Long.MIN_VALUE) {
+                                long gap = asOfRowId - prevAsOfRowId;
+                                if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
+                                        bwdScanCost,
+                                        gap,
+                                        bwdScanMinGap,
+                                        bwdScanSwitchFactor,
+                                        bwdScanAbsoluteThreshold
+                                )) {
+                                    isForwardScanMode = true;
+                                    slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
+                                }
+                            }
+                            if (!isForwardScanMode) {
+                                // Stay in backward-only: clear map, reset watermark
+                                asOfJoinMap.clear();
+                                slaveTimeFrameHelper.resetBackwardWatermark();
+                                bwdScanRowsAtPositionStart = slaveTimeFrameHelper.getBackwardScanRows();
+                            }
                         }
+                        if (isForwardScanMode) {
+                            slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
+                        }
+                        prevAsOfRowId = asOfRowId;
                     }
+                    // Look up key in map; backward scan on miss
+                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
+                            asOfRowId,
+                            masterKeyRecord,
+                            masterAsOfJoinMapSink,
+                            slaveAsOfJoinMapSink,
+                            asOfJoinMap,
+                            symbolTranslatingRecord
+                    );
                 }
             } else {
                 // Timestamp-only ASOF JOIN: ASOF row IS the match
