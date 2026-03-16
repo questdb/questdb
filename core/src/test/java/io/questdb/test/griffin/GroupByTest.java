@@ -252,7 +252,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [column,count]
                                 Async Group By workers: 1
                                   keys: [column]
-                                  keyFunctions: [column+1]
+                                  keyFunctions: [x+1]
                                   values: [count(*)]
                                   filter: null
                                     PageFrame
@@ -292,7 +292,7 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Async Group By workers: 1
                               keys: [case]
-                              keyFunctions: [case([case<0,-1,case=0,0,1])]
+                              keyFunctions: [case([x<0,-1,x=0,0,1])]
                               values: [count(*)]
                               filter: null
                                 PageFrame
@@ -334,7 +334,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [case([column<0,-1,column=0,0,1]),count]
                                 Async Group By workers: 1
                                   keys: [column]
-                                  keyFunctions: [column+1]
+                                  keyFunctions: [x+1]
                                   values: [count(*)]
                                   filter: null
                                     PageFrame
@@ -487,7 +487,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [column,x+avg,min]
                                 Async Group By workers: 1
                                   keys: [column,x]
-                                  keyFunctions: [column*10]
+                                  keyFunctions: [x*10]
                                   values: [avg(y),min(y)]
                                   filter: null
                                     PageFrame
@@ -2606,7 +2606,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
-                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Src,''])]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0)
                                         PageFrame
@@ -2632,7 +2632,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]
-                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Src,''])]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0)
                                         PageFrame
@@ -2657,7 +2657,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]
-                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Src,'']),concat([lpad(TraficSourceID::string,10,'0'),lpad(Src,32,'0')])]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,'']),concat([lpad(TraficSourceID::string,10,'0'),lpad(Referer,32,'0')])]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0)
                                         PageFrame
@@ -3201,7 +3201,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [sym,hour,avgBid]
                                     Async Group By workers: 1
                                       keys: [sym,hour]
-                                      keyFunctions: [hour(hour)]
+                                      keyFunctions: [hour(ts)]
                                       values: [avg(bid)]
                                       filter: null
                                         PageFrame

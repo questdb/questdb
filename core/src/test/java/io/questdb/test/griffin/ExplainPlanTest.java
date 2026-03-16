@@ -2692,7 +2692,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (l long, b1 boolean, b2 boolean)", "select b1||b2, min(l) from a group by b1||b2", """
                 Async Group By workers: 1
                   keys: [concat]
-                  keyFunctions: [concat([min,concat])]
+                  keyFunctions: [concat([b1,b2])]
                   values: [min(l)]
                   filter: null
                     PageFrame
@@ -2757,7 +2757,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (ts timestamp, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
                 Async JIT Group By workers: 1
                   keys: [hour]
-                  keyFunctions: [hour(hour)]
+                  keyFunctions: [hour(ts)]
                   values: [min(d)]
                   filter: 0<d
                     PageFrame
@@ -3233,7 +3233,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a", """
                 Async Group By workers: 1
                   keys: [s]
-                  keyFunctions: [concat([a,s])]
+                  keyFunctions: [concat([s1,s2])]
                   values: [avg(l)]
                   filter: null
                     PageFrame
@@ -3247,7 +3247,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (l long, s1 string, s2 string)", "select s1||s2 s, avg(l) a from a where l > 42", """
                 Async JIT Group By workers: 1
                   keys: [s]
-                  keyFunctions: [concat([a,s])]
+                  keyFunctions: [concat([s1,s2])]
                   values: [avg(l)]
                   filter: 42<l
                     PageFrame
@@ -6195,7 +6195,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async Group By workers: 1
                           keys: [substring]
-                          keyFunctions: [substring(substring,1,1)]
+                          keyFunctions: [substring(s,1,1)]
                           filter: substring(s,1,1) is not null
                             PageFrame
                                 Row forward scan
@@ -6209,7 +6209,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async Group By workers: 1
                           keys: [substring]
-                          keyFunctions: [substring(substring,1,1)]
+                          keyFunctions: [substring(s,1,1)]
                           filter: (s like %abc% and substring(s,1,1) is not null)
                             PageFrame
                                 Row forward scan
@@ -6223,7 +6223,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async Group By workers: 1
                           keys: [substring]
-                          keyFunctions: [substring(substring,1,1)]
+                          keyFunctions: [substring(s,1,1)]
                           filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)
                             PageFrame
                                 Row forward scan
@@ -6237,7 +6237,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async JIT Group By workers: 1
                           keys: [column]
-                          keyFunctions: [column+1]
+                          keyFunctions: [x+1]
                           filter: (5<x and x+1!=null)
                             PageFrame
                                 Row forward scan
@@ -6251,7 +6251,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async JIT Group By workers: 1
                           keys: [column]
-                          keyFunctions: [column+1]
+                          keyFunctions: [x+1]
                           filter: (5<x and x+1!=null)
                             PageFrame
                                 Row forward scan
@@ -6272,7 +6272,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     Count
                         Async JIT Group By workers: 1
                           keys: [column]
-                          keyFunctions: [column+1]
+                          keyFunctions: [x+1]
                           filter: (5<x and x+1!=null)
                             PageFrame
                                 Row forward scan
@@ -6396,7 +6396,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [a10]
                             Async Group By workers: 1
                               keys: [a10,ts]
-                              keyFunctions: [10*a10,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
+                              keyFunctions: [10*a,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
@@ -6440,7 +6440,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [column desc, a0, berlin_ts desc]
                             Async Group By workers: 1
                               keys: [ts,berlin_ts,a0,column]
-                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(berlin_ts),10*a0]
+                              keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(ts1),10*a0]
                               values: [sum(b)]
                               filter: null
                                 SelectedRecord
@@ -6886,7 +6886,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [l,i,ts]
-                              keyFunctions: [timestamp_floor_utc('1h',first)]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
                               values: [first(i)]
                               filter: null
                                 PageFrame
@@ -6914,7 +6914,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [l,i,ts]
-                              keyFunctions: [timestamp_floor_utc('1h',first)]
+                              keyFunctions: [timestamp_floor_utc('1h',ts)]
                               values: [first(i)]
                               filter: null
                                 PageFrame
@@ -7102,7 +7102,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           keys: [a10]
                             Async Group By workers: 1
                               keys: [a10,ts]
-                              keyFunctions: [10*a10,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
+                              keyFunctions: [10*a,timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
                               values: [sum(b)]
                               filter: null
                                 PageFrame
