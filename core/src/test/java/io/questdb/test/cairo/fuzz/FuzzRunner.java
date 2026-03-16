@@ -96,6 +96,7 @@ public class FuzzRunner {
     private double colRenameProb;
     private double colTypeChangeProb;
     private double dataAddProb;
+    private double dropParquetEncodingProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
@@ -498,7 +499,8 @@ public class FuzzRunner {
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
-                setParquetEncodingProb
+                setParquetEncodingProb,
+                dropParquetEncodingProb
         );
     }
 
@@ -667,6 +669,7 @@ public class FuzzRunner {
                 replaceInsertProb,
                 symbolAccessValidationProb,
                 queryProb,
+                0.0,
                 0.0
         );
     }
@@ -689,7 +692,8 @@ public class FuzzRunner {
             double replaceInsertProb,
             double symbolAccessValidationProb,
             double queryProb,
-            double setParquetEncodingProb
+            double setParquetEncodingProb,
+            double dropParquetEncodingProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -709,6 +713,7 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
+        this.dropParquetEncodingProb = dropParquetEncodingProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {

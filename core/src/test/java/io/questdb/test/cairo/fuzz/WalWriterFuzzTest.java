@@ -413,7 +413,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0,    // replaceInsertProb
                 0,      // symbolAccessValidationProb
                 0.0,    // queryProb
-                0.3     // setParquetEncodingProb
+                0.3,    // setParquetEncodingProb
+                0.3     // dropParquetEncodingProb
         );
         setFuzzCounts(rnd.nextBoolean(), 50_000, 100, 20, 10, 200, 0, 3);
         runFuzz(rnd);
