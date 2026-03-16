@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.IntList;
@@ -90,7 +89,6 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     private final int columnCount;
     private final DirectUtf8Sink[] columnNameSinks;
     private final ObjList<CharSequence> columnNames;
-    private final IntList columnTypes;
     private final Function function;
     private final int maxJsonValueSize;
     private final SimdJsonParser parser;
@@ -116,7 +114,6 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     ) {
         this.function = function;
         this.columnNames = columnNames;
-        this.columnTypes = columnTypes;
         this.maxJsonValueSize = maxJsonValueSize;
         this.columnCount = columnTypes.size();
         this.jsonSink = null;
@@ -182,17 +179,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     }
 
     @Override
-    public ArrayView getArray(
-            int sourceCol,
-            int elementIndex,
-            int columnType
-    ) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean getBool(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return false;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -204,33 +192,13 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     }
 
     @Override
-    public byte getByte(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public char getChar(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getColumnCount() {
         return columnCount;
     }
 
     @Override
-    public int getColumnType(int sourceCol) {
-        return columnTypes.getQuick(sourceCol);
-    }
-
-    @Override
-    public long getDate(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public double getDouble(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return Double.NaN;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -244,13 +212,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     }
 
     @Override
-    public float getFloat(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getInt(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return Numbers.INT_NULL;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -263,7 +226,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public long getLong(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return Numbers.LONG_NULL;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -277,7 +240,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     @Override
     public short getShort(int sourceCol, int elementIndex) {
         // 0 is the correct NULL sentinel for SHORT in QuestDB
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return 0;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -289,23 +252,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     }
 
     @Override
-    public CharSequence getStrA(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getStrB(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public long getTimestamp(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return Numbers.LONG_NULL;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -336,7 +284,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return null;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -362,7 +310,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
-        if (jsonSeq == null || elementIndex >= currentElementCount) {
+        if (elementIndex >= currentElementCount) {
             return null;
         }
         long resultBase = bulkResultBase(sourceCol, elementIndex);
@@ -409,8 +357,13 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         NativeByteSink nativeSink = stringBuf.borrowDirectByteSink();
         try {
             int len = parser.queryAndExtractArray(
-                    jsonSeq, result, descsPtr, bulkResultsPtr,
-                    columnCount, bulkResultsCapacity, nativeSink.ptr()
+                    jsonSeq,
+                    result,
+                    descsPtr,
+                    bulkResultsPtr,
+                    columnCount,
+                    bulkResultsCapacity,
+                    nativeSink.ptr()
             );
             if (result.getError() != SimdJsonError.SUCCESS) {
                 this.jsonSeq = null;
@@ -418,6 +371,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 return 0;
             }
             if (len == 0) {
+                this.jsonSeq = null;
                 this.currentElementCount = 0;
                 return 0;
             }
@@ -425,7 +379,18 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 // Buffer too small — grow and fall back to extraction-only
                 // call (second parse) since we can't reuse the borrow.
                 len = -len;
-                ensureBulkResultsCapacity(len);
+                Unsafe.free(
+                        bulkResultsPtr,
+                        (long) bulkResultsCapacity * columnCount * COLUMN_RESULT_SIZE,
+                        MemoryTag.NATIVE_DEFAULT
+                );
+                bulkResultsPtr = 0;
+                bulkResultsCapacity = 0;
+                bulkResultsPtr = Unsafe.calloc(
+                        (long) len * columnCount * COLUMN_RESULT_SIZE,
+                        MemoryTag.NATIVE_DEFAULT
+                );
+                bulkResultsCapacity = len;
                 boolean isObjectArray = columnCount > 1
                         || result.getType() == SimdJsonType.OBJECT;
                 nativeSink.close();
@@ -445,25 +410,6 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     private long bulkResultBase(int sourceCol, int elementIndex) {
         return bulkResultsPtr + ((long) elementIndex * columnCount + sourceCol) * COLUMN_RESULT_SIZE;
-    }
-
-    private void ensureBulkResultsCapacity(int elementCount) {
-        if (elementCount > bulkResultsCapacity) {
-            if (bulkResultsPtr != 0) {
-                Unsafe.free(
-                        bulkResultsPtr,
-                        (long) bulkResultsCapacity * columnCount * COLUMN_RESULT_SIZE,
-                        MemoryTag.NATIVE_DEFAULT
-                );
-                bulkResultsPtr = 0;
-                bulkResultsCapacity = 0;
-            }
-            bulkResultsPtr = Unsafe.calloc(
-                    (long) elementCount * columnCount * COLUMN_RESULT_SIZE,
-                    MemoryTag.NATIVE_DEFAULT
-            );
-            bulkResultsCapacity = elementCount;
-        }
     }
 
     private void initPaddedJson(Utf8Sequence json) {

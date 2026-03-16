@@ -13043,6 +13043,36 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUnnestEmptyExpression() throws Exception {
+        assertSyntaxError(
+                "SELECT val FROM t, UNNEST()",
+                26,
+                "expression expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestColumnAliasTooMany() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr) u(val, extra1, extra2)",
+                42,
+                "too many column aliases for UNNEST",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
+    public void testUnnestColumnAliasMalformedSeparator() throws Exception {
+        assertSyntaxError(
+                "SELECT u.val FROM t, UNNEST(t.arr) u(val JUNK)",
+                41,
+                "',' or ')' expected",
+                modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+        );
+    }
+
+    @Test
     public void testUnnestColumnsMalformedSeparator() throws Exception {
         assertSyntaxError(
                 "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DOUBLE JUNK)) u",
@@ -13122,7 +13152,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnnestNoAliasFollowedByWhere() throws Exception {
         assertQuery(
-                "select-choose val from (select [arr] from t, unnest(t.arr) _xQdbA1(val)) _xQdbA1 where val > 1.0",
+                "select-choose val from (select [arr] from t, unnest(t.arr) _xQdbA1(val) post-join-where val > 1.0)",
                 "SELECT val FROM t, UNNEST(t.arr)(val) WHERE val > 1.0",
                 modelOf("t").col("arr", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
         );

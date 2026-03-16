@@ -35,6 +35,9 @@ import io.questdb.std.str.Utf8Sequence;
  * output column (one array = one column).
  * For JSON UNNEST ({@link JsonUnnestSource}), one source produces N output
  * columns (one JSON expression = N declared COLUMNS).
+ * <p>
+ * All getters default to throwing {@link UnsupportedOperationException}.
+ * Implementations override only the getters they support.
  */
 public interface UnnestSource {
 
@@ -46,13 +49,21 @@ public interface UnnestSource {
      * @param columnType   the expected column type
      * @return the array view, or null if out of bounds or null
      */
-    ArrayView getArray(int sourceCol, int elementIndex, int columnType);
+    default ArrayView getArray(int sourceCol, int elementIndex, int columnType) {
+        throw new UnsupportedOperationException();
+    }
 
-    boolean getBool(int sourceCol, int elementIndex);
+    default boolean getBool(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    byte getByte(int sourceCol, int elementIndex);
+    default byte getByte(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    char getChar(int sourceCol, int elementIndex);
+    default char getChar(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Returns the number of output columns this source produces.
@@ -60,39 +71,57 @@ public interface UnnestSource {
      */
     int getColumnCount();
 
-    /**
-     * Returns the output column type for the given source column.
-     *
-     * @param sourceCol column within this source (0-based)
-     * @return QuestDB ColumnType constant
-     */
-    int getColumnType(int sourceCol);
+    default long getDate(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getDate(int sourceCol, int elementIndex);
+    default double getDouble(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    double getDouble(int sourceCol, int elementIndex);
+    default float getFloat(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    float getFloat(int sourceCol, int elementIndex);
+    default int getInt(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    int getInt(int sourceCol, int elementIndex);
+    default long getLong(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getLong(int sourceCol, int elementIndex);
+    default short getShort(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    short getShort(int sourceCol, int elementIndex);
+    default CharSequence getStrA(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getStrA(int sourceCol, int elementIndex);
+    default CharSequence getStrB(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getStrB(int sourceCol, int elementIndex);
+    default int getStrLen(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    int getStrLen(int sourceCol, int elementIndex);
+    default long getTimestamp(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getTimestamp(int sourceCol, int elementIndex);
+    default Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    Utf8Sequence getVarcharA(int sourceCol, int elementIndex);
+    default Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
-    Utf8Sequence getVarcharB(int sourceCol, int elementIndex);
-
-    int getVarcharSize(int sourceCol, int elementIndex);
+    default int getVarcharSize(int sourceCol, int elementIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Binds to the current base record. Called when the master cursor

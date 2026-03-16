@@ -114,26 +114,16 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getBool(srcCol, arrayIndex);
     }
 
+    // BYTE is never an unnest column type, so col is always a base table column.
     @Override
     public byte getByte(int col) {
-        if (col < split) {
-            return baseRecord.getByte(col);
-        }
-        int unnestCol = col - split;
-        int srcIdx = colToSourceIndex[unnestCol];
-        int srcCol = colToSourceCol[unnestCol];
-        return sources.getQuick(srcIdx).getByte(srcCol, arrayIndex);
+        return baseRecord.getByte(col);
     }
 
+    // CHAR is never an unnest column type, so col is always a base table column.
     @Override
     public char getChar(int col) {
-        if (col < split) {
-            return baseRecord.getChar(col);
-        }
-        int unnestCol = col - split;
-        int srcIdx = colToSourceIndex[unnestCol];
-        int srcCol = colToSourceCol[unnestCol];
-        return sources.getQuick(srcIdx).getChar(srcCol, arrayIndex);
+        return baseRecord.getChar(col);
     }
 
     @Override

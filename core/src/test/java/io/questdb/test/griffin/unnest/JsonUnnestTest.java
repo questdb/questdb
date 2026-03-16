@@ -1872,6 +1872,24 @@ public class JsonUnnestTest extends AbstractCairoTest {
     // ---- SHORT: object array ----
 
     @Test
+    public void testObjectShortMissingField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":10}, {\"other\":99}, {\"v\":30}]')");
+            assertQueryNoLeakCheck(
+                    """
+                            v
+                            10
+                            0
+                            30
+                            """,
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v SHORT)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testObjectShortNullField() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -2056,6 +2074,24 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     // ---- BOOLEAN: object array ----
+
+    @Test
+    public void testObjectBooleanMissingField() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"v\":true}, {\"other\":99}, {\"v\":false}]')");
+            assertQueryNoLeakCheck(
+                    """
+                            v
+                            true
+                            false
+                            false
+                            """,
+                    "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v BOOLEAN)) u",
+                    (String) null
+            );
+        });
+    }
 
     @Test
     public void testObjectBooleanNullField() throws Exception {
@@ -3083,6 +3119,27 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharBTruncationViaEquality() throws Exception {
+        // Exercises getVarcharB overflow check. EqVarcharFunctionFactory calls
+        // left.getVarcharA(rec) and right.getVarcharB(rec). When the right-hand
+        // column (s2) overflows, getVarcharB hits the truncation branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            String bigVal = "x".repeat(5000);
+            execute("INSERT INTO t VALUES ('[{\"s1\": \"ok\", \"s2\": \"" + bigVal + "\"}]')");
+            assertExceptionNoLeakCheck(
+                    "SELECT u.s1, u.s2 FROM t, UNNEST("
+                            + "t.payload COLUMNS(s1 VARCHAR, s2 VARCHAR)"
+                            + ") u WHERE u.s1 = u.s2",
+                    0,
+                    "JSON UNNEST: value exceeds maximum size of "
+                            + JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE
+                            + " bytes for column 's2'"
+            );
+        });
+    }
+
+    @Test
     public void testVarcharTruncationInObjectThrows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -3096,6 +3153,31 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     "SELECT u.v FROM t, UNNEST(t.payload COLUMNS(v VARCHAR)) u",
                     0,
                     "JSON UNNEST: value exceeds maximum size"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiColumnBufferRegrow() throws Exception {
+        // With columnCount > 1 and > 16 elements, the initial bulk results
+        // buffer (capacity 16) is too small, triggering len < 0 regrow path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            StringBuilder sb = new StringBuilder("[");
+            StringBuilder expected = new StringBuilder("a\tb\n");
+            for (int i = 0; i < 20; i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append("{\"a\":").append(i).append(",\"b\":").append(i * 10).append('}');
+                expected.append(i).append('\t').append(i * 10).append('\n');
+            }
+            sb.append(']');
+            execute("INSERT INTO t VALUES ('" + sb + "')");
+            assertQueryNoLeakCheck(
+                    expected.toString(),
+                    "SELECT u.a, u.b FROM t, UNNEST(t.payload COLUMNS(a INT, b INT)) u",
+                    (String) null
             );
         });
     }

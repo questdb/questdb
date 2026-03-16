@@ -24,38 +24,15 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.Utf8Sequence;
 
 /**
- * UnnestSource that produces a 1-based ordinality column.
- * Returns elementIndex + 1 for numeric getters, null/default for others.
+ * UnnestSource that produces a 1-based ordinality column (always LONG).
+ * Only {@link #getLong} is reachable because the ordinality column type
+ * is hardcoded to {@code ColumnType.LONG} in {@code SqlCodeGenerator}.
  * Does not contribute to the array length (init returns 0).
  */
 public class OrdinalityUnnestSource implements UnnestSource {
-
-    @Override
-    public ArrayView getArray(int sourceCol, int elementIndex, int columnType) {
-        return null;
-    }
-
-    @Override
-    public boolean getBool(int sourceCol, int elementIndex) {
-        return false;
-    }
-
-    @Override
-    public byte getByte(int sourceCol, int elementIndex) {
-        return 0;
-    }
-
-    @Override
-    public char getChar(int sourceCol, int elementIndex) {
-        return 0;
-    }
 
     @Override
     public int getColumnCount() {
@@ -63,73 +40,8 @@ public class OrdinalityUnnestSource implements UnnestSource {
     }
 
     @Override
-    public int getColumnType(int sourceCol) {
-        return ColumnType.LONG;
-    }
-
-    @Override
-    public long getDate(int sourceCol, int elementIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public double getDouble(int sourceCol, int elementIndex) {
-        return elementIndex + 1;
-    }
-
-    @Override
-    public float getFloat(int sourceCol, int elementIndex) {
-        return Float.NaN;
-    }
-
-    @Override
-    public int getInt(int sourceCol, int elementIndex) {
-        return elementIndex + 1;
-    }
-
-    @Override
     public long getLong(int sourceCol, int elementIndex) {
         return elementIndex + 1;
-    }
-
-    @Override
-    public short getShort(int sourceCol, int elementIndex) {
-        return (short) (elementIndex + 1);
-    }
-
-    @Override
-    public CharSequence getStrA(int sourceCol, int elementIndex) {
-        return null;
-    }
-
-    @Override
-    public CharSequence getStrB(int sourceCol, int elementIndex) {
-        return null;
-    }
-
-    @Override
-    public int getStrLen(int sourceCol, int elementIndex) {
-        return -1;
-    }
-
-    @Override
-    public long getTimestamp(int sourceCol, int elementIndex) {
-        return Numbers.LONG_NULL;
-    }
-
-    @Override
-    public Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
-        return null;
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
-        return null;
-    }
-
-    @Override
-    public int getVarcharSize(int sourceCol, int elementIndex) {
-        return -1;
     }
 
     @Override

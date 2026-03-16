@@ -24,13 +24,11 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.Utf8Sequence;
 
 /**
  * UnnestSource implementation for typed arrays. Wraps a single array
@@ -39,7 +37,6 @@ import io.questdb.std.str.Utf8Sequence;
 public class ArrayUnnestSource implements UnnestSource {
     private final DerivedArrayView derivedView = new DerivedArrayView();
     private final Function function;
-    private final int outputType;
     private int cachedBaseOffset;
     private int cachedLen;
     private int cachedStride0;
@@ -51,16 +48,6 @@ public class ArrayUnnestSource implements UnnestSource {
      */
     public ArrayUnnestSource(Function function) {
         this.function = function;
-        int columnType = function.getType();
-        int dims = ColumnType.decodeArrayDimensionality(columnType);
-        short elemType = ColumnType.decodeArrayElementType(columnType);
-        if (dims > 1) {
-            this.outputType = ColumnType.encodeArrayType(
-                    elemType, dims - 1
-            );
-        } else {
-            this.outputType = elemType;
-        }
     }
 
     @Override
@@ -89,39 +76,9 @@ public class ArrayUnnestSource implements UnnestSource {
         return derivedView;
     }
 
-    // Only DOUBLE[] is currently enabled in ColumnType.arrayTypeSet.
-    // These getters throw so that enabling a new element type without
-    // implementing the corresponding getter surfaces immediately
-    // rather than silently returning wrong values.
-
-    @Override
-    public boolean getBool(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public byte getByte(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public char getChar(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
     @Override
     public int getColumnCount() {
         return 1;
-    }
-
-    @Override
-    public int getColumnType(int sourceCol) {
-        return outputType;
-    }
-
-    @Override
-    public long getDate(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -132,16 +89,6 @@ public class ArrayUnnestSource implements UnnestSource {
         return view.getDouble(elementIndex);
     }
 
-    @Override
-    public float getFloat(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getInt(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
     // getLong is implemented because ArrayView.getLong() is ready.
     // It will be reachable once LONG[] is enabled in ColumnType.arrayTypeSet.
     @Override
@@ -150,46 +97,6 @@ public class ArrayUnnestSource implements UnnestSource {
             return Numbers.LONG_NULL;
         }
         return view.getLong(elementIndex);
-    }
-
-    @Override
-    public short getShort(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getStrA(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getStrB(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getTimestamp(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getVarcharSize(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -2067,6 +2067,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                     }
                                     sink.putAscii(')');
                                 }
+                                if (model.getPostJoinWhereClause() != null) {
+                                    sink.putAscii(" post-join-where ");
+                                    model.getPostJoinWhereClause().toSink(sink);
+                                }
                                 continue;
                             default:
                                 sink.putAscii(" join ");

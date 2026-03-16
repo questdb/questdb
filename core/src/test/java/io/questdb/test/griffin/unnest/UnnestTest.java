@@ -66,6 +66,23 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableByteAndCharColumnsWithUnnest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BYTE, c CHAR, arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (42, 'X', ARRAY[1.0, 2.0])");
+            assertQueryNoLeakCheck(
+                    """
+                            b\tc\tval
+                            42\tX\t1.0
+                            42\tX\t2.0
+                            """,
+                    "SELECT t.b, t.c, u.val FROM t, UNNEST(t.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testCTEAsBaseForUnnest() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS ("
@@ -1359,6 +1376,26 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnnest2DArrayMixedUnequalLengths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE[][], b DOUBLE[])");
+            execute("INSERT INTO t VALUES ("
+                    + "ARRAY[[1.0, 2.0]], "
+                    + "ARRAY[100.0, 200.0, 300.0])");
+            assertQueryNoLeakCheck(
+                    """
+                            x	y
+                            [1.0,2.0]	100.0
+                            null	200.0
+                            null	300.0
+                            """,
+                    "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testUnnest2DArrayMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[][])");
@@ -1506,19 +1543,19 @@ public class UnnestTest extends AbstractCairoTest {
     @Test
     public void testUnnest2DArrayChained() throws Exception {
         // Unnest a 2D array by chaining two UNNEST in FROM
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "val\n"
-                            + "1.0\n"
-                            + "2.0\n"
-                            + "3.0\n"
-                            + "4.0\n",
-                    "SELECT u2.val FROM ("
-                            + "  SELECT * FROM UNNEST(ARRAY[[1.0, 2.0], [3.0, 4.0]]) t(arr)"
-                            + "), UNNEST(arr) u2(val)",
-                    (String) null
-            );
-        });
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        val
+                        1.0
+                        2.0
+                        3.0
+                        4.0
+                        """,
+                "SELECT u2.val FROM ("
+                        + "  SELECT * FROM UNNEST(ARRAY[[1.0, 2.0], [3.0, 4.0]]) t(arr)"
+                        + "), UNNEST(arr) u2(val)",
+                (String) null
+        ));
     }
 
     @Test

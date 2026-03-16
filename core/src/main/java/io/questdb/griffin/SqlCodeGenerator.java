@@ -4360,6 +4360,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     // UNNEST join - no slave query to compile
                     if (slaveModel.getJoinType() == JOIN_UNNEST) {
+                        assert master != null : "UNNEST requires a master factory";
                         master = generateUnnest(master, masterAlias, slaveModel, executionContext);
                         closeSlaveOnFailure = false;
                         masterAlias = null;

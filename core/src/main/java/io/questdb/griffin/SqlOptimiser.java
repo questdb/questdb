@@ -3560,7 +3560,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void enumerateUnnestColumns(QueryModel model) throws SqlException {
+    private void enumerateUnnestColumns(QueryModel model) {
         ObjList<ExpressionNode> unnestExprs = model.getUnnestExpressions();
         ObjList<CharSequence> aliases = model.getUnnestColumnAliases();
         int exprCount = unnestExprs.size();
