@@ -47,10 +47,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -310,25 +307,18 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
     // the timestamp is moved back by the gap duration and re-floored to produce a
     // valid local time and avoid duplicate bucket keys.
 
-    private static final long BP_TS = MicrosFormatUtils.parseTimestamp("2021-03-28T01:01:00.000000Z");
-
-    public static String microsToString(long micros) {
-        StringSink sink = Misc.getThreadLocalSink();
-        MicrosFormatUtils.appendDateTime(sink, micros);
-        return sink.toString();
-    }
-
     private static long floorWithTz(long timestamp, TimeZoneRules tzRules, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long from, long offset, boolean returnUtc, char unit) {
         if (returnUtc) {
             if (CommonUtils.isSubDayUnit(unit)) {
-                // Sub-day strides have fixed duration, so DST-aware local time
-                // conversion would cause non-uniform bucket jumps at transitions.
-                // Use the standard (non-DST) offset for consistent bucketing.
+                // Standard-local anchoring: use the standard (non-DST) offset for
+                // UTC<->local conversion to keep bucket widths uniform across DST
+                // transitions, but anchor the floor to standard local time so that
+                // bucket boundaries align to clean local-time marks (e.g. :00 for
+                // 1h stride in India +5:30, not :30).
                 final long stdOff = tzRules.getStandardOffset();
                 final long localTimestamp = timestamp + stdOff;
-                final long effectiveFrom = from != 0 ? from : stdOff;
-                final long result = floorFunc.floor(localTimestamp, stride, effectiveFrom);
-                return result - stdOff + offset;
+                final long result = floorFunc.floor(localTimestamp, stride, from + offset);
+                return result - stdOff;
             }
             final long tzOff = tzRules.getOffset(timestamp);
             final long localTimestamp = timestamp + tzOff;

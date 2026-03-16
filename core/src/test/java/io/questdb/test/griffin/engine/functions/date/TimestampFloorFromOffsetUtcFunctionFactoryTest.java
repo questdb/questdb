@@ -452,11 +452,12 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
         // at local 02:00 = UTC Sep 25 14:00. After that, offset is +13 (NZDT).
         //
         // UTC Sep 25 15:00 is AFTER spring-forward. Local = 15:00 + 13 = Sep 26 04:00 NZDT.
-        // Floor 1d -> Sep 26 00:00. UTC = Sep 26 00:00 - 13 = Sep 25 11:00.
+        // Floor 1d -> Sep 26 00:00. At midnight Sep 26, still NZST (+12).
+        // UTC = Sep 26 00:00 - 12 = Sep 25 12:00.
         assertMemoryLeak(() -> assertTimestampFloorUtc(
                 """
                         timestamp_floor_utc
-                        2021-09-25T11:00:00.000000Z
+                        2021-09-25T12:00:00.000000Z
                         """,
                 "1d", "2021-09-25T15:00:00.000000Z", null, "00:00", "Pacific/Auckland"
         ));
