@@ -248,6 +248,13 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                 int stringLen = (int) decodeResult.value;
                 offset += decodeResult.bytesRead;
 
+                if (stringLen < 0 || stringLen > dataLength - offset) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "dictionary string length out of bounds: " + stringLen
+                    );
+                }
+
                 DirectUtf8String entry = dictionaryUtf8.getQuick(i);
                 long strLo = dataAddress + offset;
                 entry.of(strLo, strLo + stringLen, Utf8s.isAscii(strLo, stringLen));
