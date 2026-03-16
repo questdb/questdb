@@ -36,8 +36,6 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
-import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
@@ -46,6 +44,8 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -2029,6 +2029,50 @@ public class SqlParser {
         expectTok(lexer, ')');
     }
 
+    private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
+        CharSequence tok = tok(lexer, "')', 'index' or 'parquet'");
+
+        if (isFieldTerm(tok) || isParquetKeyword(tok)) {
+            model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
+            return tok;
+        }
+
+        expectTok(lexer, tok, "index");
+        int indexColumnPosition = lexer.lastTokenPosition();
+
+        if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
+            model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
+            return tok;
+        }
+
+        expectTok(lexer, tok, "capacity");
+
+        int errorPosition = lexer.getPosition();
+        int indexValueBlockSize = expectInt(lexer);
+        TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+        model.setIndexed(true, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
+        return null;
+    }
+
+    private void parseCreateTableLikeTable(GenericLexer lexer) throws SqlException {
+        // todo: validate keyword usage
+        CharSequence tok = tok(lexer, "table name");
+        tok = sansPublicSchema(tok, lexer);
+        createTableOperationBuilder.setLikeTableNameExpr(
+                nextLiteral(
+                        assertNoDotsAndSlashes(
+                                unquote(tok),
+                                lexer.lastTokenPosition()
+                        ),
+                        lexer.lastTokenPosition()
+                )
+        );
+        tok = tok(lexer, ")");
+        if (!Chars.equals(tok, ')')) {
+            throw errUnexpected(lexer, tok);
+        }
+    }
+
     private CharSequence parseCreateTableParquetProperties(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
         // Syntax: PARQUET(encoding [, compression[(level)]])
         expectTok(lexer, '(');
@@ -2074,50 +2118,6 @@ public class SqlParser {
 
         expectTok(lexer, tok, ")");
         return tok(lexer, "',' or ')'");
-    }
-
-    private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
-        CharSequence tok = tok(lexer, "')', 'index' or 'parquet'");
-
-        if (isFieldTerm(tok) || isParquetKeyword(tok)) {
-            model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
-            return tok;
-        }
-
-        expectTok(lexer, tok, "index");
-        int indexColumnPosition = lexer.lastTokenPosition();
-
-        if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
-            model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
-            return tok;
-        }
-
-        expectTok(lexer, tok, "capacity");
-
-        int errorPosition = lexer.getPosition();
-        int indexValueBlockSize = expectInt(lexer);
-        TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-        model.setIndexed(true, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
-        return null;
-    }
-
-    private void parseCreateTableLikeTable(GenericLexer lexer) throws SqlException {
-        // todo: validate keyword usage
-        CharSequence tok = tok(lexer, "table name");
-        tok = sansPublicSchema(tok, lexer);
-        createTableOperationBuilder.setLikeTableNameExpr(
-                nextLiteral(
-                        assertNoDotsAndSlashes(
-                                unquote(tok),
-                                lexer.lastTokenPosition()
-                        ),
-                        lexer.lastTokenPosition()
-                )
-        );
-        tok = tok(lexer, ")");
-        if (!Chars.equals(tok, ')')) {
-            throw errUnexpected(lexer, tok);
-        }
     }
 
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {

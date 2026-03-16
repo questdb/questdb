@@ -92,31 +92,28 @@ public class ParquetCompression {
      */
     public static void validateCompressionLevel(int codec, int level, int levelPos) throws SqlException {
         switch (codec) {
-            case COMPRESSION_UNCOMPRESSED:
-            case COMPRESSION_SNAPPY:
-            case COMPRESSION_LZ4_RAW:
+            case COMPRESSION_UNCOMPRESSED, COMPRESSION_SNAPPY, COMPRESSION_LZ4_RAW -> {
                 // these codecs ignore the level
-                break;
-            case COMPRESSION_GZIP:
+            }
+            case COMPRESSION_GZIP -> {
                 if (level < GZIP_MIN_COMPRESSION_LEVEL || level > GZIP_MAX_COMPRESSION_LEVEL) {
                     throw SqlException.$(levelPos, "GZIP compression level must be between ")
                             .put(GZIP_MIN_COMPRESSION_LEVEL).put(" and ").put(GZIP_MAX_COMPRESSION_LEVEL);
                 }
-                break;
-            case COMPRESSION_BROTLI:
+            }
+            case COMPRESSION_BROTLI -> {
                 if (level < BROTLI_MIN_COMPRESSION_LEVEL || level > BROTLI_MAX_COMPRESSION_LEVEL) {
                     throw SqlException.$(levelPos, "Brotli compression level must be between ")
                             .put(BROTLI_MIN_COMPRESSION_LEVEL).put(" and ").put(BROTLI_MAX_COMPRESSION_LEVEL);
                 }
-                break;
-            case COMPRESSION_ZSTD:
+            }
+            case COMPRESSION_ZSTD -> {
                 if (level < ZSTD_MIN_COMPRESSION_LEVEL || level > ZSTD_MAX_COMPRESSION_LEVEL) {
                     throw SqlException.$(levelPos, "ZSTD compression level must be between ")
                             .put(ZSTD_MIN_COMPRESSION_LEVEL).put(" and ").put(ZSTD_MAX_COMPRESSION_LEVEL);
                 }
-                break;
-            default:
-                throw SqlException.$(levelPos, "unknown compression codec: ").put(codec);
+            }
+            default -> throw SqlException.$(levelPos, "unknown compression codec: ").put(codec);
         }
     }
 
