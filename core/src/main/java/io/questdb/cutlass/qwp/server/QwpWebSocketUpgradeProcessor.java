@@ -568,8 +568,38 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     throw ServerDisconnectException.INSTANCE;
                 }
 
-                if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE ||
-                        frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
+                if (frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
+                    long totalFrameSize = frameParser.getHeaderSize() + frameParser.getPayloadLength();
+                    if (totalFrameSize > recvBufferSize) {
+                        // Payload declared in the frame header exceeds recv buffer capacity.
+                        // Reject immediately instead of wasting bandwidth filling the buffer.
+                        LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
+                                .$(", payloadLength=").$(frameParser.getPayloadLength())
+                                .$(", bufferSize=").$(recvBufferSize).I$();
+                        if (state.isSendReady()) {
+                            try {
+                                HttpRawSocket rawSocket = context.getRawResponseSocket();
+                                long bufferAddr = rawSocket.getBufferAddress();
+                                int bufferSize = rawSocket.getBufferSize();
+                                int written = WebSocketFrameWriter.writeCloseFrame(
+                                        bufferAddr, bufferSize,
+                                        WebSocketCloseCode.MESSAGE_TOO_BIG,
+                                        "frame payload exceeds maximum size"
+                                );
+                                if (written > 0) {
+                                    rawSocket.send(written);
+                                }
+                            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                                // Best effort -- we're disconnecting anyway.
+                            }
+                        }
+                        throw ServerDisconnectException.INSTANCE;
+                    }
+                    result = FrameProcessResult.NEED_MORE_DATA;
+                    break;
+                }
+
+                if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE) {
                     result = FrameProcessResult.NEED_MORE_DATA;
                     break;
                 }
