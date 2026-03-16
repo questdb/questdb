@@ -362,7 +362,7 @@ impl Column {
             !secondary_data_ptr.is_null() || secondary_data_size == 0,
             "secondary_data_ptr inconsistent with secondary_data_size"
         );
-        assert!(
+        debug_assert!(
             !symbol_offsets_ptr.is_null() || symbol_offsets_count == 0,
             "symbol_offsets_ptr inconsistent with symbol_offsets_count"
         );

@@ -44,6 +44,7 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -131,21 +132,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final PartitionDecoder.Metadata parquetMeta = partitionDecoder.metadata();
                 final int parquetColumnCount = parquetMeta.getColumnCount();
                 final int columnCount = tableWriterMetadata.getColumnCount();
-                final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
+                final IntIntHashMap parquetColIdToIdx = ctx.getParquetColIdToIdx();
                 for (int i = 0; i < parquetColumnCount; i++) {
                     parquetColIdToIdx.put(parquetMeta.getColumnId(i), i);
                 }
-                final int[] tableToParquetIdx = new int[columnCount];
+                final IntList tableToParquetIdx = ctx.getTableToParquetIdx(columnCount);
                 boolean hasMissingColumns = false;
                 int mappedParquetColumns = 0;
                 for (int i = 0; i < columnCount; i++) {
                     if (tableWriterMetadata.getColumnType(i) < 0) {
-                        tableToParquetIdx[i] = -1;
                         continue;
                     }
                     final int writerIndex = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                    tableToParquetIdx[i] = parquetColIdToIdx.get(writerIndex);
-                    if (tableToParquetIdx[i] < 0) {
+                    final int parquetIdx = parquetColIdToIdx.get(writerIndex);
+                    tableToParquetIdx.setQuick(i, parquetIdx);
+                    if (parquetIdx < 0) {
                         hasMissingColumns = true;
                     } else {
                         mappedParquetColumns++;
@@ -295,7 +296,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Use the parquet-side column index (not the table-side index)
                 // because the decoder resolves columns by their position in the
                 // parquet file schema, which may differ after ADD/DROP COLUMN.
-                final int timestampParquetIdx = tableToParquetIdx[timestampIndex];
+                final int timestampParquetIdx = tableToParquetIdx.getQuick(timestampIndex);
                 assert timestampParquetIdx >= 0 : "timestamp column missing from parquet file";
                 final LongList rowGroupBounds = ctx.getRowGroupBounds();
                 parquetColumns.clear();
@@ -375,7 +376,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         mergeDstBufs,
                                         tableToParquetIdx,
                                         nullBufs,
-                                        srcPtrs
+                                        srcPtrs,
+                                        ctx.getActiveToDecodeIdx(columnCount),
+                                        ctx.getActiveColIndices(columnCount)
                                 );
                                 final int numOutputRGs = (int) (mergeResult >>> 32);
                                 final long mergeDuplicates = mergeResult & 0xFFFFFFFFL;
@@ -1632,7 +1635,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             PartitionUpdater partitionUpdater,
             int rowGroupIndex,
             TableRecordMetadata tableWriterMetadata,
-            int[] tableToParquetIdx
+            IntList tableToParquetIdx
     ) {
         // Count missing columns (present in table but absent from parquet).
         // This may be zero in a DROP-only scenario — the function still
@@ -1641,7 +1644,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         int nullColCount = 0;
         final int columnCount = tableWriterMetadata.getColumnCount();
         for (int i = 0; i < columnCount; i++) {
-            if (tableWriterMetadata.getColumnType(i) >= 0 && tableToParquetIdx[i] < 0) {
+            if (tableWriterMetadata.getColumnType(i) >= 0 && tableToParquetIdx.getQuick(i) < 0) {
                 nullColCount++;
             }
         }
@@ -1665,7 +1668,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (colType < 0) {
                     continue; // deleted column, not in target schema
                 }
-                if (tableToParquetIdx[i] < 0) {
+                if (tableToParquetIdx.getQuick(i) < 0) {
                     Unsafe.getUnsafe().putLong(descAddr + (long) descIdx * Long.BYTES, targetPos);
                     Unsafe.getUnsafe().putLong(descAddr + (long) (descIdx + 1) * Long.BYTES, colType);
                     descIdx += 2;
@@ -1980,9 +1983,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int maxRowGroupSize,
             int metadataPosition,
             LongList mergeDstBufs,
-            int[] tableToParquetIdx,
+            IntList tableToParquetIdx,
             LongList nullBufs,
-            LongList srcPtrs
+            LongList srcPtrs,
+            IntList activeToDecodeIdx,
+            IntList activeColIndices
     ) {
         // Build the decode list: only columns present in the parquet file.
         // Also build activeToDecodeIdx mapping: for each active column position,
@@ -1992,26 +1997,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int columnCount = tableWriterMetadata.getColumnCount();
         int activeColCount = 0;
         int decodeColCount = 0;
-        final int[] activeToDecodeIdx = new int[columnCount];
-        final int[] activeColIndices = new int[columnCount];
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = tableWriterMetadata.getColumnType(columnIndex);
             if (columnType < 0) {
                 continue;
             }
-            int parquetIdx = tableToParquetIdx[columnIndex];
+            int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
             if (parquetIdx >= 0) {
                 if (columnIndex == timestampIndex) {
                     timestampColumnChunkIndex = decodeColCount;
                 }
                 parquetColumns.add(parquetIdx);
                 parquetColumns.add(columnType);
-                activeToDecodeIdx[activeColCount] = decodeColCount;
+                activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
                 decodeColCount++;
             } else {
-                activeToDecodeIdx[activeColCount] = -1;
+                activeToDecodeIdx.setQuick(activeColCount, -1);
             }
-            activeColIndices[activeColCount] = columnIndex;
+            activeColIndices.setQuick(activeColCount, columnIndex);
             activeColCount++;
         }
 
@@ -2056,9 +2059,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     int dedupColumnIndex = 0;
                     dedupCommitAddresses.clear(dedupColSinkAddr);
                     for (int ai = 0; ai < activeColCount; ai++) {
-                        int columnIndex = activeColIndices[ai];
+                        int columnIndex = activeColIndices.getQuick(ai);
                         int columnType = tableWriterMetadata.getColumnType(columnIndex);
-                        int decodeIdx = activeToDecodeIdx[ai];
+                        int decodeIdx = activeToDecodeIdx.getQuick(ai);
                         assert columnIndex >= 0;
                         assert columnType >= 0;
                         if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
@@ -2158,11 +2161,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // for this merge. Grow if needed; reuse if already sufficient.
             // Also set up null source buffers for column-top and missing columns.
             for (int ai = 0; ai < activeColCount; ai++) {
-                int columnIndex = activeColIndices[ai];
+                int columnIndex = activeColIndices.getQuick(ai);
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
                 int bi4 = ai * 4;
                 int bi2 = ai * 2;
-                int decodeIdx = activeToDecodeIdx[ai];
+                int decodeIdx = activeToDecodeIdx.getQuick(ai);
 
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
@@ -2251,7 +2254,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 chunkDescriptor.of(tableName, chunkRowCount, timestampIndex);
 
                 for (int ai = 0; ai < activeColCount; ai++) {
-                    int columnIndex = activeColIndices[ai];
+                    int columnIndex = activeColIndices.getQuick(ai);
                     int columnType = tableWriterMetadata.getColumnType(columnIndex);
                     assert columnIndex >= 0;
                     assert columnType >= 0;
