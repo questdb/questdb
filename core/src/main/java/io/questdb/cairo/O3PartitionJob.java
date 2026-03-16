@@ -343,7 +343,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     for (int i = 0; i < actionCount; i++) {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
-                            case MERGE: {
+                            case MERGE -> {
                                 final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
@@ -382,9 +382,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 duplicateCount += mergeDuplicates;
                                 tableWriter.addPhysicallyWrittenRows(rgSize + (action.o3Hi - action.o3Lo + 1) - mergeDuplicates);
                                 metadataPosition += numOutputRGs;
-                                break;
                             }
-                            case COPY_ROW_GROUP_SLICE: {
+                            case COPY_ROW_GROUP_SLICE -> {
                                 final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                                 // The merge strategy always produces full-range COPY_ROW_GROUP_SLICE
                                 // actions (the entire row group). Partial slicing is not supported.
@@ -416,9 +415,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 }
                                 // Update mode: full row groups stay in place, nothing to do.
                                 metadataPosition++;
-                                break;
                             }
-                            case COPY_O3:
+                            case COPY_O3 -> {
                                 LOG.info()
                                         .$("parquet add row group from o3 [table=").$(tableWriter.getTableToken())
                                         .$(", partition=").$ts(partitionTimestamp)
@@ -440,7 +438,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 );
                                 tableWriter.addPhysicallyWrittenRows(action.o3Hi - action.o3Lo + 1);
                                 metadataPosition++;
-                                break;
+                            }
                         }
                     }
                 } finally {

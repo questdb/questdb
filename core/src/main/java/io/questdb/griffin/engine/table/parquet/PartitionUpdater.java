@@ -38,11 +38,6 @@ public class PartitionUpdater implements QuietCloseable {
     public PartitionUpdater() {
     }
 
-    @Override
-    public void close() {
-        destroy();
-    }
-
     public void addRowGroup(int position, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
@@ -67,46 +62,14 @@ public class PartitionUpdater implements QuietCloseable {
         }
     }
 
+    @Override
+    public void close() {
+        destroy();
+    }
+
     public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
         copyRowGroup(ptr, rowGroupIndex);
-    }
-
-    /**
-     * Sets the target schema for the output file. Call this after {@link #of}
-     * when the table schema differs from the source parquet file schema
-     * (e.g., after ADD COLUMN or DROP COLUMN).
-     *
-     * @param descriptor a PartitionDescriptor containing the full target
-     *                   schema (column names, IDs, types). Data pointers are
-     *                   not required — only schema metadata is used.
-     */
-    public void setTargetSchema(PartitionDescriptor descriptor) {
-        assert ptr != 0;
-        setTargetSchema(
-                ptr,
-                descriptor.tableName.ptr(),
-                descriptor.tableName.size(),
-                descriptor.getColumnCount(),
-                descriptor.getColumnNamesPtr(),
-                descriptor.getColumnNamesLen(),
-                descriptor.getColumnDataPtr(),
-                descriptor.getColumnDataLen(),
-                descriptor.getTimestampIndex()
-        );
-    }
-
-    public long getResultUnusedBytes() {
-        assert ptr != 0;
-        return getResultUnusedBytes(ptr);
-    }
-
-    // call to this method will update file metadata
-    // MUST be called after all row groups have been updated
-    // returns the final file size
-    public long updateFileMetadata() {
-        assert ptr != 0;
-        return updateFileMetadata(ptr);
     }
 
     /**
@@ -121,6 +84,11 @@ public class PartitionUpdater implements QuietCloseable {
     public void copyRowGroupWithNullColumns(int rowGroupIndex, long nullColDescAddr, int nullColCount) {
         assert ptr != 0;
         copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
+    }
+
+    public long getResultUnusedBytes() {
+        assert ptr != 0;
+        return getResultUnusedBytes(ptr);
     }
 
     public void of(
@@ -155,6 +123,38 @@ public class PartitionUpdater implements QuietCloseable {
                 dataPageSize,
                 bloomFilterFpp
         );
+    }
+
+    /**
+     * Sets the target schema for the output file. Call this after {@link #of}
+     * when the table schema differs from the source parquet file schema
+     * (e.g., after ADD COLUMN or DROP COLUMN).
+     *
+     * @param descriptor a PartitionDescriptor containing the full target
+     *                   schema (column names, IDs, types). Data pointers are
+     *                   not required — only schema metadata is used.
+     */
+    public void setTargetSchema(PartitionDescriptor descriptor) {
+        assert ptr != 0;
+        setTargetSchema(
+                ptr,
+                descriptor.tableName.ptr(),
+                descriptor.tableName.size(),
+                descriptor.getColumnCount(),
+                descriptor.getColumnNamesPtr(),
+                descriptor.getColumnNamesLen(),
+                descriptor.getColumnDataPtr(),
+                descriptor.getColumnDataLen(),
+                descriptor.getTimestampIndex()
+        );
+    }
+
+    // call to this method will update file metadata
+    // MUST be called after all row groups have been updated
+    // returns the final file size
+    public long updateFileMetadata() {
+        assert ptr != 0;
+        return updateFileMetadata(ptr);
     }
 
     public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {

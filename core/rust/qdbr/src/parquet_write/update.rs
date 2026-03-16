@@ -49,6 +49,55 @@ use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_ME
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Partition};
 
+/// Computes the contiguous byte range [start, end) of a row group's column
+/// data, including the last column's bloom filter when present.  Non-last
+/// columns' bloom filters sit between column chunks and are already covered
+/// by the byte ranges; only the last column's bloom filter can extend past
+/// the final column chunk.
+trait RowGroupByteRange {
+    fn data_byte_range<R: std::io::Read + Seek>(&self, reader: &mut R)
+        -> ParquetResult<(u64, u64)>;
+}
+
+impl RowGroupByteRange for parquet2::metadata::RowGroupMetaData {
+    fn data_byte_range<R: std::io::Read + Seek>(
+        &self,
+        reader: &mut R,
+    ) -> ParquetResult<(u64, u64)> {
+        let columns = self.columns();
+        if columns.is_empty() {
+            return Ok((0, 0));
+        }
+        let mut rg_start = u64::MAX;
+        let mut rg_end = 0u64;
+        let mut last_col_idx = 0usize;
+        for (i, col) in columns.iter().enumerate() {
+            let (start, len) = col.byte_range();
+            rg_start = rg_start.min(start);
+            let end = start + len;
+            if end >= rg_end {
+                rg_end = end;
+                last_col_idx = i;
+            }
+        }
+        if columns[last_col_idx]
+            .metadata()
+            .bloom_filter_offset
+            .is_some()
+        {
+            let bf_total = parquet2::bloom_filter::total_size(&columns[last_col_idx], reader)?;
+            if bf_total > 0 {
+                let bf_offset = columns[last_col_idx]
+                    .metadata()
+                    .bloom_filter_offset
+                    .unwrap() as u64;
+                rg_end = rg_end.max(bf_offset + bf_total);
+            }
+        }
+        Ok((rg_start, rg_end))
+    }
+}
+
 #[repr(C)]
 pub struct ParquetUpdater {
     allocator: QdbAllocator,
@@ -242,11 +291,16 @@ impl ParquetUpdater {
         row_group_id: i32,
     ) -> ParquetResult<()> {
         self.ensure_schema_matches_columns(partition);
+        let row_count = partition
+            .columns
+            .first()
+            .ok_or_else(|| fmt_err!(InvalidLayout, "replace_row_group: partition has no columns"))?
+            .row_count;
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
             partition,
             0,
-            partition.columns[0].row_count,
+            row_count,
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
@@ -264,7 +318,19 @@ impl ParquetUpdater {
             let rg_idx = row_group_id as usize;
             if rg_idx < self.file_metadata.row_groups.len() {
                 let old_rg = &self.file_metadata.row_groups[rg_idx];
-                self.accumulated_unused_bytes += old_rg.compressed_size() as u64;
+
+                let (rg_start, rg_end) =
+                    old_rg.data_byte_range(&mut self.reader).with_context(|_| {
+                        format!(
+                            "replace_row_group: failed to compute byte range for rg {}",
+                            rg_idx,
+                        )
+                    })?;
+                if rg_start < rg_end {
+                    self.accumulated_unused_bytes += rg_end - rg_start;
+                }
+
+                // Column/offset indexes are stored separately from row group data.
                 for col in old_rg.columns() {
                     if let Some(len) = col.column_index_length() {
                         self.accumulated_unused_bytes += len as u64;
@@ -287,11 +353,16 @@ impl ParquetUpdater {
         position: i32,
     ) -> ParquetResult<()> {
         self.ensure_schema_matches_columns(partition);
+        let row_count = partition
+            .columns
+            .first()
+            .ok_or_else(|| fmt_err!(InvalidLayout, "insert_row_group: partition has no columns"))?
+            .row_count;
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
             partition,
             0,
-            partition.columns[0].row_count,
+            row_count,
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
@@ -323,51 +394,13 @@ impl ParquetUpdater {
         }
 
         let old_rg = &self.file_metadata.row_groups[rg_idx];
-        let columns_meta = old_rg.columns();
 
-        // Determine the byte range covering column chunk data in this row group.
-        // Column/offset indexes are stored separately (typically after all row groups)
-        // and must not be included here, as that would copy data from other row groups.
-        let mut rg_start = u64::MAX;
-        let mut rg_end = 0u64;
-        let mut last_col_idx = 0usize;
-        for (i, col) in columns_meta.iter().enumerate() {
-            let (start, len) = col.byte_range();
-            rg_start = rg_start.min(start);
-            let end = start + len;
-            if end >= rg_end {
-                rg_end = end;
-                last_col_idx = i;
-            }
-        }
-
-        // Bloom filters are written after page data per column and sit outside
-        // byte_range(). For all columns except the last (in byte order), the
-        // bloom filter bytes fall between that column's pages and the next
-        // column's pages, so they are already within [rg_start..rg_end].
-        // The last column's bloom filter, however, extends past rg_end.
-        // Read its header to determine the total size and extend rg_end.
-        if columns_meta[last_col_idx]
-            .metadata()
-            .bloom_filter_offset
-            .is_some()
-        {
-            let bf_total =
-                parquet2::bloom_filter::total_size(&columns_meta[last_col_idx], &mut self.reader)
-                    .with_context(|_| {
-                    format!(
-                        "copy_row_group: failed to read bloom filter header for col {} in rg {}",
-                        last_col_idx, rg_idx,
-                    )
-                })?;
-            if bf_total > 0 {
-                let bf_offset = columns_meta[last_col_idx]
-                    .metadata()
-                    .bloom_filter_offset
-                    .unwrap() as u64;
-                rg_end = rg_end.max(bf_offset + bf_total);
-            }
-        }
+        let (rg_start, rg_end) = old_rg.data_byte_range(&mut self.reader).with_context(|_| {
+            format!(
+                "copy_row_group: failed to compute byte range for rg {}",
+                rg_idx
+            )
+        })?;
 
         if rg_start >= rg_end {
             return Err(fmt_err!(
