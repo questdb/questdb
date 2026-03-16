@@ -48,6 +48,92 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class QwpSymbolDecoderTest {
 
     @Test
+    public void testDeltaSymbolDictExcessiveStartId() throws Exception {
+        // A malicious client sends deltaStartId = 100_001, deltaCount = 0.
+        // The while loop in parseDeltaSymbolDict() grows connectionSymbolDict
+        // to 100K entries without question. With larger values (e.g. 2 billion),
+        // this exhausts heap memory (DoS). The parser should reject oversized
+        // delta dictionaries with QwpParseException.
+        assertMemoryLeak(() -> {
+            int deltaStartId = 1_000_001;
+            int deltaCount = 0;
+
+            int payloadSize = QwpVarint.encodedLength(deltaStartId) + QwpVarint.encodedLength(deltaCount);
+            int totalSize = HEADER_SIZE + payloadSize;
+            long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+                Unsafe.getUnsafe().putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+
+                long pos = address + HEADER_SIZE;
+                pos = QwpVarint.encode(pos, deltaStartId);
+                QwpVarint.encode(pos, deltaCount);
+
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                ObjList<String> connectionDict = new ObjList<>();
+                try {
+                    cursor.of(address, totalSize, null, connectionDict);
+                    Assert.fail("Expected QwpParseException for excessive delta symbol dictionary size");
+                } catch (QwpParseException e) {
+                    Assert.assertTrue(e.getMessage().contains("delta symbol dictionary"));
+                }
+            } finally {
+                Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testDeltaSymbolDictIntegerOverflow() throws Exception {
+        // deltaStartId = Integer.MAX_VALUE, deltaCount = 1.
+        // deltaStartId + deltaCount overflows int, producing a negative requiredSize.
+        // The while loop is skipped, then setQuick(Integer.MAX_VALUE, ...) causes
+        // ArrayIndexOutOfBoundsException. The parser should detect the overflow and
+        // throw QwpParseException instead.
+        assertMemoryLeak(() -> {
+            long deltaStartId = Integer.MAX_VALUE;
+            int deltaCount = 1;
+
+            byte[] symbolBytes = "x".getBytes(StandardCharsets.UTF_8);
+            int payloadSize = QwpVarint.encodedLength(deltaStartId)
+                    + QwpVarint.encodedLength(deltaCount)
+                    + QwpVarint.encodedLength(symbolBytes.length)
+                    + symbolBytes.length;
+            int totalSize = HEADER_SIZE + payloadSize;
+            long address = Unsafe.malloc(totalSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_MAGIC, MAGIC_MESSAGE);
+                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_VERSION, VERSION_1);
+                Unsafe.getUnsafe().putByte(address + HEADER_OFFSET_FLAGS, FLAG_DELTA_SYMBOL_DICT);
+                Unsafe.getUnsafe().putShort(address + HEADER_OFFSET_TABLE_COUNT, (short) 0);
+                Unsafe.getUnsafe().putInt(address + HEADER_OFFSET_PAYLOAD_LENGTH, payloadSize);
+
+                long pos = address + HEADER_SIZE;
+                pos = QwpVarint.encode(pos, deltaStartId);
+                pos = QwpVarint.encode(pos, deltaCount);
+                pos = QwpVarint.encode(pos, symbolBytes.length);
+                for (byte b : symbolBytes) {
+                    Unsafe.getUnsafe().putByte(pos++, b);
+                }
+
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                ObjList<String> connectionDict = new ObjList<>();
+                try {
+                    cursor.of(address, totalSize, null, connectionDict);
+                    Assert.fail("Expected QwpParseException for integer overflow in delta symbol dictionary");
+                } catch (QwpParseException e) {
+                    Assert.assertTrue(e.getMessage().contains("delta symbol dictionary"));
+                }
+            } finally {
+                Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testDecodeEmptySymbolColumn() throws Exception {
         // The cursor always parses the dictionary, even for 0 rows.
         // Allocate a buffer with an empty dictionary (varint 0) for 0 rows.

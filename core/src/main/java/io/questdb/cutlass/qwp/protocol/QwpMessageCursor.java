@@ -51,6 +51,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
  */
 public class QwpMessageCursor implements Mutable {
 
+    private static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
     private final QwpTableBlockCursor tableBlockCursor = new QwpTableBlockCursor();
     // Reusable array for varint parsing: [0]=value, [1]=bytes consumed
@@ -190,8 +191,24 @@ public class QwpMessageCursor implements Mutable {
         int deltaCount = (int) varintResult[0];
         address += varintResult[1];
 
-        // Ensure connectionSymbolDict has capacity
-        int requiredSize = deltaStartId + deltaCount;
+        if (deltaStartId < 0 || deltaCount < 0) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "negative delta symbol dictionary deltaStartId or deltaCount"
+            );
+        }
+
+        // Check for integer overflow and enforce upper bound.
+        // A varint can encode billions in just 5 bytes, so without this
+        // check a malicious client could exhaust heap memory.
+        long requiredSizeLong = (long) deltaStartId + deltaCount;
+        if (requiredSizeLong > MAX_SYMBOL_DICTIONARY_SIZE) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "delta symbol dictionary size exceeds limit: " + requiredSizeLong
+            );
+        }
+        int requiredSize = (int) requiredSizeLong;
         while (connectionSymbolDict.size() < requiredSize) {
             connectionSymbolDict.add(null);
         }
