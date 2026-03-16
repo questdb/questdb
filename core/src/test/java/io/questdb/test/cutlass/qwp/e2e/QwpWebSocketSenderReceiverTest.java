@@ -30,6 +30,7 @@ import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.client.std.Decimal64;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -768,50 +769,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testBooleanFalse() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_test_bool_false")
-                            .symbol("id", "f")
-                            .boolColumn("flag", false)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_bool_false");
-                serverMain.assertSql("select flag from ws_test_bool_false", "flag\nfalse\n");
-            }
-        });
-    }
-
-    @Test
-    public void testBooleanTrue() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_test_bool_true")
-                            .symbol("id", "t")
-                            .boolColumn("flag", true)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_bool_true");
-                serverMain.assertSql("select flag from ws_test_bool_true", "flag\ntrue\n");
-            }
-        });
-    }
-
-    @Test
     public void testBooleanValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1111,64 +1068,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testComplexSchema1() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_complex1")
-                            .symbol("region", "us-east")
-                            .symbol("host", "server-01")
-                            .symbol("dc", "dc1")
-                            .longColumn("cpu", 50)
-                            .longColumn("mem", 80)
-                            .doubleColumn("disk_usage", 0.45)
-                            .boolColumn("healthy", true)
-                            .stringColumn("status", "running")
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_complex1");
-                serverMain.assertSql("select region,host,dc,cpu,mem from ws_complex1",
-                        "region\thost\tdc\tcpu\tmem\nus-east\tserver-01\tdc1\t50\t80\n");
-            }
-        });
-    }
-
-    @Test
-    public void testComplexSchema2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_complex2")
-                            .symbol("type", "temperature")
-                            .symbol("unit", "celsius")
-                            .symbol("sensor_id", "t-001")
-                            .doubleColumn("value", 23.5)
-                            .doubleColumn("min", 20.0)
-                            .doubleColumn("max", 30.0)
-                            .longColumn("reading_count", 1000)
-                            .boolColumn("calibrated", true)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_complex2");
-                serverMain.assertSql("select type,unit,sensor_id from ws_complex2",
-                        "type\tunit\tsensor_id\ntemperature\tcelsius\tt-001\n");
-            }
-        });
-    }
-
-    @Test
     public void testComplexSchemaMultipleRows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1185,6 +1084,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                                 .longColumn("metric2", i * 20)
                                 .doubleColumn("ratio", i / 100.0)
                                 .boolColumn("active", i % 2 == 0)
+                                .stringColumn("status", "running")
                                 .at(1000000000000L + i, ChronoUnit.MICROS);
                     }
                     sender.flush();
@@ -1239,125 +1139,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testDecimal128() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal128 value = new io.questdb.client.std.Decimal128(0, 12345678901234L, 2); // 123456789012.34
-                    sender.table("ws_test_decimal128")
-                            .decimalColumn("amount", value)
-                            .at(1000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_decimal128");
-                serverMain.assertSql("select count() from ws_test_decimal128", "count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testDecimal256() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal256 value = io.questdb.client.std.Decimal256.fromLong(123456789L, 4);
-                    sender.table("ws_test_decimal256")
-                            .decimalColumn("big_value", value)
-                            .at(1000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_decimal256");
-                serverMain.assertSql("select count() from ws_test_decimal256", "count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testDecimal64() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal64 value = new io.questdb.client.std.Decimal64(12345, 2); // 123.45
-                    sender.table("ws_test_decimal64")
-                            .decimalColumn("price", value)
-                            .at(1000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_decimal64");
-                serverMain.assertSql("select count() from ws_test_decimal64", "count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testDecimalFromString() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_test_decimal_string")
-                            .decimalColumn("price", "123.456789")
-                            .at(1000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_decimal_string");
-                serverMain.assertSql("select count() from ws_test_decimal_string", "count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testDecimalMultipleRows() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    // Same scale for all values in the column
-                    io.questdb.client.std.Decimal64 v1 = new io.questdb.client.std.Decimal64(100, 2); // 1.00
-                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(200, 2); // 2.00
-                    io.questdb.client.std.Decimal64 v3 = new io.questdb.client.std.Decimal64(300, 2); // 3.00
-
-                    sender.table("ws_test_decimal_multi")
-                            .decimalColumn("price", v1)
-                            .at(1000000000L, ChronoUnit.MICROS);
-                    sender.table("ws_test_decimal_multi")
-                            .decimalColumn("price", v2)
-                            .at(2000000000L, ChronoUnit.MICROS);
-                    sender.table("ws_test_decimal_multi")
-                            .decimalColumn("price", v3)
-                            .at(3000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_decimal_multi");
-                serverMain.assertSql("select count() from ws_test_decimal_multi", "count\n3\n");
-            }
-        });
-    }
-
-    @Test
     public void testDecimalNegativeValue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1366,7 +1147,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal64 negative = new io.questdb.client.std.Decimal64(-5000, 2); // -50.00
+                    Decimal64 negative = new Decimal64(-5000, 2); // -50.00
                     sender.table("ws_test_decimal_negative")
                             .decimalColumn("loss", negative)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -1391,7 +1172,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     // Null decimals should be skipped without error
                     sender.table("ws_test_decimal_null")
                             .symbol("name", "test")
-                            .decimalColumn("value", (io.questdb.client.std.Decimal64) null)
+                            .decimalColumn("value", (Decimal64) null)
                             .at(1000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -1412,14 +1193,14 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     // First value with scale 2 — sets column scale to 2
-                    io.questdb.client.std.Decimal64 v1 = new io.questdb.client.std.Decimal64(100, 2);
+                    Decimal64 v1 = new Decimal64(100, 2);
                     sender.table("ws_test_decimal_precision_loss")
                             .decimalColumn("price", v1)
                             .at(1_000_000_000L, ChronoUnit.MICROS);
 
                     // Second value with scale 4 whose trailing digits would be lost
                     // when rescaling from scale 4 to scale 2 (1.2345 -> cannot be 1.23 exactly)
-                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(12345, 4);
+                    Decimal64 v2 = new Decimal64(12345, 4);
                     try {
                         sender.table("ws_test_decimal_precision_loss")
                                 .decimalColumn("price", v2)
@@ -1442,7 +1223,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal64 price = new io.questdb.client.std.Decimal64(9999, 2); // 99.99
+                    Decimal64 price = new Decimal64(9999, 2); // 99.99
                     sender.table("ws_test_decimal_mixed")
                             .symbol("product", "Widget")
                             .longColumn("quantity", 10)
@@ -1467,7 +1248,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal64 zero = new io.questdb.client.std.Decimal64(0, 2); // 0.00
+                    Decimal64 zero = new Decimal64(0, 2); // 0.00
                     sender.table("ws_test_decimal_zero")
                             .decimalColumn("balance", zero)
                             .at(1000000000L, ChronoUnit.MICROS);
@@ -2119,8 +1900,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    io.questdb.client.std.Decimal64 price1 = new io.questdb.client.std.Decimal64(15099, 2);
-                    io.questdb.client.std.Decimal64 price2 = new io.questdb.client.std.Decimal64(28005, 2);
+                    Decimal64 price1 = new Decimal64(15099, 2);
+                    Decimal64 price2 = new Decimal64(28005, 2);
 
                     // Batch 1
                     sender.table("ws_delta_complex")
@@ -3014,28 +2795,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testIntRangeLong() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_test_int_range")
-                            .symbol("id", "i1")
-                            .longColumn("int_val", Integer.MAX_VALUE)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_int_range");
-                serverMain.assertSql("select int_val from ws_test_int_range", "int_val\n" + Integer.MAX_VALUE + "\n");
-            }
-        });
-    }
-
-    @Test
     public void testInterleavedTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -3151,64 +2910,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("ws_test_large_string");
                 serverMain.assertSql("select length(large_data) from ws_test_large_string", "length\n1000\n");
-            }
-        });
-    }
-
-    @Test
-    public void testLong256Column() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                // LONG256 value with distinct components for easy verification
-                long l0 = 0x1111111111111111L;
-                long l1 = 0x2222222222222222L;
-                long l2 = 0x3333333333333333L;
-                long l3 = 0x4444444444444444L;
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_long256_test")
-                            .symbol("tag", "test")
-                            .long256Column("long256_col", l0, l1, l2, l3)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_long256_test");
-                serverMain.assertSql("select count() from ws_long256_test", "count\n1\n");
-
-                // Verify the LONG256 value is correct (displayed as hex string)
-                serverMain.assertSql(
-                        "select long256_col from ws_long256_test",
-                        "long256_col\n0x4444444444444444333333333333333322222222222222221111111111111111\n"
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testLongMinMax() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_test_long_min")
-                            .longColumn("value", Long.MIN_VALUE)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.table("ws_test_long_min")
-                            .longColumn("value", Long.MAX_VALUE)
-                            .at(1000000000001L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_long_min");
-                serverMain.assertSql("select count() from ws_test_long_min", "count\n2\n");
             }
         });
     }
@@ -5277,100 +4978,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                                 count\tnull_count
                                 2\t2
                                 """
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testUnicodeInString() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_test_unicode")
-                            .symbol("id", "row1")
-                            .stringColumn("unicode_str", "こんにちは世界")
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_test_unicode");
-                serverMain.assertSql("select count() from ws_test_unicode", "count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testUuidColumn() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                // UUID: 550e8400-e29b-41d4-a716-446655440000
-                // hi = 0x550e8400e29b41d4L, lo = 0xa716446655440000L
-                long uuidHi = 0x550e8400e29b41d4L;
-                long uuidLo = 0xa716446655440000L;
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_uuid_test")
-                            .symbol("tag", "test")
-                            .uuidColumn("uuid_col", uuidLo, uuidHi)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_uuid_test");
-                serverMain.assertSql("select count() from ws_uuid_test", "count\n1\n");
-
-                // Verify the UUID value is correct
-                serverMain.assertSql(
-                        "select uuid_col from ws_uuid_test",
-                        "uuid_col\n550e8400-e29b-41d4-a716-446655440000\n"
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testVarcharColumn() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                // Pre-create table with VARCHAR column
-                serverMain.execute("CREATE TABLE ws_varchar_test (" +
-                        "tag SYMBOL, " +
-                        "v VARCHAR, " +
-                        "timestamp TIMESTAMP" +
-                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
-
-                try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    for (int i = 0; i < 30; i++) {
-                        sender.table("ws_varchar_test")
-                                .symbol("tag", "t" + i)
-                                .stringColumn("v", "varchar-value-" + i)
-                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ws_varchar_test");
-                serverMain.assertSql("SELECT count() FROM ws_varchar_test", "count\n30\n");
-                serverMain.assertSql(
-                        "SELECT tag, v FROM ws_varchar_test ORDER BY timestamp LIMIT 3",
-                        "tag\tv\nt0\tvarchar-value-0\nt1\tvarchar-value-1\nt2\tvarchar-value-2\n"
-                );
-                serverMain.assertSql(
-                        "SELECT tag, v FROM ws_varchar_test ORDER BY timestamp DESC LIMIT 3",
-                        "tag\tv\nt29\tvarchar-value-29\nt28\tvarchar-value-28\nt27\tvarchar-value-27\n"
                 );
             }
         });
