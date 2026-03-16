@@ -112,7 +112,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " NULL," +
                     " NULL," +
                     " NULL," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             try (
@@ -146,7 +146,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0) ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_timestamp('2015', '2016', 0) ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             try (
@@ -180,7 +180,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " CASE WHEN x % 2 = 0 THEN rnd_str('hello', 'world', '!') ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_varchar('ганьба', 'слава', 'добрий') ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_bin(10, 20, 2) ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             try (
@@ -214,7 +214,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
             execute("INSERT INTO x SELECT" +
                     " rnd_symbol(10_000, 10, 40, 0)," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(100_000)");
 
             execute("INSERT INTO y SELECT a_symbol, ts FROM x");
@@ -281,7 +281,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " CASE WHEN x % 2 = 0 THEN rnd_str('hello', 'world', '!') ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_varchar('ганьба', 'слава', 'добрий') ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             try (
@@ -311,7 +311,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
             execute("INSERT INTO x SELECT" +
                     " rnd_long()," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(10_000)");
 
             try (
@@ -351,7 +351,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
             execute("INSERT INTO x SELECT" +
                     " rnd_long()," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(10_000)");
 
             long compressedSize;
@@ -430,7 +430,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " CASE WHEN x % 2 = 0 THEN rnd_double() ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
                     " CASE WHEN x % 2 = 0 THEN rnd_int() ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
                     " FROM long_sequence(1000)");
 
             try (
@@ -452,7 +452,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 1000000;
+            final long rows = 1_000_000;
             execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
