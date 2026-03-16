@@ -539,7 +539,7 @@ mod tests {
                 let mut general_buf = vec![];
                 encode_primitive_def_levels(
                     &mut general_buf,
-                    std::iter::repeat(true).take(num_rows),
+                    std::iter::repeat_n(true, num_rows),
                     num_rows,
                     version,
                 )
@@ -561,7 +561,7 @@ mod tests {
                     let data = if skip_prefix { &buf[4..] } else { buf };
                     let mut decoder = Decoder::new(data, 1);
                     let mut result = Vec::new();
-                    while let Some(run) = decoder.next() {
+                    for run in decoder {
                         match run.unwrap() {
                             HybridEncoded::Bitpacked(values) => {
                                 let remaining = num_rows - result.len();
@@ -572,7 +572,7 @@ mod tests {
                             }
                             HybridEncoded::Rle(value, count) => {
                                 let val = value[0] & 1;
-                                result.extend(std::iter::repeat(val).take(count));
+                                result.extend(std::iter::repeat_n(val, count));
                             }
                         }
                     }
