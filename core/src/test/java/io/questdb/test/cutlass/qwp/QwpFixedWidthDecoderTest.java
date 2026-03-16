@@ -55,7 +55,7 @@ public class QwpFixedWidthDecoderTest {
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_BYTE, false);
+            int consumed = cursor.of(address, rowCount, rowCount, TYPE_BYTE, false);
 
             Assert.assertEquals(rowCount, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -315,7 +315,7 @@ public class QwpFixedWidthDecoderTest {
     @Test
     public void testDecodeEmptyColumn() throws QwpParseException {
         QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-        int consumed = cursor.of(0, 0, TYPE_LONG, false);
+        int consumed = cursor.of(0, 0, 0, TYPE_LONG, false);
         Assert.assertEquals(0, consumed);
     }
 
@@ -465,17 +465,10 @@ public class QwpFixedWidthDecoderTest {
         // 10 rows need 2 bytes for null bitmap, but we only provide 1
         long address = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
         try {
-            cursor.of(address, 10, TYPE_LONG, true);
-            // The cursor reads nullCount from the bitmap at of() time.
-            // With only 1 byte for a 10-row bitmap, advanceRow() will read
-            // past the buffer. Verify that the cursor does not crash and
-            // that the consumed bytes are wrong (detectable by caller).
-            // However, cursor.of() does not throw -- it trusts the caller
-            // to provide valid data. We verify the pattern still works for
-            // error handling at the message-level decoder.
-        } catch (Exception e) {
-            // Some implementations may throw during of()
-            Assert.assertTrue(e instanceof QwpParseException || e instanceof RuntimeException);
+            cursor.of(address, 1, 10, TYPE_LONG, true);
+            Assert.fail("expected QwpParseException for truncated null bitmap");
+        } catch (QwpParseException e) {
+            Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
             Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
         }
@@ -485,15 +478,14 @@ public class QwpFixedWidthDecoderTest {
     public void testDecodeInsufficientDataForValues() {
         QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
 
-        // 10 long values need 80 bytes, we provide less
+        // 10 long values need 80 bytes, we provide 40
         int size = 40;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            // cursor.of() computes consumed bytes but does not validate buffer bounds.
-            // It trusts the caller. We just verify we can call of() without a crash.
-            cursor.of(address, 10, TYPE_LONG, false);
-        } catch (Exception e) {
-            Assert.assertTrue(e instanceof QwpParseException || e instanceof RuntimeException);
+            cursor.of(address, size, 10, TYPE_LONG, false);
+            Assert.fail("expected QwpParseException for truncated values");
+        } catch (QwpParseException e) {
+            Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -512,7 +504,7 @@ public class QwpFixedWidthDecoderTest {
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_INT, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_INT, false);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -589,7 +581,7 @@ public class QwpFixedWidthDecoderTest {
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_LONG, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_LONG, false);
 
             Assert.assertEquals(size, consumed);
 
@@ -631,7 +623,7 @@ public class QwpFixedWidthDecoderTest {
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_LONG256, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_LONG256, false);
 
             Assert.assertEquals(size, consumed);
 
@@ -666,7 +658,7 @@ public class QwpFixedWidthDecoderTest {
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_LONG, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_LONG, false);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -742,7 +734,7 @@ public class QwpFixedWidthDecoderTest {
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_SHORT, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_SHORT, false);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {

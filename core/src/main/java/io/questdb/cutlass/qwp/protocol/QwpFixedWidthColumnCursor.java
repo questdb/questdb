@@ -232,17 +232,20 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data (starts at null bitmap if nullable, else values)
+     * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
      * @param typeCode    column type code
      * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
+     * @throws QwpParseException if data is truncated
      */
     public int of(
             long dataAddress,
+            int dataLength,
             int rowCount,
             byte typeCode,
             boolean nullable
-    ) {
+    ) throws QwpParseException {
         this.typeCode = typeCode;
         this.nullable = nullable;
         this.rowCount = rowCount;
@@ -253,6 +256,12 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "fixed-width column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
@@ -260,9 +269,16 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
             this.nullBitmapAddress = 0;
         }
 
-        this.valuesAddress = dataAddress + offset;
         int valueCount = rowCount - nullCount;
-        offset += valueCount * valueSize;
+        int valuesSize = valueCount * valueSize;
+        if (offset + valuesSize > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "fixed-width column data truncated: expected " + valueCount + " values"
+            );
+        }
+        this.valuesAddress = dataAddress + offset;
+        offset += valuesSize;
 
         resetRowPosition();
         return offset;

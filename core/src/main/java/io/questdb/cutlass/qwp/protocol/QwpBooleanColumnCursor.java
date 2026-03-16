@@ -103,15 +103,18 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data
+     * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
      * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
+     * @throws QwpParseException if data is truncated
      */
     public int of(
             long dataAddress,
+            int dataLength,
             int rowCount,
             boolean nullable
-    ) {
+    ) throws QwpParseException {
         this.nullable = nullable;
 
         int offset = 0;
@@ -119,6 +122,12 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "boolean column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
@@ -126,9 +135,15 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
             this.nullBitmapAddress = 0;
         }
 
-        this.valueBitmapAddress = dataAddress + offset;
         int valueCount = rowCount - nullCount;
         int valueBitmapSize = (valueCount + 7) / 8;
+        if (offset + valueBitmapSize > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "boolean column data truncated: expected value bitmap"
+            );
+        }
+        this.valueBitmapAddress = dataAddress + offset;
         offset += valueBitmapSize;
 
         resetRowPosition();

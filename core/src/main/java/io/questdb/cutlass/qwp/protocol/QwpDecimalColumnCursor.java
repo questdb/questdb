@@ -189,12 +189,14 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data
+     * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
      * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
+     * @throws QwpParseException if data is truncated
      */
-    public int of(long dataAddress, int rowCount, byte typeCode, boolean nullable) {
+    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) throws QwpParseException {
         this.typeCode = typeCode;
         this.nullable = nullable;
         this.valueSize = getDecimalValueSize(typeCode);
@@ -204,6 +206,12 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "decimal column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
@@ -212,12 +220,25 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         }
 
         // Read scale byte
+        if (offset + 1 > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "decimal column data truncated: expected scale byte"
+            );
+        }
         this.scale = Unsafe.getUnsafe().getByte(dataAddress + offset);
         offset += 1;
 
-        this.valuesAddress = dataAddress + offset;
         int valueCount = rowCount - nullCount;
-        offset += valueCount * valueSize;
+        int valuesSize = valueCount * valueSize;
+        if (offset + valuesSize > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "decimal column data truncated: expected " + valueCount + " values"
+            );
+        }
+        this.valuesAddress = dataAddress + offset;
+        offset += valuesSize;
 
         resetRowPosition();
         return offset;

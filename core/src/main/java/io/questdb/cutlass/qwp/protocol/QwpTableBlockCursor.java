@@ -439,7 +439,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, boolCursor);
                 }
                 booleanColumnIndices[booleanColumnCount++] = colIndex;
-                return boolCursor.of(dataAddress, rowCount, nullable);
+                return boolCursor.of(dataAddress, dataLength, rowCount, nullable);
 
             case TYPE_BYTE:
             case TYPE_SHORT:
@@ -459,7 +459,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, fixedCursor);
                 }
                 fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
-                return fixedCursor.of(dataAddress, rowCount, typeCode, nullable);
+                return fixedCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
 
             case TYPE_TIMESTAMP:
             case TYPE_TIMESTAMP_NANOS:
@@ -483,7 +483,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, strCursor);
                 }
                 stringColumnIndices[stringColumnCount++] = colIndex;
-                return strCursor.of(dataAddress, rowCount, typeCode, nullable);
+                return strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
 
             case TYPE_SYMBOL:
                 QwpSymbolColumnCursor symCursor;
@@ -532,7 +532,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, decCursor);
                 }
                 decimalColumnIndices[decimalColumnCount++] = colIndex;
-                return decCursor.of(dataAddress, rowCount, typeCode, nullable);
+                return decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
 
             default:
                 throw QwpParseException.create(

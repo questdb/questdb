@@ -29,6 +29,7 @@ import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
@@ -56,7 +57,7 @@ public class QwpStringDecoderTest {
     }
 
     @Test
-    public void testDecodeEmptyStringColumn() {
+    public void testDecodeEmptyStringColumn() throws QwpParseException {
         // The cursor always reads the offset array (1 entry for 0 value-rows).
         // Allocate a buffer with a valid offset array for 0 rows.
         int allocSize = 4; // (0 + 1) * 4 = 4 bytes for offset array with 0 values
@@ -64,7 +65,7 @@ public class QwpStringDecoderTest {
         try {
             Unsafe.getUnsafe().putInt(address, 0); // single offset entry = 0
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            int consumed = cursor.of(address, 0, TYPE_STRING, false);
+            int consumed = cursor.of(address, allocSize, 0, TYPE_STRING, false);
             Assert.assertEquals(allocSize, consumed);
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
@@ -125,11 +126,10 @@ public class QwpStringDecoderTest {
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, rowCount, TYPE_STRING, true);
-            // The cursor reads past available data; advancing should fail or produce wrong results.
-            // Since of() doesn't bounds-check, at least verify it doesn't crash with 0 rows.
-            // The real validation happens at a higher level (QwpTableBlockCursor).
-            // For this test, we verify the cursor handles this gracefully.
+            cursor.of(address, size, rowCount, TYPE_STRING, true);
+            Assert.fail("expected QwpParseException for truncated null bitmap");
+        } catch (QwpParseException e) {
+            Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -143,16 +143,17 @@ public class QwpStringDecoderTest {
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, rowCount, TYPE_STRING, false);
-            // The cursor reads the last offset from out-of-bounds memory.
-            // Since of() doesn't bounds-check, the real validation happens at a higher level.
+            cursor.of(address, size, rowCount, TYPE_STRING, false);
+            Assert.fail("expected QwpParseException for truncated offset array");
+        } catch (QwpParseException e) {
+            Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
-    public void testNonMonotonicOffsets() {
+    public void testNonMonotonicOffsets() throws QwpParseException {
         // Create data where offsets go backwards: 0, 10, 5 (non-monotonic).
         // A crafted message with such offsets would cause a negative string length
         // and out-of-bounds native memory reads. The cursor must reject this
@@ -167,7 +168,7 @@ public class QwpStringDecoderTest {
             Unsafe.getUnsafe().putInt(address + 8, 5); // Goes backward
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, rowCount, TYPE_STRING, false);
+            cursor.of(address, size, rowCount, TYPE_STRING, false);
 
             // Row 0: offset 0..10 is valid
             cursor.advanceRow();
@@ -186,10 +187,12 @@ public class QwpStringDecoderTest {
     }
 
     @Test
-    public void testOffsetArrayFirstOffsetMustBeZero() {
+    public void testOffsetArrayFirstOffsetMustBeZero() throws QwpParseException {
         // Hand-craft data with non-zero first offset
         int rowCount = 2;
-        int size = (rowCount + 1) * 4;
+        int offsetArraySize = (rowCount + 1) * 4;
+        // lastOffset = offset[2] = 5, so string data region = 5 bytes
+        int size = offsetArraySize + 5;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             Unsafe.getUnsafe().putInt(address, 5); // Should be 0
@@ -197,7 +200,7 @@ public class QwpStringDecoderTest {
             Unsafe.getUnsafe().putInt(address + 8, 5);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, rowCount, TYPE_STRING, false);
+            cursor.of(address, size, rowCount, TYPE_STRING, false);
 
             // Row 0: reads from stringDataAddress + 5 to stringDataAddress + 5 -> empty string
             // The cursor doesn't validate that the first offset is zero.
@@ -219,11 +222,10 @@ public class QwpStringDecoderTest {
             Unsafe.getUnsafe().putInt(address + 4, 100); // Claims 100 bytes, but only 5 available
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            int consumed = cursor.of(address, rowCount, TYPE_STRING, false);
-
-            // of() reads lastOffset=100 and returns offsetArraySize + 100 = 108
-            // This exceeds the actual buffer size, but the cursor doesn't bounds-check.
-            Assert.assertEquals(offsetArraySize + 100, consumed);
+            cursor.of(address, size, rowCount, TYPE_STRING, false);
+            Assert.fail("expected QwpParseException for out-of-bounds string data");
+        } catch (QwpParseException e) {
+            Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
