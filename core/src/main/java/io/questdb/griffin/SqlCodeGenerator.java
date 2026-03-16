@@ -256,10 +256,12 @@ import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -5641,8 +5643,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ObjList<ExpressionNode> nodes = model.getOrderBy();
                         int position = 0;
                         for (int j = 0, y = nodes.size(); j < y; j++) {
-                            if (Chars.equals(column, nodes.getQuick(i).token)) {
-                                position = nodes.getQuick(i).position;
+                            if (Chars.equals(column, nodes.getQuick(j).token)) {
+                                position = nodes.getQuick(j).position;
                                 break;
                             }
                         }
@@ -5785,13 +5787,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
-                        final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (
-                                configuration.isSqlOrderBySortEnabled()
-                                        && orderByColumnNames.size() == 1
-                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
-                        ) {
-                            return new LongSortedLightRecordCursorFactory(
+                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                            return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
                                     recordCursorFactory,
@@ -5846,8 +5843,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
-
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
+                if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                    return new EncodedSortRecordCursorFactory(
+                            configuration,
+                            orderedMetadata,
+                            recordCursorFactory,
+                            RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
+                            listColumnFilterA.copy()
+                    );
+                }
                 return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
@@ -7712,7 +7717,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.newInstance(chainTypes, e.key));
+                windowComparators.add(recordComparatorCompiler.newInstance(chainMetadata, e.key));
                 functionGroups.add(e.value);
                 keys.add(e.key);
             }
