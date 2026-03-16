@@ -643,6 +643,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.filter.dispatch.limit\tQDB_CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.topk.enabled\tQDB_CAIRO_SQL_PARALLEL_TOPK_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.horizon.join.enabled\tQDB_CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.horizon.join.bwd.scan.switch.factor\tQDB_CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR\t8\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.horizon.join.bwd.scan.min.gap\tQDB_CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP\t1024\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.horizon.join.bwd.scan.absolute.threshold\tQDB_CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.horizon.join.max.offsets\tQDB_CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
