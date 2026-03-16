@@ -4282,8 +4282,9 @@ mod tests {
         let val_min = [0x01u8; 32];
         let val_mid = [0x02u8; 32];
         let val_max = [0x03u8; 32];
-        let col1: Vec<[u8; 32]> =
-            vec![val_mid, val_max, null_val, val_min, val_mid, val_max, val_min];
+        let col1: Vec<[u8; 32]> = vec![
+            val_mid, val_max, null_val, val_min, val_mid, val_max, val_min,
+        ];
         let row_count = col1.len();
 
         let col1_w = Column::from_raw_data(

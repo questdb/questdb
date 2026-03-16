@@ -872,7 +872,7 @@ fn column_chunk_to_dict_pages(
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let orig_column_top = column.column_top;
 
@@ -900,7 +900,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
@@ -912,7 +912,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Timestamp => {
@@ -928,7 +928,7 @@ fn column_chunk_to_dict_pages(
                     adjusted_column_top,
                     options,
                     primitive_type,
-                    bloom_hashes.as_deref_mut(),
+                    bloom_hashes,
                 )
             } else {
                 primitive::slice_to_dict_pages_simd(
@@ -936,7 +936,7 @@ fn column_chunk_to_dict_pages(
                     adjusted_column_top,
                     options,
                     primitive_type,
-                    bloom_hashes.as_deref_mut(),
+                    bloom_hashes,
                 )
             }
         }
@@ -949,7 +949,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Double => {
@@ -961,7 +961,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Byte => {
@@ -973,7 +973,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Short => {
@@ -985,7 +985,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Char => {
@@ -997,7 +997,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::IPv4 => {
@@ -1009,7 +1009,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::GeoByte => {
@@ -1021,7 +1021,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::GeoShort => {
@@ -1033,7 +1033,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::GeoInt => {
@@ -1045,7 +1045,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::GeoLong => {
@@ -1057,7 +1057,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::String => {
@@ -1071,7 +1071,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Binary => {
@@ -1085,7 +1085,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
@@ -1099,7 +1099,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Long256 => {
@@ -1112,7 +1112,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Decimal8 => {
@@ -1124,7 +1124,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Decimal16 => {
@@ -1136,7 +1136,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Decimal32 => {
@@ -1148,7 +1148,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Decimal64 => {
@@ -1160,7 +1160,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Decimal128 => {
@@ -1172,7 +1172,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         ColumnTypeTag::Decimal256 => {
@@ -1184,7 +1184,7 @@ fn column_chunk_to_dict_pages(
                 adjusted_column_top,
                 options,
                 primitive_type,
-                bloom_hashes.as_deref_mut(),
+                bloom_hashes,
             )
         }
         _ => Err(fmt_err!(
