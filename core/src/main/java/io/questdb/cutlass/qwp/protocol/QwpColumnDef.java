@@ -30,7 +30,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
 
 /**
- * Represents a column definition in an QWP v1 schema.
+ * Represents a column definition in a QWP v1 schema.
  * <p>
  * This class is immutable and safe for caching.
  */

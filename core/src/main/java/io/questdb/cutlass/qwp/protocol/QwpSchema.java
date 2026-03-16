@@ -33,7 +33,7 @@ import java.util.Arrays;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMN_NAME_LENGTH;
 
 /**
- * Represents an QWP v1 table schema (immutable, safe for caching).
+ * Represents a QWP v1 table schema (immutable, safe for caching).
  * <p>
  * A schema consists of an ordered list of column definitions.
  * The schema hash is computed as XXH64 over the full schema bytes.

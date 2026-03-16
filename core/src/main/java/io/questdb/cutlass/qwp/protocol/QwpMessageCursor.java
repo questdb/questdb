@@ -32,7 +32,7 @@ import io.questdb.std.str.Utf8s;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 
 /**
- * Streaming cursor over an QWP v1 message.
+ * Streaming cursor over a QWP v1 message.
  * <p>
  * Provides iteration through table blocks in a message without allocating
  * intermediate objects. The single {@link QwpTableBlockCursor} is reused

@@ -121,7 +121,7 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps an QWP v1 type code to QuestDB column type.
+     * Maps a QWP v1 type code to QuestDB column type.
      *
      * @param ilpType QWP v1 type code
      * @return QuestDB column type
@@ -219,7 +219,7 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Returns a human-readable name for an QWP v1 type code.
+     * Returns a human-readable name for a QWP v1 type code.
      *
      * @param ilpType QWP v1 type code
      * @return human-readable type name
@@ -296,7 +296,7 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps an QWP v1 type code to QuestDB column type, with cursor access for decimal scale.
+     * Maps a QWP v1 type code to QuestDB column type, with cursor access for decimal scale.
      *
      * @param ilpType    QWP v1 type code
      * @param tableBlock table block cursor for accessing decimal scale

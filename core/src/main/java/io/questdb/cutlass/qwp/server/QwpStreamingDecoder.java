@@ -103,7 +103,7 @@ public class QwpStreamingDecoder implements QuietCloseable {
     }
 
     /**
-     * Decodes an QWP v1 message from direct memory with delta symbol dictionary support.
+     * Decodes a QWP v1 message from direct memory with delta symbol dictionary support.
      * <p>
      * If the message has FLAG_DELTA_SYMBOL_DICT set, the delta symbols are accumulated
      * to the provided connection dictionary. Symbol columns then reference this dictionary
@@ -123,7 +123,7 @@ public class QwpStreamingDecoder implements QuietCloseable {
     }
 
     /**
-     * Decodes an QWP v1 message from direct memory.
+     * Decodes a QWP v1 message from direct memory.
      * <p>
      * The returned cursor is valid until the next call to {@link #decode} or {@link #reset()}.
      * <p>

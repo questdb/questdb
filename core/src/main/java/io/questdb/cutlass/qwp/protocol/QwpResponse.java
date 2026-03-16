@@ -28,7 +28,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Represents an QWP v1 response to be sent to the client.
+ * Represents a QWP v1 response to be sent to the client.
  * <p>
  * Response format:
  * <pre>

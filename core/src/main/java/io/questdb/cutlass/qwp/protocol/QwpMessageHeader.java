@@ -74,7 +74,7 @@ public class QwpMessageHeader {
      * Checks if the given 4 bytes match the QWP v1 message magic.
      *
      * @param magic the magic integer to check
-     * @return true if it's an QWP v1 message
+     * @return true if it's a QWP v1 message
      */
     public static boolean isMessageMagic(int magic) {
         return magic == MAGIC_MESSAGE;
