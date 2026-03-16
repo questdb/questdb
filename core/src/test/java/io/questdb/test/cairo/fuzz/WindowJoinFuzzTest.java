@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -236,6 +237,16 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 sink.put(preceding);
             }
             sink.put(", t.ts)");
+            // NULL dynamic bounds must produce NULL aggregates (skip the row entirely).
+            // The main LEFT JOIN handles this naturally (dateadd returns NULL → no match),
+            // but the prevailing inner JOIN only uses the lo bound, so we must explicitly
+            // exclude rows where any dynamic bound is NULL.
+            if (isDynamicLo) {
+                sink.put(" AND t.boundLo IS NOT NULL");
+            }
+            if (isDynamicHi) {
+                sink.put(" AND t.boundHi IS NOT NULL");
+            }
             if (!joinFilter.isEmpty()) {
                 sink.put(" AND (").put(joinFilter).put(')');
             }
@@ -484,8 +495,12 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                 r.putInt(0, i);
                 r.putSym(1, symbol);
                 r.putDouble(2, rnd.nextDouble() * 100);
-                r.putInt(3, (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE)));
-                r.putInt(4, (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE)));
+                // ~10% NULL bounds to exercise the NULL-skipping path in computeEffectiveBound.
+                // Always consume the same random values to keep the sequence stable.
+                int loVal = (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE));
+                int hiVal = (int) rnd.nextLong(Math.min(avgTradeSpread * 4, Integer.MAX_VALUE));
+                r.putInt(3, i % 10 == 0 ? Numbers.INT_NULL : loVal);
+                r.putInt(4, i % 10 == 5 ? Numbers.INT_NULL : hiVal);
                 r.append();
             }
             w.commit();

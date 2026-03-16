@@ -492,8 +492,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     continue;
                 }
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                long lo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                long hi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
                 if (lo < overallSlaveLo) {
                     overallSlaveLo = lo;
                 }
@@ -546,8 +546,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
                     // Search from 0 since dynamic bounds don't guarantee monotonic slave windows.
@@ -640,8 +640,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     continue;
                 }
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                long lo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                long hi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
                 if (lo < overallSlaveLo) {
                     overallSlaveLo = lo;
                 }
@@ -694,8 +694,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
                     // Search from 0 since dynamic bounds don't guarantee monotonic slave windows.
@@ -788,8 +788,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     continue;
                 }
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                long lo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                long hi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
                 if (lo < overallSlaveLo) {
                     overallSlaveLo = lo;
                 }
@@ -848,8 +848,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                final long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                final long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
 
                 boolean needToFindPrevailing = true;
                 if (slaveTimestamps.size() > 0) {
@@ -1768,8 +1768,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         continue;
                     }
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                    long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    long lo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                    long hi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
                     if (lo < overallSlaveLo) {
                         overallSlaveLo = lo;
                     }
@@ -1824,8 +1824,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                    long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                    long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
 
                     if (slaveTimestamps.size() > 0) {
                         long rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, 0, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
@@ -1948,8 +1948,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         continue;
                     }
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                    long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    long lo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                    long hi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
                     if (lo < overallSlaveLo) {
                         overallSlaveLo = lo;
                     }
@@ -2004,8 +2004,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                    long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                    long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
 
                     if (slaveTimestamps.size() > 0) {
                         long rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, 0, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
@@ -2128,8 +2128,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         continue;
                     }
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    long lo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                    long hi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    long lo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                    long hi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
                     if (lo < overallSlaveLo) {
                         overallSlaveLo = lo;
                     }
@@ -2190,8 +2190,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     }
 
                     final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                    final long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTsScale);
-                    final long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTsScale);
+                    final long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTsScale);
+                    final long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTsScale);
 
                     boolean needToFindPrevailing = true;
                     if (slaveTimestamps.size() > 0) {
@@ -2998,6 +2998,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     /**
+     * Returns {@code a + b}, clamping to {@link Long#MAX_VALUE} on positive overflow
+     * and {@link Long#MIN_VALUE} on negative overflow instead of wrapping.
+     */
+    static long addSaturating(long a, long b) {
+        try {
+            return Math.addExact(a, b);
+        } catch (ArithmeticException e) {
+            // Positive overflow (b > 0): clamp to the largest timestamp (end of time).
+            // Negative overflow (b <= 0): clamp to the smallest timestamp (start of time).
+            return b > 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+        }
+    }
+
+    /**
      * Computes the effective window bound value for a dynamic WINDOW JOIN bound.
      * <p>
      * If the bound function is null, this method returns the pre-computed constant value.
@@ -3031,6 +3045,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             raw = 0;
         }
         long scaled = (timeUnit != 0 && driver != null) ? driver.from(raw, timeUnit) : raw;
+        // raw >= 0, and from() multiplies by a positive constant, so a negative
+        // result means the multiplication overflowed. Saturate to Long.MAX_VALUE.
+        if (scaled < 0) {
+            scaled = Long.MAX_VALUE;
+        }
         return sign * scaled;
     }
 
@@ -3079,6 +3098,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             } while (slaveTimeFrameHelper.previousFrame());
         } finally {
             slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
+        }
+    }
+
+    /**
+     * Returns {@code a - b}, clamping to {@link Long#MIN_VALUE} on negative overflow
+     * and {@link Long#MAX_VALUE} on positive overflow instead of wrapping.
+     */
+    static long subtractSaturating(long a, long b) {
+        try {
+            return Math.subtractExact(a, b);
+        } catch (ArithmeticException e) {
+            // Negative overflow (b > 0): clamp to the smallest timestamp (start of time).
+            // Positive overflow (b <= 0): clamp to the largest timestamp (end of time).
+            return b > 0 ? Long.MIN_VALUE : Long.MAX_VALUE;
         }
     }
 

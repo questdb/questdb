@@ -61,8 +61,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.addSaturating;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.computeEffectiveBound;
 import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.findPrevailingForMasterRow;
+import static io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory.subtractSaturating;
 
 /**
  * Single-threaded WINDOW JOIN factory for general join conditions.
@@ -366,8 +368,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 return true;
             }
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTimestampScale);
 
             long slaveRowIndex;
             if (includePrevailing) {
@@ -513,8 +515,8 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 return true;
             }
 
-            long slaveTimestampLo = scaleTimestamp(masterTimestamp - effectiveLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(masterTimestamp + effectiveHi, masterTimestampScale);
+            long slaveTimestampLo = scaleTimestamp(subtractSaturating(masterTimestamp, effectiveLo), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(addSaturating(masterTimestamp, effectiveHi), masterTimestampScale);
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
             final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();

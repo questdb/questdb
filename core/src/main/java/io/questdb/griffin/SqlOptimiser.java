@@ -10461,7 +10461,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void validateWindowJoins(
-            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
+            QueryModel model,
+            SqlExecutionContext sqlExecutionContext,
+            int recursionLevel
     ) throws SqlException {
         if (model == null) {
             return;
@@ -10480,7 +10482,7 @@ public class SqlOptimiser implements Mutable {
                 long lo = 0, hi = 0;
                 switch (context.getLoKind()) {
                     case WindowJoinContext.PRECEDING: {
-                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getLoExpr(), sqlExecutionContext);
+                        long val = tryEvalNonNegativeLongConstant(context.getLoExpr(), sqlExecutionContext);
                         if (val == -1) {
                             context.setDynamicLo(true);
                         } else {
@@ -10489,7 +10491,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     }
                     case WindowJoinContext.FOLLOWING: {
-                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getLoExpr(), sqlExecutionContext);
+                        long val = tryEvalNonNegativeLongConstant(context.getLoExpr(), sqlExecutionContext);
                         if (val == -1) {
                             context.setDynamicLo(true);
                         } else {
@@ -10509,7 +10511,7 @@ public class SqlOptimiser implements Mutable {
 
                 switch (context.getHiKind()) {
                     case WindowJoinContext.PRECEDING: {
-                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getHiExpr(), sqlExecutionContext);
+                        long val = tryEvalNonNegativeLongConstant(context.getHiExpr(), sqlExecutionContext);
                         if (val == -1) {
                             context.setDynamicHi(true);
                         } else {
@@ -10523,7 +10525,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     }
                     case WindowJoinContext.FOLLOWING: {
-                        long val = tryEvalNonNegativeLongConstant(functionParser, context.getHiExpr(), sqlExecutionContext);
+                        long val = tryEvalNonNegativeLongConstant(context.getHiExpr(), sqlExecutionContext);
                         if (val == -1) {
                             context.setDynamicHi(true);
                         } else {
@@ -10693,20 +10695,38 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Tries to evaluate the expression as a non-negative long constant.
-     * Returns -1 if the expression is non-constant (i.e., it references columns).
+     * Returns -1 if the expression contains column references (dynamic bound).
      * Returns {@link Long#MAX_VALUE} if expr is null.
      */
-    static long tryEvalNonNegativeLongConstant(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
-            final Function func;
-            try {
-                func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            } catch (SqlException e) {
-                // Expression references columns that don't exist in empty metadata.
-                // Treat as non-constant (dynamic) and let the code generator
-                // compile it against the actual master metadata.
-                return -1;
+            // Walk the expression tree iteratively to detect column references.
+            // If found, the expression is dynamic — return -1 without parsing.
+            // This avoids a catch-all SqlException that would mask real parse errors.
+            sqlNodeStack.clear();
+            ExpressionNode node = expr;
+            while (node != null || !sqlNodeStack.isEmpty()) {
+                if (node != null) {
+                    if (node.type == LITERAL) {
+                        return -1;
+                    }
+                    if (node.paramCount < 3) {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                    } else {
+                        for (int i = 0, n = node.paramCount; i < n; i++) {
+                            sqlNodeStack.push(node.args.getQuick(i));
+                        }
+                        node = null;
+                    }
+                    continue;
+                }
+                node = sqlNodeStack.poll();
             }
+
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
             if (!func.isConstant()) {
                 Misc.free(func);
                 return -1;
