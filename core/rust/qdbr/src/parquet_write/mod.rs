@@ -2783,7 +2783,316 @@ mod tests {
         buf.set_position(0);
         let bytes: Bytes = buf.into_inner().into();
 
+        // Verify metadata: compression should have fallen back to Uncompressed
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let row_group = &metadata.row_groups[0];
+        assert_eq!(
+            row_group.columns()[0].compression(),
+            parquet2::compression::Compression::Uncompressed,
+            "high min_compression_ratio should force fallback to uncompressed"
+        );
+
         // Verify the file is readable and data is correct
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .expect("downcast");
+            assert_eq!(arr.len(), 500);
+            for i in 0..500 {
+                let expected = i as i64 * 7 + (i as i64 % 13) * 1000;
+                assert_eq!(arr.value(i), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_min_compression_ratio_met() {
+        // All-zeros data compresses very well with Snappy.
+        // With a modest ratio threshold, compression should be kept.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let col_data: Vec<i64> = vec![0i64; 500];
+        let row_count = col_data.len();
+
+        let col = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col_data.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_compression(parquet2::compression::CompressionOptions::Snappy)
+            .with_min_compression_ratio(1.2) // modest ratio, easily met by all-zeros
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let row_group = &metadata.row_groups[0];
+        assert_eq!(
+            row_group.columns()[0].compression(),
+            parquet2::compression::Compression::Snappy,
+            "compression should be kept when ratio threshold is met"
+        );
+
+        // Verify data correctness
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .expect("downcast");
+            assert_eq!(arr.len(), 500);
+            for i in 0..500 {
+                assert_eq!(arr.value(i), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_min_compression_ratio_boundary_one() {
+        // ratio=1.0 is trivially met for any compressible data.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let col_data: Vec<i64> = vec![0i64; 500];
+        let row_count = col_data.len();
+
+        let col = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col_data.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_compression(parquet2::compression::CompressionOptions::Snappy)
+            .with_min_compression_ratio(1.0) // boundary: ratio=1.0
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let row_group = &metadata.row_groups[0];
+        assert_eq!(
+            row_group.columns()[0].compression(),
+            parquet2::compression::Compression::Snappy,
+            "ratio=1.0 should be trivially met for compressible data"
+        );
+
+        // Verify data correctness
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .expect("downcast");
+            assert_eq!(arr.len(), 500);
+            for i in 0..500 {
+                assert_eq!(arr.value(i), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_min_compression_ratio_zero_disabled() {
+        // ratio=0.0 disables the check entirely (streaming mode).
+        // Compression should always be kept regardless of data compressibility.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let col_data: Vec<i64> = (0..500).map(|i| i * 7 + (i % 13) * 1000).collect();
+        let row_count = col_data.len();
+
+        let col = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col_data.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_compression(parquet2::compression::CompressionOptions::Snappy)
+            .with_min_compression_ratio(0.0) // disabled
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let row_group = &metadata.row_groups[0];
+        assert_eq!(
+            row_group.columns()[0].compression(),
+            parquet2::compression::Compression::Snappy,
+            "ratio=0.0 should disable the check, keeping compression"
+        );
+
+        // Verify data correctness
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .expect("downcast");
+            assert_eq!(arr.len(), 500);
+            for i in 0..500 {
+                let expected = i as i64 * 7 + (i as i64 % 13) * 1000;
+                assert_eq!(arr.value(i), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_min_compression_ratio_negative() {
+        // Negative ratio should be treated the same as disabled (0.0).
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let col_data: Vec<i64> = (0..500).map(|i| i * 7 + (i % 13) * 1000).collect();
+        let row_count = col_data.len();
+
+        let col = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col_data.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_compression(parquet2::compression::CompressionOptions::Snappy)
+            .with_min_compression_ratio(-1.0) // negative: treated as disabled
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let row_group = &metadata.row_groups[0];
+        assert_eq!(
+            row_group.columns()[0].compression(),
+            parquet2::compression::Compression::Snappy,
+            "negative ratio should be treated as disabled, keeping compression"
+        );
+
+        // Verify data correctness
         let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
             .expect("reader")
             .with_batch_size(8192)

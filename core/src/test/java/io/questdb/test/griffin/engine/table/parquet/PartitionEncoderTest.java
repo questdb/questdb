@@ -301,6 +301,116 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinCompressionRatioDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_long LONG," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " rnd_long()," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(10_000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_SNAPPY,
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0 // disabled
+                );
+                assertSqlCursors(
+                        "SELECT a_long, ts FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMinCompressionRatioForcesUncompressed() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_long LONG," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " rnd_long()," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(10_000)");
+
+            long compressedSize;
+            long fallbackSize;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                // File 1: Snappy + ratio=0.0 (disabled, stays compressed)
+                path.of(root).concat("compressed.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_SNAPPY,
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+                compressedSize = Files.length(path.$());
+
+                // File 2: Snappy + ratio=100.0 (forces fallback to uncompressed)
+                path.of(root).concat("fallback.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_SNAPPY,
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        100.0
+                );
+                fallbackSize = Files.length(path.$());
+            }
+
+            LOG.info().$("compressed: ").$(compressedSize)
+                    .$(", fallback: ").$(fallbackSize).$();
+            Assert.assertTrue(
+                    "fallback file (" + fallbackSize + ") should be >= compressed file (" + compressedSize + ")",
+                    fallbackSize >= compressedSize
+            );
+
+            // Verify both files produce identical data
+            inputRoot = root;
+            assertSqlCursors(
+                    "SELECT * FROM read_parquet('compressed.parquet')",
+                    "SELECT * FROM read_parquet('fallback.parquet')"
+            );
+        });
+    }
+
+    @Test
     public void testRleDictionaryEncoding() throws Exception {
         assertMemoryLeak(() -> {
             inputRoot = root;
