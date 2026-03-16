@@ -68,8 +68,8 @@ public class TxReader implements Closeable, Mutable {
     // we reserve the highest bit to allow negative values to
     // have meaning (in future). For instance the table reader uses
     // a negative size value to mean that the partition is not open.
-    // parquet format bit is used to indicate that partition was converted to parquet format
-    // parquet conversion bit is used to indicate that partition is marked to be converted to parquet
+    // the parquet format bit indicates that the partition has been converted to parquet format
+    // the parquet generated bit indicates that a parquet file has been generated for the partition
     // The last long in partition is the parquet file size.
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
