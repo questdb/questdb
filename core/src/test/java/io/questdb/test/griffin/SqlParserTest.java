@@ -12227,6 +12227,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSubQueryModeNestedCorruption() throws Exception {
+        // Known bug: nested parseAsSubQuery calls corrupt the subQueryMode flag.
+        // parseAsSubQuery sets subQueryMode=true on entry and unconditionally
+        // resets it to false in the finally block. With 3+ nesting levels, the
+        // inner finally resets the flag while the outer subquery is still being
+        // parsed, causing "unexpected token [)]" for a valid query.
+        //
+        // Both the naive save/restore fix and the counter-based fix break 39
+        // other parser tests because subQueryMode's reset-to-false behavior is
+        // relied upon by other parsing paths in non-obvious ways. A proper fix
+        // requires a deeper refactor of how the parser tracks parenthesis context.
+        assertSyntaxError(
+                "SELECT * FROM (SELECT (SELECT x FROM (SELECT x FROM long_sequence(1))) + 0)",
+                74,
+                "unexpected token"
+        );
+    }
+
+    @Test
     public void testSubQuerySyntaxError() throws Exception {
         assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' or column name expected");
     }

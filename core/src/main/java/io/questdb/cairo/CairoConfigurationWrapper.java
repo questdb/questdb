@@ -957,6 +957,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+        return getDelegate().getSqlHorizonJoinBwdScanAbsoluteThreshold();
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanMinGap() {
+        return getDelegate().getSqlHorizonJoinBwdScanMinGap();
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanSwitchFactor() {
+        return getDelegate().getSqlHorizonJoinBwdScanSwitchFactor();
+    }
+
+    @Override
     public int getSqlHorizonJoinMaxOffsets() {
         return getDelegate().getSqlHorizonJoinMaxOffsets();
     }
