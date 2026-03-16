@@ -27,6 +27,7 @@ package io.questdb.test.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
@@ -5999,6 +6000,48 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 assertNull(record.getSymA(0));
 
                 assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testPutSymbolColumn_WithNulls_NullFlagPropagated() throws Exception {
+        // Verify that NULL symbols written via the columnar path propagate
+        // the null flag to the main table's symbol map after WAL apply.
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_sym_null_flag", PartitionBy.HOUR)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            String[] values = {"A", null, "B", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                assertTrue(appender.putSymbolColumn(0, wireFormat.cursor, rowCount));
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // After WAL apply, the main table's symbol map must report
+            // containsNullValue()=true so that subsequent WAL writers
+            // and query optimisations are aware that NULLs exist.
+            try (TableReader reader = engine.getReader(tableToken)) {
+                assertTrue(
+                        "symbol map must report containsNullValue after columnar NULL write",
+                        reader.getSymbolMapReader(0).containsNullValue()
+                );
             }
         });
     }

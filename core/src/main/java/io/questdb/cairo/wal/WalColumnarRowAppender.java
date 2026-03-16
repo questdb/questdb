@@ -752,6 +752,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             cursor.advanceRow();
             if (cursor.isNull()) {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                walWriter.markSymbolMapNull(columnIndex);
             } else {
                 strSink.clear();
                 Numbers.append(strSink, cursor.getLong());
@@ -929,6 +930,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             cursor.advanceRow();
             if (cursor.isNull()) {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                walWriter.markSymbolMapNull(columnIndex);
             } else {
                 strSink.clear();
                 Numbers.append(strSink, cursor.getDouble());
@@ -1461,6 +1463,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             cursor.advanceRow();
             if (cursor.isNull()) {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                walWriter.markSymbolMapNull(columnIndex);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 strSink.clear();
@@ -1573,6 +1576,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     cursor.advanceRow();
                     if (cursor.isNull()) {
                         dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                        walWriter.markSymbolMapNull(columnIndex);
                         continue;
                     }
 
@@ -1588,6 +1592,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     CharSequence symbolValue = cursor.getSymbolCharSequence();
                     if (symbolValue == null) {
                         dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                        walWriter.markSymbolMapNull(columnIndex);
                         continue;
                     }
 
@@ -1602,12 +1607,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     cursor.advanceRow();
                     if (cursor.isNull()) {
                         dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                        walWriter.markSymbolMapNull(columnIndex);
                         continue;
                     }
 
                     DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
                     if (utf8Value == null) {
                         dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                        walWriter.markSymbolMapNull(columnIndex);
                         continue;
                     }
 

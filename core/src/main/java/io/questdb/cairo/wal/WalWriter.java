@@ -2007,6 +2007,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
+     * Marks a symbol column as containing a NULL value. Package-private for
+     * columnar appender so the WAL event includes the null flag change.
+     */
+    void markSymbolMapNull(int columnIndex) {
+        if (!symbolMapNullFlags.get(columnIndex)) {
+            symbolMapNullFlags.set(columnIndex, true);
+            symbolMapNullFlagsChanged.set(columnIndex, true);
+        }
+    }
+
+    /**
      * Resolves a symbol value to its key. Package-private for columnar appender.
      *
      * @param columnIndex     the column index
@@ -2016,7 +2027,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader) {
         if (symbolValue == null) {
-            symbolMapNullFlags.set(columnIndex, true);
+            markSymbolMapNull(columnIndex);
             return SymbolTable.VALUE_IS_NULL;
         }
 
