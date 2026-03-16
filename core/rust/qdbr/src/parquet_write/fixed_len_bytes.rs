@@ -115,6 +115,7 @@ pub fn bytes_to_dict_pages<const N: usize>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + data.len();
     let null_value = {
@@ -152,9 +153,7 @@ pub fn bytes_to_dict_pages<const N: usize>(
                 next_id
             });
             keys.push(key);
-            if !reverse {
-                stats.update(&value);
-            }
+            stats.update(&stored);
         }
     }
 
@@ -162,6 +161,9 @@ pub fn bytes_to_dict_pages<const N: usize>(
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * N);
     for entry in &dict_entries {
         dict_buffer.extend_from_slice(entry);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(entry));
+        }
     }
 
     // Encode data page

@@ -219,6 +219,7 @@ pub fn binary_to_dict_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + offsets.len();
     let size_of_header = size_of::<i64>();
@@ -274,6 +275,9 @@ pub fn binary_to_dict_pages(
         dict_buffer.extend_from_slice(entry);
         if let Some(ref mut s) = stats {
             s.update(entry);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(entry));
         }
     }
 

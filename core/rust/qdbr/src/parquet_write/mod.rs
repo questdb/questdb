@@ -3038,4 +3038,1077 @@ mod tests {
             assert_eq!(collected, expected);
         }
     }
+
+    // =========================================================================
+    // Bloom filter + RleDictionary encoding tests
+    // =========================================================================
+
+    #[test]
+    fn test_bloom_filter_dict_int() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [1i32, 2, 3, 1, 2, 3, i32::MIN, 1, 2, 3];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        // Verify encoding is RLE_DICTIONARY
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let col_enc = meta.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_enc.iter().any(|e| e.0 == 8),
+            "expected RLE_DICTIONARY encoding, got: {:?}",
+            col_enc
+        );
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals: Vec<i64> = vec![0, 10, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals: Vec<i64> = vec![0, 2, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            !decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should not skip: 2 is in the row group"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_long() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [100i64, 200, 300, 100, 200, i64::MIN, 300];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals: Vec<i64> = vec![0, 10, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should skip"
+        );
+
+        let present_vals: Vec<i64> = vec![0, 200, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            !decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should not skip: 200 is in the row group"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_float() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [1.0f32, 2.0, 3.0, 1.0, 2.0, f32::NAN, 3.0];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Float.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<f32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let col_enc = meta.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_enc.iter().any(|e| e.0 == 8),
+            "expected RLE_DICTIONARY encoding"
+        );
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_double() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [1.5f64, 2.5, 3.5, 1.5, 2.5, f64::NAN, 3.5];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals: Vec<i64> = vec![
+            i64::from_le_bytes(10.0f64.to_le_bytes()),
+            i64::from_le_bytes(20.0f64.to_le_bytes()),
+        ];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should skip"
+        );
+
+        let present_vals: Vec<i64> = vec![i64::from_le_bytes(2.5f64.to_le_bytes())];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            !decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should not skip: 2.5 is in the row group"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_byte_notnull() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [1i8, 2, 3, 1, 2, 3, 1, 2];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Byte.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i8>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let col_enc = meta.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_enc.iter().any(|e| e.0 == 8),
+            "expected RLE_DICTIONARY encoding"
+        );
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_short_notnull() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [10i16, 20, 30, 10, 20, 30];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Short.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i16>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_ipv4() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        // IPv4 null sentinel is i32::MIN
+        let col1 = [100i32, 200, 300, 100, 200, i32::MIN, 300];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::IPv4.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals: Vec<i64> = vec![0, 10, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should skip"
+        );
+
+        let present_vals: Vec<i64> = vec![0, 200, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        assert!(
+            !decoder
+                .can_skip_row_group(0, &data, &filters, u64::MAX)
+                .expect("can_skip"),
+            "should not skip: 200 is in the row group"
+        );
+    }
+
+    /// Helper: build QuestDB string column data (UTF-16 with i64 offset array).
+    /// Returns (primary_data, aux_offsets_as_bytes).
+    fn serialize_as_questdb_strings(strings: &[Option<&str>]) -> (Vec<u8>, Vec<u8>) {
+        let mut primary = Vec::new();
+        let mut offsets = Vec::new();
+
+        for s in strings {
+            let offset = primary.len() as i64;
+            offsets.extend_from_slice(&offset.to_le_bytes());
+            match s {
+                Some(text) => {
+                    let utf16: Vec<u16> = text.encode_utf16().collect();
+                    let len = utf16.len() as i32;
+                    primary.extend_from_slice(&len.to_le_bytes());
+                    for ch in &utf16 {
+                        primary.extend_from_slice(&ch.to_le_bytes());
+                    }
+                }
+                None => {
+                    let null_marker: i32 = -1;
+                    primary.extend_from_slice(&null_marker.to_le_bytes());
+                }
+            }
+        }
+
+        (primary, offsets)
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_string() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let strings: Vec<Option<&str>> = vec![
+            Some("hello"),
+            Some("world"),
+            None,
+            Some("hello"),
+            Some("world"),
+            Some("hello"),
+        ];
+        let (primary, aux) = serialize_as_questdb_strings(&strings);
+        let row_count = strings.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::String.into_type().code(),
+            0,
+            row_count,
+            primary.as_ptr(),
+            primary.len(),
+            aux.as_ptr(),
+            aux.len(),
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let col_enc = meta.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_enc.iter().any(|e| e.0 == 8),
+            "expected RLE_DICTIONARY encoding"
+        );
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    /// Helper: build QuestDB binary column data (i64 length header + raw bytes).
+    /// Returns (primary_data, aux_offsets_as_bytes).
+    fn serialize_as_questdb_binaries(entries: &[Option<&[u8]>]) -> (Vec<u8>, Vec<u8>) {
+        let mut primary = Vec::new();
+        let mut offsets = Vec::new();
+
+        for entry in entries {
+            let offset = primary.len() as i64;
+            offsets.extend_from_slice(&offset.to_le_bytes());
+            match entry {
+                Some(bytes) => {
+                    let len = bytes.len() as i64;
+                    primary.extend_from_slice(&len.to_le_bytes());
+                    primary.extend_from_slice(bytes);
+                }
+                None => {
+                    let null_marker: i64 = -1;
+                    primary.extend_from_slice(&null_marker.to_le_bytes());
+                }
+            }
+        }
+
+        (primary, offsets)
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_binary() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let entries: Vec<Option<&[u8]>> = vec![
+            Some(b"abc"),
+            Some(b"def"),
+            None,
+            Some(b"abc"),
+            Some(b"def"),
+            Some(b"abc"),
+        ];
+        let (primary, aux) = serialize_as_questdb_binaries(&entries);
+        let row_count = entries.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Binary.into_type().code(),
+            0,
+            row_count,
+            primary.as_ptr(),
+            primary.len(),
+            aux.as_ptr(),
+            aux.len(),
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_uuid() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let null_val = {
+            let mut v = [0u8; 16];
+            let long_bytes = i64::MIN.to_le_bytes();
+            for i in 0..16 {
+                v[i] = long_bytes[i % 8];
+            }
+            v
+        };
+        let val1 = [1u8; 16];
+        let val2 = [2u8; 16];
+        let col1: Vec<[u8; 16]> = vec![val1, val2, null_val, val1, val2, val1];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Uuid.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * 16,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let col_enc = meta.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_enc.iter().any(|e| e.0 == 8),
+            "expected RLE_DICTIONARY encoding"
+        );
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_long256() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let null_val = {
+            let mut v = [0u8; 32];
+            let long_bytes = i64::MIN.to_le_bytes();
+            for i in 0..32 {
+                v[i] = long_bytes[i % 8];
+            }
+            v
+        };
+        let val1 = [1u8; 32];
+        let val2 = [2u8; 32];
+        let col1: Vec<[u8; 32]> = vec![val1, val2, null_val, val1, val2, val1];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long256.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * 32,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_dict_decimal8() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        // Decimal8 values with repeats (natural for dict encoding).
+        // Decimal8 null sentinel is i8::MIN (-128).
+        let col1 = [10i8, 20, 30, 10, 20, 30, 10];
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(2, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i8>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        // Decimal dict encoding has a known issue with statistics serialization
+        // (PrimitiveStatistics vs FixedLenStatistics mismatch), so disable statistics.
+        ParquetWriter::new(&mut buf)
+            .with_statistics(false)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let col_enc = meta.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_enc.iter().any(|e| e.0 == 8),
+            "expected RLE_DICTIONARY encoding"
+        );
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+    }
+
+    #[test]
+    fn test_dict_stats_fixed_len_bytes_non_reversed() {
+        // Long256 uses reverse=false: stats should match the raw byte values.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let null_val = {
+            let mut v = [0u8; 32];
+            let long_bytes = i64::MIN.to_le_bytes();
+            for i in 0..32 {
+                v[i] = long_bytes[i % 8];
+            }
+            v
+        };
+        // min = [0x01; 32], max = [0x03; 32]
+        let val_min = [0x01u8; 32];
+        let val_mid = [0x02u8; 32];
+        let val_max = [0x03u8; 32];
+        let col1: Vec<[u8; 32]> =
+            vec![val_mid, val_max, null_val, val_min, val_mid, val_max, val_min];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long256.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * 32,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+
+        let stats_arc = meta.row_groups[0].columns()[0]
+            .statistics()
+            .expect("statistics present")
+            .expect("statistics ok");
+        let stats = stats_arc
+            .as_any()
+            .downcast_ref::<parquet2::statistics::FixedLenStatistics>()
+            .expect("FixedLenStatistics");
+
+        assert_eq!(stats.min_value.as_deref(), Some(val_min.as_slice()));
+        assert_eq!(stats.max_value.as_deref(), Some(val_max.as_slice()));
+        assert_eq!(stats.null_count, Some(1));
+    }
+
+    #[test]
+    fn test_dict_stats_fixed_len_bytes_reversed() {
+        // UUID uses reverse=true: stats should be computed on the reversed
+        // (big-endian / Parquet) representation, not the original LE bytes.
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let null_val = {
+            let mut v = [0u8; 16];
+            let long_bytes = i64::MIN.to_le_bytes();
+            for i in 0..16 {
+                v[i] = long_bytes[i % 8];
+            }
+            v
+        };
+
+        // In-memory LE values.  After reversal the byte ordering flips.
+        // val_a LE = [0x01, 0x00, ..., 0x00] → reversed = [0x00, ..., 0x00, 0x01]
+        // val_b LE = [0x00, 0x00, ..., 0x02] → reversed = [0x02, 0x00, ..., 0x00]
+        // Lexicographic comparison on the reversed form: val_a_rev < val_b_rev
+        // because 0x00 < 0x02 at byte[0].
+        let mut val_a = [0u8; 16];
+        val_a[0] = 0x01; // LE low byte set
+        let mut val_b = [0u8; 16];
+        val_b[15] = 0x02; // LE high byte set
+
+        let mut val_a_rev = val_a;
+        val_a_rev.reverse();
+        let mut val_b_rev = val_b;
+        val_b_rev.reverse();
+        // Sanity: val_a_rev < val_b_rev lexicographically
+        assert!(val_a_rev < val_b_rev);
+
+        let col1: Vec<[u8; 16]> = vec![val_b, null_val, val_a, val_b, val_a];
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Uuid.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * 16,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        let data = buf.into_inner();
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+
+        let stats_arc = meta.row_groups[0].columns()[0]
+            .statistics()
+            .expect("statistics present")
+            .expect("statistics ok");
+        let stats = stats_arc
+            .as_any()
+            .downcast_ref::<parquet2::statistics::FixedLenStatistics>()
+            .expect("FixedLenStatistics");
+
+        // Stats must be on the reversed (Parquet) representation.
+        assert_eq!(
+            stats.min_value.as_deref(),
+            Some(val_a_rev.as_slice()),
+            "min should be val_a reversed"
+        );
+        assert_eq!(
+            stats.max_value.as_deref(),
+            Some(val_b_rev.as_slice()),
+            "max should be val_b reversed"
+        );
+        assert_eq!(stats.null_count, Some(1));
+    }
 }
