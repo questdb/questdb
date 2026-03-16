@@ -39,6 +39,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     min_compression_ratio: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
+        // SAFETY: JNI caller guarantees a valid file descriptor for the duration of the updater.
+        let file = unsafe { File::from_raw_fd_i32(raw_fd) };
+
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
@@ -67,8 +70,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
-            // SAFETY: JNI caller guarantees a valid file descriptor for the duration of the updater.
-            unsafe { File::from_raw_fd_i32(raw_fd) },
+            file,
             file_size,
             sorting_columns,
             statistics_enabled,
