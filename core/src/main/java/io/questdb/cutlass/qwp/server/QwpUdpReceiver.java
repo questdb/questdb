@@ -337,7 +337,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
-            new Thread(() -> {
+            Thread thread = new Thread(() -> {
                 started.countDown();
                 try {
                     if (configuration.ownThreadAffinity() != -1) {
@@ -352,7 +352,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     Path.clearThreadLocals();
                     halted.countDown();
                 }
-            }).start();
+            });
+            thread.setName("qwp-udp-receiver");
+            thread.start();
         }
     }
 
