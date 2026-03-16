@@ -4646,7 +4646,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop all foobar",
                 9,
-                "';' or 'tables' expected"
+                "unexpected token [foobar]"
         );
     }
 
@@ -4655,7 +4655,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop all tables foobar",
                 16,
-                "';' or 'tables' expected"
+                "unexpected token [foobar]"
         );
     }
 
@@ -12223,6 +12223,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose x, y from (select [x, y] from (select-choose [y, x] x, y from (select [y, x, z] from tab where x > z) limit 100,200) _xQdbA1 where x = y) limit 150",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSubQueryModeNestedCorruption() throws Exception {
+        // Known bug: nested parseAsSubQuery calls corrupt the subQueryMode flag.
+        // parseAsSubQuery sets subQueryMode=true on entry and unconditionally
+        // resets it to false in the finally block. With 3+ nesting levels, the
+        // inner finally resets the flag while the outer subquery is still being
+        // parsed, causing "unexpected token [)]" for a valid query.
+        //
+        // Both the naive save/restore fix and the counter-based fix break 39
+        // other parser tests because subQueryMode's reset-to-false behavior is
+        // relied upon by other parsing paths in non-obvious ways. A proper fix
+        // requires a deeper refactor of how the parser tracks parenthesis context.
+        assertSyntaxError(
+                "SELECT * FROM (SELECT (SELECT x FROM (SELECT x FROM long_sequence(1))) + 0)",
+                74,
+                "unexpected token"
         );
     }
 

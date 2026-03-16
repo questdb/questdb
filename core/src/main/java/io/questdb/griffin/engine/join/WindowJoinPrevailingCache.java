@@ -93,7 +93,7 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
         }
 
         // slow path: we need to start/continue the backward scan
-        if (rowIndex < 0) {
+        if (rowIndex == Long.MIN_VALUE) {
             // oops, previously we've scanned the slave table until the very start
             // or the row index was never initialized (Long.MIN_VALUE)
             return Long.MIN_VALUE;
@@ -136,6 +136,7 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                 rowIndex = rowLo - 1;
                 scanStart = Long.MAX_VALUE;
             } while (slaveTimeFrameHelper.previousFrame());
+            rowIndex = Long.MIN_VALUE; // we've scanned until the very beginning, no more rows to check
         } finally {
             slaveTimeFrameHelper.restoreBookmark(savedFrameIndex, savedRowId);
         }

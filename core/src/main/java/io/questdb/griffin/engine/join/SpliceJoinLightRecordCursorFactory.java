@@ -79,10 +79,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMap = null;
         try {
             this.masterKeySink = masterSink;
             this.slaveKeySink = slaveSink;
-            Map joinKeyMap = MapFactory.createUnorderedMap(
+            joinKeyMap = MapFactory.createUnorderedMap(
                     cairoConfiguration,
                     joinColumnTypes,
                     valueTypes
@@ -98,6 +99,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
                     NullRecordFactory.getInstance(slaveFactory.getMetadata())
             );
         } catch (Throwable th) {
+            Misc.free(joinKeyMap);
             close();
             throw th;
         }

@@ -442,6 +442,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHashJoinLightValuePageSize;
     private final int sqlHashJoinValueMaxPages;
     private final int sqlHashJoinValuePageSize;
+    private final long sqlHorizonJoinBwdScanAbsoluteThreshold;
+    private final long sqlHorizonJoinBwdScanMinGap;
+    private final long sqlHorizonJoinBwdScanSwitchFactor;
     private final int sqlHorizonJoinMaxOffsets;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
@@ -466,7 +469,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
-    private final int sqlOrderByRadixSortThreshold;
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
@@ -493,6 +495,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSmallMapPageSize;
     private final int sqlSmallPageFrameMaxRows;
     private final int sqlSmallPageFrameMinRows;
+    private final long sqlSortEncodedParallelThreshold;
     private final int sqlSortKeyMaterializationThreshold;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortKeyPageSize;
@@ -1499,6 +1502,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
             this.sqlSortKeyMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlSortKeyMaterializationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD, 3);
+            this.sqlSortEncodedParallelThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 1_024_000);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlSortLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
@@ -1944,6 +1948,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             final boolean defaultParallelSqlEnabled = queryWorkers > 0;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
+            this.sqlHorizonJoinBwdScanAbsoluteThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 131_072);
+            this.sqlHorizonJoinBwdScanMinGap = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1_024);
+            this.sqlHorizonJoinBwdScanSwitchFactor = getLong(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 8);
             this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
             this.sqlParallelHorizonJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
@@ -1962,7 +1969,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
-            this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
             this.copierType = getInt(properties, env, PropertyKey.DEBUG_CAIRO_COPIER_TYPE, 0);
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
@@ -2902,6 +2908,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
             registerObsolete("cairo.sql.asof.join.fast");
+            registerObsolete("cairo.sql.orderby.radix.sort.threshold");
             registerObsolete("shared.worker.affinity", PropertyKey.SHARED_NETWORK_WORKER_AFFINITY, PropertyKey.SHARED_QUERY_WORKER_AFFINITY, PropertyKey.SHARED_WRITE_WORKER_AFFINITY);
 
             registerDeprecated(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT);
@@ -4105,6 +4112,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+            return sqlHorizonJoinBwdScanAbsoluteThreshold;
+        }
+
+        @Override
+        public long getSqlHorizonJoinBwdScanMinGap() {
+            return sqlHorizonJoinBwdScanMinGap;
+        }
+
+        @Override
+        public long getSqlHorizonJoinBwdScanSwitchFactor() {
+            return sqlHorizonJoinBwdScanSwitchFactor;
+        }
+
+        @Override
         public int getSqlHorizonJoinMaxOffsets() {
             return sqlHorizonJoinMaxOffsets;
         }
@@ -4200,11 +4222,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlOrderByRadixSortThreshold() {
-            return sqlOrderByRadixSortThreshold;
-        }
-
-        @Override
         public int getSqlPageFrameMaxRows() {
             return sqlPageFrameMaxRows;
         }
@@ -4262,6 +4279,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlSmallPageFrameMinRows() {
             return sqlSmallPageFrameMinRows;
+        }
+
+        @Override
+        public long getSqlSortEncodedParallelThreshold() {
+            return sqlSortEncodedParallelThreshold;
         }
 
         @Override

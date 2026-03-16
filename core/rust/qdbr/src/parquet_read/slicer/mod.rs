@@ -292,7 +292,7 @@ impl<'a> DeltaLengthArraySlicer<'a> {
         sliced_row_count: usize,
     ) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
-        let lengths: Vec<_> = decoder
+        let lengths: Vec<i32> = decoder
             .by_ref()
             .take(row_count)
             .map(|r| {
@@ -418,7 +418,7 @@ impl<'a> DeltaBytesArraySlicer<'a> {
     ) -> ParquetResult<Self> {
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
-        let prefix = (&mut decoder)
+        let prefix: Vec<i32> = (&mut decoder)
             .take(row_count)
             .map(|r| {
                 r.map(|v| v as i32)

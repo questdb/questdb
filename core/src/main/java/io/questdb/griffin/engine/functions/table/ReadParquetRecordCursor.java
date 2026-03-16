@@ -80,7 +80,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
-    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     // doesn't include unsupported columns
@@ -92,6 +91,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
+    private long filterBufEnd;
     private boolean isFilterListPrepared;
     private int rowGroupIndex;
     private long rowGroupRowCount;
@@ -167,7 +167,17 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
             if (columns != null) {
                 columns.add(parquetIndex);
-                columns.add(actualType);
+                if (isSymbolToVarcharConversion) {
+                    // Decode SYMBOL as VARCHAR_SLICE so that the aux format
+                    // matches what ParquetRecord.getVarcharA() expects.
+                    columns.add(ColumnType.VARCHAR_SLICE);
+                } else {
+                    int decodedType = actualType;
+                    if (ColumnType.tagOf(decodedType) == ColumnType.VARCHAR) {
+                        decodedType = ColumnType.VARCHAR_SLICE;
+                    }
+                    columns.add(decodedType);
+                }
             }
             if (columnIndexes != null) {
                 columnIndexes.add(parquetIndex);
@@ -571,22 +581,20 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public Utf8Sequence getVarcharA(int col) {
             long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8ViewA(col));
+            return VarcharTypeDriver.getSliceValue(auxPtr, currentRowInRowGroup, utf8ViewA(col));
         }
 
         @Nullable
         @Override
         public Utf8Sequence getVarcharB(int col) {
             long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8ViewB(col));
+            return VarcharTypeDriver.getSliceValue(auxPtr, currentRowInRowGroup, utf8ViewB(col));
         }
 
         @Override
         public int getVarcharSize(int col) {
             long auxPtr = auxPtrs.get(col);
-            return VarcharTypeDriver.getValueSize(auxPtr, currentRowInRowGroup);
+            return VarcharTypeDriver.getSliceValueSize(auxPtr, currentRowInRowGroup);
         }
 
         private @NotNull BorrowedArray borrowedArray(int col) {

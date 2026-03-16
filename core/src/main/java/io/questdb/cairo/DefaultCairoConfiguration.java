@@ -977,6 +977,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+        return 131_072;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanMinGap() {
+        return 1_024;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanSwitchFactor() {
+        return 8;
+    }
+
+    @Override
     public int getSqlHorizonJoinMaxOffsets() {
         return 10_000;
     }
@@ -1072,11 +1087,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlOrderByRadixSortThreshold() {
-        return 600;
-    }
-
-    @Override
     public int getSqlPageFrameMaxRows() {
         return 1_000_000;
     }
@@ -1134,6 +1144,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSmallPageFrameMinRows() {
         return 5;
+    }
+
+    @Override
+    public long getSqlSortEncodedParallelThreshold() {
+        return 1_024_000;
     }
 
     @Override
