@@ -230,7 +230,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         offset += 1;
 
         int valueCount = rowCount - nullCount;
-        int valuesSize = valueCount * valueSize;
+        long valuesSize = (long) valueCount * valueSize;
         if (offset + valuesSize > dataLength) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -238,7 +238,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
             );
         }
         this.valuesAddress = dataAddress + offset;
-        offset += valuesSize;
+        offset += (int) valuesSize;
 
         resetRowPosition();
         return offset;

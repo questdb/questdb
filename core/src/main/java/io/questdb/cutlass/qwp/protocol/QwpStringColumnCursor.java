@@ -166,7 +166,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         }
 
         int valueCount = rowCount - nullCount;
-        int offsetArraySize = (valueCount + 1) * 4;
+        long offsetArraySize = (long) (valueCount + 1) * 4;
         if (offset + offsetArraySize > dataLength) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -174,7 +174,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
             );
         }
         this.offsetArrayAddress = dataAddress + offset;
-        offset += offsetArraySize;
+        offset += (int) offsetArraySize;
 
         // Calculate total string data size from offset array
         int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
