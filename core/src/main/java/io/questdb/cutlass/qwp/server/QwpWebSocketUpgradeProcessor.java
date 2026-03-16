@@ -491,7 +491,17 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             long bufferAddr = rawSocket.getBufferAddress();
             int bufferSize = rawSocket.getBufferSize();
 
-            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, closeCode, null);
+            // Normalize close code for the response per RFC 6455 Section 7.4.1:
+            // codes 1005, 1006, 1015 must not appear on the wire; codes outside
+            // the valid 1000-4999 range (including -1 for no-payload frames)
+            // are replaced with 1000 (normal closure).
+            int responseCode = closeCode;
+            if (responseCode < 1000 || responseCode > 4999
+                    || responseCode == 1005 || responseCode == 1006 || responseCode == 1015) {
+                responseCode = WebSocketCloseCode.NORMAL_CLOSURE;
+            }
+
+            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, responseCode, null);
             if (written > 0) {
                 rawSocket.send(written);
             }
