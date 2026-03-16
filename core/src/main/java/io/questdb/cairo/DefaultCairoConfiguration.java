@@ -987,6 +987,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+        return 131_072;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanMinGap() {
+        return 1_024;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanSwitchFactor() {
+        return 8;
+    }
+
+    @Override
     public int getSqlHorizonJoinMaxOffsets() {
         return 10_000;
     }
