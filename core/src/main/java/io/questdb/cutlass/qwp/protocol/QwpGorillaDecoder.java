@@ -111,6 +111,7 @@ public class QwpGorillaDecoder {
      * @param secondTimestamp the second timestamp in the sequence
      */
     public void reset(long firstTimestamp, long secondTimestamp) {
+        this.decodeCount = 0;
         this.prevTimestamp = secondTimestamp;
         this.prevDelta = secondTimestamp - firstTimestamp;
     }
