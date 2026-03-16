@@ -1621,16 +1621,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableSetParquetEncoding(
-            SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
-            int columnNamePosition,
             CharSequence columnName,
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
         // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET(encoding [, compression[(level)]])
-        int encoding = ParquetEncoding.ENCODING_DEFAULT;
+        int encoding;
         int compression = -1;
         int level = -1;
 
@@ -2408,10 +2406,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = expectToken(lexer, "'parquet'");
                         if (isParquetKeyword(tok)) {
                             alterTableSetParquetEncoding(
-                                    securityContext,
                                     tableNamePosition,
                                     tableToken,
-                                    columnNamePosition,
                                     columnName,
                                     tableMetadata,
                                     columnIndex
