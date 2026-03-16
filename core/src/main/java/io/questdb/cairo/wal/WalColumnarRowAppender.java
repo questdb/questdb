@@ -80,6 +80,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     private final Decimal256 decimal = new Decimal256();
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal64 decimal64 = new Decimal64();
+    private final Long256Impl long256 = new Long256Impl();
     private final DirectArray reusableArray = new DirectArray();
     private final StringSink strSink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -1309,7 +1310,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     public void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        Long256Impl long256 = new Long256Impl();
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
