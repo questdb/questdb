@@ -1485,9 +1485,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (func != null && !func.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert funcExpr != null;
             ObjList<Function> workerFunctions = new ObjList<>();
-            for (int i = 0; i < sharedQueryWorkerCount; i++) {
-                Function workerFunc = functionParser.parseFunction(funcExpr, metadata, executionContext);
-                workerFunctions.extendAndSet(i, workerFunc);
+            try {
+                for (int i = 0; i < sharedQueryWorkerCount; i++) {
+                    Function workerFunc = functionParser.parseFunction(funcExpr, metadata, executionContext);
+                    workerFunctions.extendAndSet(i, workerFunc);
+                }
+            } catch (Throwable th) {
+                Misc.freeObjList(workerFunctions);
+                throw th;
             }
             return workerFunctions;
         }
