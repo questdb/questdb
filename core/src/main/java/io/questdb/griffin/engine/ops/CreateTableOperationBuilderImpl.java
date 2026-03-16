@@ -69,6 +69,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
+    private CharSequence secondarySortByExpr;
+    private int secondarySortByPosition;
     private int ttlHoursOrMonths;
     private int ttlPosition;
     private CharSequence volumeAlias;
@@ -91,6 +93,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             CharSequence sqlText
     ) throws SqlException {
         boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
+        IntList secondarySortIndices = validateSecondarySortBy();
+
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -115,7 +119,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     batchSize,
                     batchO3MaxLag,
                     tableKind,
-                    autoIncludeTs
+                    autoIncludeTs,
+                    secondarySortIndices
             );
         }
 
@@ -134,7 +139,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
-                    ignoreIfExists
+                    ignoreIfExists,
+                    secondarySortIndices
             );
         }
 
@@ -155,8 +161,21 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 ttlHoursOrMonths,
                 ttlPosition,
                 walEnabled,
-                autoIncludeTs
+                autoIncludeTs,
+                secondarySortIndices
         );
+    }
+
+    private IntList validateSecondarySortBy() throws SqlException {
+        if (secondarySortByExpr != null && secondarySortByExpr.length() > 0) {
+            return SecondarySortValidator.validateSecondarySortColumns(
+                    secondarySortByExpr,
+                    columnModels,
+                    getTimestampIndex(),
+                    secondarySortByPosition
+            );
+        }
+        return new IntList();
     }
 
     @Override
@@ -172,6 +191,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
+        secondarySortByExpr = null;
+        secondarySortByPosition = 0;
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
@@ -236,6 +257,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return ttlHoursOrMonths;
     }
 
+    public CharSequence getSecondarySortByExpr() {
+        return secondarySortByExpr;
+    }
+
+    public int getSecondarySortByPosition() {
+        return secondarySortByPosition;
+    }
+
     public CharSequence getVolumeAlias() {
         return volumeAlias;
     }
@@ -278,6 +307,16 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setPartitionByExpr(ExpressionNode partitionByExpr) {
         this.partitionByExpr = partitionByExpr;
+    }
+
+    public void setSecondarySortByExpr(CharSequence secondarySortByExpr, int secondarySortByPosition) {
+        this.secondarySortByExpr = secondarySortByExpr;
+        this.secondarySortByPosition = secondarySortByPosition;
+    }
+
+    public void setSecondarySortColumnIndices(int[] indices) {
+        this.secondarySortByExpr = null;
+        this.secondarySortByPosition = 0;
     }
 
     @Override
@@ -392,6 +431,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             if (walEnabled) {
                 sink.putAscii(" wal");
             }
+        }
+        if (secondarySortByExpr != null) {
+            sink.putAscii(" secondarySortBy ").put(secondarySortByExpr);
         }
         ttlToSink(ttlHoursOrMonths, sink);
         if (volumeAlias != null) {

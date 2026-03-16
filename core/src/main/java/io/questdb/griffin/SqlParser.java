@@ -1549,6 +1549,15 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
+        if (tok != null && Chars.equals(tok, "secondarySortBy")) {
+            tok = tok(lexer, "secondary sort column names");
+            if (tok == null || Chars.equals(tok, ",")) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("expected column name(s) after secondarySortBy");
+            }
+            tableOpBuilder.setSecondarySortByExpr(tok, lexer.lastTokenPosition());
+            tok = optTok(lexer);
+        }
+
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
             tok = optTok(lexer);
@@ -1707,6 +1716,15 @@ public class SqlParser {
                 tok = optTok(lexer);
             }
 
+            if (tok != null && Chars.equals(tok, "secondarySortBy")) {
+                tok = tok(lexer, "secondary sort column names");
+                if (tok == null || Chars.equals(tok, ",")) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("expected column name(s) after secondarySortBy");
+                }
+                builder.setSecondarySortByExpr(tok, lexer.lastTokenPosition());
+                tok = optTok(lexer);
+            }
+
             if (tok != null) {
                 if (isWalKeyword(tok)) {
                     if (!PartitionBy.isPartitioned(builder.getPartitionByFromExpr())) {
@@ -1836,6 +1854,35 @@ public class SqlParser {
                 tok = optTok(lexer);
             } else {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");
+            }
+
+            // Parse ORDER BY clause for secondary sort
+            tok = optTok(lexer);
+            if (tok != null && isOrderByKeyword(tok)) {
+                IntList orderColumnIndices = new IntList();
+                tok = optTok(lexer);
+                if (tok != null && Chars.equals(tok, '(')) {
+                    tok = optTok(lexer);
+                    while (tok != null && !Chars.equals(tok, ')')) {
+                        validateLiteral(lexer.lastTokenPosition(), tok);
+                        final CharSequence columnName = unquote(tok);
+                        int colIndex = builder.getColumnIndex(columnName);
+                        if (colIndex < 0) {
+                            throw SqlException.position(lexer.lastTokenPosition())
+                                    .put("ORDER BY column not found [column=").put(columnName).put(']');
+                        }
+                        // Skip timestamp column in ORDER BY (it's already primary sort key)
+                        if (colIndex != builder.getTimestampIndex()) {
+                            orderColumnIndices.add(colIndex);
+                        }
+                        tok = optTok(lexer);
+                        if (tok != null && Chars.equals(tok, ',')) {
+                            tok = optTok(lexer);
+                        }
+                    }
+                    tok = optTok(lexer);
+                }
+                builder.setSecondarySortColumnIndices(orderColumnIndices.toArray());
             }
         }
         return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);

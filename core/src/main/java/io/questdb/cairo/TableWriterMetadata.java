@@ -45,6 +45,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int ttlHoursOrMonths;
     private TxReader txReader;
     private boolean walEnabled;
+    private int[] secondarySortColumnIndices;
 
     public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
@@ -93,6 +94,15 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    @Override
+    public int[] getSecondarySortColumnIndices() {
+        return secondarySortColumnIndices != null ? secondarySortColumnIndices : EMPTY_INT_ARRAY;
+    }
+
+    public void setSecondarySortColumnIndices(int[] secondarySortColumnIndices) {
+        this.secondarySortColumnIndices = secondarySortColumnIndices;
     }
 
     public int getReplacingColumnIndex(int columnIndex) {
@@ -156,6 +166,17 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+
+        int secondarySortCount = metaMem.getInt(TableUtils.META_OFFSET_SECONDARY_SORT_INDICES);
+        if (secondarySortCount > 0) {
+            int[] secondaryIndices = new int[secondarySortCount];
+            for (int i = 0; i < secondarySortCount; i++) {
+                secondaryIndices[i] = metaMem.getInt(TableUtils.META_OFFSET_SECONDARY_SORT_INDICES + 4L + i * 4);
+            }
+            this.secondarySortColumnIndices = secondaryIndices;
+        } else {
+            this.secondarySortColumnIndices = null;
+        }
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
