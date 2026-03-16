@@ -210,7 +210,8 @@ impl<W: Write> ParquetWriter<W> {
         parquet_schema: SchemaDescriptor,
         encodings: Vec<Encoding>,
     ) -> ParquetResult<ChunkedWriter<W>> {
-        self.chunked_with_compressions(parquet_schema, encodings, vec![])
+        let compressions = encodings.iter().map(|_| None).collect();
+        self.chunked_with_compressions(parquet_schema, encodings, compressions)
     }
 
     pub fn chunked_with_compressions(
