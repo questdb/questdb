@@ -83,6 +83,9 @@ public final class QwpVarint {
                 throw QwpParseException.varintOverflow();
             }
             b = buf[pos++];
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
             result |= (long) (b & DATA_MASK) << shift;
             shift += 7;
             bytesRead++;
@@ -113,6 +116,9 @@ public final class QwpVarint {
                 throw QwpParseException.varintOverflow();
             }
             b = Unsafe.getUnsafe().getByte(address++);
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
             result |= (long) (b & DATA_MASK) << shift;
             shift += 7;
             bytesRead++;
@@ -144,6 +150,9 @@ public final class QwpVarint {
                 throw QwpParseException.varintOverflow();
             }
             b = buf[pos++];
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
             value |= (long) (b & DATA_MASK) << shift;
             shift += 7;
             bytesRead++;
@@ -175,6 +184,9 @@ public final class QwpVarint {
                 throw QwpParseException.varintOverflow();
             }
             b = Unsafe.getUnsafe().getByte(address++);
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
             value |= (long) (b & DATA_MASK) << shift;
             shift += 7;
             bytesRead++;

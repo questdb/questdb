@@ -84,6 +84,74 @@ public class QwpVarintTest {
     }
 
     @Test
+    public void testDecodeOverflowOn10thByteSilentlyDropsBits() {
+        // The 10th byte is decoded at shift=63, so (long)(b & 0x7F) << 63
+        // can only preserve bit 0. Bits 1-6 are shifted beyond 64-bit range
+        // and silently lost. A valid 64-bit LEB128 can only have 0x00 or 0x01
+        // as the 10th byte's data nibble. Any higher value represents a number
+        // exceeding 64 bits and must be rejected.
+
+        // 9 continuation bytes with zero data + 10th byte = 0x02 (data nibble = 2)
+        // This encodes the value 2 * 2^63 = 2^64, which does not fit in a long.
+        // Current code silently decodes it to 0 instead of throwing overflow.
+        byte[] buf = new byte[]{
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x02
+        };
+        try {
+            QwpVarint.decode(buf, 0, 10);
+            Assert.fail("10th byte with data nibble 0x02 should overflow");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
+        }
+
+        // 9 bytes of 0xFF (all data bits set + continuation) + 10th byte = 0x03.
+        // With 0x01 the value is 0xFFFFFFFFFFFFFFFF (-1 unsigned), which is valid.
+        // With 0x03 the value would be 0xFFFFFFFFFFFFFFFF + 2^64 — doesn't fit.
+        // Current code silently decodes both 0x01 and 0x03 to the same value (-1).
+        byte[] buf2 = new byte[]{
+                (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF,
+                (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x03
+        };
+        try {
+            QwpVarint.decode(buf2, 0, 10);
+            Assert.fail("10th byte with data nibble 0x03 should overflow");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
+        }
+
+        // 10th byte with maximum data nibble 0x7F — clearly overflows
+        byte[] buf3 = new byte[]{
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x7F
+        };
+        try {
+            QwpVarint.decode(buf3, 0, 10);
+            Assert.fail("10th byte with data nibble 0x7F should overflow");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
+        }
+    }
+
+    @Test
+    public void testDecodeValid10thByte() throws QwpParseException {
+        // 10th byte with data nibble 0x01 is valid — encodes values with bit 63 set.
+        // This is the encoding of Long.MIN_VALUE (0x8000000000000000 unsigned).
+        byte[] buf = new byte[]{
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01
+        };
+        Assert.assertEquals(Long.MIN_VALUE, QwpVarint.decode(buf, 0, 10));
+
+        // 10th byte with data nibble 0x00 is valid (redundant encoding of 0).
+        byte[] buf2 = new byte[]{
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x00
+        };
+        Assert.assertEquals(0, QwpVarint.decode(buf2, 0, 10));
+    }
+
+    @Test
     public void testDecodeResult() throws QwpParseException {
         byte[] buf = new byte[10];
         int len = QwpVarint.encode(buf, 0, 300);
