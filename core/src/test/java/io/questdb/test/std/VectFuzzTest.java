@@ -1271,7 +1271,8 @@ public class VectFuzzTest {
             int[] sizes = new int[]{0, 1, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1024, 10_000};
             // Byte offsets into the allocation to exercise the alignment head path.
             // 0 = naturally aligned, 16/32/48 = 1/2/3 elements into a 64-byte cache line.
-            int[] offsetBytes = new int[]{0, 16, 32, 48};
+            // 8 = not element-aligned (8 % 16 != 0), exercises scalar fallback path.
+            int[] offsetBytes = new int[]{0, 8, 16, 32, 48};
             long long0 = 0xDEAD_BEEF_CAFE_BABEL;
             long long1 = 0x0123_4567_89AB_CDEFL;
             int elementBytes = 2 * Long.BYTES; // 16 bytes per long_128bit
@@ -1333,7 +1334,8 @@ public class VectFuzzTest {
         TestUtils.assertMemoryLeak(() -> {
             int[] sizes = new int[]{0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 100, 1024, 10_000};
             // Byte offsets: 0 = aligned, 32 = one long_256bit element into a cache line.
-            int[] offsetBytes = new int[]{0, 32};
+            // 16 = not element-aligned (16 % 32 != 0), exercises scalar fallback path.
+            int[] offsetBytes = new int[]{0, 16, 32};
             long long0 = 0xDEAD_BEEF_CAFE_BABEL;
             long long1 = 0x0123_4567_89AB_CDEFL;
             long long2 = 0xFEDC_BA98_7654_3210L;
