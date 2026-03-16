@@ -291,7 +291,7 @@ public class SqlOptimiser implements Mutable {
                         if (functionFactoryCache.isGroupBy(node.token)) {
                             return true;
                         }
-                        break;
+                        // fall through to traverse rhs and args
                     default:
                         for (int i = 0, n = node.args.size(); i < n; i++) {
                             sqlNodeStack.add(node.args.getQuick(i));
@@ -370,7 +370,7 @@ public class SqlOptimiser implements Mutable {
                         if (node.token != null && orderedGroupByFunctions.contains(node.token)) {
                             return true;
                         }
-                        break;
+                        // fall through to traverse rhs and args
                     default:
                         for (int i = 0, n = node.args.size(); i < n; i++) {
                             sqlNodeStack.add(node.args.getQuick(i));
@@ -4596,7 +4596,13 @@ public class SqlOptimiser implements Mutable {
             // which is "result".
             // hence, whenever it exists in "positions" we copy clause to "to"
             // otherwise copy to "result"
-            JoinContext t = p < m && i == positions.getQuick(p) ? to : result;
+            JoinContext t;
+            if (p < m && i == positions.getQuick(p)) {
+                t = to;
+                p++;
+            } else {
+                t = result;
+            }
             int ai = from.aIndexes.getQuick(i);
             int bi = from.bIndexes.getQuick(i);
             t.aIndexes.add(ai);
