@@ -2062,8 +2062,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         assert columnIndex >= 0;
                         assert columnType >= 0;
                         if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
-                            // Dedup key columns must exist in the parquet file.
-                            assert decodeIdx >= 0 : "dedup key column missing from parquet, columnIndex=" + columnIndex;
                             final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
                             final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, rowGroupSize);
                             long addr = DedupColumnCommitAddresses.setColValues(
@@ -2074,16 +2072,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     columnTop
                             );
                             if (columnSize > 0) {
-                                DedupColumnCommitAddresses.setColAddressValues(addr, rowGroupBuffers.getChunkDataPtr(decodeIdx));
+                                if (decodeIdx >= 0) {
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, rowGroupBuffers.getChunkDataPtr(decodeIdx));
+                                } else {
+                                    // Column missing from parquet (ADD COLUMN after partition
+                                    // was created).  columnTop == rowGroupSize, so the native
+                                    // dedup code treats all parquet values as NULL and will
+                                    // not dereference the data pointer.
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, 0);
+                                }
                                 final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
                             } else {
-                                DedupColumnCommitAddresses.setColAddressValues(
-                                        addr,
-                                        rowGroupBuffers.getChunkAuxPtr(decodeIdx),
-                                        rowGroupBuffers.getChunkDataPtr(decodeIdx),
-                                        rowGroupBuffers.getChunkDataSize(decodeIdx)
-                                );
+                                if (decodeIdx >= 0) {
+                                    DedupColumnCommitAddresses.setColAddressValues(
+                                            addr,
+                                            rowGroupBuffers.getChunkAuxPtr(decodeIdx),
+                                            rowGroupBuffers.getChunkDataPtr(decodeIdx),
+                                            rowGroupBuffers.getChunkDataSize(decodeIdx)
+                                    );
+                                } else {
+                                    DedupColumnCommitAddresses.setColAddressValues(addr, 0, 0, 0);
+                                }
                                 MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));
                                 final long oooVarColAddress = oooVarCol.addressOf(0);
                                 final long oooVarColSize = oooVarCol.addressHi() - oooVarColAddress;

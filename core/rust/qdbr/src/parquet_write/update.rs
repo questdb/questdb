@@ -36,8 +36,8 @@ use parquet2::write::footer_cache::FooterCache;
 use parquet2::write::{ParquetFile, Version};
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
 use parquet_format_safe::{
-    ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, Encoding as ThriftEncoding,
-    PageHeader, PageType, RowGroup, Type,
+    ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
+    Encoding as ThriftEncoding, PageHeader, PageType, RowGroup, Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
@@ -858,15 +858,24 @@ fn generate_null_column_chunk_bytes(
 ) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
     let field_info = parquet_field.get_field_info();
     let is_required = field_info.repetition == parquet2::schema::Repetition::Required;
+    let is_symbol = column_type.tag() == ColumnTypeTag::Symbol;
 
     // Build page data.
-    let page_data = if is_required {
+    let mut page_data = if is_required {
         // Required column: no definition levels, all-zero values.
         generate_required_zero_page(parquet_field, column_type, row_count)?
     } else {
         // Optional column: RLE def levels = all zeros, no values.
         generate_optional_null_page(row_count)
     };
+
+    // Symbol columns use RleDictionary encoding. The decoder does not
+    // support Plain encoding for symbols, so we emit an empty dictionary
+    // page and mark the data page as RLE_DICTIONARY. The data page needs
+    // a trailing bit-width byte (0) for the empty dictionary indices.
+    if is_symbol {
+        page_data.push(0x00); // bit_width = 0 (empty dictionary)
+    }
 
     // Build column path_in_schema.
     let path = vec![field_info.name.clone()];
@@ -880,15 +889,53 @@ fn generate_null_column_chunk_bytes(
         }
     };
 
-    // Serialize the page header.
-    let page_header = PageHeader {
+    let mut chunk_bytes = Vec::new();
+
+    // For Symbol columns, prepend an empty dictionary page.
+    let dict_page_offset = if is_symbol {
+        let dict_header = PageHeader {
+            type_: PageType::DICTIONARY_PAGE,
+            uncompressed_page_size: 0,
+            compressed_page_size: 0,
+            crc: None,
+            data_page_header: None,
+            index_page_header: None,
+            dictionary_page_header: Some(DictionaryPageHeader {
+                num_values: 0,
+                encoding: ThriftEncoding::PLAIN,
+                is_sorted: None,
+            }),
+            data_page_header_v2: None,
+        };
+        let mut protocol = TCompactOutputProtocol::new(&mut chunk_bytes);
+        dict_header
+            .write_to_out_protocol(&mut protocol)
+            .map_err(|e| {
+                ParquetError::with_descr(
+                    ParquetErrorReason::Parquet2(parquet2::error::Error::oos(e.to_string())),
+                    "Failed to serialize null column dictionary page header",
+                )
+            })?;
+        // Dictionary page has no data (0 entries), only the header.
+        Some(file_offset as i64)
+    } else {
+        None
+    };
+
+    // Serialize the data page header.
+    let data_encoding = if is_symbol {
+        ThriftEncoding::RLE_DICTIONARY
+    } else {
+        ThriftEncoding::PLAIN
+    };
+    let data_page_header = PageHeader {
         type_: PageType::DATA_PAGE,
         uncompressed_page_size: page_data.len() as i32,
         compressed_page_size: page_data.len() as i32,
         crc: None,
         data_page_header: Some(DataPageHeader {
             num_values: row_count as i32,
-            encoding: ThriftEncoding::PLAIN,
+            encoding: data_encoding,
             definition_level_encoding: ThriftEncoding::RLE,
             repetition_level_encoding: ThriftEncoding::RLE,
             statistics: None,
@@ -897,11 +944,10 @@ fn generate_null_column_chunk_bytes(
         dictionary_page_header: None,
         data_page_header_v2: None,
     };
-
-    let mut header_bytes = Vec::new();
+    let data_page_offset = file_offset as i64 + chunk_bytes.len() as i64;
     {
-        let mut protocol = TCompactOutputProtocol::new(&mut header_bytes);
-        page_header
+        let mut protocol = TCompactOutputProtocol::new(&mut chunk_bytes);
+        data_page_header
             .write_to_out_protocol(&mut protocol)
             .map_err(|e| {
                 ParquetError::with_descr(
@@ -910,26 +956,28 @@ fn generate_null_column_chunk_bytes(
                 )
             })?;
     }
-
-    let header_size = header_bytes.len() as i64;
-    let data_size = page_data.len() as i64;
-    let total_size = header_size + data_size;
-
-    let mut chunk_bytes = header_bytes;
     chunk_bytes.extend_from_slice(&page_data);
+
+    let total_size = chunk_bytes.len() as i64;
+
+    let encodings = if is_symbol {
+        vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE_DICTIONARY, ThriftEncoding::RLE]
+    } else {
+        vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE]
+    };
 
     let metadata = ColumnMetaData {
         type_: thrift_type,
-        encodings: vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE],
+        encodings,
         path_in_schema: path,
         codec: CompressionCodec::UNCOMPRESSED,
         num_values: row_count as i64,
         total_uncompressed_size: total_size,
         total_compressed_size: total_size,
         key_value_metadata: None,
-        data_page_offset: file_offset as i64,
+        data_page_offset,
         index_page_offset: None,
-        dictionary_page_offset: None,
+        dictionary_page_offset: dict_page_offset,
         statistics: None,
         encoding_stats: None,
         bloom_filter_offset: None,

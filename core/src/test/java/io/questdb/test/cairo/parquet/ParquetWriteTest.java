@@ -1067,6 +1067,161 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3AfterAddDedupKeyColumn() throws Exception {
+        // Reproduces: dedup key column added after parquet partition exists.
+        // O3 merge into that partition enters the dedup code path, where
+        // the new column is a dedup key but is missing from the parquet
+        // file (decodeIdx == -1), causing an assertion failure or crash.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            // Second partition keeps 2020-01-01 as a non-active partition.
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Add a new column and make it a dedup key.
+            // Parquet file has (x, ts); table now has (x, ts, y).
+            execute("ALTER TABLE x ADD COLUMN y INT");
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts, y)");
+            drainWalQueue();
+
+            // O3 insert with timestamps that duplicate existing rows.
+            // Triggers dedup merge, which iterates dedup key columns.
+            // Column y is a dedup key but does not exist in the parquet file.
+            execute(
+                    """
+                            INSERT INTO x(x, y, ts) VALUES
+                            (5, 10, '2020-01-01T00:00:00.000Z'),
+                            (6, 20, '2020-01-01T06:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            // Old rows have y=NULL, new rows have y=10/20.
+            // Dedup keys (ts, y) differ, so all rows are kept.
+            assertSql(
+                    """
+                            x\tts\ty
+                            1\t2020-01-01T00:00:00.000000Z\tnull
+                            5\t2020-01-01T00:00:00.000000Z\t10
+                            2\t2020-01-01T06:00:00.000000Z\tnull
+                            6\t2020-01-01T06:00:00.000000Z\t20
+                            3\t2020-01-01T12:00:00.000000Z\tnull
+                            4\t2020-01-01T18:00:00.000000Z\tnull
+                            100\t2020-01-02T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testO3AfterAddRequiredSymbolColumnMultipleRowGroups() throws Exception {
+        // Reproduces: Required Symbol null chunk encoding mismatch.
+        //
+        // When a SYMBOL column is added after a parquet partition exists and
+        // only non-null values are inserted, the symbol map's null flag stays
+        // false → the target schema marks it as Required (no def levels).
+        // copy_row_group_with_null_columns must generate a Required null chunk
+        // (zero-filled Int32), but generate_required_zero_page did not handle
+        // ColumnTypeTag::Symbol, falling through to generate_optional_null_page
+        // — a page with RLE definition levels in a Required column, producing
+        // a malformed parquet file.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows with row group size 4 -> 2 row groups (RG0: rows 1-4, RG1: rows 5-8).
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Add a SYMBOL column after the parquet partition exists.
+            execute("ALTER TABLE x ADD COLUMN s SYMBOL");
+            drainWalQueue();
+
+            // O3 insert with non-null symbol values into RG0's time range.
+            // null flag stays false -> Required in target schema.
+            // RG0: merged with new rows (s filled for all rows).
+            // RG1: copied via copy_row_group_with_null_columns — needs a
+            //      Required null chunk for 's'. Bug: Symbol not handled in
+            //      generate_required_zero_page -> Optional page for Required column.
+            execute(
+                    """
+                            INSERT INTO x(x, s, ts) VALUES
+                            (9, 'a', '2020-01-01T00:30:00.000Z'),
+                            (10, 'b', '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            // Verify new O3 rows have correct symbol values.
+            assertSql(
+                    """
+                            x\tts\ts
+                            9\t2020-01-01T00:30:00.000000Z\ta
+                            10\t2020-01-01T01:30:00.000000Z\tb
+                            """,
+                    "SELECT * FROM x WHERE x IN (9, 10) ORDER BY ts"
+            );
+
+            // Read from the copied row group (RG1) to exercise the symbol
+            // null chunk. Before the fix, the null chunk used Plain encoding
+            // which the symbol decoder does not support, causing a decode error.
+            // Old rows have no symbol data -> NULL (empty).
+            assertSql(
+                    """
+                            x\tts\ts
+                            5\t2020-01-01T04:00:00.000000Z\t
+                            6\t2020-01-01T05:00:00.000000Z\t
+                            7\t2020-01-01T06:00:00.000000Z\t
+                            8\t2020-01-01T07:00:00.000000Z\t
+                            """,
+                    "SELECT * FROM x WHERE x >= 5 AND x <= 8 ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testO3AfterMultipleAddColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute(
