@@ -10,6 +10,8 @@ import io.questdb.mp.SCSequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.OperationCodes.*;
+
 public class GenericDropOperation implements Operation {
     private final String entityName;
     private final int entityNamePosition;
@@ -41,8 +43,17 @@ public class GenericDropOperation implements Operation {
         final TableToken tableToken = engine.getTableTokenIfExists(entityName);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             if (compiler.execute(this, sqlExecutionContext)) {
-                assert tableToken != null;
-                engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(tableToken);
+                switch (operationCode) {
+                    case DROP_TABLE:
+                    case DROP_MAT_VIEW:
+                    case DROP_VIEW:
+                        if (tableToken != null) {
+                            engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(tableToken);
+                        }
+                        break;
+                    default:
+                        break;
+                }
             }
         }
         return ImmutableDoneOperationFuture.INSTANCE;
