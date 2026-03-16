@@ -45,6 +45,11 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
 
     FactoryProvider getFactoryProvider();
 
+    @Override
+    default String getOomResponse() {
+        return "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    }
+
     HttpContextConfiguration getHttpContextConfiguration();
 
     byte getRequiredAuthType();

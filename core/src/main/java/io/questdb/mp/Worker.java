@@ -132,8 +132,14 @@ public class Worker extends Thread {
                     Unsafe.getUnsafe().loadFence();
                     try {
                         Job job = jobs.get(i);
-                        if (job instanceof EagerThreadSetup) {
-                            ((EagerThreadSetup) job).setup();
+                        if (job instanceof EagerThreadSetup ets) {
+                            ets.setup();
+                        }
+                    } catch (Throwable e) {
+                        if (log != null) {
+                            log.critical().$("setup failed [job=").$(jobs.get(i).toString()).$(", e=").$(e).I$();
+                        } else {
+                            stdErrCritical(e);
                         }
                     } finally {
                         Unsafe.getUnsafe().storeFence();
