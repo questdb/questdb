@@ -96,6 +96,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             throw NetworkError.instance(errno, "cannot open UDP socket");
         }
 
+        long buf = 0;
+        QwpWalAppender walAppender = null;
+        QwpTudCache tudCache = null;
         try {
             if (nf.bindUdp(fd, configuration.isUnicast() ? configuration.getBindIPv4Address() : 0, configuration.getPort())) {
                 if (!configuration.isUnicast() && !nf.join(fd, configuration.getBindIPv4Address(), configuration.getGroupIPv4Address())) {
@@ -120,9 +123,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                         .I$();
             }
 
-            this.buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_ILP_RSS);
+            buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_ILP_RSS);
 
-            this.walAppender = new QwpWalAppender(
+            walAppender = new QwpWalAppender(
                     configuration.getAutoCreateNewColumns(),
                     engine.getConfiguration().getMaxFileNameLength()
             );
@@ -211,7 +214,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     }
             );
 
-            this.tudCache = new QwpTudCache(
+            tudCache = new QwpTudCache(
                     engine,
                     configuration.getAutoCreateNewColumns(),
                     configuration.getAutoCreateNewTables(),
@@ -221,6 +224,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             this.messageHeader = new QwpMessageHeader();
             this.messageCursor = new QwpMessageCursor();
+            this.buf = buf;
+            this.walAppender = walAppender;
+            this.tudCache = tudCache;
 
             if (!configuration.ownThread() && workerPool != null) {
                 workerPool.assign(this);
