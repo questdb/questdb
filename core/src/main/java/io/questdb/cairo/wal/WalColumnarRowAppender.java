@@ -140,6 +140,10 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         pendingRowCount = 0;
     }
 
+    public boolean isInColumnarWrite() {
+        return inColumnarWrite;
+    }
+
     @Override
     public void putArrayColumn(
             int columnIndex,

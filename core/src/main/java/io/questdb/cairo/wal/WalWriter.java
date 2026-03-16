@@ -481,6 +481,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
+        if (columnarAppender != null && columnarAppender.isInColumnarWrite()) {
+            throw CairoException.nonCritical().put("cannot use row-oriented newRow() during columnar write");
+        }
         timestampDriver.validateBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
