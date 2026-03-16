@@ -166,7 +166,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         }
 
         int valueCount = rowCount - nullCount;
-        long offsetArraySize = (long) (valueCount + 1) * 4;
+        long offsetArraySize = ((long) valueCount + 1) * 4;
         if (offset + offsetArraySize > dataLength) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
