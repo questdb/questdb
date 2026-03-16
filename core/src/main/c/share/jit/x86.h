@@ -296,12 +296,44 @@ namespace questdb::x86 {
             case data_type_t::i32: {
                 Gp reg = c.new_gp32("col_%d_i32", column_idx);
                 c.mov(reg, mem_op);
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    c.mov(bitmap_addr, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.mov(byte_offset, input_index);
+                    c.shr(byte_offset, 3);
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.movzx(bitmap_byte, Mem(bitmap_addr, byte_offset, 0, 0, 1));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.mov(bit_idx, input_index.r32());
+                    c.and_(bit_idx, 7);
+                    c.bt(bitmap_byte, bit_idx);
+                    Gp null_sentinel = c.new_gp32("null_sentinel");
+                    c.mov(null_sentinel, INT_NULL);
+                    c.cmovc(reg, null_sentinel);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }
             case data_type_t::i64: {
                 Gp reg = c.new_gp64("col_%d_i64", column_idx);
                 c.mov(reg, mem_op);
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    c.mov(bitmap_addr, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.mov(byte_offset, input_index);
+                    c.shr(byte_offset, 3);
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.movzx(bitmap_byte, Mem(bitmap_addr, byte_offset, 0, 0, 1));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.mov(bit_idx, input_index.r32());
+                    c.and_(bit_idx, 7);
+                    c.bt(bitmap_byte, bit_idx);
+                    Gp null_sentinel = c.new_gp64("null_sentinel");
+                    c.movabs(null_sentinel, LONG_NULL);
+                    c.cmovc(reg, null_sentinel);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }

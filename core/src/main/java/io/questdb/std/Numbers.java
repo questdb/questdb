@@ -641,15 +641,15 @@ public final class Numbers {
         return Boolean.compare(isNull(a), isNull(b));
     }
 
-    public static int compare(int a, int b) {
+    public static int compareUnsigned(int a, int b) {
         return Integer.compareUnsigned(a, b);
     }
 
-    public static int compare(long a, long b) {
+    public static int compareUnsigned(long a, long b) {
         return Long.compareUnsigned(a, b);
     }
 
-    public static int compare(short a, short b) {
+    public static int compareUnsigned(short a, short b) {
         return Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b));
     }
 

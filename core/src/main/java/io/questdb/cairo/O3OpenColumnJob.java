@@ -2303,27 +2303,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             nAddr = mapRW(ff, nFd, bitmapByteSize, MemoryTag.MMAP_O3);
 
-            int srcBitOff = (int) (srcOooLo & 7);
-            long srcByteStart = srcOooLo >> 3;
-
-            if (srcBitOff == 0) {
-                // Byte-aligned: simple copy
-                Vect.memcpy(nAddr, bitmapAddr + srcByteStart, bitmapByteSize);
-            } else {
-                // Non-aligned: shift bits
-                Vect.memset(nAddr, bitmapByteSize, 0);
-                for (long i = 0; i < rowCount; i++) {
-                    long srcBit = srcOooLo + i;
-                    byte srcByte = Unsafe.getUnsafe().getByte(bitmapAddr + (srcBit >> 3));
-                    boolean isNull = ((srcByte >> (int) (srcBit & 7)) & 1) != 0;
-                    if (isNull) {
-                        long dstByte = i >> 3;
-                        int dstBitIdx = (int) (i & 7);
-                        long addr = nAddr + dstByte;
-                        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << dstBitIdx)));
-                    }
-                }
-            }
+            Vect.memset(nAddr, bitmapByteSize, 0);
+            Vect.bitmapCopyOffset(bitmapAddr, srcOooLo, nAddr, 0, rowCount);
 
             // Mask trailing bits in the last byte
             int trailingBits = (int) (rowCount & 7);
@@ -2388,11 +2369,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // Write O3 rows' null bits at positions srcDataMax onwards.
             // Existing bits (0 to srcDataMax-1) are preserved from the file.
             if (o3BitmapAddr != 0) {
-                for (long i = 0; i < oooRowCount; i++) {
-                    if (isNullBitmapBitSet(o3BitmapAddr, srcOooLo + i)) {
-                        setNullBitmapBit(nAddr, srcDataMax + i);
-                    }
-                }
+                Vect.bitmapCopyOffset(o3BitmapAddr, srcOooLo, nAddr, srcDataMax, oooRowCount);
             }
 
             // Mask trailing bits in the last byte
@@ -2470,21 +2447,14 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             // Prefix block
             if (prefixType == O3_BLOCK_DATA) {
-                for (long i = prefixLo; i <= prefixHi; i++, outputRow++) {
-                    if (i < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, i))) {
-                        setNullBitmapBit(nAddr, outputRow);
-                    }
-                }
+                long blockCount = prefixHi - prefixLo + 1;
+                outputRow += writeDataBlockBitmap(nAddr, outputRow, srcDataNullAddr, prefixLo, blockCount, originalSrcDataTop);
             } else if (prefixType == O3_BLOCK_O3) {
+                long blockCount = prefixHi - prefixLo + 1;
                 if (o3BitmapAddr != 0) {
-                    for (long i = prefixLo; i <= prefixHi; i++, outputRow++) {
-                        if (isNullBitmapBitSet(o3BitmapAddr, i)) {
-                            setNullBitmapBit(nAddr, outputRow);
-                        }
-                    }
-                } else {
-                    outputRow += prefixHi - prefixLo + 1;
+                    Vect.bitmapCopyOffset(o3BitmapAddr, prefixLo, nAddr, outputRow, blockCount);
                 }
+                outputRow += blockCount;
             }
 
             // Merge block
@@ -2495,53 +2465,34 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     long row = indexEntry & 0x7FFFFFFFFFFFFFFFL;
 
                     if (pick == 1) {
-                        // Old data: null if within column-top range or marked in source bitmap
                         if (row < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, row))) {
                             setNullBitmapBit(nAddr, outputRow);
                         }
                     } else if (o3BitmapAddr != 0) {
-                        // O3 data: check O3 null bitmap
                         if (isNullBitmapBitSet(o3BitmapAddr, row)) {
                             setNullBitmapBit(nAddr, outputRow);
                         }
                     }
                 }
             } else if (mergeType == O3_BLOCK_O3) {
-                // All O3 data in merge block: check O3 bitmap or skip
                 if (o3BitmapAddr != 0) {
-                    for (long i = 0; i < mergeRowCount; i++, outputRow++) {
-                        if (isNullBitmapBitSet(o3BitmapAddr, srcOooLo + i)) {
-                            setNullBitmapBit(nAddr, outputRow);
-                        }
-                    }
-                } else {
-                    outputRow += mergeRowCount;
+                    Vect.bitmapCopyOffset(o3BitmapAddr, srcOooLo, nAddr, outputRow, mergeRowCount);
                 }
+                outputRow += mergeRowCount;
             } else if (mergeType == O3_BLOCK_DATA) {
-                // All partition data in merge block: check against column-top and source bitmap
-                for (long i = 0; i < mergeRowCount; i++, outputRow++) {
-                    long srcRow = mergeDataLo + i;
-                    if (srcRow < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, srcRow))) {
-                        setNullBitmapBit(nAddr, outputRow);
-                    }
-                }
+                outputRow += writeDataBlockBitmap(nAddr, outputRow, srcDataNullAddr, mergeDataLo, mergeRowCount, originalSrcDataTop);
             }
 
             // Suffix block
             if (suffixType == O3_BLOCK_DATA) {
-                for (long i = suffixLo; i <= suffixHi; i++, outputRow++) {
-                    if (i < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, i))) {
-                        setNullBitmapBit(nAddr, outputRow);
-                    }
-                }
+                long blockCount = suffixHi - suffixLo + 1;
+                outputRow += writeDataBlockBitmap(nAddr, outputRow, srcDataNullAddr, suffixLo, blockCount, originalSrcDataTop);
             } else if (suffixType == O3_BLOCK_O3) {
+                long blockCount = suffixHi - suffixLo + 1;
                 if (o3BitmapAddr != 0) {
-                    for (long i = suffixLo; i <= suffixHi; i++, outputRow++) {
-                        if (isNullBitmapBitSet(o3BitmapAddr, i)) {
-                            setNullBitmapBit(nAddr, outputRow);
-                        }
-                    }
+                    Vect.bitmapCopyOffset(o3BitmapAddr, suffixLo, nAddr, outputRow, blockCount);
                 }
+                outputRow += blockCount;
             }
 
             // Mask trailing bits in the last byte
@@ -2568,13 +2519,28 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static boolean isNullBitmapBitSet(long bitmapAddr, long row) {
-        byte b = Unsafe.getUnsafe().getByte(bitmapAddr + (row >> 3));
-        return (b & (1 << (int) (row & 7))) != 0;
+        return NullBitmapUtil.isNull(bitmapAddr, row);
     }
 
     private static void setNullBitmapBit(long bitmapAddr, long row) {
-        long addr = bitmapAddr + (row >> 3);
-        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << (int) (row & 7))));
+        NullBitmapUtil.setNull(bitmapAddr, row);
+    }
+
+    private static long writeDataBlockBitmap(long dstAddr, long dstBitOffset, long srcBitmapAddr, long srcLo, long blockCount, long columnTop) {
+        if (blockCount <= 0) {
+            return 0;
+        }
+        // Column-top rows (srcLo < columnTop) are always null
+        long columnTopRows = Math.min(blockCount, Math.max(0, columnTop - srcLo));
+        if (columnTopRows > 0) {
+            Vect.bitmapSetRange(dstAddr, dstBitOffset, columnTopRows);
+        }
+        // Remaining rows: copy from source bitmap if present
+        long remainingRows = blockCount - columnTopRows;
+        if (remainingRows > 0 && srcBitmapAddr != 0) {
+            Vect.bitmapCopyOffset(srcBitmapAddr, srcLo + columnTopRows, dstAddr, dstBitOffset + columnTopRows, remainingRows);
+        }
+        return blockCount;
     }
 
     private static void appendTimestampColumn(

@@ -1777,12 +1777,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         for (int i = 0; i < columnCount; i++) {
             MemoryMA bitmapMem = getNullBitmapColumn(i);
             if (bitmapMem != null && bitmapMem.isOpen() && metadata.getColumnType(i) > 0) {
-                bitmapMem.jumpTo(bitmapByteCount);
+                // Clear stale bits BEFORE jumpTo(bitmapByteCount) because
+                // MemoryPMARImpl keeps only one page mapped at a time. If
+                // bitmapByteCount falls on a page boundary, jumpTo unmaps the page
+                // containing the last byte, making addressOf(bitmapByteCount - 1)
+                // crash with SIGSEGV.
                 if (bitmapBitCount > 0 && bitmapByteCount > 0) {
+                    bitmapMem.jumpTo(bitmapByteCount - 1);
                     long addr = bitmapMem.addressOf(bitmapByteCount - 1);
                     byte existing = Unsafe.getUnsafe().getByte(addr);
                     Unsafe.getUnsafe().putByte(addr, (byte) (existing & ((1 << bitmapBitCount) - 1)));
                 }
+                bitmapMem.jumpTo(bitmapByteCount);
             }
         }
     }

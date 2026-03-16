@@ -69,6 +69,9 @@ enum class ColumnType : int {
   INTERVAL = 32,
   NULL_ = 33,
   TIMESTAMP_NANO = 1 << 18 | TIMESTAMP_MICRO,
+  UINT16 = SHORT | (1 << 20),
+  UINT32 = INT | (1 << 21),
+  UINT64 = LONG | (1 << 22),
 };
 
 #pragma pack (push, 1)

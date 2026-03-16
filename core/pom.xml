@@ -353,7 +353,15 @@
                         </executions>
                     </plugin>
 
-                    <!-- Patch Web Console bundle to expose unsigned integer types in table creator -->
+                    <!-- Patch Web Console bundle to expose unsigned integer types in table creator.
+                         FRAGILE: the <token> below is a verbatim substring of the minified JS bundle.
+                         If the web-console dependency is updated and the minifier changes the order
+                         of type labels, changes quoting, or refactors the dropdown, the replacement
+                         will fail with "failOnNoReplacements". When that happens, download the new
+                         bundle, find the type-list substring in the minified JS, and update the
+                         token/value pair here. A regex-based <replaceregexp> would be more robust
+                         but Ant's replaceregexp does not support the full minified-JS context
+                         needed to anchor the match safely. -->
                     <plugin>
                         <artifactId>maven-antrun-plugin</artifactId>
                         <version>3.1.0</version>

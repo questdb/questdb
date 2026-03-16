@@ -74,8 +74,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        if (isNull(rec)) return Numbers.LONG_NULL;
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -110,14 +109,12 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        if (isNull(rec)) return Double.NaN;
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToDouble(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        if (isNull(rec)) return Float.NaN;
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToFloat(getInt(rec));
     }
 
     @Override
@@ -158,8 +155,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        if (isNull(rec)) return Numbers.LONG_NULL;
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -227,8 +223,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getTimestamp(Record rec) {
-        if (isNull(rec)) return Numbers.LONG_NULL;
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

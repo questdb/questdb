@@ -188,6 +188,9 @@ import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgUInt16VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgUInt32VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgUInt64VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountLongVectorAggregateFunction;
@@ -201,14 +204,18 @@ import io.questdb.griffin.engine.groupby.vect.MaxIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxTimestampVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxUInt16VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxUInt32VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxUInt64VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinDateVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinTimestampVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinUInt16VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinUInt32VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinUInt64VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.NSumDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumIntVectorAggregateFunction;
@@ -9212,6 +9219,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         avgConstructors.put(LONG, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(INT, AvgIntVectorAggregateFunction::new);
         avgConstructors.put(SHORT, AvgShortVectorAggregateFunction::new);
+        avgConstructors.put(UINT16, AvgUInt16VectorAggregateFunction::new);
+        avgConstructors.put(UINT32, AvgUInt32VectorAggregateFunction::new);
+        avgConstructors.put(UINT64, AvgUInt64VectorAggregateFunction::new);
 
         minConstructors.put(DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(LONG, MinLongVectorAggregateFunction::new);
@@ -9220,7 +9230,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         minConstructors.put(INT, MinIntVectorAggregateFunction::new);
         minConstructors.put(SHORT, MinShortVectorAggregateFunction::new);
+        minConstructors.put(UINT16, MinUInt16VectorAggregateFunction::new);
         minConstructors.put(UINT32, MinUInt32VectorAggregateFunction::new);
+        minConstructors.put(UINT64, MinUInt64VectorAggregateFunction::new);
 
         maxConstructors.put(DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(LONG, MaxLongVectorAggregateFunction::new);
@@ -9229,6 +9241,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         maxConstructors.put(INT, MaxIntVectorAggregateFunction::new);
         maxConstructors.put(SHORT, MaxShortVectorAggregateFunction::new);
+        maxConstructors.put(UINT16, MaxUInt16VectorAggregateFunction::new);
         maxConstructors.put(UINT32, MaxUInt32VectorAggregateFunction::new);
+        maxConstructors.put(UINT64, MaxUInt64VectorAggregateFunction::new);
     }
 }

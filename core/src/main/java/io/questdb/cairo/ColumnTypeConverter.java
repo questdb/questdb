@@ -321,10 +321,7 @@ public class ColumnTypeConverter {
     }
 
     private static boolean isNullInBitmap(long bitmapAddr, long row) {
-        long byteOffset = row >> 3;
-        int bitIndex = (int) (row & 7);
-        byte bitmapByte = Unsafe.getUnsafe().getByte(bitmapAddr + byteOffset);
-        return (bitmapByte & (1 << bitIndex)) != 0;
+        return NullBitmapUtil.isNull(bitmapAddr, row);
     }
 
     private static boolean convertFixedToSymbol(
@@ -1027,7 +1024,6 @@ public class ColumnTypeConverter {
     }
 
     private static void stampNullsInFixedColumn(long dstMapAddress, int dstColumnType, long dstColumnTypeSize, long rowCount, long nullBitmapAddr) {
-        final boolean isUInt16 = ColumnType.isUInt16(dstColumnType);
         final boolean isUInt32 = ColumnType.isUInt32(dstColumnType);
         final boolean isUInt64 = ColumnType.isUInt64(dstColumnType);
         int dstTag = ColumnType.tagOf(dstColumnType);
@@ -1035,37 +1031,18 @@ public class ColumnTypeConverter {
             if (isNullInBitmap(nullBitmapAddr, row)) {
                 long dstAddr = dstMapAddress + row * dstColumnTypeSize;
                 switch (dstTag) {
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.BYTE:
-                        Unsafe.getUnsafe().putByte(dstAddr, (byte) 0);
-                        break;
-                    case ColumnType.SHORT:
-                        Unsafe.getUnsafe().putShort(dstAddr, (short) 0);
-                        break;
-                    case ColumnType.CHAR:
-                        Unsafe.getUnsafe().putChar(dstAddr, (char) 0);
-                        break;
-                    case ColumnType.INT:
-                    case ColumnType.IPv4:
-                        Unsafe.getUnsafe().putInt(dstAddr, isUInt32 ? 0 : Numbers.INT_NULL);
-                        break;
-                    case ColumnType.LONG:
-                    case ColumnType.DATE:
-                    case ColumnType.TIMESTAMP:
-                        Unsafe.getUnsafe().putLong(dstAddr, isUInt64 ? 0L : Numbers.LONG_NULL);
-                        break;
-                    case ColumnType.FLOAT:
-                        Unsafe.getUnsafe().putFloat(dstAddr, Float.NaN);
-                        break;
-                    case ColumnType.DOUBLE:
-                        Unsafe.getUnsafe().putDouble(dstAddr, Double.NaN);
-                        break;
-                    case ColumnType.UUID:
+                    case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstAddr, (byte) 0);
+                    case ColumnType.SHORT -> Unsafe.getUnsafe().putShort(dstAddr, (short) 0);
+                    case ColumnType.CHAR -> Unsafe.getUnsafe().putChar(dstAddr, (char) 0);
+                    case ColumnType.INT, ColumnType.IPv4 -> Unsafe.getUnsafe().putInt(dstAddr, isUInt32 ? 0 : Numbers.INT_NULL);
+                    case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> Unsafe.getUnsafe().putLong(dstAddr, isUInt64 ? 0L : Numbers.LONG_NULL);
+                    case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(dstAddr, Float.NaN);
+                    case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(dstAddr, Double.NaN);
+                    case ColumnType.UUID -> {
                         Unsafe.getUnsafe().putLong(dstAddr, Numbers.LONG_NULL);
                         Unsafe.getUnsafe().putLong(dstAddr + 8, Numbers.LONG_NULL);
-                        break;
-                    default:
-                        break;
+                    }
+                    default -> { }
                 }
             }
         }

@@ -520,4 +520,178 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl,
 \
 }
 
+// Bitmap-null dispatcher macros.
+// Signature: (data_ptr, bitmap_ptr, bitOffset, count) -> result
+// The bitmap_ptr and bitOffset identify null bits: bit=1 means null.
+
+typedef int64_t ShortLongBitmapNullFuncType(int16_t *, uint8_t *, int64_t, int64_t);
+
+#define SHORT_LONG_BITMAP_NULL_DISPATCHER(func) \
+\
+ShortLongBitmapNullFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+ShortLongBitmapNullFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int64_t F_DISPATCH(func) (int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(ps, bitmap, bitOffset, count); \
+} \
+\
+inline int64_t func(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    return (*POINTER_NAME(func))(ps, bitmap, bitOffset, count); \
+}\
+\
+extern "C" { \
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) { \
+    return func((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count); \
+}\
+}
+
+typedef int32_t ShortIntBitmapNullFuncType(int16_t *, uint8_t *, int64_t, int64_t);
+
+#define SHORT_INT_BITMAP_NULL_DISPATCHER(func) \
+\
+ShortIntBitmapNullFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+ShortIntBitmapNullFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int32_t F_DISPATCH(func) (int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(ps, bitmap, bitOffset, count); \
+} \
+\
+inline int32_t func(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    return (*POINTER_NAME(func))(ps, bitmap, bitOffset, count); \
+}\
+\
+extern "C" { \
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) { \
+    return func((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count); \
+}\
+}
+
+typedef int64_t IntLongBitmapNullFuncType(int32_t *, uint8_t *, int64_t, int64_t);
+
+#define INT_LONG_BITMAP_NULL_DISPATCHER(func) \
+\
+IntLongBitmapNullFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+IntLongBitmapNullFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int64_t F_DISPATCH(func) (int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(pi, bitmap, bitOffset, count); \
+} \
+\
+inline int64_t func(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    return (*POINTER_NAME(func))(pi, bitmap, bitOffset, count); \
+}\
+\
+extern "C" { \
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) { \
+    return func((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count); \
+}\
+}
+
+typedef int64_t LongLongBitmapNullFuncType(int64_t *, uint8_t *, int64_t, int64_t);
+
+#define LONG_LONG_BITMAP_NULL_DISPATCHER(func) \
+\
+LongLongBitmapNullFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+LongLongBitmapNullFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int64_t F_DISPATCH(func) (int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(pl, bitmap, bitOffset, count); \
+} \
+\
+inline int64_t func(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    return (*POINTER_NAME(func))(pl, bitmap, bitOffset, count); \
+}\
+\
+extern "C" { \
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) { \
+    return func((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count); \
+}\
+}
+
+typedef int64_t BitmapCountFuncType(uint8_t *, int64_t, int64_t);
+
+#define BITMAP_COUNT_DISPATCHER(func) \
+\
+BitmapCountFuncType F_SSE2(func), F_SSE41(func), F_AVX2(func), F_AVX512(func), F_DISPATCH(func); \
+\
+BitmapCountFuncType *POINTER_NAME(func) = &func ## _dispatch; \
+\
+int64_t F_DISPATCH(func) (uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    const int iset = instrset_detect();  \
+    if (iset >= 10) { \
+        POINTER_NAME(func) = &F_AVX512(func); \
+    } else if (iset >= 8) { \
+        POINTER_NAME(func) = &F_AVX2(func); \
+    } else if (iset >= 5) { \
+        POINTER_NAME(func) = &F_SSE41(func); \
+    } else if (iset >= 2) { \
+        POINTER_NAME(func) = &F_SSE2(func); \
+    } else { \
+        POINTER_NAME(func) = &F_VANILLA(func); \
+    }\
+    return (*POINTER_NAME(func))(bitmap, bitOffset, count); \
+} \
+\
+inline int64_t func(uint8_t *bitmap, int64_t bitOffset, int64_t count) { \
+    return (*POINTER_NAME(func))(bitmap, bitOffset, count); \
+}\
+\
+extern "C" { \
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_ ## func(JNIEnv *env, jclass cl, jlong pBitmap, jlong bitOffset, jlong count) { \
+    return func((uint8_t *) pBitmap, bitOffset, count); \
+}\
+}
+
 #endif //VECT_H

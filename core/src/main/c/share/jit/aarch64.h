@@ -349,12 +349,48 @@ namespace questdb::aarch64 {
             case data_type_t::i32: {
                 Gp reg = c.new_gp32("col_%d_i32", column_idx);
                 c.ldr(reg, ptr(elem_addr));
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    ldr_indexed(c, bitmap_addr, varsize_aux_ptr, column_idx);
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.lsr(byte_offset, input_index, imm(3));
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.add(bitmap_addr, bitmap_addr, byte_offset);
+                    c.ldrb(bitmap_byte, ptr(bitmap_addr));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.and_(bit_idx, input_index.w(), imm(7));
+                    Gp bit_mask = c.new_gp32("bit_mask");
+                    c.mov(bit_mask, 1);
+                    c.lsl(bit_mask, bit_mask, bit_idx);
+                    c.tst(bitmap_byte, bit_mask);
+                    Gp null_sentinel = c.new_gp32("null_sentinel");
+                    c.mov(null_sentinel, INT_NULL);
+                    c.csel(reg, null_sentinel, reg, CondCode::kNE);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }
             case data_type_t::i64: {
                 Gp reg = c.new_gp64("col_%d_i64", column_idx);
                 c.ldr(reg, ptr(elem_addr));
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    ldr_indexed(c, bitmap_addr, varsize_aux_ptr, column_idx);
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.lsr(byte_offset, input_index, imm(3));
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.add(bitmap_addr, bitmap_addr, byte_offset);
+                    c.ldrb(bitmap_byte, ptr(bitmap_addr));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.and_(bit_idx, input_index.w(), imm(7));
+                    Gp bit_mask = c.new_gp32("bit_mask");
+                    c.mov(bit_mask, 1);
+                    c.lsl(bit_mask, bit_mask, bit_idx);
+                    c.tst(bitmap_byte, bit_mask);
+                    Gp null_sentinel = c.new_gp64("null_sentinel");
+                    c.mov(null_sentinel, LONG_NULL);
+                    c.csel(reg, null_sentinel, reg, CondCode::kNE);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }

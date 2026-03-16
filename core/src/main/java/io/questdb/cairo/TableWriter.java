@@ -2949,6 +2949,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     distressed = true;
                     checkDistressed();
                 }
+                freeO3MergedBitmaps();
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
                 rollbackIndexes();
@@ -3353,19 +3354,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long dstSize = (rowCount + 7) >> 3;
         long dstAddr = Unsafe.malloc(dstSize, MemoryTag.NATIVE_O3);
         Vect.memset(dstAddr, dstSize, 0);
-        int bitShift = (int) (srcBitOffset & 7);
-        long srcByteStart = srcBitOffset >> 3;
-        if (bitShift == 0) {
-            Vect.memcpy(dstAddr, srcBitmapAddr + srcByteStart, dstSize);
-        } else {
-            long srcBytesNeeded = ((srcBitOffset + rowCount + 7) >> 3) - srcByteStart;
-            for (long b = 0; b < dstSize; b++) {
-                int lo = Unsafe.getUnsafe().getByte(srcBitmapAddr + srcByteStart + b) & 0xFF;
-                int hi = (b + 1 < srcBytesNeeded)
-                        ? (Unsafe.getUnsafe().getByte(srcBitmapAddr + srcByteStart + b + 1) & 0xFF) : 0;
-                Unsafe.getUnsafe().putByte(dstAddr + b, (byte) ((lo >>> bitShift) | (hi << (8 - bitShift))));
-            }
-        }
+        Vect.bitmapCopyOffset(srcBitmapAddr, srcBitOffset, dstAddr, 0, rowCount);
         return dstAddr;
     }
 
@@ -5019,40 +5008,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Allocate destination bitmap
                 long destBitmapSize = (mergeCount + 7) >> 3;
                 long destBitmapAddr = Unsafe.malloc(destBitmapSize, MemoryTag.NATIVE_O3);
-                Vect.memset(destBitmapAddr, destBitmapSize, 0);
+                try {
+                    Vect.memset(destBitmapAddr, destBitmapSize, 0);
 
-                long lagBitmapBase = Math.abs(lagBitmapMappedAddr);
-                long lagBitShift = lagBitmapBitOffset & 7;
+                    long lagBitmapBase = Math.abs(lagBitmapMappedAddr);
+                    long lagBitShift = lagBitmapBitOffset & 7;
 
-                // Merge bits following the merge index
-                for (long i = 0; i < mergeCount; i++) {
-                    long indexEntry = Unsafe.getUnsafe().getLong(mergeIndex + i * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES);
-                    long pick = indexEntry >>> 63; // 0 = WAL, 1 = lag
-                    long row = indexEntry & 0x7FFFFFFFFFFFFFFFL;
+                    // Merge bits following the merge index
+                    Vect.bitmapMergeTwoSources(
+                            walBitmapAddr, lagBitmapBase, lagBitShift,
+                            destBitmapAddr, mergeIndex,
+                            (int) TIMESTAMP_MERGE_ENTRY_BYTES, mergeCount
+                    );
 
-                    boolean isNull = false;
-                    if (pick == 1 && lagBitmapBase != 0) {
-                        // Lag source: bit at position (lagBitShift + row) in the mapped region
-                        long bitPos = lagBitShift + row;
-                        byte b = Unsafe.getUnsafe().getByte(lagBitmapBase + (bitPos >> 3));
-                        isNull = ((b >> (int) (bitPos & 7)) & 1) != 0;
-                    } else if (pick == 0 && walBitmapAddr != 0) {
-                        // WAL source: bit at position (row) in the WAL bitmap
-                        byte b = Unsafe.getUnsafe().getByte(walBitmapAddr + (row >> 3));
-                        isNull = ((b >> (int) (row & 7)) & 1) != 0;
-                    }
-
-                    if (isNull) {
-                        long destByte = i >> 3;
-                        int destBit = (int) (i & 7);
-                        long addr = destBitmapAddr + destByte;
-                        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << destBit)));
-                    }
+                    // Store merged bitmap (thread-safe: each column writes to its own index)
+                    o3NullBitmapAddrs[columnIndex] = destBitmapAddr;
+                    o3NullBitmapAllocSizes[columnIndex] = destBitmapSize;
+                } catch (Throwable th) {
+                    Unsafe.free(destBitmapAddr, destBitmapSize, MemoryTag.NATIVE_O3);
+                    throw th;
                 }
-
-                // Store merged bitmap (thread-safe: each column writes to its own index)
-                o3NullBitmapAddrs[columnIndex] = destBitmapAddr;
-                o3NullBitmapAllocSizes[columnIndex] = destBitmapSize;
             } finally {
                 if (lagBitmapMappedAddr != 0) {
                     mapAppendColumnBufferRelease(lagBitmapMappedAddr, lagBitmapByteOffset, lagBitmapByteSize);
@@ -5411,16 +5386,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long newBitmapAddr = Unsafe.malloc(newBitmapSize, MemoryTag.NATIVE_O3);
         try {
             Vect.memset(newBitmapAddr, newBitmapSize, 0);
-            for (long i = 0; i < rowCount; i++) {
-                long origIndex = Unsafe.getUnsafe().getLong(sortedTimestampsAddr + i * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES);
-                byte srcByte = Unsafe.getUnsafe().getByte(srcBitmapAddr + (origIndex >> 3));
-                if (((srcByte >> (int) (origIndex & 7)) & 1) != 0) {
-                    long dstByteOffset = i >> 3;
-                    int dstBitIndex = (int) (i & 7);
-                    long addr = newBitmapAddr + dstByteOffset;
-                    Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << dstBitIndex)));
-                }
-            }
+            Vect.bitmapReshuffle(srcBitmapAddr, newBitmapAddr, sortedTimestampsAddr, (int) TIMESTAMP_MERGE_ENTRY_BYTES, rowCount);
         } catch (Throwable th) {
             Unsafe.free(newBitmapAddr, newBitmapSize, MemoryTag.NATIVE_O3);
             throw th;
@@ -5760,6 +5726,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
+        freeO3MergedBitmaps();
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -10620,43 +10587,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long o3BitmapSize = (totalO3 + 7) >> 3;
             long o3BitmapAddr = Unsafe.malloc(o3BitmapSize, MemoryTag.NATIVE_O3);
-            Vect.memset(o3BitmapAddr, o3BitmapSize, 0);
+            try {
+                Vect.memset(o3BitmapAddr, o3BitmapSize, 0);
 
-            // O3 rows (indices 0..originalO3-1): bitmap bits written after moved rows'
-            // bits in nullBitmapColumns, at positions committed + transientRowsAdded + k.
-            for (long k = 0; k < originalO3; k++) {
-                long srcBit = committed + transientRowsAdded + k;
-                long srcByteOffset = srcBit >> 3;
-                int srcBitIndex = (int) (srcBit & 7);
-                byte srcByte = Unsafe.getUnsafe().getByte(bitmapMem.addressOf(srcByteOffset));
-                if ((srcByte & (1 << srcBitIndex)) != 0) {
-                    long dstByteOffset = k >> 3;
-                    int dstBitIndex = (int) (k & 7);
-                    long dstAddr = o3BitmapAddr + dstByteOffset;
-                    byte dstByte = Unsafe.getUnsafe().getByte(dstAddr);
-                    Unsafe.getUnsafe().putByte(dstAddr, (byte) (dstByte | (1 << dstBitIndex)));
+                // O3 rows (indices 0..originalO3-1): bitmap bits written after moved rows'
+                // bits in nullBitmapColumns, at positions committed + transientRowsAdded + k.
+                for (long k = 0; k < originalO3; k++) {
+                    long srcBit = committed + transientRowsAdded + k;
+                    long srcByteOffset = srcBit >> 3;
+                    int srcBitIndex = (int) (srcBit & 7);
+                    byte srcByte = Unsafe.getUnsafe().getByte(bitmapMem.addressOf(srcByteOffset));
+                    if ((srcByte & (1 << srcBitIndex)) != 0) {
+                        long dstByteOffset = k >> 3;
+                        int dstBitIndex = (int) (k & 7);
+                        long dstAddr = o3BitmapAddr + dstByteOffset;
+                        byte dstByte = Unsafe.getUnsafe().getByte(dstAddr);
+                        Unsafe.getUnsafe().putByte(dstAddr, (byte) (dstByte | (1 << dstBitIndex)));
+                    }
                 }
-            }
 
-            // Moved rows (indices originalO3..totalO3-1): bitmap bits at positions
-            // committed + j in nullBitmapColumns, appended after O3 rows in o3 memory.
-            for (long j = 0; j < transientRowsAdded; j++) {
-                long srcBit = committed + j;
-                long srcByteOffset = srcBit >> 3;
-                int srcBitIndex = (int) (srcBit & 7);
-                byte srcByte = Unsafe.getUnsafe().getByte(bitmapMem.addressOf(srcByteOffset));
-                if ((srcByte & (1 << srcBitIndex)) != 0) {
-                    long dstBit = originalO3 + j;
-                    long dstByteOffset = dstBit >> 3;
-                    int dstBitIndex = (int) (dstBit & 7);
-                    long dstAddr = o3BitmapAddr + dstByteOffset;
-                    byte dstByte = Unsafe.getUnsafe().getByte(dstAddr);
-                    Unsafe.getUnsafe().putByte(dstAddr, (byte) (dstByte | (1 << dstBitIndex)));
+                // Moved rows (indices originalO3..totalO3-1): bitmap bits at positions
+                // committed + j in nullBitmapColumns, appended after O3 rows in o3 memory.
+                for (long j = 0; j < transientRowsAdded; j++) {
+                    long srcBit = committed + j;
+                    long srcByteOffset = srcBit >> 3;
+                    int srcBitIndex = (int) (srcBit & 7);
+                    byte srcByte = Unsafe.getUnsafe().getByte(bitmapMem.addressOf(srcByteOffset));
+                    if ((srcByte & (1 << srcBitIndex)) != 0) {
+                        long dstBit = originalO3 + j;
+                        long dstByteOffset = dstBit >> 3;
+                        int dstBitIndex = (int) (dstBit & 7);
+                        long dstAddr = o3BitmapAddr + dstByteOffset;
+                        byte dstByte = Unsafe.getUnsafe().getByte(dstAddr);
+                        Unsafe.getUnsafe().putByte(dstAddr, (byte) (dstByte | (1 << dstBitIndex)));
+                    }
                 }
-            }
 
-            o3NullBitmapAddrs[i] = o3BitmapAddr;
-            o3NullBitmapAllocSizes[i] = o3BitmapSize;
+                o3NullBitmapAddrs[i] = o3BitmapAddr;
+                o3NullBitmapAllocSizes[i] = o3BitmapSize;
+            } catch (Throwable th) {
+                Unsafe.free(o3BitmapAddr, o3BitmapSize, MemoryTag.NATIVE_O3);
+                throw th;
+            }
         }
     }
 
@@ -10707,51 +10679,51 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Allocate destination bitmap
             long bitmapSize = (totalRows + 7) >> 3;
             long destBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_O3);
-            Vect.memset(destBitmapAddr, bitmapSize, 0);
+            try {
+                Vect.memset(destBitmapAddr, bitmapSize, 0);
 
-            // Iterate segments and rows using reverse index
-            long revRowIndex = 0;
-            for (int seg = 0; seg < segmentCount; seg++) {
-                long segLo = segmentCopyInfo.getRowLo(seg);
-                long segHi = segmentCopyInfo.getRowHi(seg);
+                // Iterate segments and rows using reverse index
+                long revRowIndex = 0;
+                for (int seg = 0; seg < segmentCount; seg++) {
+                    long segLo = segmentCopyInfo.getRowLo(seg);
+                    long segHi = segmentCopyInfo.getRowHi(seg);
 
-                // Get this segment's bitmap
-                int bmIdx = seg * columnCount + colIdx;
-                long srcBitmapAddr = 0;
-                if (bmIdx < o3BitmapColumns.size()) {
-                    MemoryCR bm = o3BitmapColumns.getQuick(bmIdx);
-                    if (bm != null && bm.size() > 0) {
-                        srcBitmapAddr = bm.addressOf(0);
-                    }
-                }
-
-                for (long r = segLo; r < segHi; r++) {
-                    // Read destination row from reverse index
-                    long destRow = readReverseIndexEntry(reverseIndexAddr, revRowIndex, reverseIdxItemBytes);
-                    revRowIndex++;
-
-                    if (isDedupShuffle) {
-                        if (destRow == 0) {
-                            // Duplicate row, not in result set
-                            continue;
+                    // Get this segment's bitmap
+                    int bmIdx = seg * columnCount + colIdx;
+                    long srcBitmapAddr = 0;
+                    if (bmIdx < o3BitmapColumns.size()) {
+                        MemoryCR bm = o3BitmapColumns.getQuick(bmIdx);
+                        if (bm != null && bm.size() > 0) {
+                            srcBitmapAddr = bm.addressOf(0);
                         }
-                        // Rows shifted by 1
-                        destRow--;
                     }
 
-                    // Copy null bit if source has bitmap and bit is set
-                    if (srcBitmapAddr != 0) {
-                        byte srcByte = Unsafe.getUnsafe().getByte(srcBitmapAddr + (r >> 3));
-                        if ((srcByte & (1 << (int) (r & 7))) != 0) {
-                            long destByteOffset = destBitmapAddr + (destRow >> 3);
-                            byte destByte = Unsafe.getUnsafe().getByte(destByteOffset);
-                            Unsafe.getUnsafe().putByte(destByteOffset, (byte) (destByte | (1 << (int) (destRow & 7))));
+                    for (long r = segLo; r < segHi; r++) {
+                        // Read destination row from reverse index
+                        long destRow = readReverseIndexEntry(reverseIndexAddr, revRowIndex, reverseIdxItemBytes);
+                        revRowIndex++;
+
+                        if (isDedupShuffle) {
+                            if (destRow == 0) {
+                                // Duplicate row, not in result set
+                                continue;
+                            }
+                            // Rows shifted by 1
+                            destRow--;
+                        }
+
+                        // Copy null bit if source has bitmap and bit is set
+                        if (srcBitmapAddr != 0 && NullBitmapUtil.isNull(srcBitmapAddr, r)) {
+                            NullBitmapUtil.setNull(destBitmapAddr, destRow);
                         }
                     }
                 }
+
+                o3NullBitmapAddrs[colIdx] = destBitmapAddr;
+            } catch (Throwable th) {
+                Unsafe.free(destBitmapAddr, bitmapSize, MemoryTag.NATIVE_O3);
+                throw th;
             }
-
-            o3NullBitmapAddrs[colIdx] = destBitmapAddr;
             o3NullBitmapAllocSizes[colIdx] = bitmapSize;
         }
     }

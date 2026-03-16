@@ -107,14 +107,12 @@ public abstract class ShortFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        if (isNull(rec)) return Double.NaN;
-        return getShort(rec);
+        return Numbers.intToDouble(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        if (isNull(rec)) return Float.NaN;
-        return getShort(rec);
+        return Numbers.intToFloat(getInt(rec));
     }
 
     @Override
@@ -155,8 +153,7 @@ public abstract class ShortFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        if (isNull(rec)) return Numbers.LONG_NULL;
-        return getShort(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

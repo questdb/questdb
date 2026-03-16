@@ -45,7 +45,7 @@ public class MinShortGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             mapValue.putInt(valueIndex, Vect.minShort(ptr, count));
         }

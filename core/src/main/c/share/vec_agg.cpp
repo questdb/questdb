@@ -54,6 +54,20 @@
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
 
+#define SUM_SHORT_BITMAP_NULL F_AVX512(sumShortBitmapNull)
+#define MIN_SHORT_BITMAP_NULL F_AVX512(minShortBitmapNull)
+#define MAX_SHORT_BITMAP_NULL F_AVX512(maxShortBitmapNull)
+#define COUNT_SHORT_BITMAP_NULL F_AVX512(countShortBitmapNull)
+#define SUM_UINT16_BITMAP_NULL F_AVX512(sumUInt16BitmapNull)
+#define MIN_UINT16_BITMAP_NULL F_AVX512(minUInt16BitmapNull)
+#define MAX_UINT16_BITMAP_NULL F_AVX512(maxUInt16BitmapNull)
+#define SUM_UINT32_BITMAP_NULL F_AVX512(sumUInt32BitmapNull)
+#define MIN_UINT32_BITMAP_NULL F_AVX512(minUInt32BitmapNull)
+#define MAX_UINT32_BITMAP_NULL F_AVX512(maxUInt32BitmapNull)
+#define SUM_UINT64_BITMAP_NULL F_AVX512(sumUInt64BitmapNull)
+#define MIN_UINT64_BITMAP_NULL F_AVX512(minUInt64BitmapNull)
+#define MAX_UINT64_BITMAP_NULL F_AVX512(maxUInt64BitmapNull)
+
 #elif INSTRSET >= 8
 
 #define COUNT_DOUBLE F_AVX2(countDouble)
@@ -79,6 +93,20 @@
 #define SUM_LONG_ACC F_AVX2(sumLongAcc)
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
+
+#define SUM_SHORT_BITMAP_NULL F_AVX2(sumShortBitmapNull)
+#define MIN_SHORT_BITMAP_NULL F_AVX2(minShortBitmapNull)
+#define MAX_SHORT_BITMAP_NULL F_AVX2(maxShortBitmapNull)
+#define COUNT_SHORT_BITMAP_NULL F_AVX2(countShortBitmapNull)
+#define SUM_UINT16_BITMAP_NULL F_AVX2(sumUInt16BitmapNull)
+#define MIN_UINT16_BITMAP_NULL F_AVX2(minUInt16BitmapNull)
+#define MAX_UINT16_BITMAP_NULL F_AVX2(maxUInt16BitmapNull)
+#define SUM_UINT32_BITMAP_NULL F_AVX2(sumUInt32BitmapNull)
+#define MIN_UINT32_BITMAP_NULL F_AVX2(minUInt32BitmapNull)
+#define MAX_UINT32_BITMAP_NULL F_AVX2(maxUInt32BitmapNull)
+#define SUM_UINT64_BITMAP_NULL F_AVX2(sumUInt64BitmapNull)
+#define MIN_UINT64_BITMAP_NULL F_AVX2(minUInt64BitmapNull)
+#define MAX_UINT64_BITMAP_NULL F_AVX2(maxUInt64BitmapNull)
 
 #elif INSTRSET >= 5
 
@@ -106,6 +134,20 @@
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
 
+#define SUM_SHORT_BITMAP_NULL F_SSE41(sumShortBitmapNull)
+#define MIN_SHORT_BITMAP_NULL F_SSE41(minShortBitmapNull)
+#define MAX_SHORT_BITMAP_NULL F_SSE41(maxShortBitmapNull)
+#define COUNT_SHORT_BITMAP_NULL F_SSE41(countShortBitmapNull)
+#define SUM_UINT16_BITMAP_NULL F_SSE41(sumUInt16BitmapNull)
+#define MIN_UINT16_BITMAP_NULL F_SSE41(minUInt16BitmapNull)
+#define MAX_UINT16_BITMAP_NULL F_SSE41(maxUInt16BitmapNull)
+#define SUM_UINT32_BITMAP_NULL F_SSE41(sumUInt32BitmapNull)
+#define MIN_UINT32_BITMAP_NULL F_SSE41(minUInt32BitmapNull)
+#define MAX_UINT32_BITMAP_NULL F_SSE41(maxUInt32BitmapNull)
+#define SUM_UINT64_BITMAP_NULL F_SSE41(sumUInt64BitmapNull)
+#define MIN_UINT64_BITMAP_NULL F_SSE41(minUInt64BitmapNull)
+#define MAX_UINT64_BITMAP_NULL F_SSE41(maxUInt64BitmapNull)
+
 #elif INSTRSET >= 2
 
 #define COUNT_DOUBLE F_SSE2(countDouble)
@@ -131,6 +173,20 @@
 #define SUM_LONG_ACC F_SSE2(sumLongAcc)
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
+
+#define SUM_SHORT_BITMAP_NULL F_SSE2(sumShortBitmapNull)
+#define MIN_SHORT_BITMAP_NULL F_SSE2(minShortBitmapNull)
+#define MAX_SHORT_BITMAP_NULL F_SSE2(maxShortBitmapNull)
+#define COUNT_SHORT_BITMAP_NULL F_SSE2(countShortBitmapNull)
+#define SUM_UINT16_BITMAP_NULL F_SSE2(sumUInt16BitmapNull)
+#define MIN_UINT16_BITMAP_NULL F_SSE2(minUInt16BitmapNull)
+#define MAX_UINT16_BITMAP_NULL F_SSE2(maxUInt16BitmapNull)
+#define SUM_UINT32_BITMAP_NULL F_SSE2(sumUInt32BitmapNull)
+#define MIN_UINT32_BITMAP_NULL F_SSE2(minUInt32BitmapNull)
+#define MAX_UINT32_BITMAP_NULL F_SSE2(maxUInt32BitmapNull)
+#define SUM_UINT64_BITMAP_NULL F_SSE2(sumUInt64BitmapNull)
+#define MIN_UINT64_BITMAP_NULL F_SSE2(minUInt64BitmapNull)
+#define MAX_UINT64_BITMAP_NULL F_SSE2(maxUInt64BitmapNull)
 
 #else
 
@@ -600,6 +656,405 @@ int32_t MAX_SHORT(int16_t *ps, int64_t count) {
 
 #endif
 
+// Helper: test if bitmap bit is set (null). Inlined for use in scalar prologues/epilogues.
+static inline bool bitmapIsNull(const uint8_t *bitmap, int64_t bitIdx) {
+    return (bitmap[bitIdx >> 3] >> (bitIdx & 7)) & 1;
+}
+
+// Bitmap-null SHORT aggregates: sum, min, max, count.
+// These use VCL vectors with bitmap-based null masking.
+// The bitmap is loaded byte-at-a-time and expanded to per-lane masks.
+
+#ifdef SUM_SHORT_BITMAP_NULL
+
+// Expand 16 bitmap bits (2 bytes at bitmapPtr) to a Vec16sb mask.
+// Each lane i gets: (byte[i/8] >> (i%8)) & 1, true if null.
+static inline Vec16sb expandBitmapToMask16(const uint8_t *bitmapPtr) {
+    // Load 2 bytes, broadcast each byte to 8 lanes, AND with bit mask constant
+    Vec16s bitmask;
+    const int16_t bit_patterns[16] = {
+        1, 2, 4, 8, 16, 32, 64, 128,
+        1, 2, 4, 8, 16, 32, 64, 128
+    };
+    Vec16s patterns;
+    patterns.load(bit_patterns);
+
+    // Broadcast byte 0 to lanes 0-7, byte 1 to lanes 8-15
+    int16_t b0 = bitmapPtr[0];
+    int16_t b1 = bitmapPtr[1];
+    const int16_t bytes[16] = {b0, b0, b0, b0, b0, b0, b0, b0, b1, b1, b1, b1, b1, b1, b1, b1};
+    bitmask.load(bytes);
+
+    return (bitmask & patterns) != 0;
+}
+
+int64_t SUM_SHORT_BITMAP_NULL(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return L_MIN;
+
+    const int step = 16;
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    int64_t i = 0;
+
+    // Scalar prologue: process unaligned bits until bitOffset is byte-aligned
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += ps[i];
+            hasNonNull = true;
+        }
+    }
+
+    // SIMD main loop: process 16 elements per iteration
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    Vec8i acc0 = 0;
+    Vec8i acc1 = 0;
+    int64_t vecNonNull = 0;
+    for (; i + step - 1 < count; i += step, bitmapBase += 2) {
+        Vec16s data;
+        data.load(ps + i);
+        Vec16sb isNull = expandBitmapToMask16(bitmapBase);
+        Vec16s masked = select(isNull, Vec16s(0), data);
+        acc0 += extend_low(masked);
+        acc1 += extend_high(masked);
+        vecNonNull += step - horizontal_count(isNull);
+    }
+
+    sum += horizontal_add_x(acc0) + horizontal_add_x(acc1);
+    hasNonNull = hasNonNull || (vecNonNull > 0);
+
+    // Scalar epilogue
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += ps[i];
+            hasNonNull = true;
+        }
+    }
+
+    return hasNonNull ? sum : L_MIN;
+}
+
+int32_t MIN_SHORT_BITMAP_NULL(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return I_MIN;
+
+    const int step = 16;
+    int32_t result = I_MAX;
+    bool hasNonNull = false;
+    int64_t i = 0;
+
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            int16_t v = ps[i];
+            if (v < result) result = v;
+            hasNonNull = true;
+        }
+    }
+
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    Vec16s vecMin = S_MAX;
+    int64_t vecNonNull = 0;
+    for (; i + step - 1 < count; i += step, bitmapBase += 2) {
+        Vec16s data;
+        data.load(ps + i);
+        Vec16sb isNull = expandBitmapToMask16(bitmapBase);
+        // Replace null lanes with S_MAX so they don't affect min
+        data = select(isNull, Vec16s(S_MAX), data);
+        vecMin = min(vecMin, data);
+        vecNonNull += step - horizontal_count(isNull);
+    }
+
+    if (vecNonNull > 0) {
+        int32_t vecResult = horizontal_min(vecMin);
+        if (vecResult < result) result = vecResult;
+        hasNonNull = true;
+    }
+
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            int16_t v = ps[i];
+            if (v < result) result = v;
+            hasNonNull = true;
+        }
+    }
+
+    return hasNonNull ? result : I_MIN;
+}
+
+int32_t MAX_SHORT_BITMAP_NULL(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return I_MIN;
+
+    const int step = 16;
+    int32_t result = I_MIN;
+    bool hasNonNull = false;
+    int64_t i = 0;
+
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            int16_t v = ps[i];
+            if (v > result) result = v;
+            hasNonNull = true;
+        }
+    }
+
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    Vec16s vecMax = S_MIN;
+    int64_t vecNonNull = 0;
+    for (; i + step - 1 < count; i += step, bitmapBase += 2) {
+        Vec16s data;
+        data.load(ps + i);
+        Vec16sb isNull = expandBitmapToMask16(bitmapBase);
+        data = select(isNull, Vec16s(S_MIN), data);
+        vecMax = max(vecMax, data);
+        vecNonNull += step - horizontal_count(isNull);
+    }
+
+    if (vecNonNull > 0) {
+        int32_t vecResult = horizontal_max(vecMax);
+        if (vecResult > result) result = vecResult;
+        hasNonNull = true;
+    }
+
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            int16_t v = ps[i];
+            if (v > result) result = v;
+            hasNonNull = true;
+        }
+    }
+
+    return hasNonNull ? result : I_MIN;
+}
+
+int64_t COUNT_SHORT_BITMAP_NULL(uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return 0;
+
+    int64_t nonNullCount = 0;
+    int64_t i = 0;
+
+    // Scalar prologue
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            nonNullCount++;
+        }
+    }
+
+    // Byte-level counting: each byte has popcount null bits
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    int64_t fullBytes = (count - i) >> 3;
+    for (int64_t b = 0; b < fullBytes; b++) {
+        // popcount gives number of null bits; 8 - popcount = non-null count
+        nonNullCount += 8 - __builtin_popcount(bitmapBase[b]);
+    }
+    i += fullBytes * 8;
+
+    // Scalar epilogue
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            nonNullCount++;
+        }
+    }
+
+    return nonNullCount;
+}
+
+// UINT16 bitmap-null aggregates (same layout as SHORT, unsigned comparison)
+int64_t SUM_UINT16_BITMAP_NULL(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return L_MIN;
+    // Use the SHORT sum but with zero-extension
+    const int step = 16;
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    int64_t i = 0;
+
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += (uint16_t) ps[i];
+            hasNonNull = true;
+        }
+    }
+
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    Vec8ui acc0 = 0;
+    Vec8ui acc1 = 0;
+    int64_t vecNonNull = 0;
+    for (; i + step - 1 < count; i += step, bitmapBase += 2) {
+        Vec16us data;
+        data.load((uint16_t *) (ps + i));
+        Vec16sb isNull = expandBitmapToMask16(bitmapBase);
+        Vec16us masked = select(isNull, Vec16us(0), data);
+        acc0 += extend_low(masked);
+        acc1 += extend_high(masked);
+        vecNonNull += step - horizontal_count(isNull);
+    }
+
+    sum += horizontal_add_x(Vec8i(acc0)) + horizontal_add_x(Vec8i(acc1));
+    hasNonNull = hasNonNull || (vecNonNull > 0);
+
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += (uint16_t) ps[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int32_t MIN_UINT16_BITMAP_NULL(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    // Delegate to vanilla — unsigned min with bitmap requires careful handling
+    return minUInt16BitmapNull_Vanilla(ps, bitmap, bitOffset, count);
+}
+
+int32_t MAX_UINT16_BITMAP_NULL(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    return maxUInt16BitmapNull_Vanilla(ps, bitmap, bitOffset, count);
+}
+
+#endif // SUM_SHORT_BITMAP_NULL
+
+// Bitmap-null INT32 (UINT32) aggregates
+#ifdef SUM_UINT32_BITMAP_NULL
+
+// Expand 16 bitmap bits to Vec16ib mask for 32-bit elements.
+// Process 16 × int32_t per iteration, read 2 bitmap bytes.
+static inline Vec16ib expandBitmapToMask16i(const uint8_t *bitmapPtr) {
+    Vec16i bitmask;
+    const int32_t bit_patterns[16] = {
+        1, 2, 4, 8, 16, 32, 64, 128,
+        1, 2, 4, 8, 16, 32, 64, 128
+    };
+    Vec16i patterns;
+    patterns.load(bit_patterns);
+    int32_t b0 = bitmapPtr[0];
+    int32_t b1 = bitmapPtr[1];
+    const int32_t bytes[16] = {b0, b0, b0, b0, b0, b0, b0, b0, b1, b1, b1, b1, b1, b1, b1, b1};
+    bitmask.load(bytes);
+    return (bitmask & patterns) != 0;
+}
+
+int64_t SUM_UINT32_BITMAP_NULL(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return L_MIN;
+
+    const int step = 16;
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    int64_t i = 0;
+
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += (uint32_t) pi[i];
+            hasNonNull = true;
+        }
+    }
+
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    Vec16i acc = 0;
+    int64_t vecNonNull = 0;
+    for (; i + step - 1 < count; i += step, bitmapBase += 2) {
+        Vec16i data;
+        data.load(pi + i);
+        Vec16ib isNull = expandBitmapToMask16i(bitmapBase);
+        Vec16i masked = select(isNull, Vec16i(0), data);
+        acc += masked;
+        vecNonNull += step - horizontal_count(isNull);
+    }
+
+    // Reduce with unsigned awareness: horizontal_add_x gives int64_t
+    sum += horizontal_add_x(acc);
+    hasNonNull = hasNonNull || (vecNonNull > 0);
+
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += (uint32_t) pi[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int64_t MIN_UINT32_BITMAP_NULL(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    return minUInt32BitmapNull_Vanilla(pi, bitmap, bitOffset, count);
+}
+
+int64_t MAX_UINT32_BITMAP_NULL(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    return maxUInt32BitmapNull_Vanilla(pi, bitmap, bitOffset, count);
+}
+
+#endif // SUM_UINT32_BITMAP_NULL
+
+// Bitmap-null INT64 (UINT64) aggregates
+#ifdef SUM_UINT64_BITMAP_NULL
+
+// Expand 8 bitmap bits (1 byte) to Vec8qb mask for 64-bit elements.
+static inline Vec8qb expandBitmapToMask8q(const uint8_t *bitmapPtr) {
+    Vec8q bitmask;
+    const int64_t bit_patterns[8] = {1, 2, 4, 8, 16, 32, 64, 128};
+    Vec8q patterns;
+    patterns.load(bit_patterns);
+    int64_t b0 = bitmapPtr[0];
+    bitmask = b0;
+    return (bitmask & patterns) != 0;
+}
+
+int64_t SUM_UINT64_BITMAP_NULL(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    if (count == 0) return L_MIN;
+
+    const int step = 8;
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    int64_t i = 0;
+
+    int64_t alignedStart = ((bitOffset + 7) & ~7) - bitOffset;
+    if (alignedStart > count) alignedStart = count;
+    for (; i < alignedStart; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += pl[i];
+            hasNonNull = true;
+        }
+    }
+
+    const uint8_t *bitmapBase = bitmap + ((bitOffset + i) >> 3);
+    Vec8q vecsum = 0;
+    int64_t vecNonNull = 0;
+    for (; i + step - 1 < count; i += step, bitmapBase++) {
+        Vec8q data;
+        data.load(pl + i);
+        Vec8qb isNull = expandBitmapToMask8q(bitmapBase);
+        vecsum = if_add(!isNull, vecsum, data);
+        vecNonNull += step - horizontal_count(isNull);
+    }
+
+    sum += horizontal_add(vecsum);
+    hasNonNull = hasNonNull || (vecNonNull > 0);
+
+    for (; i < count; i++) {
+        if (!bitmapIsNull(bitmap, bitOffset + i)) {
+            sum += pl[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int64_t MIN_UINT64_BITMAP_NULL(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    return minUInt64BitmapNull_Vanilla(pl, bitmap, bitOffset, count);
+}
+
+int64_t MAX_UINT64_BITMAP_NULL(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    return maxUInt64BitmapNull_Vanilla(pl, bitmap, bitOffset, count);
+}
+
+#endif // SUM_UINT64_BITMAP_NULL
+
 #ifdef SUM_DOUBLE
 
 int64_t COUNT_DOUBLE(double *d, int64_t count) {
@@ -881,83 +1336,23 @@ LONG_LONG_ACC_DISPATCHER(sumLongAcc)
 LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 
-// Bitmap-null-aware SHORT aggregation JNI exports.
-// These call vanilla (scalar) implementations directly. SIMD versions can be
-// added later by creating dispatcher macros with the bitmap signature.
-extern "C" {
+// Bitmap-null dispatchers
+SHORT_LONG_BITMAP_NULL_DISPATCHER(sumShortBitmapNull)
+SHORT_INT_BITMAP_NULL_DISPATCHER(minShortBitmapNull)
+SHORT_INT_BITMAP_NULL_DISPATCHER(maxShortBitmapNull)
+BITMAP_COUNT_DISPATCHER(countShortBitmapNull)
 
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_sumShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
-    return sumShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
-}
+SHORT_LONG_BITMAP_NULL_DISPATCHER(sumUInt16BitmapNull)
+SHORT_INT_BITMAP_NULL_DISPATCHER(minUInt16BitmapNull)
+SHORT_INT_BITMAP_NULL_DISPATCHER(maxUInt16BitmapNull)
 
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_Vect_minShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
-    return minShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
-}
+INT_LONG_BITMAP_NULL_DISPATCHER(sumUInt32BitmapNull)
+INT_LONG_BITMAP_NULL_DISPATCHER(minUInt32BitmapNull)
+INT_LONG_BITMAP_NULL_DISPATCHER(maxUInt32BitmapNull)
 
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_Vect_maxShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
-    return maxShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_countShortBitmapNull(JNIEnv *env, jclass cl, jlong pBitmap, jlong bitOffset, jlong count) {
-    return countShortBitmapNull_Vanilla((uint8_t *) pBitmap, bitOffset, count);
-}
-
-// UINT16 bitmap-null aggregation JNI exports.
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_sumUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
-    return sumUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_Vect_minUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
-    return minUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_Vect_maxUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
-    return maxUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-// UINT32 bitmap-null aggregation JNI exports.
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_sumUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) {
-    return sumUInt32BitmapNull_Vanilla((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_minUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) {
-    return minUInt32BitmapNull_Vanilla((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_maxUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) {
-    return maxUInt32BitmapNull_Vanilla((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-// UINT64 bitmap-null aggregation JNI exports.
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_sumUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) {
-    return sumUInt64BitmapNull_Vanilla((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_minUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) {
-    return minUInt64BitmapNull_Vanilla((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_maxUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) {
-    return maxUInt64BitmapNull_Vanilla((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count);
-}
-
-}
+LONG_LONG_BITMAP_NULL_DISPATCHER(sumUInt64BitmapNull)
+LONG_LONG_BITMAP_NULL_DISPATCHER(minUInt64BitmapNull)
+LONG_LONG_BITMAP_NULL_DISPATCHER(maxUInt64BitmapNull)
 
 extern "C" {
 

@@ -102,14 +102,12 @@ public abstract class ByteFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        if (isNull(rec)) return Double.NaN;
-        return getByte(rec);
+        return Numbers.intToDouble(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        if (isNull(rec)) return Float.NaN;
-        return getByte(rec);
+        return Numbers.intToFloat(getInt(rec));
     }
 
     @Override
@@ -150,8 +148,7 @@ public abstract class ByteFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        if (isNull(rec)) return Numbers.LONG_NULL;
-        return getByte(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

@@ -207,11 +207,7 @@ public class NullBitmapMigrator {
     }
 
     private static void setBit(long bitmapAddr, long row) {
-        long byteOffset = row >> 3;
-        int bitIndex = (int) (row & 7);
-        long addr = bitmapAddr + byteOffset;
-        byte current = Unsafe.getUnsafe().getByte(addr);
-        Unsafe.getUnsafe().putByte(addr, (byte) (current | (1 << bitIndex)));
+        NullBitmapUtil.setNull(bitmapAddr, row);
     }
 
     private static void writeNFile(FilesFacade ff, LPSZ nFilePath, long bitmapAddr, long bitmapSize) {
@@ -230,6 +226,7 @@ public class NullBitmapMigrator {
                         .put(", expected=").put(bitmapSize)
                         .put(", written=").put(written).put(']');
             }
+            ff.fsync(fd);
         } finally {
             ff.close(fd);
         }
