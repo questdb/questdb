@@ -132,7 +132,7 @@ offending character, not the start of the expression.
 
 ```bash
 # Build JAR without tests (fastest)
-mvn clean package -DskipTests
+mvn clean package -DskipTests -P local-client
 
 # Build with web console
 mvn clean package -DskipTests -P build-web-console
@@ -140,6 +140,16 @@ mvn clean package -DskipTests -P build-web-console
 # Build with web console and native binaries
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
+
+When you build just the core module with `mvn -pl core`, it will fall use a
+pre-built java-questdb-client module, installed in the local Maven cache. It may
+be stale and result in build errors. Fix this issue with:
+
+```bash
+cd java-questdb-client && mvn clean install -DskipTests && cd -
+```
+
+This should install a fresh version into the Maven cache.
 
 ### Running Tests
 
