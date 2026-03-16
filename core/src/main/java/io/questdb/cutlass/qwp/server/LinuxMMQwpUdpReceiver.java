@@ -44,7 +44,12 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
         super(configuration, engine, workerPool);
         this.msgCount = configuration.getMsgCount();
-        this.msgVec = nf.msgHeaders(bufLen, msgCount);
+        try {
+            this.msgVec = nf.msgHeaders(bufLen, msgCount);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
     }
 
     @Override
