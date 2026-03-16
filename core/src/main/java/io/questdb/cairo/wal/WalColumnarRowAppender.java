@@ -94,6 +94,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     @Override
     public void beginColumnarWrite(int rowCount) {
+        walWriter.checkDistressed();
         if (inColumnarWrite) {
             throw CairoException.nonCritical().put("already in columnar write mode");
         }

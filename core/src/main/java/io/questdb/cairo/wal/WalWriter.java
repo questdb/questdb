@@ -881,7 +881,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return tally > threshold;
     }
 
-    private void checkDistressed() {
+    void checkDistressed() {
         if (!distressed) {
             return;
         }
