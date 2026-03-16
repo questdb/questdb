@@ -4368,6 +4368,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Function joinFilter = null;
                 Function windowHiFunc = null;
                 Function windowLoFunc = null;
+                ObjList<Function> perWorkerWindowLoFuncs = null;
+                ObjList<Function> perWorkerWindowHiFuncs = null;
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
                 try {
@@ -4889,6 +4891,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
                                     } else {
+                                        perWorkerWindowLoFuncs = compileWorkerFunctionsConditionally(
+                                                executionContext,
+                                                windowLoFunc,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                context.getLoExpr(),
+                                                masterMetadata
+                                        );
+                                        perWorkerWindowHiFuncs = compileWorkerFunctionsConditionally(
+                                                executionContext,
+                                                windowHiFunc,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                context.getHiExpr(),
+                                                masterMetadata
+                                        );
                                         master = new AsyncWindowJoinRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 configuration,
@@ -4912,20 +4928,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 hi,
                                                 windowLoFunc,
                                                 windowHiFunc,
-                                                compileWorkerFunctionsConditionally(
-                                                        executionContext,
-                                                        windowLoFunc,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        context.getLoExpr(),
-                                                        masterMetadata
-                                                ),
-                                                compileWorkerFunctionsConditionally(
-                                                        executionContext,
-                                                        windowHiFunc,
-                                                        executionContext.getSharedQueryWorkerCount(),
-                                                        context.getHiExpr(),
-                                                        masterMetadata
-                                                ),
+                                                perWorkerWindowLoFuncs,
+                                                perWorkerWindowHiFuncs,
                                                 loSign,
                                                 hiSign,
                                                 loTimeUnit,
@@ -4956,9 +4960,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
-                                        // Factory now owns these functions.
+                                        // Factory now owns these resources.
                                         windowLoFunc = null;
                                         windowHiFunc = null;
+                                        perWorkerWindowLoFuncs = null;
+                                        perWorkerWindowHiFuncs = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slave.supportsTimeFrameCursor()) {
@@ -5094,6 +5100,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.free(joinFilter);
                     Misc.free(windowHiFunc);
                     Misc.free(windowLoFunc);
+                    Misc.freeObjListIfCloseable(perWorkerWindowLoFuncs);
+                    Misc.freeObjListIfCloseable(perWorkerWindowHiFuncs);
                     Misc.freeObjList(groupByFunctions);
                     master = Misc.free(master);
                     if (closeSlaveOnFailure) {
