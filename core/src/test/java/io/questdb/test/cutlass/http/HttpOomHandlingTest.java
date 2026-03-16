@@ -49,9 +49,6 @@ public class HttpOomHandlingTest extends AbstractBootstrapTest {
         super.setUp();
     }
 
-    // Not wrapped in assertMemoryLeak() because OOM during HttpConnectionContext construction
-    // inherently leaks native memory from partially initialized fields (e.g., DirectUtf8Sink in
-    // HttpHeaderParser). This is a pre-existing resource management limitation, not a regression.
     @Test
     public void testOomDuringAcceptReturns503() throws Exception {
         TestUtils.unchecked(() -> createDummyConfiguration(
