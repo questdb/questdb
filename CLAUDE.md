@@ -46,8 +46,8 @@ is... or has... prefix, as appropriate.
   because the factory properties are irrelevant for data-correctness checks and
   can cause false failures.
 - use execute() to run non-queries (DDL)
-- use UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
-  etc.)
+- prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
+  etc.), but mixing cases is acceptable since SQL is case-insensitive
 - use a single INSERT statement to insert multiple rows
 - use multiline strings for longer statements (multiple INSERT rows, complex
   queries), as well as to assert multiline query results

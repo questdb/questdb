@@ -186,7 +186,7 @@ fn write_options() -> WriteOptions {
 fn primitive_type_for(column_type: ColumnType) -> PrimitiveType {
     let raw_array_encoding = column_type.tag() == ColumnTypeTag::Array;
     let parquet_type =
-        column_type_to_parquet_type(0, "col", column_type, false, false, raw_array_encoding)
+        column_type_to_parquet_type(0, "col", column_type, false, raw_array_encoding)
             .expect("parquet type");
 
     match parquet_type {

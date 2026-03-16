@@ -19,16 +19,18 @@ pub fn column_type_to_parquet_type(
     column_name: &str,
     column_type: ColumnType,
     designated_timestamp: bool,
-    required: bool,
     raw_array_encoding: bool,
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
-    // Types that don't have null values in QuestDB always use Required repetition
+    // Types that don't have null values in QuestDB always use Required repetition.
+    // All other types use Optional so the file-level schema is stable across O3
+    // merges — this avoids a REQUIRED→OPTIONAL transition that would break
+    // copy_row_group (raw-copied pages already have def levels encoded).
     let is_notnull_type = matches!(
         column_type.tag(),
         ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
     );
-    let repetition = if designated_timestamp || required || is_notnull_type {
+    let repetition = if designated_timestamp || is_notnull_type {
         Repetition::Required
     } else {
         Repetition::Optional
@@ -418,7 +420,6 @@ pub fn to_parquet_schema(
                 c.name,
                 c.data_type,
                 c.designated_timestamp,
-                c.required,
                 raw_array_encoding,
             )
         })

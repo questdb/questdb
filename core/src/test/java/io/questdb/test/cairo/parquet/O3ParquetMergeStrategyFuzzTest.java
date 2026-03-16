@@ -61,7 +61,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         setFuzzProbabilities(
                 0,      // cancelRow
                 0,      // notSet
-                0,      // null
+                0.1,    // null
                 0,      // rollback
                 0,      // colAdd
                 0,      // colRemove

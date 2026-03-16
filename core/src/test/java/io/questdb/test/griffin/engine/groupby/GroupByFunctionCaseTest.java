@@ -207,7 +207,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                               SAMPLE BY 1h\s
                               ALIGN TO CALENDAR TIME ZONE 'UTC'""",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [candle_st]
                                 VirtualRecord
                                   functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]

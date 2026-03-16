@@ -4,6 +4,7 @@ use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
+use parquet2::encoding::uleb128;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
@@ -244,6 +245,36 @@ pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
         Version::V1 => encode_primitive_def_levels_v1(buffer, iter, length),
         Version::V2 => encode_primitive_def_levels_v2(buffer, iter, length),
     }
+}
+
+/// Encode def levels where every value is present (all 1s).
+/// Uses a single RLE run which is ~3 bytes regardless of row count,
+/// vs the general bitpacked path that scales with row count.
+pub fn encode_all_ones_def_levels(buffer: &mut Vec<u8>, num_rows: usize, version: Version) {
+    match version {
+        Version::V1 => {
+            // 4-byte LE length prefix, then RLE payload
+            let start = buffer.len();
+            buffer.extend_from_slice(&[0; 4]);
+            let payload_start = buffer.len();
+            encode_rle_ones(buffer, num_rows);
+            let payload_len = (buffer.len() - payload_start) as i32;
+            buffer[start..start + 4].copy_from_slice(&payload_len.to_le_bytes());
+        }
+        Version::V2 => {
+            encode_rle_ones(buffer, num_rows);
+        }
+    }
+}
+
+/// Emit an RLE run of `count` ones with bit_width=1.
+/// Format: varint header (count << 1, even = RLE) + 1 value byte (0x01).
+fn encode_rle_ones(buffer: &mut Vec<u8>, count: usize) {
+    let header = (count as u64) << 1; // even = RLE mode
+    let mut container = [0u8; 10];
+    let used = uleb128::encode(header, &mut container);
+    buffer.extend_from_slice(&container[..used]);
+    buffer.push(0x01); // value = 1 in 1 byte (ceil(bit_width/8) = 1)
 }
 
 fn encode_group_levels_v1<I: Iterator<Item = u32>>(

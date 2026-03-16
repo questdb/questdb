@@ -43,23 +43,33 @@ public class PartitionUpdater implements QuietCloseable {
         destroy();
     }
 
-    public void copyRowGroup(short rowGroupIndex) {
-        assert ptr != 0;
-        copyRowGroup(ptr, rowGroupIndex);
+    public void addRowGroup(int position, PartitionDescriptor descriptor) {
+        final int columnCount = descriptor.getColumnCount();
+        final long rowCount = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
+        try {
+            assert ptr != 0;
+            insertRowGroup(
+                    ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
+                    position,
+                    columnCount,
+                    descriptor.getColumnNamesPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
+                    timestampIndex,
+                    rowCount
+            );
+        } finally {
+            descriptor.clear();
+        }
     }
 
-    /**
-     * Copies a row group from the source file, appending null column chunks
-     * for columns present in the target schema but missing from the source.
-     *
-     * @param rowGroupIndex    index of the row group to copy
-     * @param nullColDescAddr  native memory address of flat array: pairs of
-     *                         [targetSchemaPosition (long), columnType (long)]
-     * @param nullColCount     number of null columns
-     */
-    public void copyRowGroupWithNullColumns(short rowGroupIndex, long nullColDescAddr, int nullColCount) {
+    public void copyRowGroup(int rowGroupIndex) {
         assert ptr != 0;
-        copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
+        copyRowGroup(ptr, rowGroupIndex);
     }
 
     /**
@@ -99,28 +109,18 @@ public class PartitionUpdater implements QuietCloseable {
         return updateFileMetadata(ptr);
     }
 
-    public void addRowGroup(short position, PartitionDescriptor descriptor) {
-        final int columnCount = descriptor.getColumnCount();
-        final long rowCount = descriptor.getPartitionRowCount();
-        final int timestampIndex = descriptor.getTimestampIndex();
-        try {
-            assert ptr != 0;
-            insertRowGroup(
-                    ptr,
-                    descriptor.tableName.size(),
-                    descriptor.tableName.ptr(),
-                    position,
-                    columnCount,
-                    descriptor.getColumnNamesPtr(),
-                    descriptor.getColumnNamesLen(),
-                    descriptor.getColumnDataPtr(),
-                    descriptor.getColumnDataLen(),
-                    timestampIndex,
-                    rowCount
-            );
-        } finally {
-            descriptor.clear();
-        }
+    /**
+     * Copies a row group from the source file, appending null column chunks
+     * for columns present in the target schema but missing from the source.
+     *
+     * @param rowGroupIndex   index of the row group to copy
+     * @param nullColDescAddr native memory address of flat array: pairs of
+     *                        [targetSchemaPosition (long), columnType (long)]
+     * @param nullColCount    number of null columns
+     */
+    public void copyRowGroupWithNullColumns(int rowGroupIndex, long nullColDescAddr, int nullColCount) {
+        assert ptr != 0;
+        copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
     }
 
     public void of(
@@ -157,7 +157,7 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
+    public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -183,12 +183,12 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void copyRowGroup(
             long impl,
-            short rowGroupIndex
+            int rowGroupIndex
     ) throws CairoException;
 
     private static native void copyRowGroupWithNullColumns(
             long impl,
-            short rowGroupIndex,
+            int rowGroupIndex,
             long nullColDescAddr,
             int nullColCount
     ) throws CairoException;
@@ -230,7 +230,7 @@ public class PartitionUpdater implements QuietCloseable {
             long impl,
             int tableNameLen,
             long tableNamePtr,
-            short position,
+            int position,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,
@@ -247,7 +247,7 @@ public class PartitionUpdater implements QuietCloseable {
             long impl,
             int tableNameLen,
             long tableNamePtr,
-            short rowGroupId,
+            int rowGroupId,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,

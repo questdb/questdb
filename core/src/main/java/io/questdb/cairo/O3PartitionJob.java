@@ -159,20 +159,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;
-                // Row group indices are passed as i16 through JNI to Rust. The Parquet
-                // format itself supports i32 row group counts, but having more than 32K
-                // row groups per partition degrades read performance (large footer,
-                // excessive metadata overhead). If this limit is hit, the fix is to
-                // increase cairo.partition.encoder.parquet.row.group.size rather than
-                // widening the index type.
-                if (rowGroupCount > Short.MAX_VALUE) {
-                    throw CairoException.critical(0)
-                            .put("too many row groups in parquet partition for O3 merge [rowGroupCount=")
-                            .put(rowGroupCount)
-                            .put(", max=")
-                            .put((int) Short.MAX_VALUE)
-                            .put(']');
-                }
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
                 final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
                 assert ColumnType.isTimestamp(timestampColumnType);
@@ -217,10 +203,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // They must be distinct OS fds even when pointing to the same file,
                 // because the reader and writer maintain independent cursor positions.
                 // Rust closes both fds when the ParquetUpdater is dropped.
-                int readerFd = -1;
-                int writerFd = -1;
+                int readerFdOs = -1, writerFdOs = -1;
+                long readerFd = -1, writerFd = -1;
+                final long writeFileSize;
                 try {
-                    final long writeFileSize;
+                    readerFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    readerFdOs = Files.detach(readerFd);
+                    readerFd = -1;
                     if (isRewrite) {
                         // Rewrite mode: write to a new partition directory named by txn.
                         // The old directory (srcNameTxn) is left intact and queued for removal on commit.
@@ -228,73 +217,78 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
                         ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
-                        readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
-                        writerFd = Files.detach(TableUtils.openRW(ff, newPath.$(), LOG, opts));
+                        writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                        writerFdOs = Files.detach(writerFd);
+                        writerFd = -1;
                         writeFileSize = 0;
                     } else {
-                        readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
-                        writerFd = Files.detach(TableUtils.openRW(ff, path.$(), LOG, opts));
+                        writerFd = TableUtils.openRW(ff, path.$(), LOG, opts);
+                        writerFdOs = Files.detach(writerFd);
+                        writerFd = -1;
                         writeFileSize = parquetSize;
                     }
-
-                    // partitionUpdater.of() transfers fd ownership to Rust.
-                    // After this call succeeds, Rust closes both fds on destroy.
-                    partitionUpdater.of(
-                            path.$(),
-                            readerFd,
-                            parquetSize,
-                            writerFd,
-                            writeFileSize,
-                            timestampIndex,
-                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                            statisticsEnabled,
-                            rawArrayEncoding,
-                            rowGroupSize,
-                            dataPageSize,
-                            bloomFilterFpp
-                    );
-
-                    if (hasSchemaChange) {
-                        // Table schema differs from parquet file schema (ADD COLUMN,
-                        // DROP COLUMN, or both). Pass the full target schema to Rust
-                        // so the output file footer, column remapping, and null column
-                        // chunks use the new schema.
-                        // For SYMBOL columns, set the high bit on the column type
-                        // when the symbol map has no null flag — this propagates to
-                        // Repetition::Required in the Parquet schema, matching how
-                        // the original file encoded the column (no definition levels).
-                        final PartitionDescriptor schemaDesc = new PartitionDescriptor();
-                        try {
-                            schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
-                            for (int i = 0; i < columnCount; i++) {
-                                int colType = tableWriterMetadata.getColumnType(i);
-                                if (colType < 0) {
-                                    continue;
-                                }
-                                if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
-                                    colType |= Integer.MIN_VALUE;
-                                }
-                                final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                                schemaDesc.addColumn(
-                                        tableWriterMetadata.getColumnName(i),
-                                        colType,
-                                        colId,
-                                        0
-                                );
-                            }
-                            partitionUpdater.setTargetSchema(schemaDesc);
-                        } finally {
-                            schemaDesc.close();
-                        }
-                    }
                 } catch (Throwable e) {
-                    if (readerFd != -1) {
-                        ff.close(readerFd);
+                    O3Utils.close(ff, readerFd);
+                    if (readerFdOs != -1) {
+                        Files.closeDetached(readerFdOs);
                     }
-                    if (writerFd != -1) {
-                        ff.close(writerFd);
-                    }
+                    O3Utils.close(ff, writerFd);
+                    // writerFdOs is not closed on error because in this catch is always -1;
+                    //noinspection ConstantValue
+                    assert writerFdOs == -1;
                     throw e;
+                }
+
+                // partitionUpdater.of() transfers fd ownership to Rust.
+                // Rust closes both fds on success (via destroy) and on error
+                // (via File drop). Skip Java-side close once ownership transfers.
+                partitionUpdater.of(
+                        path.$(),
+                        readerFdOs,
+                        parquetSize,
+                        writerFdOs,
+                        writeFileSize,
+                        timestampIndex,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        bloomFilterFpp
+                );
+
+                if (hasSchemaChange) {
+                    // Table schema differs from parquet file schema (ADD COLUMN,
+                    // DROP COLUMN, or both). Pass the full target schema to Rust
+                    // so the output file footer, column remapping, and null column
+                    // chunks use the new schema.
+                    // For SYMBOL columns, set the high bit on the column type
+                    // when the symbol map has no null flag — this propagates to
+                    // Repetition::Required in the Parquet schema, matching how
+                    // the original file encoded the column (no definition levels).
+                    final PartitionDescriptor schemaDesc = new PartitionDescriptor();
+                    try {
+                        schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
+                        for (int i = 0; i < columnCount; i++) {
+                            int colType = tableWriterMetadata.getColumnType(i);
+                            if (colType < 0) {
+                                continue;
+                            }
+                            if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
+                                colType |= Integer.MIN_VALUE;
+                            }
+                            final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
+                            schemaDesc.addColumn(
+                                    tableWriterMetadata.getColumnName(i),
+                                    colType,
+                                    colId,
+                                    0
+                            );
+                        }
+                        partitionUpdater.setTargetSchema(schemaDesc);
+                    } finally {
+                        schemaDesc.close();
+                    }
                 }
 
                 // Build row group bounds for merge strategy computation.
@@ -347,14 +341,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int metadataPosition = 0;
                 try {
                     for (int i = 0; i < actionCount; i++) {
-                        if (metadataPosition > Short.MAX_VALUE) {
-                            throw CairoException.critical(0)
-                                    .put("too many output row groups in parquet O3 merge [count=")
-                                    .put(metadataPosition)
-                                    .put(", max=")
-                                    .put((int) Short.MAX_VALUE)
-                                    .put(']');
-                        }
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE: {
@@ -424,7 +410,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 tableToParquetIdx
                                         );
                                     } else {
-                                        partitionUpdater.copyRowGroup((short) action.rowGroupIndex);
+                                        partitionUpdater.copyRowGroup(action.rowGroupIndex);
                                     }
                                     tableWriter.addPhysicallyWrittenRows(rgSize);
                                 }
@@ -450,7 +436,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         action.o3Lo,
                                         action.o3Hi,
                                         tableWriterMetadata,
-                                        (short) metadataPosition
+                                        metadataPosition
                                 );
                                 tableWriter.addPhysicallyWrittenRows(action.o3Hi - action.o3Lo + 1);
                                 metadataPosition++;
@@ -1491,65 +1477,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return Long.MAX_VALUE;
     }
 
-    /**
-     * Copies a row group from the source parquet file, appending null column
-     * chunks for columns that exist in the current table schema but are missing
-     * from the parquet file (ADD COLUMN case).
-     */
-    private static void copyRowGroupWithNullColumns(
-            PartitionUpdater partitionUpdater,
-            int rowGroupIndex,
-            TableRecordMetadata tableWriterMetadata,
-            int[] tableToParquetIdx
-    ) {
-        // Count missing columns (present in table but absent from parquet).
-        // This may be zero in a DROP-only scenario — the function still
-        // handles column remapping via field_id, dropping extra parquet
-        // columns that no longer exist in the table schema.
-        int nullColCount = 0;
-        final int columnCount = tableWriterMetadata.getColumnCount();
-        for (int i = 0; i < columnCount; i++) {
-            if (tableWriterMetadata.getColumnType(i) >= 0 && tableToParquetIdx[i] < 0) {
-                nullColCount++;
-            }
-        }
-
-        if (nullColCount == 0) {
-            // DROP-only: no null columns needed, but the Rust function
-            // still remaps existing columns by field_id, skipping dropped ones.
-            partitionUpdater.copyRowGroupWithNullColumns((short) rowGroupIndex, 0, 0);
-            return;
-        }
-
-        // Build the null column descriptor in native memory: pairs of
-        // [targetSchemaPosition (long), columnType (long)] per null column.
-        final long descSize = (long) nullColCount * 2 * Long.BYTES;
-        final long descAddr = Unsafe.malloc(descSize, MemoryTag.NATIVE_O3);
-        try {
-            int targetPos = 0;
-            int descIdx = 0;
-            for (int i = 0; i < columnCount; i++) {
-                final int colType = tableWriterMetadata.getColumnType(i);
-                if (colType < 0) {
-                    continue; // deleted column, not in target schema
-                }
-                if (tableToParquetIdx[i] < 0) {
-                    Unsafe.getUnsafe().putLong(descAddr + (long) descIdx * Long.BYTES, targetPos);
-                    Unsafe.getUnsafe().putLong(descAddr + (long) (descIdx + 1) * Long.BYTES, colType);
-                    descIdx += 2;
-                }
-                targetPos++;
-            }
-            partitionUpdater.copyRowGroupWithNullColumns(
-                    (short) rowGroupIndex,
-                    descAddr,
-                    nullColCount
-            );
-        } finally {
-            Unsafe.free(descAddr, descSize, MemoryTag.NATIVE_O3);
-        }
-    }
-
     private static void copyO3ToRowGroup(
             PartitionDescriptor partitionDescriptor,
             PartitionUpdater partitionUpdater,
@@ -1560,7 +1487,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3Lo,
             long o3Hi,
             TableRecordMetadata tableWriterMetadata,
-            short metadataPosition
+            int metadataPosition
     ) {
         final long rowCount = o3Hi - o3Lo + 1;
         // Use the sorted timestamps directly as merge index.
@@ -1696,6 +1623,65 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
         partitionUpdater.addRowGroup(metadataPosition, partitionDescriptor);
+    }
+
+    /**
+     * Copies a row group from the source parquet file, appending null column
+     * chunks for columns that exist in the current table schema but are missing
+     * from the parquet file (ADD COLUMN case).
+     */
+    private static void copyRowGroupWithNullColumns(
+            PartitionUpdater partitionUpdater,
+            int rowGroupIndex,
+            TableRecordMetadata tableWriterMetadata,
+            int[] tableToParquetIdx
+    ) {
+        // Count missing columns (present in table but absent from parquet).
+        // This may be zero in a DROP-only scenario — the function still
+        // handles column remapping via field_id, dropping extra parquet
+        // columns that no longer exist in the table schema.
+        int nullColCount = 0;
+        final int columnCount = tableWriterMetadata.getColumnCount();
+        for (int i = 0; i < columnCount; i++) {
+            if (tableWriterMetadata.getColumnType(i) >= 0 && tableToParquetIdx[i] < 0) {
+                nullColCount++;
+            }
+        }
+
+        if (nullColCount == 0) {
+            // DROP-only: no null columns needed, but the Rust function
+            // still remaps existing columns by field_id, skipping dropped ones.
+            partitionUpdater.copyRowGroupWithNullColumns(rowGroupIndex, 0, 0);
+            return;
+        }
+
+        // Build the null column descriptor in native memory: pairs of
+        // [targetSchemaPosition (long), columnType (long)] per null column.
+        final long descSize = (long) nullColCount * 2 * Long.BYTES;
+        final long descAddr = Unsafe.malloc(descSize, MemoryTag.NATIVE_O3);
+        try {
+            int targetPos = 0;
+            int descIdx = 0;
+            for (int i = 0; i < columnCount; i++) {
+                final int colType = tableWriterMetadata.getColumnType(i);
+                if (colType < 0) {
+                    continue; // deleted column, not in target schema
+                }
+                if (tableToParquetIdx[i] < 0) {
+                    Unsafe.getUnsafe().putLong(descAddr + (long) descIdx * Long.BYTES, targetPos);
+                    Unsafe.getUnsafe().putLong(descAddr + (long) (descIdx + 1) * Long.BYTES, colType);
+                    descIdx += 2;
+                }
+                targetPos++;
+            }
+            partitionUpdater.copyRowGroupWithNullColumns(
+                    rowGroupIndex,
+                    descAddr,
+                    nullColCount
+            );
+        } finally {
+            Unsafe.free(descAddr, descSize, MemoryTag.NATIVE_O3);
+        }
     }
 
     private static long createMergeIndex(
@@ -2374,9 +2360,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (chunk == 0) {
-                    partitionUpdater.updateRowGroup((short) rowGroupIndex, chunkDescriptor);
+                    partitionUpdater.updateRowGroup(rowGroupIndex, chunkDescriptor);
                 } else {
-                    partitionUpdater.addRowGroup((short) (metadataPosition + chunk), chunkDescriptor);
+                    partitionUpdater.addRowGroup(metadataPosition + chunk, chunkDescriptor);
                 }
                 chunkLo += chunkRowCount;
             }
@@ -3198,6 +3184,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                         indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
+                        vFd = kFd = -1;
 
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
@@ -3240,6 +3227,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         indexWriter.commit();
                     } finally {
                         Misc.free(indexWriter);
+                        O3Utils.close(ff, kFd);
+                        O3Utils.close(ff, vFd);
                     }
                 }
             }

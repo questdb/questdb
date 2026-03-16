@@ -15,7 +15,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -26,7 +26,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
-    rg_index: jshort,
+    rg_index: jint,
 ) {
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
@@ -101,7 +101,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
-    rg_index: jshort,
+    rg_index: jint,
     null_col_desc_ptr: *const i64,
     null_col_count: jint,
 ) {
@@ -168,6 +168,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     bloom_filter_fpp: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
+        // Take ownership of fds immediately so Rust closes them on any error
+        // path below. The Java caller must set its fd locals to -1 before this
+        // JNI call so that it never double-closes on the exception path.
+        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
+        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
+
         // reader_fd and writer_fd must be distinct OS file descriptors.
         // Both are closed by Rust when ParquetUpdater is dropped.
         // Passing the same fd would cause a double-close bug.
@@ -206,9 +212,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
-            unsafe { File::from_raw_fd_i32(reader_fd) },
+            reader_file,
             read_file_size,
-            unsafe { File::from_raw_fd_i32(writer_fd) },
+            writer_file,
             write_file_size,
             sorting_columns,
             statistics_enabled,
@@ -293,7 +299,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_updater: *mut ParquetUpdater,
     table_name_len: u32,
     table_name_ptr: *const u8,
-    row_group_id: jshort,
+    row_group_id: jint,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -347,7 +353,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_updater: *mut ParquetUpdater,
     table_name_len: u32,
     table_name_ptr: *const u8,
-    position: jshort,
+    position: jint,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,

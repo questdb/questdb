@@ -39,18 +39,18 @@ import io.questdb.std.ObjList;
 import java.io.Closeable;
 
 public class O3ParquetMergeContext implements Closeable {
+    private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private PartitionDescriptor chunkDescriptor;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
     private LongList nullBufs;
-    private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private DirectIntList parquetColumns;
     private PartitionDecoder partitionDecoder;
     private OwnedMemoryPartitionDescriptor partitionDescriptor;
     private PartitionUpdater partitionUpdater;
     private LongList rgO3Ranges;
-    private RowGroupBuffers rowGroupBuffers;
     private LongList rowGroupBounds;
+    private RowGroupBuffers rowGroupBuffers;
     private RowGroupStatBuffers rowGroupStatBuffers;
     private LongList srcPtrs;
 
@@ -101,16 +101,16 @@ public class O3ParquetMergeContext implements Closeable {
         srcPtrs = null;
     }
 
+    public ObjList<O3ParquetMergeStrategy.MergeAction> getActionsBuf() {
+        return actionsBuf;
+    }
+
     public PartitionDescriptor getChunkDescriptor() {
         return chunkDescriptor;
     }
 
     public LongList getGapO3Ranges() {
         return gapO3Ranges;
-    }
-
-    public ObjList<O3ParquetMergeStrategy.MergeAction> getActionsBuf() {
-        return actionsBuf;
     }
 
     public LongList getMergeDstBufs(int colCount) {
@@ -147,12 +147,12 @@ public class O3ParquetMergeContext implements Closeable {
         return rgO3Ranges;
     }
 
-    public RowGroupBuffers getRowGroupBuffers() {
-        return rowGroupBuffers;
-    }
-
     public LongList getRowGroupBounds() {
         return rowGroupBounds;
+    }
+
+    public RowGroupBuffers getRowGroupBuffers() {
+        return rowGroupBuffers;
     }
 
     public RowGroupStatBuffers getRowGroupStatBuffers() {

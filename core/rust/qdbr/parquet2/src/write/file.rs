@@ -673,7 +673,7 @@ impl<W: Write> ParquetFile<W> {
     pub fn replace<E>(
         &mut self,
         row_group: RowGroupIter<'_, E>,
-        ordinal: Option<i16>,
+        ordinal: Option<i32>,
         bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
     ) -> std::result::Result<(), E>
     where
@@ -709,7 +709,7 @@ impl<W: Write> ParquetFile<W> {
     pub fn insert<E>(
         &mut self,
         row_group: RowGroupIter<'_, E>,
-        position: i16,
+        position: i32,
         bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
     ) -> std::result::Result<(), E>
     where

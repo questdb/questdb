@@ -70,7 +70,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             Rnd rnd
     ) throws SqlException {
         long microsBetweenRows = 1000000L;
-        int nTotalRows = 120000;
+        int nTotalRows = 120_000;
         // create initial table "x"
         String sql = "create table x as (" +
                 "select" +

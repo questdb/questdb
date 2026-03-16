@@ -62,61 +62,6 @@ public class O3ParquetMergeStrategy {
     }
 
     /**
-     * Computes the merge strategy with default small row group threshold and no row group size limit.
-     * Allocates temporary buffers internally. For zero-GC usage, prefer the overload that
-     * accepts pre-allocated {@code rgO3Ranges} and {@code gapO3Ranges} lists.
-     *
-     * @return the number of actions written into actionsBuf
-     */
-    public static int computeMergeActions(
-            LongList rowGroupBounds,
-            long sortedTimestampsAddr,
-            long srcOooLo,
-            long srcOooHi,
-            ObjList<MergeAction> actionsBuf
-    ) {
-        return computeMergeActions(
-                rowGroupBounds,
-                sortedTimestampsAddr,
-                srcOooLo,
-                srcOooHi,
-                DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
-                Integer.MAX_VALUE,
-                actionsBuf,
-                new LongList(),
-                new LongList()
-        );
-    }
-
-    /**
-     * Computes the merge strategy with custom small row group threshold and no row group size limit.
-     * Allocates temporary buffers internally. For zero-GC usage, prefer the overload that
-     * accepts pre-allocated {@code rgO3Ranges} and {@code gapO3Ranges} lists.
-     *
-     * @return the number of actions written into actionsBuf
-     */
-    public static int computeMergeActions(
-            LongList rowGroupBounds,
-            long sortedTimestampsAddr,
-            long srcOooLo,
-            long srcOooHi,
-            int smallRowGroupThreshold,
-            ObjList<MergeAction> actionsBuf
-    ) {
-        return computeMergeActions(
-                rowGroupBounds,
-                sortedTimestampsAddr,
-                srcOooLo,
-                srcOooHi,
-                smallRowGroupThreshold,
-                Integer.MAX_VALUE,
-                actionsBuf,
-                new LongList(),
-                new LongList()
-        );
-    }
-
-    /**
      * Computes the merge strategy between existing row groups and incoming O3 data.
      * <p>
      * The algorithm uses both min and max timestamps to detect true overlap:
