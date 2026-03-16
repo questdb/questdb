@@ -559,7 +559,7 @@ mod tests {
                 // Both should decode to all-ones.
                 let decode = |buf: &[u8], skip_prefix: bool| -> Vec<u8> {
                     let data = if skip_prefix { &buf[4..] } else { buf };
-                    let mut decoder = Decoder::new(data, 1);
+                    let decoder = Decoder::new(data, 1);
                     let mut result = Vec::new();
                     for run in decoder {
                         match run.unwrap() {
