@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
+use num_traits::AsPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -61,11 +62,12 @@ pub enum ColumnTypeTag {
     Decimal64 = 31,
     Decimal128 = 32,
     Decimal256 = 33,
+    VarcharSlice = 40,
 }
 
 impl ColumnTypeTag {
     #[cfg(test)]
-    const VALUES: [Self; 29] = [
+    const VALUES: [Self; 30] = [
         Self::Boolean,
         Self::Byte,
         Self::Short,
@@ -95,6 +97,7 @@ impl ColumnTypeTag {
         Self::Decimal64,
         Self::Decimal128,
         Self::Decimal256,
+        Self::VarcharSlice,
     ];
 
     /// If true, the column is encoded with both data and aux vectors.
@@ -170,6 +173,7 @@ impl ColumnTypeTag {
             ColumnTypeTag::Decimal64 => "decimal64",
             ColumnTypeTag::Decimal128 => "decimal128",
             ColumnTypeTag::Decimal256 => "decimal256",
+            ColumnTypeTag::VarcharSlice => "varchar_slice",
         }
     }
 
@@ -216,6 +220,7 @@ impl TryFrom<u8> for ColumnTypeTag {
             31 => Ok(ColumnTypeTag::Decimal64),
             32 => Ok(ColumnTypeTag::Decimal128),
             33 => Ok(ColumnTypeTag::Decimal256),
+            40 => Ok(ColumnTypeTag::VarcharSlice),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
@@ -466,6 +471,78 @@ pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<Colum
         << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
         | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
     Ok(ColumnType::new(ColumnTypeTag::Array, extra))
+}
+
+pub mod nulls {
+    pub const BYTE: i8 = 0;
+    pub const SHORT: i16 = 0;
+    pub const INT: i32 = i32::MIN;
+    pub const LONG: i64 = i64::MIN;
+    pub const IPV4: i32 = 0;
+    pub const FLOAT: f32 = f32::NAN;
+    pub const DOUBLE: f64 = f64::NAN;
+    pub const GEOHASH_BYTE: i8 = -1;
+    pub const GEOHASH_SHORT: i16 = -1;
+    pub const GEOHASH_INT: i32 = -1;
+    pub const GEOHASH_LONG: i64 = -1;
+    pub const SYMBOL: i32 = i32::MIN;
+    pub const TIMESTAMP: i64 = i64::MIN;
+    pub const UUID: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128]);
+    pub const DECIMAL8: i8 = i8::MIN;
+    pub const DECIMAL16: i16 = i16::MIN;
+    pub const DECIMAL32: i32 = i32::MIN;
+    pub const DECIMAL64: i64 = i64::MIN;
+    pub const DECIMAL128: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]);
+    pub const DECIMAL256: [u128; 2] = [
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]),
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    ];
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long128 {
+    pub lo: i64,
+    pub hi: i64,
+}
+
+impl Long128 {
+    pub const NULL: Self = Self {
+        lo: i64::MIN,
+        hi: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long128> for Long128 {
+    fn as_(self) -> Long128 {
+        self
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long256 {
+    pub l0: i64,
+    pub l1: i64,
+    pub l2: i64,
+    pub l3: i64,
+}
+
+impl Long256 {
+    pub const NULL: Self = Self {
+        l0: i64::MIN,
+        l1: i64::MIN,
+        l2: i64::MIN,
+        l3: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long256> for Long256 {
+    fn as_(self) -> Long256 {
+        self
+    }
 }
 
 #[cfg(test)]

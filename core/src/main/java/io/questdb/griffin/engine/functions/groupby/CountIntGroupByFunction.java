@@ -41,7 +41,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long nonNullCount = Vect.countInt(ptr, count);
             if (nonNullCount > 0) {

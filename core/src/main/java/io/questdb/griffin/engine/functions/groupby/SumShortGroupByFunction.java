@@ -45,9 +45,15 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.sumShort(ptr, count));
+            final long batchSum = Vect.sumShort(ptr, count);
+            final long existing = mapValue.getLong(valueIndex);
+            if (existing != Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, existing + batchSum);
+            } else {
+                mapValue.putLong(valueIndex, batchSum);
+            }
         }
     }
 

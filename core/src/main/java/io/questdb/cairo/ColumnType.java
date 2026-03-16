@@ -134,7 +134,8 @@ public final class ColumnType {
     public static final short ARRAY_STRING = REGPROCEDURE + 1; // = 37;
     public static final short PARAMETER = ARRAY_STRING + 1;    // = 38;
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
-    public static final short NULL = INTERVAL + 1;          // = 40; ALWAYS the last
+    public static final short VARCHAR_SLICE = INTERVAL + 1;    // = 40;
+    public static final short NULL = VARCHAR_SLICE + 1;        // = 41; ALWAYS the last
     public static final int UINT16 = SHORT | (1 << 20);
     public static final int UINT32 = INT | (1 << 21);
     public static final int UINT64 = LONG | (1 << 22);
@@ -173,6 +174,9 @@ public final class ColumnType {
     }
 
     public static int commonWideningType(int typeA, int typeB) {
+        // VARCHAR_SLICE is a transient in-memory type that must never appear in union results.
+        if (typeA == VARCHAR_SLICE) typeA = VARCHAR;
+        if (typeB == VARCHAR_SLICE) typeB = VARCHAR;
         return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
                 : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
@@ -192,7 +196,7 @@ public final class ColumnType {
                 : ((typeA == DATE) && (typeB == LONG)) ? DATE
 
                 // Varchars take priority over strings, but strings over most types.
-                : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
+                : (isVarchar(typeA) || isVarchar(typeB)) ? VARCHAR
                 : ((typeA == STRING) || (typeB == STRING)) ? STRING
 
                 // cast booleans vs anything other than varchars to strings.
@@ -345,7 +349,7 @@ public final class ColumnType {
         return switch (tagOf(columnType)) {
             case STRING -> StringTypeDriver.INSTANCE;
             case BINARY -> BinaryTypeDriver.INSTANCE;
-            case VARCHAR -> VarcharTypeDriver.INSTANCE;
+            case VARCHAR, VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
             case ARRAY -> ArrayTypeDriver.INSTANCE;
             default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         };
@@ -405,7 +409,7 @@ public final class ColumnType {
     public static int getTimestampType(int type) {
         return switch (tagOf(type)) {
             case TIMESTAMP -> type;
-            case VARCHAR, STRING, SYMBOL -> TIMESTAMP_NANO;
+            case VARCHAR, VARCHAR_SLICE, STRING, SYMBOL -> TIMESTAMP_NANO;
             case DATE -> TIMESTAMP_MICRO;
             // Long, Int etc.
             default -> UNDEFINED;
@@ -614,7 +618,7 @@ public final class ColumnType {
     }
 
     public static boolean isStringyType(int colType) {
-        return colType == VARCHAR || colType == STRING;
+        return colType == VARCHAR || colType == VARCHAR_SLICE || colType == STRING;
     }
 
     public static boolean isSupportedArrayElementType(int typeTag) {
@@ -630,7 +634,7 @@ public final class ColumnType {
     }
 
     public static boolean isSymbolOrStringOrVarchar(int columnType) {
-        return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR;
+        return columnType == SYMBOL || columnType == STRING || columnType == VARCHAR || columnType == VARCHAR_SLICE;
     }
 
     public static boolean isTimestamp(int columnType) {
@@ -667,15 +671,16 @@ public final class ColumnType {
         return columnType == STRING
                 || columnType == BINARY
                 || columnType == VARCHAR
+                || columnType == VARCHAR_SLICE
                 || tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
-        return columnType == VARCHAR;
+        return columnType == VARCHAR || columnType == VARCHAR_SLICE;
     }
 
     public static boolean isVarcharOrString(int columnType) {
-        return columnType == VARCHAR || columnType == STRING;
+        return columnType == VARCHAR || columnType == VARCHAR_SLICE || columnType == STRING;
     }
 
     public static void makeUtf16DefaultString() {
@@ -800,7 +805,7 @@ public final class ColumnType {
                 || fromTag == NULL
                 || (fromTag == CHAR && toTag == SHORT)  // Special: CHAR can be converted to SHORT
                 || ((fromTag == TIMESTAMP || fromTag == DATE) && toTag == LONG)  // Temporal to long
-                || ((fromTag == STRING || fromTag == VARCHAR) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
+                || ((fromTag == STRING || fromTag == VARCHAR || fromTag == VARCHAR_SLICE) && (toTag >= BYTE && toTag <= DOUBLE));  // String-ish parsing to numeric
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -826,14 +831,14 @@ public final class ColumnType {
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING || fromType == VARCHAR) && toType == IPv4;
+        return (fromType == STRING || fromType == VARCHAR || fromType == VARCHAR_SLICE) && toType == IPv4;
     }
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         return switch (fromType) {
             case CHAR -> (toTag == GEOBYTE && getGeoHashBits(toType) < 6) || (toTag == DATE || toTag == TIMESTAMP);
-            case STRING, VARCHAR -> switch (toTag) {
+            case STRING, VARCHAR, VARCHAR_SLICE -> switch (toTag) {
                 case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
                 default -> false;
             };
@@ -892,7 +897,10 @@ public final class ColumnType {
                 || (fromType == VARCHAR && toType == STRING)
                 || (fromType == SYMBOL && toType == VARCHAR)
                 || (fromType == CHAR && toType == VARCHAR)
-                || (fromType == UUID && toType == VARCHAR);
+                || (fromType == UUID && toType == VARCHAR)
+                || (fromType == VARCHAR_SLICE && toType == VARCHAR)
+                || (fromType == VARCHAR_SLICE && toType == STRING)
+                || (fromType == VARCHAR_SLICE && toType == SYMBOL);
     }
 
     private static int mkGeoHashType(int bits, short baseType) {
@@ -956,7 +964,8 @@ public final class ColumnType {
                 /* 37 unused     */, {}
                 /* 38 unused     */, {}
                 /* 39 INTERVAL   */, {INTERVAL, STRING}
-                /* 40 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 40 VARCHAR_SLICE */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 41 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -1017,6 +1026,7 @@ public final class ColumnType {
         typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_NANO, "INTERVAL");
         typeNameMap.put(DECIMAL, "DECIMAL");
+        typeNameMap.put(VARCHAR_SLICE, "VARCHAR_SLICE");
         typeNameMap.put(NULL, "NULL");
 
 //        arrayTypeSet.add(BOOLEAN);
@@ -1121,6 +1131,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DECIMAL128] = 4;
         TYPE_SIZE_POW2[DECIMAL256] = 5;
         TYPE_SIZE_POW2[INTERVAL] = 4;
+        TYPE_SIZE_POW2[VARCHAR_SLICE] = VARCHAR_AUX_SHL;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -1158,6 +1169,7 @@ public final class ColumnType {
         TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
         TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
         TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
+        TYPE_SIZE[VARCHAR_SLICE] = 0;
 
         nonPersistedTypes.add(UNDEFINED);
         nonPersistedTypes.add(INTERVAL);
@@ -1169,6 +1181,7 @@ public final class ColumnType {
         nonPersistedTypes.add(REGCLASS);
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
+        nonPersistedTypes.add(VARCHAR_SLICE);
 
         addArrayTypeName(sink, ColumnType.BOOLEAN);
         addArrayTypeName(sink, ColumnType.BYTE);

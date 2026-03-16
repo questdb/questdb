@@ -27,11 +27,14 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
@@ -320,6 +323,36 @@ public class CopyExportTest extends AbstractCairoTest {
                 "copy test_table to 'test_table'  with format parquet parquet_version 3;",
                 69,
                 "invalid parquet version: 3, expected 1 or 2"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 0;",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 1;",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '1.5';",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '-0.1';",
+                70,
+                "bloom_filter_fpp must be between 0 and 1 (exclusive)"
+        );
+
+        assertException(
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp abc;",
+                70,
+                "bad number"
         );
     }
 
@@ -1165,6 +1198,67 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryVarcharSliceRoundtrip() throws Exception {
+        // VARCHAR_SLICE is a transient type produced by read_parquet(). This test
+        // verifies that VARCHAR_SLICE columns can flow through the parquet write path
+        // (HybridColumnMaterializer) without errors.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_src (
+                        id INT,
+                        vc VARCHAR
+                    )""");
+            execute("""
+                    INSERT INTO vc_src VALUES
+                        (1, 'hello'),
+                        (2, ''),
+                        (3, NULL),
+                        (4, 'café ☕'),
+                        (5, 'world')""");
+
+            // Encode the table to a parquet file so read_parquet() produces VARCHAR_SLICE columns.
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("vc_src")
+            ) {
+                Files.mkdirs(path.of(exportRoot).slash(), configuration.getMkDirMode());
+                path.of(exportRoot).concat("vc_input.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+
+            // Round-trip: read_parquet() → VARCHAR_SLICE → COPY TO parquet
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_input.parquet')) TO 'vc_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        id\tvc
+                                        1\thello
+                                        2\t
+                                        3\t
+                                        4\tcafé ☕
+                                        5\tworld
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_output.parquet') ORDER BY id"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryWithArithmeticExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (x LONG, y DOUBLE, name STRING)");
@@ -1886,6 +1980,93 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithBloomFilterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING, z DOUBLE)");
+            execute("INSERT INTO test_table VALUES (1, 'hello', 1.5), (2, 'world', 2.5)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'bloom_cols' with format parquet bloom_filter_columns 'x,z'", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_cols.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("""
+                                        x\ty\tz
+                                        1\thello\t1.5
+                                        2\tworld\t2.5
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_cols.parquet') ORDER BY x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterColumnsAndFpp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING, z DOUBLE)");
+            execute("INSERT INTO test_table VALUES (1, 'hello', 1.5), (2, 'world', 2.5)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'bloom_both' with format parquet bloom_filter_columns 'x,z' bloom_filter_fpp '0.05'", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_both.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("""
+                                        x\ty\tz
+                                        1\thello\t1.5
+                                        2\tworld\t2.5
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_both.parquet') ORDER BY x");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterFpp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING)");
+            execute("INSERT INTO test_table VALUES (1, 'test')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy test_table to 'bloom_fpp' with format parquet bloom_filter_fpp '0.01'", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bloom_fpp.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("x\ty\n1\ttest\n",
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bloom_fpp.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithBloomFilterNonExistentColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y STRING)");
+            execute("INSERT INTO test_table VALUES (1, 'test')");
+            assertException(
+                    "copy test_table to 'bloom_bad_col' with format parquet bloom_filter_columns 'x,nonexistent'",
+                    79,
+                    "bloom_filter_columns contains non-existent column: nonexistent"
+            );
+        });
+    }
+
+    @Test
     public void testCopyWithCaseInsensitiveOptions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
@@ -2324,6 +2505,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
             drainWalQueue();
+            pause.set(true);
 
             Callable<Exception> callback = () -> {
                 try {
@@ -2333,16 +2515,18 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
-                } finally {
-                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
 
             CopyExportRunnable stmt = () -> {
                 runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                // Wait for the first export to be active before attempting the second
-                waitForActiveExport();
+                try {
+                    // Wait for the first export to be active before attempting the second
+                    waitForActiveExport();
+                } finally {
+                    pause.set(false);
+                }
             };
 
             CopyExportRunnable test = () ->
@@ -2379,6 +2563,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
+            pause.set(true);
 
             Callable<Exception> callback = () -> {
                 try {
@@ -2388,15 +2573,17 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
-                } finally {
-                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
 
             CopyExportRunnable stmt = () -> {
                 runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                waitForActiveExport();
+                try {
+                    waitForActiveExport();
+                } finally {
+                    pause.set(false);
+                }
             };
 
             CopyExportRunnable test = () ->

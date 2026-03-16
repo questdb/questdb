@@ -108,7 +108,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getMetadata(),
                     task.getWriteCallback(),
                     task.getExportMode(),
-                    task.getSelectText()
+                    task.getSelectText(),
+                    task.getBloomFilterColumns(),
+                    task.getBloomFilterColumnsPosition(),
+                    task.getBloomFilterFpp()
             );
             localTaskCopy.setSelectFactory(selectFactory);
             task.clear();

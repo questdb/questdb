@@ -94,6 +94,12 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
+            // VARCHAR_SLICE is a transient in-memory type (from read_parquet)
+            // accessed through the same getVarcharA() interface as VARCHAR.
+            if (fromColumnTypeTag == ColumnType.VARCHAR_SLICE) {
+                fromColumnTypeTag = ColumnType.VARCHAR;
+            }
+
             // Handle NULL type
             if (fromColumnTypeTag == ColumnType.NULL) {
                 if (toColumnTypeTag == ColumnType.BOOLEAN || toColumnTypeTag == ColumnType.BYTE || toColumnTypeTag == ColumnType.SHORT
@@ -152,9 +158,12 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
             int toColumnType = to.getColumnType(toColumnIndex);
             int fromColumnType = from.getColumnType(i);
+            int fromTag = ColumnType.tagOf(fromColumnType);
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = ColumnType.VARCHAR;
+            }
             if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    (ColumnType.tagOf(fromColumnType) == ColumnType.STRING ||
-                            ColumnType.tagOf(fromColumnType) == ColumnType.VARCHAR)) {
+                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
                 return true;
             }
         }

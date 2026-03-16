@@ -124,7 +124,34 @@ public class WindowJoinTimeFrameHelper {
         if (bookmarkedFrameIndex != -1) {
             timeFrameCursor.jumpTo(bookmarkedFrameIndex);
             timeFrameCursor.open();
+            if (recordPrevailing) {
+                // Set prevailing candidate so findPrevailingForMasterRow can
+                // scan backward if the window starts at the frame boundary.
+                // linearScan/binarySearch will refine this if they find a
+                // closer candidate within the frame.
+                if (bookmarkedRowIndex > timeFrame.getRowLo()) {
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowIndex = bookmarkedRowIndex - 1;
+                } else {
+                    // Bookmark is at frame start; prevailing is in a prior frame.
+                    // Setting rowIndex < rowLo causes findPrevailingForMasterRow
+                    // to skip to previousFrame().
+                    prevailingFrameIndex = timeFrame.getFrameIndex();
+                    prevailingRowIndex = -1; // signal to scan the previous frame
+                }
+            }
             rowLo = bookmarkedRowIndex;
+        } else {
+            // First lookup: use seekEstimate to skip to the target's vicinity,
+            // avoiding O(N) linear scan through all preceding frames.
+            final long nativeTimestamp = scale == 1 ? timestampLo : timestampLo / scale;
+            timeFrameCursor.seekEstimate(nativeTimestamp);
+            if (recordPrevailing && timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
+                // The seeked frame has ceiling <= timestampLo, so all its rows
+                // are < timestampLo. Record its last row as prevailing candidate.
+                prevailingFrameIndex = timeFrame.getFrameIndex();
+                prevailingRowIndex = timeFrame.getRowHi() - 1;
+            }
         }
 
         for (; ; ) {
@@ -234,6 +261,17 @@ public class WindowJoinTimeFrameHelper {
                 } else {
                     rowLo = bookmarkedRowIndex;
                 }
+            }
+        } else {
+            // First lookup: use seekEstimate to skip to the target's vicinity,
+            // avoiding O(N) linear scan through all preceding frames.
+            final long nativeTimestamp = scale == 1 ? timestampLo : timestampLo / scale;
+            timeFrameCursor.seekEstimate(nativeTimestamp);
+            if (timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
+                // The seeked frame has ceiling <= timestampLo, so all its rows
+                // are < timestampLo. Record its last row as prevailing candidate.
+                prevailingRowIndex = timeFrame.getRowHi() - 1;
+                prevailingFrameIndex = timeFrame.getFrameIndex();
             }
         }
 
@@ -440,9 +478,11 @@ public class WindowJoinTimeFrameHelper {
     public void restoreBookmark(int frameIndex, long rowIndex) {
         this.bookmarkedFrameIndex = frameIndex;
         this.bookmarkedRowIndex = rowIndex;
-        timeFrameCursor.jumpTo(bookmarkedFrameIndex);
-        timeFrameCursor.open();
-        timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        if (frameIndex >= 0) {
+            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+            timeFrameCursor.open();
+            timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        }
     }
 
     public void toTop() {

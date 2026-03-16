@@ -131,10 +131,9 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
-import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.createTimestamp;
 import static org.junit.Assert.*;
-import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3602,8 +3601,8 @@ if __name__ == "__main__":
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
-                {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop all table if exists;", "ERROR: unexpected token [table]"},
+                {"drop all tables if exists;", "ERROR: unexpected token [if]"},
                 {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -3799,11 +3798,7 @@ if __name__ == "__main__":
 
                                         try (PreparedStatement stmt = conn.prepareStatement(command)) {
                                             if (command.startsWith("select")) {
-                                                try (ResultSet result = stmt.executeQuery()) {
-                                                    while (result.next()) {
-                                                        // ignore
-                                                    }
-                                                }
+                                                consume(stmt.executeQuery());
                                             } else {
                                                 stmt.executeUpdate();
                                             }
@@ -4067,7 +4062,7 @@ if __name__ == "__main__":
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                        "  filter: (" + i + "L<x and x<" + (i + 1) * 10 + ".0)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -7248,7 +7243,7 @@ nodejs code:
                     final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
                     final ResultSet ignore = copy.executeQuery()
             ) {
-                assertEventually(() -> {
+                TestUtils.assertEventually(() -> {
                     try (
                             final PreparedStatement select = connection.prepareStatement("select * from x");
                             final ResultSet rs = select.executeQuery()
@@ -7624,11 +7619,7 @@ nodejs code:
                     // since PG JDBC does use phantom references to track statement instances
                     // and close them when they are GCed
                     statements.add(stmt);
-                    try (ResultSet ignore = stmt.executeQuery("select * from x")) {
-                        while (ignore.next()) {
-                            // ignore
-                        }
-                    }
+                    consume(stmt.executeQuery("select * from x"));
                 }
                 Assert.fail("Expected exception");
             } catch (PSQLException e) {
@@ -12462,6 +12453,17 @@ create table tab as (
         });
     }
 
+    private static void consume(ResultSet stmt) throws SQLException {
+        int count = 0;
+        try (ResultSet ignore = stmt) {
+            while (ignore.next()) {
+                // ignore
+                count++;
+            }
+        }
+        Assert.assertTrue(count > 0);
+    }
+
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
         int backendPid;
         AtomicBoolean isCancelled = new AtomicBoolean(false);
@@ -13296,7 +13298,7 @@ create table tab as (
                         stmt.executeQuery();
                         Assert.fail("Exception is not thrown");
                     } catch (PSQLException ex) {
-                        ex.printStackTrace();
+                        ex.printStackTrace(System.out);
                         // expected
                         Assert.assertNotNull(ex);
                     }

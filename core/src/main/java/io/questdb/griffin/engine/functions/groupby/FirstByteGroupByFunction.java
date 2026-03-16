@@ -45,10 +45,14 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr));
-            mapValue.putBool(valueIndex + 2, false);
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, startRowId);
+                mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr));
+                mapValue.putBool(valueIndex + 2, false);
+            }
         }
     }
 

@@ -621,6 +621,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         streamingMode = false;
     }
 
+    public boolean hasParquetPartitions() {
+        for (int i = 0; i < partitionCount; i++) {
+            if (txFile.isPartitionParquet(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean isActive() {
         return txnAcquired;
     }

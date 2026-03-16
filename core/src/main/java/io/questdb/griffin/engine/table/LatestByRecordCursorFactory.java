@@ -74,13 +74,21 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         assert !base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
-        ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
-        mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
-        mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
-        Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
-        this.cursor = new LatestByRecordCursor(latestByMap, timestampIndex);
-        this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
-        this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+        Map latestByMap = null;
+        try {
+            ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
+            mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
+            mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
+            latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
+            this.cursor = new LatestByRecordCursor(latestByMap, timestampIndex);
+            latestByMap = null; // cursor owns the map now
+            this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
+            this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+        } catch (Throwable th) {
+            Misc.free(latestByMap);
+            close();
+            throw th;
+        }
     }
 
     @Override

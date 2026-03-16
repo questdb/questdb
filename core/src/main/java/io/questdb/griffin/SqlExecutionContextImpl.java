@@ -98,6 +98,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
+    private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
@@ -123,6 +124,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
+        parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         // default set to micro
@@ -356,6 +358,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParquetRowGroupPruningEnabled() {
+        return parquetRowGroupPruningEnabled;
+    }
+
+    @Override
     public boolean isParallelTopKEnabled() {
         return parallelTopKEnabled;
     }
@@ -496,6 +503,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
         this.parallelReadParquetEnabled = parallelReadParquetEnabled;
+    }
+
+    @Override
+    public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+        this.parquetRowGroupPruningEnabled = parquetRowGroupPruningEnabled;
     }
 
     @Override

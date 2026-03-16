@@ -263,7 +263,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 queryToFrameColumnMapping[i] = underlyingColIndex;
 
                 int underlyingType = metadata.getColumnType(underlyingColIndex);
-                if (underlyingType != resultSetColumnType || ColumnType.pow2SizeOf(resultSetColumnType) > 3) {
+                int pow2 = ColumnType.pow2SizeOf(resultSetColumnType);
+                if (underlyingType != resultSetColumnType || pow2 < 0 || pow2 > 3) {
                     throw SqlException.$(ast.position, "column \"")
                             .put(metadata.getColumnName(underlyingColIndex))
                             .put("\": first(), last() is not supported on data type ")

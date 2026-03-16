@@ -338,7 +338,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
         for (int i = 0; i < readParquetColumnCount; i++) {
             final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
-            final int columnType = addressCache.getColumnTypes().getQuick(i);
+            int columnType = addressCache.getColumnTypes().getQuick(i);
+            if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
+                columnType = ColumnType.VARCHAR_SLICE;
+            }
             parquetColumns.add(parquetColumnIndex);
             fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
             parquetColumns.add(columnType);
@@ -366,7 +369,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
                 final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
-                final int columnType = addressCache.getColumnTypes().getQuick(i);
+                int columnType = addressCache.getColumnTypes().getQuick(i);
+                if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
+                    columnType = ColumnType.VARCHAR_SLICE;
+                }
                 parquetColumns.add(parquetColumnIndex);
                 fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
                 parquetColumns.add(columnType);

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -37,11 +38,15 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            final long addr = ptr + ((long) count - 1) * Short.BYTES;
-            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(addr));
-            mapValue.putBool(valueIndex + 2, false);
+            long lastRowId = startRowId + count - 1;
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, lastRowId);
+                mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr + ((long) count - 1) * Short.BYTES));
+                mapValue.putBool(valueIndex + 2, false);
+            }
         }
     }
 

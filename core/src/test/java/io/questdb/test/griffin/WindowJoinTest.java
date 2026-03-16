@@ -117,7 +117,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -169,7 +169,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -220,7 +220,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -283,7 +283,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym0\t2023-01-01T09:00:00.000000Z\t1.5
                             """,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
                                   vectorized: true
@@ -348,7 +348,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -587,7 +587,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -642,7 +642,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -696,7 +696,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -751,7 +751,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -807,7 +807,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -874,7 +874,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -930,7 +930,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1030,7 +1030,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym0	9.0	2023-01-09T09:00:04.000000Z	null	null
                             """,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Async Window Fast Join workers: 1
                                   vectorized: true
@@ -1398,6 +1398,60 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with keyed WINDOW JOIN and multiple slave partitions.
+        // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-03T12:00:00.000000Z', 'TSLA', 100.0),
+                                ('2024-01-03T18:00:00.000000Z', 'AMZN', 200.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 'TSLA', 10.0),
+                                ('2024-01-02T06:00:00.000000Z', 'AMZN', 20.0),
+                                ('2024-01-03T06:00:00.000000Z', 'TSLA', 30.0),
+                                ('2024-01-03T15:00:00.000000Z', 'AMZN', 40.0)
+                            """
+            );
+
+            // Window covers all data, so prevailing has no effect.
+            // TSLA at day3 12:00: window matches TSLA in [~Dec30, day3 12:00+1s] → 10.0 + 30.0 = 40.0
+            // AMZN at day3 18:00: window matches AMZN in [~Dec30, day3 18:00+1s] → 20.0 + 40.0 = 60.0
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tprice\twindow_price
+                            TSLA\t100.0\t40.0
+                            AMZN\t200.0\t60.0
+                            """,
+                    "SELECT t.sym, t.price, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
+                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMasterFilterLimit() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -1450,7 +1504,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym\tprice\tts\tfirst\tavg
                             """,
                     String.format("""
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
                                   vectorized: true
@@ -1519,7 +1573,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1548,7 +1602,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1606,7 +1660,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1677,7 +1731,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym0\t2023-01-01T09:00:00.000000Z\t2.0\t3.0
                             """,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
                                   vectorized: true
@@ -1742,7 +1796,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1795,7 +1849,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1824,7 +1878,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "order by t.ts, t.sym;", sink);
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -1842,6 +1896,60 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " range between 1 minute preceding and 1 minute following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "order by t.ts, t.sym;",
                     "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with no-key WINDOW JOIN and multiple slave partitions.
+        // Trades start from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) timestamp(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-03T12:00:00.000000Z', 100.0),
+                                ('2024-01-03T18:00:00.000000Z', 200.0)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 10.0),
+                                ('2024-01-02T06:00:00.000000Z', 20.0),
+                                ('2024-01-03T06:00:00.000000Z', 30.0),
+                                ('2024-01-03T15:00:00.000000Z', 40.0)
+                            """
+            );
+
+            // Window covers all data, so prevailing has no effect.
+            // Trade at day3 12:00: prices in [~Dec30, day3 12:00+1s] → 10.0 + 20.0 + 30.0 = 60.0
+            // Trade at day3 18:00: prices in [~Dec30, day3 18:00+1s] → 10.0 + 20.0 + 30.0 + 40.0 = 100.0
+            assertQueryNoLeakCheck(
+                    """
+                            price\twindow_price
+                            100.0\t60.0
+                            200.0\t100.0
+                            """,
+                    "SELECT t.price, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p " +
+                            "RANGE BETWEEN 100 hour PRECEDING AND 1 second FOLLOWING " +
+                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts",
+                    null,
                     true,
                     false
             );
@@ -2006,7 +2114,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -2189,7 +2297,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
@@ -2273,7 +2381,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
@@ -2333,7 +2441,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    ExtraNullColumnRecord\n" +
                             "        Async Window Join workers: 1\n" +
@@ -2409,7 +2517,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """, leftTableTimestampType.getTypeName());
             assertQueryAndPlan(
                     expect,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: true\n" +
@@ -2466,7 +2574,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             );
             assertQueryAndPlan(
                     expect,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Window Fast Join\n" +
                             "      vectorized: true\n" +
@@ -2992,7 +3100,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     String.format("""
-                                    Sort
+                                    Encode sort
                                       keys: [ts desc]
                                         Async Window Fast Join workers: 1
                                           vectorized: true
@@ -3071,7 +3179,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     sink,
                     String.format(
                             """
-                                    Sort
+                                    Encode sort
                                       keys: [ts desc, sym]
                                         Async Window Join workers: 1
                                           vectorized: true
@@ -3151,7 +3259,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     sink,
                     String.format(
                             """
-                                    Sort
+                                    Encode sort
                                       keys: [ts desc]
                                         Window Fast Join
                                           vectorized: true
@@ -3234,7 +3342,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     sink,
                     String.format(
                             """
-                                    Sort
+                                    Encode sort
                                       keys: [ts desc]
                                         Window Join
                                           window lo: 60000000%1$s preceding (%2$s prevailing)
@@ -3303,7 +3411,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sum+2,price+1,sym,ts]\n" +
@@ -3359,7 +3467,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sum+2,price+1,sym,ts]\n" +
@@ -3556,7 +3664,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n",
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 VirtualRecord
                                   functions: [ts,sym,price,agg0,agg1,agg2,agg1]
@@ -3590,7 +3698,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "ts\tsym\tprice\tagg0\tagg1\tagg2\tagg3\n",
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 VirtualRecord
                                   functions: [ts,sym,price,agg0,agg1,agg2,agg1]
@@ -3623,7 +3731,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "ts\tsym\tprice\tagg1\tagg2\n",
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 VirtualRecord
                                   functions: [ts,sym,price,first-last,sum-last1]
@@ -3794,7 +3902,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     String.format("""
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
                                   vectorized: true
@@ -3871,7 +3979,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     String.format("""
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
                                   vectorized: false
@@ -3932,7 +4040,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     String.format("""
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Window Fast Join
                                   vectorized: true
@@ -3965,7 +4073,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     String.format("""
-                            Sort
+                            Encode sort
                               keys: [ts, sym]
                                 Window Join
                                   window lo: 60000000%1$s preceding (%2$s prevailing)
@@ -4263,7 +4371,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [ts, sym]
                                 ExtraNullColumnRecord
                                     PageFrame
@@ -4311,7 +4419,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     sink,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [sym]
                                 SelectedRecord
                                     ExtraNullColumnRecord
@@ -4430,7 +4538,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             }
             assertQueryAndPlan(
                     sink,
-                    "Sort\n" +
+                    "Encode sort\n" +
                             "  keys: [ts, sym]\n" +
                             "    Async Window Fast Join workers: 1\n" +
                             "      vectorized: false\n" +
@@ -4497,7 +4605,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
                             """,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
                                   vectorized: false
@@ -4539,7 +4647,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     sym2	sym2	2023-01-01T09:00:00.000000Z	1
                                     """,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
                                   vectorized: false
@@ -4575,7 +4683,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
                             """,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts, s]
                                 Async Window Fast Join workers: 1
                                   vectorized: false
@@ -4634,6 +4742,113 @@ public class WindowJoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    /**
+     * Verifies INCLUDE PREVAILING with the non-vectorized fast (symbol-keyed) variant.
+     * Uses max(concat(...)) to force the non-vectorized code path.
+     * When no right row matches the window start exactly, the prevailing row
+     * (strictly before the window) is included as an extra row.
+     */
+    @Test
+    public void testFastNonVectorizedPrevailingWithWindowMatches() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            execute("""
+                    CREATE TABLE left_t (
+                        ts TIMESTAMP,
+                        sym SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    CREATE TABLE right_t (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // Left row at 09:05 with sym=A. Window = [09:03, 09:07].
+            execute("INSERT INTO left_t VALUES ('2023-01-01T09:05:00.000000Z', 'A')");
+
+            // Right rows for sym=A: 09:01 (before window), 09:04 (in window), 09:06 (in window).
+            // No row at 09:03 (window start), so prevailing = 09:01 (strictly before window).
+            // Prevailing val=99 is the max; without prevailing, max would be "30".
+            execute("""
+                    INSERT INTO right_t VALUES
+                    ('2023-01-01T09:01:00.000000Z', 'A', 99),
+                    ('2023-01-01T09:04:00.000000Z', 'A', 20),
+                    ('2023-01-01T09:06:00.000000Z', 'A', 30)
+                    """);
+
+            // max(concat(r.val, '')) forces non-vectorized path.
+            // With prevailing: vals are 99, 20, 30 -> max("99") = "99".
+            // Without prevailing (bug): vals are 20, 30 -> max("30") = "30".
+            assertQueryAndPlan(
+                    """
+                            ts\tsym\tf
+                            2023-01-01T09:05:00.000000Z\tA\t99
+                            """,
+                    """
+                            Window Fast Join
+                              vectorized: false
+                              symbol: sym=sym
+                              window lo: 120000000 preceding (include prevailing)
+                              window hi: 120000000 following
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: left_t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: right_t
+                            """,
+                    """
+                            SELECT l.ts, l.sym, max(concat(r.val, '')) AS f
+                            FROM left_t l
+                            WINDOW JOIN right_t r ON (l.sym = r.sym)
+                            RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
+                            INCLUDE PREVAILING
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Cross-check with vectorized count(*): 3 rows (prevailing + 2 window).
+            assertQueryAndPlan(
+                    """
+                            ts\tsym\tcnt
+                            2023-01-01T09:05:00.000000Z\tA\t3
+                            """,
+                    """
+                            Window Fast Join
+                              vectorized: true
+                              symbol: sym=sym
+                              window lo: 120000000 preceding (include prevailing)
+                              window hi: 120000000 following
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: left_t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: right_t
+                            """,
+                    """
+                            SELECT l.ts, l.sym, count(*) AS cnt
+                            FROM left_t l
+                            WINDOW JOIN right_t r ON (l.sym = r.sym)
+                            RANGE BETWEEN 2 MINUTES PRECEDING AND 2 MINUTES FOLLOWING
+                            INCLUDE PREVAILING
+                            """,
+                    "ts",
+                    false,
+                    true
+            );
+        });
     }
 
     private void prepareTable() throws SqlException {
@@ -4719,5 +4934,135 @@ public class WindowJoinTest extends AbstractCairoTest {
             execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
         }
         drainWalQueue();
+    }
+
+    @Test
+    public void testPrevailingWithFilterCrossPartition() throws Exception {
+        // Regression test: WindowJoinWithPrevailingAndJoinFilterRecordCursor
+        // failed to find prevailing rows from a previous partition when the
+        // bookmarked frame's first row was at the window boundary.
+        // The bug was in WindowJoinTimeFrameHelper.findRowLo(lo, hi, true)
+        // not setting prevailing candidates when reusing a bookmarked frame.
+        Assume.assumeTrue("Non-fast cursor needs same timestamp types",
+                leftTableTimestampType == rightTableTimestampType);
+        assertMemoryLeak(() -> {
+            // Disable parallel window join to force the sync WindowJoinRecordCursorFactory
+            // code path where the bug exists.
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+            // Tables WITHOUT symbol columns to force non-fast WindowJoinRecordCursorFactory.
+            // Join filter on id column triggers WindowJoinWithPrevailingAndJoinFilterRecordCursor.
+            execute(
+                    "CREATE TABLE master (ts #TIMESTAMP, id INT, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE slave (ts #TIMESTAMP, id INT, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+
+            // Master: rows on day 2 only.
+            execute("""
+                    INSERT INTO master VALUES
+                    ('2023-01-02T00:00:00.000000Z'::timestamp, 1, 10),
+                    ('2023-01-02T00:00:01.000000Z'::timestamp, 1, 20),
+                    ('2023-01-02T00:00:02.000000Z'::timestamp, 1, 30)
+                    """);
+
+            // Slave: rows on day 1 (prevailing source) and day 2 (window matches).
+            execute("""
+                    INSERT INTO slave VALUES
+                    ('2023-01-01T23:59:50.000000Z'::timestamp, 1, 100),
+                    ('2023-01-01T23:59:55.000000Z'::timestamp, 2, 200),
+                    ('2023-01-02T00:00:00.500000Z'::timestamp, 1, 300),
+                    ('2023-01-02T00:00:01.500000Z'::timestamp, 1, 400)
+                    """);
+
+            drainWalQueue();
+
+            // Window: 1 second each side. For master row at 00:00:01:
+            // - Window: [00:00:00, 00:00:02]
+            // - Window matches with id=1: slave rows at 00:00:00.5 and 00:00:01.5 -> count=2
+            // - Prevailing (id=1, ts < 00:00:00): slave row at 23:59:50 (id=1, day 1) -> +1
+            // - Total: 3
+            // Before the fix, the engine returned 2 (missed the cross-partition prevailing).
+            String tsFormat = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? "000000Z" : "000000000Z";
+            assertQueryNoLeakCheck(
+                    "ts\tid\tval\tcnt\n" +
+                            "2023-01-02T00:00:00." + tsFormat + "\t1\t10\t2\n" +
+                            "2023-01-02T00:00:01." + tsFormat + "\t1\t20\t3\n" +
+                            "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n",
+                    "SELECT m.ts, m.id, m.val, count(*) cnt " +
+                            "FROM master m " +
+                            "WINDOW JOIN slave s " +
+                            "ON m.id = s.id " +
+                            "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                            "INCLUDE PREVAILING",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testPrevailingWithFilterCrossPartitionFast() throws Exception {
+        // Similar test as testPrevailingWithFilterCrossPartition but with symbol columns to use the fast WindowJoinRecordCursorFactory.
+        assertMemoryLeak(() -> {
+            // Disable parallel window join to force the sync WindowJoinFastRecordCursorFactory
+            // code path where the bug exists.
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+            execute(
+                    "CREATE TABLE master (ts #TIMESTAMP, sym SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE slave (ts #TIMESTAMP, sym SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+
+            // Master: rows on day 2 only.
+            execute("""
+                    INSERT INTO master VALUES
+                    ('2023-01-02T00:00:00.000000Z'::timestamp, '1', 10),
+                    ('2023-01-02T00:00:01.000000Z'::timestamp, '1', 20),
+                    ('2023-01-02T00:00:02.000000Z'::timestamp, '1', 30)
+                    """);
+
+            // Slave: rows on day 1 (prevailing source) and day 2 (window matches).
+            execute("""
+                    INSERT INTO slave VALUES
+                    ('2023-01-01T23:59:50.000000Z'::timestamp, '1', 100),
+                    ('2023-01-01T23:59:55.000000Z'::timestamp, '2', 200),
+                    ('2023-01-02T00:00:00.500000Z'::timestamp, '1', 300),
+                    ('2023-01-02T00:00:01.500000Z'::timestamp, '1', 400)
+                    """);
+
+            drainWalQueue();
+
+            // Window: 1 second each side. For master row at 00:00:01:
+            // - Window: [00:00:00, 00:00:02]
+            // - Window matches with sym=1: slave rows at 00:00:00.5 and 00:00:01.5 -> count=2
+            // - Prevailing (sym=1, ts < 00:00:00): slave row at 23:59:50 (sym=1, day 1) -> +1
+            // - Total: 3
+            // Before the fix, the engine returned 2 (missed the cross-partition prevailing).
+            String tsFormat = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType())
+                    ? "000000Z" : "000000000Z";
+            assertQueryNoLeakCheck(
+                    "ts\tsym\tval\tcnt\n" +
+                            "2023-01-02T00:00:00." + tsFormat + "\t1\t10\t2\n" +
+                            "2023-01-02T00:00:01." + tsFormat + "\t1\t20\t3\n" +
+                            "2023-01-02T00:00:02." + tsFormat + "\t1\t30\t2\n",
+                    "SELECT m.ts, m.sym, m.val, count(*) cnt " +
+                            "FROM master m " +
+                            "WINDOW JOIN slave s " +
+                            "ON m.sym = s.sym " +
+                            "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING " +
+                            "INCLUDE PREVAILING",
+                    "ts",
+                    false,
+                    true
+            );
+        });
     }
 }

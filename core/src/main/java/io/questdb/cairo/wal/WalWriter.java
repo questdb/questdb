@@ -118,6 +118,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
+    private final int columnsMadviseMode;
     private final DdlListener ddlListener;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
@@ -178,6 +179,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
+        this.columnsMadviseMode = configuration.getWalWriterMadviseMode();
         this.ddlListener = ddlListener;
         this.recentWriteTracker = recentWriteTracker;
         this.telemetryWal = telemetryWal;
@@ -1369,7 +1371,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     -1,
                     MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
-                    Files.POSIX_MADV_RANDOM
+                    columnsMadviseMode
             );
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
@@ -1384,7 +1386,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         getDataAppendPageSize(),
                         MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
-                        Files.POSIX_MADV_RANDOM
+                        columnsMadviseMode
                 );
             }
 
@@ -2133,7 +2135,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
@@ -2378,7 +2380,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
                 String columnName = metadata.getColumnName(columnIndex);
@@ -2406,7 +2408,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         markColumnRemoved(index, type);
-                        path.trimTo(pathSize);
+
+                        try {
+                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName).I$();
                     } else {
@@ -2457,11 +2464,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        if (securityContext != null) {
-                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
+                        try {
+                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
+                        } finally {
+                            path.trimTo(pathSize);
                         }
-
-                        path.trimTo(pathSize);
                         LOG.info().$("renamed column in WAL [path=")
                                 .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName)

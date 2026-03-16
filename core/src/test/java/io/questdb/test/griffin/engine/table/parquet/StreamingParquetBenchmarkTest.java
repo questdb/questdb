@@ -65,6 +65,7 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
  */
 @Ignore
 public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
+    private static final boolean CPU_TIME_SUPPORTED;
     // Sentinel value indicating CPU time measurement is not supported
     private static final long CPU_TIME_UNSUPPORTED = -1;
     private static final int DATA_PAGE_SIZE = 1024 * 1024;  // 1MB
@@ -77,19 +78,6 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
     private static final boolean STATISTICS_ENABLED = true;
     private static final String TABLE_NAME = "benchmark_table";
     private static final ThreadMXBean THREAD_MX_BEAN = ManagementFactory.getThreadMXBean();
-    private static final boolean CPU_TIME_SUPPORTED;
-
-    static {
-        boolean supported = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
-        if (supported && !THREAD_MX_BEAN.isThreadCpuTimeEnabled()) {
-            try {
-                THREAD_MX_BEAN.setThreadCpuTimeEnabled(true);
-            } catch (UnsupportedOperationException | SecurityException e) {
-                supported = false;
-            }
-        }
-        CPU_TIME_SUPPORTED = supported;
-    }
 
     /**
      * Pure read benchmark - reads all data without Parquet encoding.
@@ -347,9 +335,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         if (!symbolTable.containsNullValue()) {
                             symbolColumnType |= 1 << 31;
                         }
-                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
+                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (symbolColumnType & 0xFFFFFFFFL));
                     } else {
-                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
+                        columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | (columnType & 0xFFFFFFFFL));
                     }
                 }
 
@@ -367,7 +355,10 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         RAW_ARRAY_ENCODING,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
-                        PARQUET_VERSION
+                        PARQUET_VERSION,
+                        0,
+                        0,
+                        0
                 );
 
                 try {
@@ -484,5 +475,17 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    static {
+        boolean supported = THREAD_MX_BEAN.isCurrentThreadCpuTimeSupported();
+        if (supported && !THREAD_MX_BEAN.isThreadCpuTimeEnabled()) {
+            try {
+                THREAD_MX_BEAN.setThreadCpuTimeEnabled(true);
+            } catch (UnsupportedOperationException | SecurityException e) {
+                supported = false;
+            }
+        }
+        CPU_TIME_SUPPORTED = supported;
     }
 }
