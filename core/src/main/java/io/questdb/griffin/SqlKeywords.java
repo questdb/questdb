@@ -316,21 +316,6 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'e';
     }
 
-    public static boolean isCompressionKeyword(CharSequence tok) {
-        return tok.length() == 11
-                && (tok.charAt(0) | 32) == 'c'
-                && (tok.charAt(1) | 32) == 'o'
-                && (tok.charAt(2) | 32) == 'm'
-                && (tok.charAt(3) | 32) == 'p'
-                && (tok.charAt(4) | 32) == 'r'
-                && (tok.charAt(5) | 32) == 'e'
-                && (tok.charAt(6) | 32) == 's'
-                && (tok.charAt(7) | 32) == 's'
-                && (tok.charAt(8) | 32) == 'i'
-                && (tok.charAt(9) | 32) == 'o'
-                && (tok.charAt(10) | 32) == 'n';
-    }
-
     public static boolean isConcatKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -508,17 +493,6 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'a'
                 && (tok.charAt(4) | 32) == 'd'
                 && (tok.charAt(5) | 32) == 'e';
-    }
-
-    public static boolean isDefaultKeyword(CharSequence tok) {
-        return tok.length() == 7
-                && (tok.charAt(0) | 32) == 'd'
-                && (tok.charAt(1) | 32) == 'e'
-                && (tok.charAt(2) | 32) == 'f'
-                && (tok.charAt(3) | 32) == 'a'
-                && (tok.charAt(4) | 32) == 'u'
-                && (tok.charAt(5) | 32) == 'l'
-                && (tok.charAt(6) | 32) == 't';
     }
 
     public static boolean isDecimalKeyword(CharSequence tok) {
@@ -714,18 +688,6 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'b'
                 && (tok.charAt(4) | 32) == 'l'
                 && (tok.charAt(5) | 32) == 'e';
-    }
-
-    public static boolean isEncodingKeyword(CharSequence tok) {
-        return tok.length() == 8
-                && (tok.charAt(0) | 32) == 'e'
-                && (tok.charAt(1) | 32) == 'n'
-                && (tok.charAt(2) | 32) == 'c'
-                && (tok.charAt(3) | 32) == 'o'
-                && (tok.charAt(4) | 32) == 'd'
-                && (tok.charAt(5) | 32) == 'i'
-                && (tok.charAt(6) | 32) == 'n'
-                && (tok.charAt(7) | 32) == 'g';
     }
 
     public static boolean isEndKeyword(CharSequence tok) {

@@ -687,13 +687,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void setParquetEncoding(MetadataService svc) {
+    private void changeSymbolCapacity(MetadataService svc) {
         if (activeExtraStrInfo.size() != 1) {
-            throw CairoException.nonCritical().put("invalid set parquet encoding alter statement");
+            throw CairoException.nonCritical().put("invalid change symbol capacity alter statement");
         }
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
-        int parquetEncodingConfig = (int) extraInfo.get(0);
-        svc.setColumnParquetEncoding(columnName, parquetEncodingConfig);
+        int newCapacity = (int) extraInfo.get(1);
+        svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
     private void dropParquetEncoding(MetadataService svc) {
@@ -705,18 +705,22 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.dropColumnParquetEncoding(columnName, dropFlags);
     }
 
-    private void changeSymbolCapacity(MetadataService svc) {
-        if (activeExtraStrInfo.size() != 1) {
-            throw CairoException.nonCritical().put("invalid change symbol capacity alter statement");
-        }
-        CharSequence columnName = activeExtraStrInfo.getStrA(0);
-        int newCapacity = (int) extraInfo.get(1);
-        svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
-    }
-
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    }
+
+    private CairoEngine getCairoEngine() {
+        assert sqlExecutionContext != null;
+        return sqlExecutionContext.getCairoEngine();
+    }
+
+    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
+    private void removeColumn(MetadataService svc, CharSequence columnName) {
+        svc.removeColumn(columnName, securityContext);
     }
 
     private void setMatViewRefresh(MetadataService svc) {
@@ -765,21 +769,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    private void setParquetEncoding(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid set parquet encoding alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int parquetEncodingConfig = (int) extraInfo.get(0);
+        svc.setColumnParquetEncoding(columnName, parquetEncodingConfig);
+    }
+
     private void squashPartitions(MetadataService svc) {
         svc.squashPartitions();
-    }
-
-    private CairoEngine getCairoEngine() {
-        assert sqlExecutionContext != null;
-        return sqlExecutionContext.getCairoEngine();
-    }
-
-    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
-    }
-
-    private void removeColumn(MetadataService svc, CharSequence columnName) {
-        svc.removeColumn(columnName, securityContext);
     }
 
     private interface CharSequenceList extends Mutable {

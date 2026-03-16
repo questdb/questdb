@@ -39,8 +39,8 @@ public class CairoColumn implements Sinkable {
     private int indexBlockCapacity;
     private boolean indexed;
     private long metadataVersion;
-    private int parquetEncodingConfig;
     private CharSequence name;
+    private int parquetEncodingConfig;
     private int position;
     private boolean symbolCached;
     private int symbolCapacity;
