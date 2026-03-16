@@ -71,7 +71,11 @@ public class ParquetEncoding {
      * Returns the human-readable name for the given encoding constant, or null if unknown.
      */
     public static CharSequence getEncodingName(int encoding) {
-        return encodingToNameMap.get(encoding);
+        CharSequence name = encodingToNameMap.get(encoding);
+        if (name != null) {
+            return name;
+        }
+        return "unknown(" + encoding + ")";
     }
 
     /**
