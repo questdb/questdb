@@ -179,8 +179,7 @@ impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<
                 Page::Dict(p) => p.buffer.len(),
             };
             total_uncompressed += uncompressed_size;
-            let compressed =
-                compress(page.clone(), vec![], self.compression).map_err(E::from)?;
+            let compressed = compress(page.clone(), vec![], self.compression).map_err(E::from)?;
             total_compressed += compressed.compressed_size();
             trial.push(compressed);
         }
@@ -192,9 +191,15 @@ impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<
         let pages = if ratio_failed {
             // Ratio not met: store all pages uncompressed.
             let mut uncompressed = Vec::with_capacity(raw_pages.len());
-            for page in raw_pages {
+            // We can reuse the trial compressed pages as buffers for the uncompressed pages to avoid extra allocations.
+            for (page, mut buf) in raw_pages.into_iter().zip(trial) {
                 uncompressed.push(
-                    compress(page, vec![], CompressionOptions::Uncompressed).map_err(E::from)?,
+                    compress(
+                        page,
+                        std::mem::take(buf.buffer()),
+                        CompressionOptions::Uncompressed,
+                    )
+                    .map_err(E::from)?,
                 );
             }
             uncompressed
