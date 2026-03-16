@@ -1022,6 +1022,98 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicWindowBoundOnSymbolKeyWithPrevailing() throws Exception {
+        // Data correctness test for dynamic bound with ON key equality and
+        // INCLUDE PREVAILING. This exercises the aggregateDynamicWithPrevailingJoinFiltered
+        // reducer which does backward scan through slaveRowIds with filter checks,
+        // then falls back to findPrevailingForMasterRow.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (sym SYMBOL, bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(sym, bound, ts) VALUES
+                    ('A', 1, '2023-01-01T09:00:00.000000Z'),
+                    ('B', 2, '2023-01-01T09:01:00.000000Z'),
+                    ('A', 0, '2023-01-01T09:02:00.000000Z'),
+                    ('B', 1, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(sym, val, ts) VALUES
+                    ('A', 1.0, '2023-01-01T08:59:00.000000Z'),
+                    ('B', 2.0, '2023-01-01T08:59:00.000000Z'),
+                    ('A', 3.0, '2023-01-01T09:00:00.000000Z'),
+                    ('B', 4.0, '2023-01-01T09:00:00.000000Z'),
+                    ('A', 5.0, '2023-01-01T09:01:00.000000Z'),
+                    ('B', 6.0, '2023-01-01T09:01:00.000000Z'),
+                    ('A', 7.0, '2023-01-01T09:02:00.000000Z'),
+                    ('B', 8.0, '2023-01-01T09:02:00.000000Z'),
+                    ('A', 9.0, '2023-01-01T09:03:00.000000Z'),
+                    ('B', 10.0, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            // Reference: sym equality + dynamic lo bound + prevailing
+            printSql("""
+                    SELECT ts, sym, bound, sum(val) AS agg FROM
+                    (
+                        SELECT * FROM (
+                            SELECT m.ts, m.sym, m.bound, s.val
+                            FROM master m
+                            LEFT JOIN slave s
+                            ON m.sym = s.sym AND s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                        UNION
+                            SELECT ts, sym, bound, val FROM (
+                                SELECT m.ts, m.sym, m.bound, s.val, s.ts AS ts1
+                                FROM master m
+                                JOIN slave s ON m.sym = s.sym AND s.ts <= dateadd('m', -m.bound, m.ts)
+                            ) LATEST ON ts1 PARTITION BY ts
+                        ) ORDER BY ts
+                    )
+                    ORDER BY ts
+                    """, sink);
+
+            // Async General path (ON key + dynamic bound + prevailing)
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            ON (m.sym = s.sym)
+                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                            INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.sym, m.bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            ON (m.sym = s.sym)
+                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                            INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDynamicWindowBoundWithTimeUnit() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -1530,6 +1622,147 @@ public class WindowJoinTest extends AbstractCairoTest {
                             WINDOW JOIN slave s
                             RANGE BETWEEN 1 minute PRECEDING AND bound minutes FOLLOWING
                             INCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowMasterFilter() throws Exception {
+        // Exercises the FILTER_AND_AGGREGATE_DYNAMIC reducer which handles
+        // a master WHERE clause combined with dynamic window bounds.
+        // The WHERE must be on a non-timestamp column to create a real masterFilter
+        // (timestamp conditions get pushed down as page frame interval restrictions).
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(bound, ts) VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (2, '2023-01-01T09:01:00.000000Z'),
+                    (1, '2023-01-01T09:02:00.000000Z'),
+                    (3, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:58:00.000000Z'),
+                    (2.0, '2023-01-01T08:59:00.000000Z'),
+                    (3.0, '2023-01-01T09:00:00.000000Z'),
+                    (4.0, '2023-01-01T09:01:00.000000Z'),
+                    (5.0, '2023-01-01T09:02:00.000000Z'),
+                    (6.0, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            // Reference: non-timestamp master filter + dynamic lo bound.
+            // m.bound > 1 selects rows at 09:01 (bound=2) and 09:03 (bound=3).
+            printSql("""
+                    SELECT m.ts, m.bound, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON s.ts >= dateadd('m', -m.bound, m.ts) AND s.ts <= m.ts
+                    WHERE m.bound > 1
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path (master filter + dynamic bound).
+            // No ST path here: LIMIT on master prevents the WHERE from becoming
+            // a masterFilter in the reducer, so the ST path is not useful for
+            // exercising FILTER_AND_AGGREGATE_DYNAMIC.
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN bound minutes PRECEDING AND CURRENT ROW
+                            EXCLUDE PREVAILING
+                            WHERE m.bound > 1
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicWindowMixedNullBounds() throws Exception {
+        // Tests that when both lo and hi are dynamic with different NULL patterns,
+        // a NULL in either bound causes the entire row to be skipped (NULL aggregate).
+        // Row 1: NULL lo / non-NULL hi -> NULL agg
+        // Row 2: non-NULL lo / NULL hi -> NULL agg
+        // Row 3: non-NULL lo / non-NULL hi -> computed agg
+        // Row 4: NULL lo / NULL hi -> NULL agg
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("""
+                    INSERT INTO master(lo_bound, hi_bound, ts) VALUES
+                    (NULL, 1, '2023-01-01T09:00:00.000000Z'),
+                    (1, NULL, '2023-01-01T09:01:00.000000Z'),
+                    (1, 1, '2023-01-01T09:02:00.000000Z'),
+                    (NULL, NULL, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave(val, ts) VALUES
+                    (1.0, '2023-01-01T08:59:00.000000Z'),
+                    (2.0, '2023-01-01T09:00:00.000000Z'),
+                    (3.0, '2023-01-01T09:01:00.000000Z'),
+                    (4.0, '2023-01-01T09:02:00.000000Z'),
+                    (5.0, '2023-01-01T09:03:00.000000Z')
+                    """);
+
+            // Reference: NULL in either bound -> dateadd returns NULL -> ON fails -> NULL agg
+            // Only row 3 (lo_bound=1, hi_bound=1) produces a result: [09:01, 09:03] -> 3+4+5=12
+            printSql("""
+                    SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                    FROM master m
+                    LEFT JOIN slave s
+                    ON s.ts >= dateadd('m', -m.lo_bound, m.ts) AND s.ts <= dateadd('m', m.hi_bound, m.ts)
+                    ORDER BY m.ts
+                    """, sink);
+
+            // Async General path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                            FROM master m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                            EXCLUDE PREVAILING
+                            ORDER BY m.ts
+                            """,
+                    "ts",
+                    false,
+                    false,
+                    true
+            );
+
+            // ST path
+            assertQueryNoLeakCheck(
+                    sink.toString(),
+                    """
+                            SELECT m.ts, m.lo_bound, m.hi_bound, sum(s.val) AS agg
+                            FROM (SELECT * FROM master LIMIT 4) m
+                            WINDOW JOIN slave s
+                            RANGE BETWEEN lo_bound minutes PRECEDING AND hi_bound minutes FOLLOWING
+                            EXCLUDE PREVAILING
                             ORDER BY m.ts
                             """,
                     "ts",
@@ -2053,10 +2286,12 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Row 1 (bound=1): [09:00, 09:00:01] → only slave at 09:00 (val=2)
             // Row 2 (bound=overflow): [09:01, end of time] → slaves at 09:01..09:03 (3+4+5=12)
             // Row 3 (bound=0): [09:02, 09:02] → only slave at 09:02 (val=4)
-            String expected = "ts\tbound\tagg\n" +
-                    "2023-01-01T09:00:00.000000Z\t1\t2.0\n" +
-                    "2023-01-01T09:01:00.000000Z\t9223372036855\t12.0\n" +
-                    "2023-01-01T09:02:00.000000Z\t0\t4.0\n";
+            String expected = """
+                    ts\tbound\tagg
+                    2023-01-01T09:00:00.000000Z\t1\t2.0
+                    2023-01-01T09:01:00.000000Z\t9223372036855\t12.0
+                    2023-01-01T09:02:00.000000Z\t0\t4.0
+                    """;
 
             // Async General path
             assertQueryNoLeakCheck(
@@ -2126,10 +2361,12 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Row 1 (bound=1): [08:59:59, 09:00] → only slave at 09:00 (val=2)
             // Row 2 (bound=overflow): [start of time, 09:01] → slaves at 08:59..09:01 (1+2+3=6)
             // Row 3 (bound=0): [09:02, 09:02] → only slave at 09:02 (val=4)
-            String expected = "ts\tbound\tagg\n" +
-                    "2023-01-01T09:00:00.000000Z\t1\t2.0\n" +
-                    "2023-01-01T09:01:00.000000Z\t9223372036855\t6.0\n" +
-                    "2023-01-01T09:02:00.000000Z\t0\t4.0\n";
+            String expected = """
+                    ts\tbound\tagg
+                    2023-01-01T09:00:00.000000Z\t1\t2.0
+                    2023-01-01T09:01:00.000000Z\t9223372036855\t6.0
+                    2023-01-01T09:02:00.000000Z\t0\t4.0
+                    """;
 
             // Async General path
             assertQueryNoLeakCheck(

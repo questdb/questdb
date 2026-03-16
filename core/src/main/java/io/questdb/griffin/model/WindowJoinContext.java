@@ -46,7 +46,6 @@ public class WindowJoinContext implements Mutable {
     private int loKind = PRECEDING;
     private int loKindPos;
     private QueryModel parentModel;
-    private int prevailingPos;
 
     @Override
     public void clear() {
@@ -65,7 +64,6 @@ public class WindowJoinContext implements Mutable {
         includePrevailing = true;
         isDynamicHi = false;
         isDynamicLo = false;
-        prevailingPos = 0;
         parentModel = null;
     }
 
@@ -121,10 +119,6 @@ public class WindowJoinContext implements Mutable {
         return parentModel;
     }
 
-    public int getPrevailingPos() {
-        return prevailingPos;
-    }
-
     public boolean isDynamicHi() {
         return isDynamicHi;
     }
@@ -163,9 +157,8 @@ public class WindowJoinContext implements Mutable {
         this.hiKindPos = hiKindPos;
     }
 
-    public void setIncludePrevailing(boolean includePrevailing, int pos) {
+    public void setIncludePrevailing(boolean includePrevailing) {
         this.includePrevailing = includePrevailing;
-        this.prevailingPos = pos;
     }
 
     public void setLo(long lo) {
