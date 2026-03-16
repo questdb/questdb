@@ -25,6 +25,8 @@
 package io.questdb.plugin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.griffin.SqlException;
 
 /**
@@ -43,19 +45,82 @@ import io.questdb.griffin.SqlException;
 public interface PluginContext {
 
     /**
+     * Validates the given username and password against QuestDB's user store
+     * (admin credentials and password store) and returns a {@link SecurityContext}
+     * for the authenticated user.
+     * <p>
+     * This mirrors how the ILP HTTP endpoint authenticates Basic credentials.
+     * Use this when the plugin receives user-supplied credentials (e.g., HTTP Basic auth).
+     * <p>
+     * Example:
+     * <pre>
+     *   SecurityContext userCtx = context.authenticate("alice", "secret", SecurityContextFactory.HTTP);
+     *   context.executeSql("INSERT INTO my_table VALUES (...)", userCtx);
+     * </pre>
+     *
+     * @param username    the user name
+     * @param password    the password
+     * @param interfaceId one of {@link SecurityContextFactory#HTTP},
+     *                    {@link SecurityContextFactory#PGWIRE}, {@link SecurityContextFactory#ILP}
+     * @return a security context enforcing that user's permissions
+     * @throws io.questdb.cairo.CairoException if the credentials are invalid
+     */
+    SecurityContext authenticate(CharSequence username, CharSequence password, byte interfaceId);
+
+    /**
+     * Creates a {@link SecurityContext} for the given principal, using
+     * {@link SecurityContext#AUTH_TYPE_CREDENTIALS} and no group memberships.
+     * <p>
+     * This is a convenience wrapper around {@link #getSecurityContextFactory()}
+     * that hides the internal {@link io.questdb.cairo.security.PrincipalContext} type.
+     * <p>
+     * Use this when the plugin handles its own authentication (e.g., OIDC, API keys)
+     * and only needs to map a known principal to a {@link SecurityContext}.
+     * For password-based authentication, use {@link #authenticate(CharSequence, CharSequence, byte)} instead.
+     * <p>
+     * Example:
+     * <pre>
+     *   SecurityContext userCtx = context.createSecurityContext("alice", SecurityContextFactory.HTTP);
+     *   context.executeSql("INSERT INTO my_table VALUES (...)", userCtx);
+     * </pre>
+     *
+     * @param principal   the authenticated user name
+     * @param interfaceId one of {@link SecurityContextFactory#HTTP},
+     *                    {@link SecurityContextFactory#PGWIRE}, {@link SecurityContextFactory#ILP}
+     * @return a security context enforcing that user's permissions
+     */
+    SecurityContext createSecurityContext(CharSequence principal, byte interfaceId);
+
+    /**
      * Executes a SQL statement (DDL or DML). Runs with full privileges.
      * <p>
-     * Plugins can use this to create tables, insert data, or run any SQL during
-     * lifecycle callbacks. Example:
+     * Intended for plugin bootstrap (creating tables, inserting seed data) during
+     * lifecycle callbacks. For operations on behalf of an authenticated user, use
+     * {@link #executeSql(CharSequence, SecurityContext)} instead.
+     * <p>
+     * Example:
      * <pre>
      *   context.executeSql("CREATE TABLE IF NOT EXISTS my_plugin_log (ts TIMESTAMP, msg STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
-     *   context.executeSql("INSERT INTO my_plugin_log VALUES (now(), 'plugin started')");
      * </pre>
      *
      * @param sql the SQL statement to execute
      * @throws SqlException if the statement is invalid or execution fails
      */
     void executeSql(CharSequence sql) throws SqlException;
+
+    /**
+     * Executes a SQL statement with the given security context, enforcing that
+     * user's permissions. Use this when executing SQL on behalf of an authenticated
+     * user (e.g., from a plugin HTTP endpoint).
+     * <p>
+     * Obtain a {@link SecurityContext} via {@link #getSecurityContextFactory()}.
+     *
+     * @param sql             the SQL statement to execute
+     * @param securityContext the authenticated user's security context
+     * @throws SqlException if the statement is invalid, execution fails, or the
+     *                      user lacks the required permissions
+     */
+    void executeSql(CharSequence sql, SecurityContext securityContext) throws SqlException;
 
     /**
      * Returns the CairoEngine instance for advanced operations.
@@ -69,6 +134,24 @@ public interface PluginContext {
      * Returns the canonical name of this plugin (e.g., "questdb-plugin-example-1.0.0").
      */
     CharSequence getPluginName();
+
+    /**
+     * Returns the server's {@link SecurityContextFactory} for creating user-specific
+     * security contexts. Plugins that accept external requests (e.g., HTTP endpoints)
+     * should use this to authenticate users and enforce permissions.
+     * <p>
+     * Example: creating a security context for a known user:
+     * <pre>
+     *   SecurityContextFactory factory = context.getSecurityContextFactory();
+     *   SecurityContext userCtx = factory.getInstance(principalContext, SecurityContextFactory.HTTP);
+     *   context.executeSql("INSERT INTO my_table VALUES (...)", userCtx);
+     * </pre>
+     *
+     * @return the security context factory, never null
+     * @see SecurityContextFactory
+     * @see io.questdb.cairo.security.PrincipalContext
+     */
+    SecurityContextFactory getSecurityContextFactory();
 
     /**
      * Returns a plugin configuration property, or {@code defaultValue} if not set.
