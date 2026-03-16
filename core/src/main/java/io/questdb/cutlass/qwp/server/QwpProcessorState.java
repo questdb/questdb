@@ -90,7 +90,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     ) {
         assert initBufferSize > 0;
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
-        this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
+        this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         this.streamingDecoder = new QwpStreamingDecoder(new QwpSchemaCache());
         this.walAppender = new QwpWalAppender(
                 configuration.autoCreateNewColumns(),
