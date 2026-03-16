@@ -508,6 +508,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > overallSlaveHi) {
@@ -655,6 +656,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > overallSlaveHi) {
@@ -808,6 +810,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                         if (slaveTimestamp > overallSlaveHi) {
@@ -1781,6 +1784,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (slaveRowIndex != Long.MIN_VALUE) {
                         long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         for (; ; ) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
                             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                             final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                             if (slaveTimestamp > overallSlaveHi) {
@@ -1960,6 +1964,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (slaveRowIndex != Long.MIN_VALUE) {
                         long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         for (; ; ) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
                             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                             final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                             if (slaveTimestamp > overallSlaveHi) {
@@ -2145,6 +2150,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (slaveRowIndex != Long.MIN_VALUE) {
                         long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         for (; ; ) {
+                            circuitBreaker.statefulThrowExceptionIfTripped();
                             slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                             final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                             if (slaveTimestamp > overallSlaveHi) {

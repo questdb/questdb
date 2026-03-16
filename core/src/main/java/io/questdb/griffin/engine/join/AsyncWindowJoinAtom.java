@@ -170,6 +170,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     ) {
         assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
         assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
+        assert perWorkerWindowLoFuncs == null || perWorkerWindowLoFuncs.size() == workerCount;
+        assert perWorkerWindowHiFuncs == null || perWorkerWindowHiFuncs.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {

@@ -460,6 +460,13 @@ public class SqlOptimiser implements Mutable {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
 
+    private static boolean matchesModelAlias(CharSequence prefix, QueryModel model) {
+        if (model.getAlias() != null && Chars.equalsIgnoreCase(model.getAlias().token, prefix)) {
+            return true;
+        }
+        return model.getTableName() != null && Chars.equalsIgnoreCase(model.getTableName(), prefix);
+    }
+
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
@@ -4414,6 +4421,39 @@ public class SqlOptimiser implements Mutable {
                 : Chars.equalsIgnoreCase(name, target);
     }
 
+    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
+        ExpressionNode constWhere = model.getConstWhereClause();
+        if (constWhere == null) {
+            return;
+        }
+        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
+        ExpressionNode compileTimeTerms = null;
+        ExpressionNode runtimeTerms = null;
+        // Flatten the AND-tree and classify each conjunct.
+        tempExprs.clear();
+        extractAndTerms(constWhere, tempExprs);
+        for (int i = 0, n = tempExprs.size(); i < n; i++) {
+            ExpressionNode term = tempExprs.getQuick(i);
+            if (isCompileTimeConstant(term)) {
+                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
+            } else {
+                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
+            }
+        }
+        model.setConstWhereClause(compileTimeTerms);
+        if (runtimeTerms != null) {
+            IntList ordered = model.getOrderedJoinModels();
+            int lastIndex = ordered.getQuick(ordered.size() - 1);
+            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
+            lastModel.setPostJoinWhereClause(concatFilters(
+                    legacy,
+                    expressionNodePool,
+                    lastModel.getPostJoinWhereClause(),
+                    runtimeTerms
+            ));
+        }
+    }
+
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
         assert a.slaveIndex == b.slaveIndex;
 
@@ -4545,39 +4585,6 @@ public class SqlOptimiser implements Mutable {
             child.setRowsHiExprTimeUnit(base.getRowsHiExprTimeUnit());
             child.setRowsHiKind(base.getRowsHiKind(), base.getRowsHiKindPos());
             child.setExclusionKind(base.getExclusionKind(), base.getExclusionKindPos());
-        }
-    }
-
-    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
-        ExpressionNode constWhere = model.getConstWhereClause();
-        if (constWhere == null) {
-            return;
-        }
-        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
-        ExpressionNode compileTimeTerms = null;
-        ExpressionNode runtimeTerms = null;
-        // Flatten the AND-tree and classify each conjunct.
-        tempExprs.clear();
-        extractAndTerms(constWhere, tempExprs);
-        for (int i = 0, n = tempExprs.size(); i < n; i++) {
-            ExpressionNode term = tempExprs.getQuick(i);
-            if (isCompileTimeConstant(term)) {
-                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
-            } else {
-                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
-            }
-        }
-        model.setConstWhereClause(compileTimeTerms);
-        if (runtimeTerms != null) {
-            IntList ordered = model.getOrderedJoinModels();
-            int lastIndex = ordered.getQuick(ordered.size() - 1);
-            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
-            lastModel.setPostJoinWhereClause(concatFilters(
-                    legacy,
-                    expressionNodePool,
-                    lastModel.getPostJoinWhereClause(),
-                    runtimeTerms
-            ));
         }
     }
 
@@ -6665,6 +6672,58 @@ public class SqlOptimiser implements Mutable {
 
         // Clear the base reference — inheritance is now resolved
         window.setBaseWindowName(null, 0);
+    }
+
+    /**
+     * Resolves column prefixes in WINDOW JOIN RANGE BETWEEN bound expressions.
+     * Strips the master table prefix and rejects the slave table prefix with an error.
+     * <p>
+     * This method only processes children of FUNCTION/OPERATION/SET_OPERATION nodes,
+     * so the caller must apply {@link #rewriteWindowJoinBoundLiteral} to the root node
+     * first to handle the case where the bound expression is a bare column reference.
+     */
+    private void resolveWindowJoinBoundColumns(
+            ExpressionNode node,
+            QueryModel masterModel,
+            QueryModel slaveModel
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+
+        sqlNodeStack.clear();
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case FUNCTION:
+                    case OPERATION:
+                    case SET_OPERATION:
+                        if (node.paramCount < 3) {
+                            node.lhs = rewriteWindowJoinBoundLiteral(node.lhs, masterModel, slaveModel);
+                            node.rhs = rewriteWindowJoinBoundLiteral(node.rhs, masterModel, slaveModel);
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            node = node.lhs;
+                        } else {
+                            for (int i = 0, n = node.paramCount; i < n; i++) {
+                                ExpressionNode arg = rewriteWindowJoinBoundLiteral(node.args.getQuick(i), masterModel, slaveModel);
+                                node.args.setQuick(i, arg);
+                                if (arg != null && arg.type != LITERAL) {
+                                    sqlNodeStack.push(arg);
+                                }
+                            }
+                            node = null;
+                        }
+                        continue;
+                    default:
+                        node = null;
+                        continue;
+                }
+            }
+            node = sqlNodeStack.poll();
+        }
     }
 
     // Rewrite:
@@ -9731,6 +9790,28 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private ExpressionNode rewriteWindowJoinBoundLiteral(
+            ExpressionNode node,
+            QueryModel masterModel,
+            QueryModel slaveModel
+    ) throws SqlException {
+        if (node == null || node.type != LITERAL) {
+            return node;
+        }
+        final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+        if (dot == -1) {
+            return node;
+        }
+        final CharSequence prefix = node.token.subSequence(0, dot);
+        if (matchesModelAlias(prefix, slaveModel)) {
+            throw SqlException.$(node.position, "RANGE BETWEEN expression must not reference right table columns");
+        }
+        if (matchesModelAlias(prefix, masterModel)) {
+            return nextLiteral(node.token.subSequence(dot + 1, node.token.length()), node.position);
+        }
+        return node;
+    }
+
     /**
      * Copies the provided order by advice into the given model.
      *
@@ -11126,87 +11207,6 @@ public class SqlOptimiser implements Mutable {
             }
             return node;
         }
-    }
-
-    /**
-     * Resolves column prefixes in WINDOW JOIN RANGE BETWEEN bound expressions.
-     * Strips the master table prefix and rejects the slave table prefix with an error.
-     * <p>
-     * This method only processes children of FUNCTION/OPERATION/SET_OPERATION nodes,
-     * so the caller must apply {@link #rewriteWindowJoinBoundLiteral} to the root node
-     * first to handle the case where the bound expression is a bare column reference.
-     */
-    private void resolveWindowJoinBoundColumns(
-            ExpressionNode node,
-            QueryModel masterModel,
-            QueryModel slaveModel
-    ) throws SqlException {
-        if (node == null) {
-            return;
-        }
-
-        sqlNodeStack.clear();
-
-        while (!sqlNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                switch (node.type) {
-                    case FUNCTION:
-                    case OPERATION:
-                    case SET_OPERATION:
-                        if (node.paramCount < 3) {
-                            node.lhs = rewriteWindowJoinBoundLiteral(node.lhs, masterModel, slaveModel);
-                            node.rhs = rewriteWindowJoinBoundLiteral(node.rhs, masterModel, slaveModel);
-                            if (node.rhs != null) {
-                                sqlNodeStack.push(node.rhs);
-                            }
-                            node = node.lhs;
-                        } else {
-                            for (int i = 0, n = node.paramCount; i < n; i++) {
-                                ExpressionNode arg = rewriteWindowJoinBoundLiteral(node.args.getQuick(i), masterModel, slaveModel);
-                                node.args.setQuick(i, arg);
-                                if (arg != null && arg.type != LITERAL) {
-                                    sqlNodeStack.push(arg);
-                                }
-                            }
-                            node = null;
-                        }
-                        continue;
-                    default:
-                        node = null;
-                        continue;
-                }
-            }
-            node = sqlNodeStack.poll();
-        }
-    }
-
-    private ExpressionNode rewriteWindowJoinBoundLiteral(
-            ExpressionNode node,
-            QueryModel masterModel,
-            QueryModel slaveModel
-    ) throws SqlException {
-        if (node == null || node.type != LITERAL) {
-            return node;
-        }
-        final int dot = Chars.indexOfLastUnquoted(node.token, '.');
-        if (dot == -1) {
-            return node;
-        }
-        final CharSequence prefix = node.token.subSequence(0, dot);
-        if (matchesModelAlias(prefix, slaveModel)) {
-            throw SqlException.$(node.position, "RANGE BETWEEN expression must not reference right table columns");
-        }
-        if (matchesModelAlias(prefix, masterModel)) {
-            return nextLiteral(node.token.subSequence(dot + 1, node.token.length()), node.position);
-        }
-        return node;
-    }
-
-    private static boolean matchesModelAlias(CharSequence prefix, QueryModel model) {
-        if (model.getAlias() != null && Chars.equalsIgnoreCase(model.getAlias().token, prefix)) {
-            return true;
-        }
-        return model.getTableName() != null && Chars.equalsIgnoreCase(model.getTableName(), prefix);
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
