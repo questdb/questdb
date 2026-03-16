@@ -240,6 +240,34 @@ public class O3ParquetMergeStrategy {
     }
 
     /**
+     * Returns the number of row groups in the bounds list.
+     */
+    public static int getRowGroupCount(LongList rowGroupBounds) {
+        return rowGroupBounds.size() / ROW_GROUP_ENTRY_SIZE;
+    }
+
+    /**
+     * Helper to get row group max timestamp from bounds list.
+     */
+    public static long getRowGroupMax(LongList rowGroupBounds, int rowGroupIndex) {
+        return rowGroupBounds.get(rowGroupIndex * ROW_GROUP_ENTRY_SIZE + ROW_GROUP_MAX_OFFSET);
+    }
+
+    /**
+     * Helper to get row group min timestamp from bounds list.
+     */
+    public static long getRowGroupMin(LongList rowGroupBounds, int rowGroupIndex) {
+        return rowGroupBounds.get(rowGroupIndex * ROW_GROUP_ENTRY_SIZE + ROW_GROUP_MIN_OFFSET);
+    }
+
+    /**
+     * Helper to get row group row count from bounds list.
+     */
+    public static long getRowGroupRowCount(LongList rowGroupBounds, int rowGroupIndex) {
+        return rowGroupBounds.get(rowGroupIndex * ROW_GROUP_ENTRY_SIZE + ROW_GROUP_ROW_COUNT_OFFSET);
+    }
+
+    /**
      * Emits one or more COPY_O3 actions, splitting the range into chunks of
      * maxRowGroupSize rows. If the last chunk would be smaller than
      * smallRowGroupThreshold, it absorbs the remainder into the previous chunk
@@ -301,34 +329,6 @@ public class O3ParquetMergeStrategy {
 
     private static void setRangeLo(LongList ranges, int index, long value) {
         ranges.setQuick(index * 2, value);
-    }
-
-    /**
-     * Returns the number of row groups in the bounds list.
-     */
-    public static int getRowGroupCount(LongList rowGroupBounds) {
-        return rowGroupBounds.size() / ROW_GROUP_ENTRY_SIZE;
-    }
-
-    /**
-     * Helper to get row group max timestamp from bounds list.
-     */
-    public static long getRowGroupMax(LongList rowGroupBounds, int rowGroupIndex) {
-        return rowGroupBounds.get(rowGroupIndex * ROW_GROUP_ENTRY_SIZE + ROW_GROUP_MAX_OFFSET);
-    }
-
-    /**
-     * Helper to get row group min timestamp from bounds list.
-     */
-    public static long getRowGroupMin(LongList rowGroupBounds, int rowGroupIndex) {
-        return rowGroupBounds.get(rowGroupIndex * ROW_GROUP_ENTRY_SIZE + ROW_GROUP_MIN_OFFSET);
-    }
-
-    /**
-     * Helper to get row group row count from bounds list.
-     */
-    public static long getRowGroupRowCount(LongList rowGroupBounds, int rowGroupIndex) {
-        return rowGroupBounds.get(rowGroupIndex * ROW_GROUP_ENTRY_SIZE + ROW_GROUP_ROW_COUNT_OFFSET);
     }
 
     /**

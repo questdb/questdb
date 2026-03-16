@@ -38,29 +38,6 @@ public class PartitionUpdater implements QuietCloseable {
     public PartitionUpdater() {
     }
 
-    @Override
-    public void close() {
-        destroy();
-    }
-
-    public void copyRowGroup(int rowGroupIndex) {
-        assert ptr != 0;
-        copyRowGroup(ptr, rowGroupIndex);
-    }
-
-    public long getResultUnusedBytes() {
-        assert ptr != 0;
-        return getResultUnusedBytes(ptr);
-    }
-
-    // call to this method will update file metadata
-    // MUST be called after all row groups have been updated
-    // returns the final file size
-    public long updateFileMetadata() {
-        assert ptr != 0;
-        return updateFileMetadata(ptr);
-    }
-
     public void addRowGroup(int position, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
@@ -83,6 +60,21 @@ public class PartitionUpdater implements QuietCloseable {
         } finally {
             descriptor.clear();
         }
+    }
+
+    @Override
+    public void close() {
+        destroy();
+    }
+
+    public void copyRowGroup(int rowGroupIndex) {
+        assert ptr != 0;
+        copyRowGroup(ptr, rowGroupIndex);
+    }
+
+    public long getResultUnusedBytes() {
+        assert ptr != 0;
+        return getResultUnusedBytes(ptr);
     }
 
     public void of(
@@ -117,6 +109,14 @@ public class PartitionUpdater implements QuietCloseable {
                 dataPageSize,
                 bloomFilterFpp
         );
+    }
+
+    // call to this method will update file metadata
+    // MUST be called after all row groups have been updated
+    // returns the final file size
+    public long updateFileMetadata() {
+        assert ptr != 0;
+        return updateFileMetadata(ptr);
     }
 
     public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
