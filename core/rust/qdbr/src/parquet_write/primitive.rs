@@ -662,6 +662,7 @@ pub fn slice_to_dict_pages_simd<T: SimdEncodable>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     T::Bytes: Eq + Hash,
@@ -697,6 +698,9 @@ where
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
     for &entry in &dict_entries {
         dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
     }
 
     // Encode data page: def levels + bit_width + RLE-encoded keys
@@ -746,6 +750,7 @@ pub fn int_slice_to_dict_pages_nullable<T, P>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     P: NativeType,
@@ -782,6 +787,9 @@ where
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
     for &entry in &dict_entries {
         dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
     }
 
     let total_null_count = column_top + null_count;
@@ -831,6 +839,7 @@ pub fn int_slice_to_dict_pages_notnull<T, P>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     P: NativeType,
@@ -877,6 +886,9 @@ where
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
     for &entry in &dict_entries {
         dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
     }
 
     let stats = if options.write_statistics {
@@ -911,6 +923,7 @@ pub fn decimal_slice_to_dict_pages<T>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     T: Nullable + NativeType + Debug,
@@ -944,6 +957,9 @@ where
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * size_of::<T>());
     for &entry in &dict_entries {
         dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
     }
 
     let total_null_count = column_top + null_count;

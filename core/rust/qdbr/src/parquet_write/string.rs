@@ -130,6 +130,7 @@ pub fn string_to_dict_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + offsets.len();
     let mut null_count = 0;
@@ -181,6 +182,9 @@ pub fn string_to_dict_pages(
         dict_buffer.extend_from_slice(utf8_bytes);
         if let Some(ref mut s) = stats {
             s.update(utf8_bytes);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(utf8_bytes));
         }
     }
 
