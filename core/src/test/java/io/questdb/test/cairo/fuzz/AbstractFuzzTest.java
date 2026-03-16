@@ -309,13 +309,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double replaceProb,
             double symbolAccessProb,
             double queryProb,
-            double setParquetEncodingProb
+            double setParquetEncodingProb,
+            double dropParquetEncodingProb
     ) {
         fuzzer.setFuzzProbabilities(
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
                 equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
-                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, dropParquetEncodingProb
         );
     }
 
