@@ -26,12 +26,21 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Integration tests for O3 writes into Parquet partitions, covering the three
@@ -531,6 +540,100 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteCleanupOnUpdateParquetIndexesFailure() throws Exception {
+        // Regression test for orphaned directory when updateParquetIndexes() fails
+        // in rewrite mode.
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger openROCount = new AtomicInteger(0);
+
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // 1st openRO on data.parquet: reading original parquet (line 119) → succeed
+                    // 2nd openRO on data.parquet: updateParquetIndexes (line 2949) → fail
+                    if (openROCount.incrementAndGet() == 2) {
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // Single row group → rewrite guaranteed on O3.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Count 2020-01-01.* partition directories before O3.
+            TableToken tableToken = engine.verifyTableName("x");
+            File tableDir = new File(root, tableToken.getDirName());
+
+            // Arm the failure injection.
+            armed.set(true);
+
+            // O3 insert triggers rewrite. The rewrite itself succeeds but
+            // updateParquetIndexes fails because the 2nd openRO returns -1.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (5, '2020-01-01T03:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Table should be suspended due to O3 error.
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // BUG: the outer catch does not clean up the rewrite directory.
+            // The new txn-named directory is left orphaned on disk.
+            int partDirsAfterFailure = countPartitionDirs(tableDir, "2020-01-01");
+            Assert.assertEquals(
+                    "orphaned rewrite directory left on disk",
+                    1,
+                    partDirsAfterFailure
+            );
+
+            // Disarm, resume, and retry.
+            armed.set(false);
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+
+            // After successful retry, data should be correct.
+            assertSql(
+                    """
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            5\t2020-01-01T03:00:00.000000Z
+                            2\t2020-01-01T06:00:00.000000Z
+                            3\t2020-01-01T12:00:00.000000Z
+                            4\t2020-01-01T18:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteResetsUnusedBytesToZero() throws Exception {
         // Use small row group size to get multiple row groups.
         // Set absolute threshold low so the second O3 triggers a rewrite.
@@ -867,6 +970,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     "SELECT * FROM x"
             );
         });
+    }
+
+    private static int countPartitionDirs(File tableDir, String prefix) {
+        String[] dirs = tableDir.list((dir, name) -> name.startsWith(prefix));
+        return dirs != null ? dirs.length : 0;
     }
 
     private long getPartitionNameTxn(String tableName, long partitionTimestamp) {

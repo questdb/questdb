@@ -220,8 +220,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 // partitionUpdater.of() transfers fd ownership to Rust.
-                // Rust closes both fds on success (via destroy) and on error
-                // (via File drop). Skip Java-side close once ownership transfers.
+                // Rust closes both fds when destroy() is called (via close()).
+                // The outer catch calls partitionUpdater.close() on error.
                 partitionUpdater.of(
                         path.$(),
                         readerFdOs,
@@ -393,6 +393,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", unusedPct=").$(newParquetSize > 0 ? (100.0 * resultUnusedBytes / newParquetSize) : 0)
                         .$(", partitionMutates=").$(isRewrite)
                         .I$();
+
+                // Update indexes.
+                // In rewrite mode, the new file is in a txn-named directory.
+                final long txnName = isRewrite ? txn : srcNameTxn;
+                path.of(pathToTable);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
+                updateParquetIndexes(
+                        partitionBy,
+                        partitionTimestamp,
+                        tableWriter,
+                        txnName,
+                        o3Basket,
+                        newPartitionSize,
+                        newParquetSize,
+                        pathToTable,
+                        path,
+                        ff,
+                        partitionDecoder,
+                        tableWriterMetadata,
+                        parquetColumns,
+                        rowGroupBuffers
+                );
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -408,35 +430,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 }
             }
-
-            // Update indexes.
-            // In rewrite mode, the new file is in a txn-named directory.
-            final long txnName = isRewrite ? txn : srcNameTxn;
-            path.of(pathToTable);
-            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
-            updateParquetIndexes(
-                    partitionBy,
-                    partitionTimestamp,
-                    tableWriter,
-                    txnName,
-                    o3Basket,
-                    newPartitionSize,
-                    newParquetSize,
-                    pathToTable,
-                    path,
-                    ff,
-                    partitionDecoder,
-                    tableWriterMetadata,
-                    parquetColumns,
-                    rowGroupBuffers
-            );
         } catch (Throwable th) {
             LOG.error().$("process partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(th)
                     .I$();
+            // Release the Rust-owned file descriptors immediately so that
+            // the truncation below (update mode) does not compete with them,
+            // and on Windows the file is not locked by stale fds.
+            partitionUpdater.close();
             if (!isRewrite) {
-                // Update mode: the file is re-opened here because PartitionUpdater owns the file descriptor.
-                // Truncate to the previous uncorrupted size.
+                // Update mode: truncate to the previous uncorrupted size.
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                 final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
