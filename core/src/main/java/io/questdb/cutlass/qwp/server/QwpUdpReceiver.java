@@ -325,7 +325,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 break;
             }
         }
-        if (!committed) {
+        if (!committed && ran) {
             try {
                 tudCache.commitAll();
             } catch (Throwable t) {

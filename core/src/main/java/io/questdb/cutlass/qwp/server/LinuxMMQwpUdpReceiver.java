@@ -88,7 +88,7 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
                 break;
             }
         }
-        if (!committed) {
+        if (!committed && ran) {
             try {
                 tudCache.commitAll();
             } catch (Throwable t) {
