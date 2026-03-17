@@ -153,33 +153,38 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 configuration.getHttpContextConfiguration().getNetworkFacade(),
                 LOG
         );
-        this.configuration = configuration;
-        this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
-        this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
-        this.activeConnectionTracker = activeConnectionTracker;
-        final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
-        this.nf = contextConfiguration.getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
-        this.headerParser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
-        this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
-        this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
-        this.responseSink = new HttpResponseSink(configuration);
-        this.recvBufferSize = configuration.getRecvBufferSize();
-        this.preAllocateBuffers = configuration.preAllocateBuffers();
-        if (preAllocateBuffers) {
-            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-            this.responseSink.open(configuration.getSendBufferSize());
+        try {
+            this.configuration = configuration;
+            this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+            this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
+            this.activeConnectionTracker = activeConnectionTracker;
+            final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
+            this.nf = contextConfiguration.getNetworkFacade();
+            this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
+            this.headerParser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+            this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
+            this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
+            this.responseSink = new HttpResponseSink(configuration);
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.preAllocateBuffers = configuration.preAllocateBuffers();
+            if (preAllocateBuffers) {
+                recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+                this.responseSink.open(configuration.getSendBufferSize());
+            }
+            this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
+            this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
+            // This is default behaviour until the security context is overridden with correct principal.
+            this.securityContext = DenyAllSecurityContext.INSTANCE;
+            this.metrics = contextConfiguration.getMetrics();
+            this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
+            this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
+            this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
+            this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
+            this.selectCache = selectCache;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
-        this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
-        // This is default behaviour until the security context is overridden with correct principal.
-        this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.metrics = contextConfiguration.getMetrics();
-        this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
-        this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
-        this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
-        this.recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
-        this.selectCache = selectCache;
     }
 
     @Override
@@ -214,19 +219,25 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.nCompletedRequests = 0;
         this.totalBytesSent = 0;
-        this.csPool.clear();
-        this.multipartContentParser.close();
-        this.multipartContentHeaderParser.close();
-        this.headerParser.close();
+        if (csPool != null) {
+            this.csPool.clear();
+        }
+        Misc.free(multipartContentParser);
+        Misc.free(multipartContentHeaderParser);
+        Misc.free(headerParser);
         this.localValueMap.close();
         this.httpCircuitBreaker = Misc.free(httpCircuitBreaker);
         this.httpSqlExecutionContext = Misc.free(httpSqlExecutionContext);
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-        this.responseSink.close();
+        if (responseSink != null) {
+            this.responseSink.close();
+        }
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.sessionIdSink.clear();
-        this.authenticator.close();
+        if (authenticator != null) {
+            this.authenticator.close();
+        }
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 

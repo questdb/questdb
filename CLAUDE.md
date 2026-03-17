@@ -16,7 +16,9 @@ Java class members are grouped by kind (static vs. instance) and visibility, and
 sorted alphabetically. When adding new methods or fields, insert them in the
 correct alphabetical position among existing members of the same kind. Don't
 insert comments as "section headings" because methods won't stay together after
-auto-sorting.
+auto-sorting. Code formatting is configured in `.idea/codeStyles/Project.xml`;
+in IntelliJ, enable File > Settings > Tools > Actions on Save > Reformat and
+Rearrange Code.
 
 Use modern Java features:
 
@@ -32,21 +34,47 @@ NULL value.
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
 
+### Zero-GC conventions
+
+QuestDB is zero-GC along critical paths (query execution, data ingestion):
+
+- **No string concatenation** — use `StringSink` (builder pattern), not `+` or
+  `StringBuilder`
+- **No string creation** — work with `CharSequence`, `Utf8Sequence`, or direct
+  memory
+- **No JDK collections** — use QuestDB's internal collections (`ObjList`,
+  `CharSequenceIntHashMap`, etc.) instead of `ArrayList`, `HashMap`, etc.
+- **No throwing `new` exceptions on hot paths** — use pre-allocated exception
+  instances or error codes
+- **No lambdas on hot paths** — they can allocate; cache them if necessary
+- **Reuse objects** — use object pools and pre-allocated buffers rather than
+  creating new instances
+
 ### Tests
 
-- write all tests using assertMemoryLeak(). This isn't needed for narrow unit
-  tests that doesn't allocate native memory.
+Most SQL and storage tests extend `AbstractCairoTest`, which provides
+`engine`, `sqlExecutionContext`, and the key helper methods below.
+`AbstractBootstrapTest` extends `AbstractTest` and adds server bootstrap
+functionality for integration tests that need a running QuestDB instance.
+
+- wrap all tests in `assertMemoryLeak()` — this detects native memory leaks.
+  Not needed for narrow unit tests that don't allocate native memory.
 - resource leaks are a pain point in QuestDB. Always think carefully about all
   possible code paths, especially error paths, and write tests that ensure
   correct resource cleanup on each path.
-- use assertQueryNoLeakCheck() to assert the results of queries
-- use execute() to run non-queries (DDL)
+- use `assertQueryNoLeakCheck()` to assert the results of queries
+- use `assertExceptionNoLeakCheck(sql, errorPos, contains)` for negative tests
+  (SQL compilation/execution errors)
+- use `execute()` to run non-queries (DDL)
+- call `drainWalQueue()` after writes to WAL tables to synchronize before
+  asserting results
 - use UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.)
 - use a single INSERT statement to insert multiple rows
 - use multiline strings for longer statements (multiple INSERT rows, complex
   queries), as well as to assert multiline query results
 - use underscore to separate thousands in numbers with 5 digits or more
+- tests run in random order per session (`RandomOrder`) for robustness
 
 ### QuestDB's SQL dialect
 
@@ -110,7 +138,7 @@ offending character, not the start of the expression.
 
 ### Prerequisites
 
-- Java 11+ (64-bit)
+- Java 17 64-bit (strict requirement — no earlier, no later)
 - Maven 3
 - `JAVA_HOME` environment variable set
 
@@ -161,6 +189,17 @@ cmake --build build/release --config Release
 # Artifacts go to core/src/main/resources/io/questdb/bin/
 ```
 
+### Building Rust Libraries
+
+```bash
+cd core/rust/qdbr
+cargo build --release
+```
+
+Rust uses the nightly toolchain (pinned in `rust-toolchain.toml`). Compiled
+binaries are committed to git under `core/src/main/resources/io/questdb/bin/`
+alongside the C libraries.
+
 ## Architecture
 
 ### Module Structure
@@ -198,7 +237,8 @@ cmake --build build/release --config Release
    principles for tight integration and performance.
 
 3. **Native code for performance**: SIMD operations, memory management, and
-   platform-specific optimizations in C/C++ via JNI.
+   platform-specific optimizations in C/C++ and Rust via JNI. JIT-compiled
+   filters are x86-64 only (skipped on ARM64/Apple Silicon).
 
 4. **Column-oriented storage**: Data stored by column for compression and
    vectorized operations.

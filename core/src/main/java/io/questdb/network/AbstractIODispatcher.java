@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Counter;
@@ -43,6 +44,7 @@ import io.questdb.std.ObjLongMatrix;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Utf8s;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -87,6 +89,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
     private final Counter listenerStateChangeCounter;
+    private final int oomResponseBufLen;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
@@ -98,6 +101,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private long idSeq = 1;
     private volatile boolean listening;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
+    private long oomResponseBuf;
     private int port;
     private long testConnectionBuf;
 
@@ -113,6 +117,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
         this.testConnectionBufSize = configuration.getTestConnectionBufferSize();
         this.testConnectionBuf = Unsafe.malloc(testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
+
+        final String oomResponse = configuration.getOomResponse();
+        if (oomResponse != null) {
+            this.oomResponseBufLen = oomResponse.length();
+            this.oomResponseBuf = Unsafe.malloc(oomResponseBufLen, MemoryTag.NATIVE_DEFAULT);
+            Utf8s.strCpyAscii(oomResponse, oomResponseBuf);
+        } else {
+            this.oomResponseBufLen = 0;
+        }
 
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCycle());
@@ -171,6 +184,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         }
 
         testConnectionBuf = Unsafe.free(testConnectionBuf, testConnectionBufSize, MemoryTag.NATIVE_DEFAULT);
+        oomResponseBuf = Unsafe.free(oomResponseBuf, oomResponseBufLen, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
@@ -247,8 +261,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void setup() {
-        if (ioContextFactory instanceof EagerThreadSetup) {
-            ((EagerThreadSetup) ioContextFactory).setup();
+        if (ioContextFactory instanceof EagerThreadSetup ets) {
+            ets.setup();
         }
     }
 
@@ -419,6 +433,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 addPending(fd, timestamp);
             } catch (Throwable th) {
                 LOG.error().$("could not accept connection [fd=").$(fd).$(", e=").$(th).I$();
+                if (!closed && oomResponseBuf != 0 && CairoException.isCairoOomError(th)) {
+                    nf.sendRaw(fd, oomResponseBuf, oomResponseBufLen);
+                }
                 nf.close(fd, LOG);
                 connectionCount.decrementAndGet();
                 continue;
