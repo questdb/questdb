@@ -18,6 +18,12 @@ pub struct MaxMin<T> {
     pub min: Option<T>,
 }
 
+impl<T: Copy + NativeType> Default for MaxMin<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Copy + NativeType> MaxMin<T> {
     pub fn new() -> Self {
         MaxMin { max: None, min: None }
@@ -30,6 +36,33 @@ impl<T: Copy + NativeType> MaxMin<T> {
         });
         self.min = Some(if let Some(min) = self.min {
             cmp::min_by(min, x, |x, y| x.ord(y))
+        } else {
+            x
+        });
+    }
+}
+
+impl MaxMin<i32> {
+    /// Updates max/min by interpreting `x` as an unsigned value for comparison.
+    /// Useful for types like IPv4 where the bit pattern represents an unsigned
+    /// value but is stored as `i32`.
+    pub fn update_unsigned(&mut self, x: i32) {
+        let xu = x as u32;
+        self.max = Some(if let Some(max) = self.max {
+            if xu > max as u32 {
+                x
+            } else {
+                max
+            }
+        } else {
+            x
+        });
+        self.min = Some(if let Some(min) = self.min {
+            if xu < min as u32 {
+                x
+            } else {
+                min
+            }
         } else {
             x
         });
@@ -386,5 +419,25 @@ mod tests {
         } else {
             panic!()
         };
+    }
+
+    #[test]
+    fn test_max_min_update_unsigned() {
+        let mut mm: super::MaxMin<i32> = super::MaxMin::new();
+
+        // i32::MIN (0x80000000) is largest as unsigned (2^31)
+        // i32::MAX (0x7FFFFFFF) is 2^31 - 1 as unsigned
+        mm.update_unsigned(0);
+        assert_eq!(mm.min, Some(0));
+        assert_eq!(mm.max, Some(0));
+
+        mm.update_unsigned(i32::MAX); // 0x7FFFFFFF = 2147483647u32
+        assert_eq!(mm.max, Some(i32::MAX));
+
+        mm.update_unsigned(-1); // 0xFFFFFFFF = 4294967295u32 (max u32)
+        assert_eq!(mm.max, Some(-1));
+
+        mm.update_unsigned(i32::MIN); // 0x80000000 = 2147483648u32
+        assert_eq!(mm.min, Some(0)); // 0 is still the smallest unsigned
     }
 }

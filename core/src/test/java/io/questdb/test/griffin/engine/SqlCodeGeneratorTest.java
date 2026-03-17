@@ -8004,7 +8004,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
                     """
-                            Sort
+                            Encode sort
                               keys: [min]
                                 Sample By
                                   keys: [timestamp]
@@ -8020,7 +8020,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [min]
                                     Async Group By workers: 1
                                       keys: [timestamp,timestamp1]

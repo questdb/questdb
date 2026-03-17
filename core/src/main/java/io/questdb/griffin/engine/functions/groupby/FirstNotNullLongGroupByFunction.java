@@ -38,15 +38,22 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * 8L;
+            long offset = 0;
             for (; ptr < hi; ptr += 8L) {
                 long value = Unsafe.getUnsafe().getLong(ptr);
                 if (value != Numbers.LONG_NULL) {
-                    mapValue.putLong(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putLong(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }

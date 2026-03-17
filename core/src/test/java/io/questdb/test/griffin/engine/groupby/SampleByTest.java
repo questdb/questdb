@@ -4242,7 +4242,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                 query,
-                    "Radix sort light\n" +
+                    "Encode sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
@@ -5128,7 +5128,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = """
-                Radix sort light
+                Encode sort light
                   keys: [tstmp]
                     Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)
                         Async JIT Group By workers: 1
@@ -5160,7 +5160,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [ts1]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym,ts1]
@@ -6181,7 +6181,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [time]
@@ -6215,7 +6215,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,ts]
@@ -6249,7 +6249,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [time,type]
@@ -6266,7 +6266,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,type]
@@ -6299,7 +6299,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,geo6]
@@ -6316,7 +6316,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,lat]
@@ -6991,7 +6991,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -7008,7 +7008,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -7025,7 +7025,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -7042,7 +7042,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -7967,7 +7967,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
                                     SelectedRecord
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts1]
                                             Async Group By workers: 1
                                               keys: [sym,ts1]
@@ -7979,7 +7979,7 @@ public class SampleByTest extends AbstractCairoTest {
                                                     Frame forward scan on: x
                                     Hash
                                         SelectedRecord
-                                            Radix sort light
+                                            Encode sort light
                                               keys: [ts1]
                                                 Async Group By workers: 1
                                                   keys: [sym,ts1]
@@ -8013,7 +8013,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             SelectedRecord
                                 AsOf Join
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
@@ -8023,7 +8023,7 @@ public class SampleByTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
@@ -8093,7 +8093,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [b]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -8121,7 +8121,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [b]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -8149,7 +8149,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [d]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -8197,7 +8197,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 VirtualRecord
                                   functions: [ts1,ts2,ts1-ts2,count]
@@ -8230,7 +8230,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query2,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 VirtualRecord
                                   functions: [ts1,ts1-ts2,count]
@@ -8280,7 +8280,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
@@ -8315,7 +8315,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,count,max::long/count]
@@ -8350,7 +8350,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
@@ -8385,7 +8385,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
@@ -8420,7 +8420,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
@@ -8455,7 +8455,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,datediff('h',ts2,ts)/count]
@@ -8490,7 +8490,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,datediff('h',ts2,ts)/count,diff2]
@@ -8521,7 +8521,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar time zone 'UTC'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 Async Group By workers: 1
                                   keys: [ts1,sym]
@@ -8554,7 +8554,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             Union All
                                 SelectedRecord
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
@@ -8565,7 +8565,7 @@ public class SampleByTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                                 SelectedRecord
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
@@ -8597,7 +8597,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "sample by 1m align to calendar ",
                     """
                             Union All
-                                Radix sort light
+                                Encode sort light
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
@@ -8607,7 +8607,7 @@ public class SampleByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                                Radix sort light
+                                Encode sort light
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
@@ -8634,7 +8634,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [d]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -12882,7 +12882,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select last(z) s from x sample by 30m fill(null)",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [k]
                                     Fill Range
                                       stride: '30m'
@@ -16684,7 +16684,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute(ddl);
             assertPlanNoLeakCheck(query,
                     """
-                            Sort
+                            Encode sort
                               keys: [k]
                                 Fill Range
                                   stride: '30m'
@@ -16808,7 +16808,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [s,k,to_timezone(k)]
-                                Sort
+                                Encode sort
                                   keys: [k]
                                     Fill Range
                                       stride: '30m'
@@ -16845,7 +16845,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [s,k,to_timezone(k)]
-                                Sort
+                                Encode sort
                                   keys: [k]
                                     Fill Range
                                       stride: '30m'

@@ -444,6 +444,8 @@ public interface CairoConfiguration {
 
     long getParquetExportBatchSize();
 
+    double getParquetExportBloomFilterFpp();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
@@ -457,6 +459,8 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    double getPartitionEncoderParquetBloomFilterFpp();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -578,6 +582,12 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    long getSqlHorizonJoinBwdScanAbsoluteThreshold();
+
+    long getSqlHorizonJoinBwdScanMinGap();
+
+    long getSqlHorizonJoinBwdScanSwitchFactor();
+
     int getSqlHorizonJoinMaxOffsets();
 
     /**
@@ -632,8 +642,6 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlOrderByRadixSortThreshold();
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -657,6 +665,8 @@ public interface CairoConfiguration {
     int getSqlSmallPageFrameMaxRows();
 
     int getSqlSmallPageFrameMinRows();
+
+    long getSqlSortEncodedParallelThreshold();
 
     int getSqlSortKeyMaterializationThreshold();
 
@@ -863,6 +873,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();
 

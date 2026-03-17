@@ -3,6 +3,7 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
+    VarcharSliceColumnSink, VarcharSliceSpillSink,
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decode::decimal::{
@@ -14,8 +15,9 @@ use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConve
 use crate::parquet_read::decoders::{
     int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
     BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
-    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
-    RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+    DeltaLAVarcharSliceDecoder, FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder,
+    RleBooleanDecoder, RleDictVarcharSliceDecoder, RleDictionaryDecoder,
+    RleLocalIsGlobalSymbolDictDecoder,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -34,7 +36,7 @@ use parquet2::read::{SlicedDataPage, SlicedDictPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
-use std::{i32, ptr};
+use std::ptr;
 
 mod array;
 mod decimal;
@@ -69,6 +71,7 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers: Vec::new(),
         }
     }
 
@@ -92,6 +95,8 @@ impl ColumnChunkBuffers {
         self.aux_vec.clear();
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
+
+        self.page_buffers.clear();
     }
 }
 
@@ -381,6 +386,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -778,6 +784,27 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Date,
+        ) => {
+            let dict_decoder =
+                ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
         (encoding, dict, logical_type, ColumnTypeTag::Double) => {
             let scale = match logical_type {
                 Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
@@ -971,6 +998,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1081,6 +1109,7 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1195,6 +1224,60 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    Ok(true)
+                }
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::VarcharSlice) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut DeltaLAVarcharSliceDecoder::try_new(
+                            values_buffer,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    ColumnTypeTag::VarcharSlice,
+                ) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut RleDictVarcharSliceDecoder::try_new(
+                            values_buffer,
+                            dict_page,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::Plain, _, ColumnTypeTag::VarcharSlice) => {
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut VarcharSliceColumnSink::new(
+                            &mut slicer,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        ),
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::DeltaByteArray, _, ColumnTypeTag::VarcharSlice) => {
+                    let mut slicer =
+                        DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut spill_sink = VarcharSliceSpillSink::new(
+                        &mut slicer,
+                        bufs,
+                        col_info.ascii.unwrap_or(false),
+                    );
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut spill_sink)?;
+                    // fixup_pointers deferred to end-of-chunk (see decode_column_chunk)
                     Ok(true)
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
@@ -1751,7 +1834,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
     let filter_len = rows_filter.len();
     let mut output_row = row_lo;
 
-    let iter = decode_null_bitmap(&page, page_row_count)?;
+    let iter = decode_null_bitmap(page, page_row_count)?;
     if let Some(iter) = iter {
         let mut current_row = 0usize;
 
@@ -2314,7 +2397,12 @@ mod tests {
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type.unwrap();
-            let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+            let col_info = QdbMetaCol {
+                column_type,
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
             for row_group_index in 0..row_group_count {
                 decoder
                     .decode_column_chunk(
@@ -2367,7 +2455,12 @@ mod tests {
             for row_hi in row_lo + 1..row_group_size {
                 for column_index in 0..column_count {
                     let column_type = decoder.columns[column_index].column_type.unwrap();
-                    let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+                    let col_info = QdbMetaCol {
+                        column_type,
+                        column_top: 0,
+                        format: None,
+                        ascii: None,
+                    };
                     for row_group_index in 0..row_group_count {
                         decoder
                             .decode_column_chunk(
@@ -2437,6 +2530,7 @@ mod tests {
                                 column_type: ColumnTypeTag::Boolean.into_type(),
                                 column_top: 0,
                                 format: None,
+                                ascii: None,
                             },
                         )
                         .unwrap();
@@ -2657,7 +2751,7 @@ mod tests {
                         0,
                         row_group_size,
                         column_index,
-                        QdbMetaCol { column_type, column_top: 0, format },
+                        QdbMetaCol { column_type, column_top: 0, format, ascii: None },
                     )
                     .unwrap();
 
@@ -2982,8 +3076,8 @@ mod tests {
         for i in 0..src_len {
             out[i] = src[src_len - 1 - i];
         }
-        for i in src_len..target {
-            out[i] = sign_byte;
+        for byte in out.iter_mut().take(target).skip(src_len) {
+            *byte = sign_byte;
         }
         out
     }
@@ -3713,6 +3807,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -3753,6 +3848,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         let rows_filter = vec![1i64];
@@ -3801,6 +3897,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
@@ -3842,6 +3939,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page(
                 &page,
@@ -3895,6 +3993,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -3939,6 +4038,7 @@ mod tests {
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -3983,6 +4083,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -4019,6 +4120,7 @@ mod tests {
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4056,6 +4158,7 @@ mod tests {
                 column_type: ColumnType::new(tag, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
 
             decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4103,6 +4206,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
 
                 decode_page_filtered::<false>(
@@ -4158,6 +4262,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
                 decode_page(
                     &page,
@@ -4193,9 +4298,9 @@ mod tests {
         for (tag, size, null_bytes) in cases {
             let expected_all = expected_from_i32::<4>(&dict_values);
             let mut expected = Vec::new();
-            for row in 0..indices.len() {
+            for (row, &idx_raw) in indices.iter().enumerate() {
                 if rows_filter.contains(&(row as i64)) {
-                    let idx = indices[row] as usize;
+                    let idx = idx_raw as usize;
                     expected.extend_from_slice(&expected_all[idx * 4..idx * 4 + size]);
                 } else {
                     expected.extend_from_slice(&null_bytes[..size]);
@@ -4209,6 +4314,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
                 decode_page_filtered::<true>(
                     &page,
@@ -4225,6 +4331,180 @@ mod tests {
                 .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
             }
+        }
+    }
+
+    fn make_date_type() -> PrimitiveType {
+        PrimitiveType {
+            field_info: FieldInfo {
+                name: "date_col".to_string(),
+                repetition: Repetition::Optional,
+                id: None,
+            },
+            logical_type: Some(PrimitiveLogicalType::Date),
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        }
+    }
+
+    const MILLIS_PER_DAY: i64 = 86_400_000;
+    const DATE_NULL: [u8; 8] = i64::MIN.to_le_bytes();
+
+    #[test]
+    fn test_decode_date_dict_unfiltered() {
+        // Date dictionary stores INT32 days, decoder converts to i64 millis.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [100i32, 200, 365];
+        let dict_page = make_dict_page_i32(&dict_days);
+
+        let indices = [0u32, 1, 2, 1, 0, 2];
+        let primitive_type = make_date_type();
+
+        let mut expected = Vec::new();
+        for &idx in &indices {
+            let day = dict_days[idx as usize];
+            let millis = (day as i64) * MILLIS_PER_DAY;
+            expected.extend_from_slice(&millis.to_le_bytes());
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
+
+            decode_page(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
+        }
+    }
+
+    #[test]
+    fn test_decode_date_dict_filtered_no_fill_nulls() {
+        // Filtered decode without filling nulls for non-matching rows.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [10i32, 50, 100];
+        let dict_page = make_dict_page_i32(&dict_days);
+        let indices = [0u32, 1, 2, 1, 0];
+        let primitive_type = make_date_type();
+        let rows_filter = vec![1i64, 3]; // Select rows 1 and 3
+
+        let mut expected = Vec::new();
+        for &row in &rows_filter {
+            let idx = indices[row as usize];
+            let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
+            expected.extend_from_slice(&millis.to_le_bytes());
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
+
+            decode_page_filtered::<false>(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+                0,
+                0,
+                indices.len(),
+                &rows_filter,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict filtered decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
+        }
+    }
+
+    #[test]
+    fn test_decode_date_dict_filtered_fill_nulls() {
+        // Filtered decode with nulls filled for non-matching rows.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [7i32, 30, 365];
+        let dict_page = make_dict_page_i32(&dict_days);
+        let indices = [0u32, 1, 2, 1, 0];
+        let primitive_type = make_date_type();
+        let rows_filter = vec![0i64, 2, 4]; // Select rows 0, 2, 4
+
+        let mut expected = Vec::new();
+        for (row, &idx) in indices.iter().enumerate() {
+            if rows_filter.contains(&(row as i64)) {
+                let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
+                expected.extend_from_slice(&millis.to_le_bytes());
+            } else {
+                expected.extend_from_slice(&DATE_NULL);
+            }
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
+
+            decode_page_filtered::<true>(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+                0,
+                0,
+                indices.len(),
+                &rows_filter,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict filtered fill_nulls decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
         }
     }
 
@@ -4319,7 +4599,7 @@ mod tests {
             &mut self,
             count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
-            self.bits.extend(std::iter::repeat(true).take(count));
+            self.bits.extend(std::iter::repeat_n(true, count));
             Ok(())
         }
         fn push_null(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
@@ -4330,7 +4610,7 @@ mod tests {
             &mut self,
             count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
-            self.bits.extend(std::iter::repeat(false).take(count));
+            self.bits.extend(std::iter::repeat_n(false, count));
             Ok(())
         }
         fn skip(
@@ -4445,14 +4725,8 @@ mod tests {
         // Bit 0..6: ones (7 ones)
         values[0] = 0x7F; // 0b01111111
                           // Bit 7..9: zeros (3 zeros, bit 7 already 0 from 0x7F)
-        values[1] = 0b11111_00_0; // bits 8,9=0, bits 10-15=1
-                                  // Actually let me be more precise. Let me construct this carefully.
-                                  // I want: 7 ones, 3 zeros, 54 ones
-                                  // bits  0- 6: 1 (7 ones)
-                                  // bits  7- 9: 0 (3 zeros)
-                                  // bits 10-63: 1 (54 ones)
-                                  // byte 0: bits 0-7 = 0111_1111 = 0x7F
-                                  // byte 1: bits 8-15 = 1111_11_00 = 0xFC
+                          // Pattern: bits 0..6 = 1, bits 7..9 = 0, bits 10..63 = 1.
+                          // byte0 = 0x7F, byte1 = 0xFC.
         values[0] = 0x7F;
         values[1] = 0xFC;
         values[2..8].fill(0xFF);

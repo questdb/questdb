@@ -15,6 +15,9 @@ pub trait VarDictDecoder {
     fn get_dict_value(&self, index: u32) -> &[u8];
     fn avg_key_len(&self) -> f32;
     fn len(&self) -> u32;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Variable-width dictionary represented as slices into the dictionary page.
@@ -80,10 +83,13 @@ impl<'a> BaseVarDictDecoder<'a> {
             total_key_len += str_len;
         }
 
-        Ok(Self {
-            dict_values,
-            avg_key_len: total_key_len as f32 / dict_page.num_values as f32,
-        })
+        let avg_key_len = if dict_page.num_values == 0 {
+            0.0
+        } else {
+            total_key_len as f32 / dict_page.num_values as f32
+        };
+
+        Ok(Self { dict_values, avg_key_len })
     }
 }
 
@@ -118,7 +124,7 @@ impl<'a, const N: usize> FixedDictDecoder<'a, N> {
             ));
         }
 
-        Ok(Self { dict_page: dict_page.buffer.as_ref() })
+        Ok(Self { dict_page: dict_page.buffer })
     }
 }
 
@@ -128,6 +134,10 @@ pub trait PrimitiveDictDecoder<T> {
 
     /// Number of values in this dictionary.
     fn len(&self) -> u32;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// A dictionary decoder for primitive types.
@@ -143,6 +153,12 @@ impl<U, T> PrimitiveDictDecoder<T> for BasePrimitiveDictDecoder<'_, U, T> {
     #[inline]
     #[cfg(target_endian = "little")]
     fn get_dict_value(&self, index: u32) -> T {
+        const {
+            assert!(
+                size_of::<T>() <= size_of::<U>(),
+                "destination type T must not be larger than physical type U"
+            )
+        };
         // SAFETY: Caller guarantees index is in bounds and dict_page is properly sized.
         // We also require little-endian platforms, so no byte swapping is necessary.
         unsafe {
@@ -176,7 +192,7 @@ impl<'a, U, T> BasePrimitiveDictDecoder<'a, U, T> {
         }
 
         Ok(Self {
-            dict_page: dict_page.buffer.as_ref(),
+            dict_page: dict_page.buffer,
             _u: std::marker::PhantomData,
             _t: std::marker::PhantomData,
         })
@@ -197,7 +213,7 @@ impl RleLocalIsGlobalSymbolDictDecoder {
 impl PrimitiveDictDecoder<i32> for RleLocalIsGlobalSymbolDictDecoder {
     #[inline]
     fn len(&self) -> u32 {
-        self.len as u32
+        self.len
     }
 
     #[inline]
@@ -245,7 +261,7 @@ impl<'a, U, T, V> ConvertablePrimitiveDictDecoder<'a, U, T, V> {
         }
 
         Ok(Self {
-            dict_page: dict_page.buffer.as_ref(),
+            dict_page: dict_page.buffer,
             converter,
             _u: std::marker::PhantomData,
             _t: std::marker::PhantomData,

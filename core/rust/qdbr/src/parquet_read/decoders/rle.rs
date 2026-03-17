@@ -3,6 +3,8 @@
 //! `RleDictionaryDecoder` switches between these iterator shapes when it moves
 //! across run boundaries in a hybrid-RLE stream.
 
+#![allow(clippy::should_implement_trait)]
+
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::plain::BOOLEAN_BITMAP_LUT;
@@ -24,6 +26,7 @@ impl RepeatN {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
         if self.remaining > 0 {
             self.remaining -= 1;
@@ -56,6 +59,7 @@ pub enum RleIterator<'a> {
 
 impl RleIterator<'_> {
     #[inline(always)]
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
         match self {
             RleIterator::Bitpacked(iter) => iter.next(),
@@ -218,7 +222,7 @@ impl<'a> RleBooleanDecoder<'a> {
 
         // First align to byte boundary if we are in the middle of a source byte.
         if *bit_offset != 0 {
-            let bits_in_first_byte = ((8 - *bit_offset as usize).min(remaining)) as usize;
+            let bits_in_first_byte = (8 - *bit_offset as usize).min(remaining);
             let byte = data[*byte_offset] >> *bit_offset;
             for i in 0..bits_in_first_byte {
                 unsafe {
@@ -310,7 +314,7 @@ impl<'a> RleBooleanDecoder<'a> {
                 }
                 RleBooleanRun::Bitpacked { data, byte_offset, bit_offset, remaining } => {
                     // Bitpacked run: expand packed bits into byte-per-bool output.
-                    Self::decode_bitpacked_into(*data, byte_offset, bit_offset, out, take);
+                    Self::decode_bitpacked_into(data, byte_offset, bit_offset, out, take);
                     *remaining -= take;
                 }
                 RleBooleanRun::None => unreachable!(),
@@ -443,6 +447,7 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers: Vec::new(),
         }
     }
 

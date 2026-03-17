@@ -136,7 +136,7 @@ where
                 Ok(()) => self.push(),
                 Err(err) => {
                     self.inner.error = Some(err);
-                    return Ok(());
+                    Ok(())
                 }
             }
         }
@@ -316,7 +316,7 @@ where
         null_value: U,
         buffers: &'a mut ColumnChunkBuffers,
     ) -> ParquetResult<Self> {
-        let num_bits = buffer.get(0).copied().ok_or_else(|| {
+        let num_bits = buffer.first().copied().ok_or_else(|| {
             fmt_err!(
                 Layout,
                 "RLE dictionary page is missing the initial byte with bit width"
@@ -408,6 +408,7 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers: Vec::new(),
         }
     }
 
@@ -947,7 +948,7 @@ mod tests {
         }
 
         assert!(decoder.result().is_ok());
-        let expected: Vec<i32> = (0..200).map(|i| (i % 4) as i32 + 1).collect();
+        let expected: Vec<i32> = (0..200).map(|i| (i % 4) + 1).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
 
@@ -1052,7 +1053,7 @@ mod tests {
         decoder.push_slice(64).unwrap();
 
         assert!(decoder.result().is_ok());
-        let expected: Vec<i32> = (0..64).map(|i| (i % 2) as i32).collect();
+        let expected: Vec<i32> = (0..64).map(|i| i % 2).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
 
@@ -1091,7 +1092,7 @@ mod tests {
         decoder.push_slice(128).unwrap();
 
         assert!(decoder.result().is_ok());
-        let expected: Vec<i32> = (0..128).map(|i| (i % 16) as i32).collect();
+        let expected: Vec<i32> = (0..128).map(|i| i % 16).collect();
         assert_eq!(read_i32_results(&buffers), expected);
     }
 
@@ -1291,15 +1292,9 @@ mod tests {
         let dict = TestPrimitiveDictDecoder::new(vec![100, 200, 300]);
         // Create data with long runs of the same value (will be RLE encoded)
         let mut values: Vec<u32> = Vec::new();
-        for _ in 0..30 {
-            values.push(0);
-        }
-        for _ in 0..30 {
-            values.push(1);
-        }
-        for _ in 0..30 {
-            values.push(2);
-        }
+        values.extend(std::iter::repeat_n(0, 30));
+        values.extend(std::iter::repeat_n(1, 30));
+        values.extend(std::iter::repeat_n(2, 30));
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =

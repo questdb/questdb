@@ -70,7 +70,27 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(1000));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(enableParallelHorizonJoin));
+        // Randomize adaptive backward-to-forward scan switch thresholds.
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1 + rnd.nextLong(262_144));
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 1 + rnd.nextLong(2_048));
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, 1 + rnd.nextLong(16));
         super.setUp();
+    }
+
+    @Test
+    public void testParallelHorizonJoinAdaptiveScan() throws Exception {
+        testParallelHorizonJoinAdaptiveScan(
+                "LIST (-1s, 0s) AS h",
+                new long[]{-1_000_000, 0}
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinAdaptiveScan2() throws Exception {
+        testParallelHorizonJoinAdaptiveScan(
+                "RANGE FROM 0 TO 1s STEP 1s AS h",
+                new long[]{0, 1_000_000}
+        );
     }
 
     @Test
@@ -252,7 +272,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             if (i > 0) {
                 ref.append(" UNION ALL ");
             }
-            ref.append("SELECT cast(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
             if (keyed) {
                 ref.append(", t.sym");
             }
@@ -334,6 +354,114 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                                         + "      rnd_double() * 10.0 + 5.0 as bid, "
                                         + "      rnd_double() * 10.0 + 5.0 as ask "
                                         + "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+
+                        final StringSink horizonSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, horizonQuery, horizonSink);
+
+                        final StringSink referenceSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, referenceQuery, referenceSink);
+
+                        try {
+                            TestUtils.assertEquals(referenceSink, horizonSink);
+                        } catch (AssertionError e) {
+                            LOG.error().$("HORIZON JOIN query: ").$(horizonQuery).$();
+                            LOG.error().$("Reference query: ").$(referenceQuery).$();
+                            throw e;
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    // Tests keyed HORIZON JOIN with data designed to trigger the adaptive
+    // backward-to-forward scan switch. Prices have a rare symbol only at the
+    // beginning, causing deep backward scans that trigger the switch.
+    private void testParallelHorizonJoinAdaptiveScan(
+            String horizonClause,
+            long[] offsetsMicros
+    ) throws Exception {
+        // Build HORIZON JOIN query (keyed, no filter).
+        String horizonQuery = "SELECT h.offset AS h_offset, t.sym"
+                + ", count(p.bid) AS cnt_bid, max(p.ask) AS max_ask"
+                + " FROM trades t"
+                + " HORIZON JOIN prices p ON (t.sym = p.sym)"
+                + " " + horizonClause
+                + " ORDER BY h_offset, t.sym";
+
+        // Build reference query: UNION ALL of ASOF JOINs per offset.
+        StringBuilder ref = new StringBuilder();
+        ref.append("SELECT h_offset, sym, count(bid) AS cnt_bid, max(ask) AS max_ask FROM (");
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                ref.append(" UNION ALL ");
+            }
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
+            ref.append(", t.sym, p.bid, p.ask");
+            ref.append(" FROM (SELECT * FROM (SELECT dateadd('u', ")
+                    .append(offsetsMicros[i])
+                    .append(", ts) AS ts, sym FROM trades) TIMESTAMP(ts)) t ASOF JOIN prices p ON (t.sym = p.sym)");
+        }
+        ref.append(") GROUP BY h_offset, sym ORDER BY h_offset, sym");
+        String referenceQuery = ref.toString();
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // 50,000 prices at 1us spacing (all within one partition).
+                        // RARE at row 0, COMMON everywhere else.
+                        // The rare key causes deep backward scans that trigger the adaptive switch.
+                        engine.execute(
+                                """
+                                        CREATE TABLE prices (
+                                            ts TIMESTAMP,
+                                            sym SYMBOL,
+                                            bid DOUBLE,
+                                            ask DOUBLE
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                """
+                                        INSERT INTO prices
+                                        SELECT dateadd('u', x::int, '2020-01-01T00:00:00.000000Z'),
+                                               CASE WHEN x = 1 THEN 'RARE' ELSE 'COMMON' END,
+                                               x * 0.01 + 5.0,
+                                               x * 0.01 + 5.5
+                                        FROM long_sequence(50_000)
+                                        """,
+                                sqlExecutionContext
+                        );
+
+                        // 20 trades at 2,000us spacing, alternating COMMON/RARE.
+                        // All in one partition so ASOF position gaps are exact row counts (~2,000).
+                        engine.execute(
+                                """
+                                        CREATE TABLE trades (
+                                            ts TIMESTAMP,
+                                            sym SYMBOL
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                """
+                                        INSERT INTO trades
+                                        SELECT dateadd('u', (2000 * x)::int, '2020-01-01T00:00:00.000000Z'),
+                                               CASE WHEN x % 2 = 0 THEN 'RARE' ELSE 'COMMON' END
+                                        FROM long_sequence(20)
+                                        """,
                                 sqlExecutionContext
                         );
 

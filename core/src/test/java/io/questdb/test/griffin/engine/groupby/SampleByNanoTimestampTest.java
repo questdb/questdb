@@ -4210,7 +4210,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = """
-                Radix sort light
+                Encode sort light
                   keys: [tstmp]
                     Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)
                         Async JIT Group By workers: 1
@@ -4239,7 +4239,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "where tstmp >= '2022-12-01T00:00:00.000000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [ts1]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym,ts1]
@@ -4666,7 +4666,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [time]
@@ -4697,7 +4697,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,ts]
@@ -4728,7 +4728,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [time,type]
@@ -4745,7 +4745,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,type]
@@ -4775,7 +4775,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,geo6]
@@ -4792,7 +4792,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,lat]
@@ -5026,7 +5026,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5043,7 +5043,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5060,7 +5060,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5077,7 +5077,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5827,7 +5827,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
                                     SelectedRecord
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts1]
                                             Async Group By workers: 1
                                               keys: [sym,ts1]
@@ -5839,7 +5839,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                                     Frame forward scan on: x
                                     Hash
                                         SelectedRecord
-                                            Radix sort light
+                                            Encode sort light
                                               keys: [ts1]
                                                 Async Group By workers: 1
                                                   keys: [sym,ts1]
@@ -5870,7 +5870,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     """
                             SelectedRecord
                                 AsOf Join
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
@@ -5880,7 +5880,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
@@ -5944,7 +5944,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [b]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -5969,7 +5969,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [b]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -5994,7 +5994,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [d]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -6019,7 +6019,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar time zone 'UTC'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 Async Group By workers: 1
                                   keys: [ts1,sym]
@@ -6049,7 +6049,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     """
                             Union All
                                 SelectedRecord
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
@@ -6060,7 +6060,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                                 SelectedRecord
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
@@ -6089,7 +6089,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "sample by 1m align to calendar ",
                     """
                             Union All
-                                Radix sort light
+                                Encode sort light
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
@@ -6099,7 +6099,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                                Radix sort light
+                                Encode sort light
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
@@ -6123,7 +6123,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [d]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -9782,7 +9782,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "select last(z) s from x sample by 30m fill(null)",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [k]
                                     Fill Range
                                       stride: '30m'

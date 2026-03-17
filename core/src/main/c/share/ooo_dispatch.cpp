@@ -62,6 +62,13 @@ inline void run_vec_bulk(T *dest,
                          const lambda_iteration l_iteration,
                          const lambda_vec_iteration l_vec_iteration) {
 
+    // TVec::size() returns the number of lanes (e.g. 8 for Vec8uq), which equals
+    // the number of T elements per store ONLY when sizeof(lane) == sizeof(T).
+    // Mismatched types (e.g. Vec8uq with long_128bit) silently produce a wrong
+    // increment, leaving holes in the output. Fail at compile time instead.
+    static_assert(TVec::size() == sizeof(TVec) / sizeof(T),
+                  "TVec::size() does not match sizeof(TVec)/sizeof(T) — use set_memory_vanilla_vec for mismatched types");
+
     constexpr int64_t alignment = TVec::store_nt_alignment();
     const auto unaligned = ((uint64_t) dest) % alignment;
     constexpr int64_t iteration_increment = sizeof(T);
@@ -138,18 +145,32 @@ inline void set_memory_vanilla(T *addr, const T value, const int64_t count) {
 }
 
 // 33-34
+// Cannot use run_vec_bulk here because TVec::size() returns the number of
+// uint64_t lanes (8 for Vec8uq), not the number of T elements per store.
+// For long_128bit (16 bytes) one Vec8uq store covers 4 elements, not 8.
+// For long_256bit (32 bytes) one Vec8uq store covers 2 elements, not 8.
 template<typename T, typename TVec>
 inline void set_memory_vanilla_vec(T *addr, const T value, const TVec vec, const int64_t count) {
+    constexpr int64_t store_bytes = (int64_t) sizeof(TVec);
+    constexpr int64_t elems_per_store = store_bytes / (int64_t) sizeof(T);
+    static_assert(elems_per_store * sizeof(T) == store_bytes, "T size must evenly divide vector store size");
 
-    const auto l_iteration = [addr, value](int64_t i) {
+    constexpr int64_t alignment = TVec::store_nt_alignment();
+    const auto unaligned = ((uint64_t) addr) % alignment;
+
+    int64_t i = 0;
+    if (unaligned % sizeof(T) == 0) {
+        const int64_t head = unaligned > 0 ? (int64_t) (alignment - unaligned) / (int64_t) sizeof(T) : 0;
+        for (; i < head && i < count; i++) {
+            addr[i] = value;
+        }
+        for (; i + elems_per_store <= count; i += elems_per_store) {
+            vec.store_nt(addr + i);
+        }
+    }
+    for (; i < count; i++) {
         addr[i] = value;
-    };
-
-    const auto l_bulk = [&vec, addr](const int64_t i) {
-        vec.store_nt(addr + i);
-    };
-
-    run_vec_bulk<T, TVec>(addr, count, l_iteration, l_bulk);
+    }
 }
 
 template<typename TVec, typename T>

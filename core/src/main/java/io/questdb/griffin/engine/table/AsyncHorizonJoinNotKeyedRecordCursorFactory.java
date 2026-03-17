@@ -370,7 +370,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     slaveRecord,
                     horizonJoinRecord,
                     value,
-                    functionUpdater
+                    functionUpdater,
+                    circuitBreaker
             );
         } finally {
             frameMemoryPool.releaseParquetBuffers();
@@ -405,7 +406,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             Record slaveRecord,
             HorizonJoinRecord horizonJoinRecord,
             SimpleMapValue value,
-            GroupByFunctionsUpdater functionUpdater
+            GroupByFunctionsUpdater functionUpdater,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
         final SymbolTranslatingRecord symbolTranslatingRecord =
@@ -420,6 +422,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         final long masterTsScale = atom.getMasterTimestampScale();
 
         while (horizonIterator.next()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
@@ -566,7 +569,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     slaveRecord,
                     horizonJoinRecord,
                     value,
-                    functionUpdater
+                    functionUpdater,
+                    circuitBreaker
             );
         } finally {
             frameMemoryPool.releaseParquetBuffers();

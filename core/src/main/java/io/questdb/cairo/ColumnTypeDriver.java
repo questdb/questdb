@@ -118,12 +118,18 @@ public interface ColumnTypeDriver {
 
     /**
      * Get the size of the data vector from entries 0 to <code>row</code> inclusive.
+     *
+     * @param auxMemAddr pointer to the aux vector
+     * @param row        row number, inclusive
+     * @return size of data vector in bytes
      */
     long getDataVectorSizeAt(long auxMemAddr, long row);
 
     long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row);
 
     long getMinAuxVectorSize();
+
+    boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount);
 
     /**
      * Used to shuffle column data after calling Vect.radixSortManySegmentsIndexAsc()
@@ -136,6 +142,8 @@ public interface ColumnTypeDriver {
      * @param mergeIndex           merge index. Format is 2 longs per row. First long is timestamp and second long is row index + segment index.
      *                             Segment index bytes is passed in mergeIndexEncodingSegmentBytes
      * @param destDataOffset       offset in the destination data memory to shift all the records in aux column by
+     * @param destDataSize         size of the destination data memory
+     * @return number of bytes written to the destination
      */
     long mergeShuffleColumnFromManyAddresses(
             long indexFormat,
@@ -147,8 +155,6 @@ public interface ColumnTypeDriver {
             long destDataOffset,
             long destDataSize
     );
-
-    boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount);
 
     void o3ColumnMerge(
             long timestampMergeIndexAddr,
@@ -210,7 +216,10 @@ public interface ColumnTypeDriver {
      * expectation of the WAL writer is to have the append position set correctly on aux mem and size of data vector
      * provided correctly.
      *
-     * @param rowCount the new row count that we'll want to write at.
+     * @param auxMem     the auxiliary memory
+     * @param dataMem    the data memory
+     * @param columnType the column type
+     * @param rowCount   the new row count that we'll want to write at.
      * @return the write offset for <code>rowCount</code> in the data vector.
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount);

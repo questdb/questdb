@@ -45,9 +45,13 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putChar(valueIndex + 1, Unsafe.getUnsafe().getChar(ptr));
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, startRowId);
+                mapValue.putChar(valueIndex + 1, Unsafe.getUnsafe().getChar(ptr));
+            }
         }
     }
 

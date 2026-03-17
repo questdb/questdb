@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
 /**
  * SortedLightRecordCursor which implements LIMIT clause and assumes that base cursor is
@@ -43,6 +45,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
+    private final ObjList<DirectIntList> rankMaps;
     private final int timestampIndex;
     private RecordCursor baseCursor;
     private Record baseRecord;
@@ -61,18 +64,21 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     public LimitedSizePartiallySortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
             RecordComparator comparator,
-            int timestampIndex
+            int timestampIndex,
+            ObjList<DirectIntList> rankMaps
     ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
         this.isOpen = true;
         this.timestampIndex = timestampIndex;
+        this.rankMaps = rankMaps;
     }
 
     @Override
     public void close() {
         if (isOpen) {
+            Misc.freeObjListAndKeepObjects(rankMaps);
             baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
             isOpen = false;
@@ -121,6 +127,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isOpen = true;
             chain.reopen();
         }
+        SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         rowsInGroup = 0;

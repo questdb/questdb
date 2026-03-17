@@ -650,6 +650,23 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
+    private double expectDouble(GenericLexer lexer) throws SqlException {
+        CharSequence tok = GenericLexer.unquote(expectStringLiteral(lexer).token);
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "number");
+        } else {
+            negative = false;
+        }
+        try {
+            double result = Numbers.parseDouble(tok);
+            return negative ? -result : result;
+        } catch (NumericException e) {
+            throw err(lexer, tok, "bad number");
+        }
+    }
+
     private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
         if (n != null) {
@@ -759,6 +776,13 @@ public class SqlParser {
             return;
         }
         throw SqlException.$(pos, "one letter sample by period unit expected");
+    }
+
+    private ExpressionNode expectStringLiteral(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "literal");
+        int pos = lexer.lastTokenPosition();
+        assertNameIsQuotedOrNotAKeyword(tok, pos);
+        return nextLiteral(GenericLexer.immutableOf(tok), pos);
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
@@ -1172,6 +1196,17 @@ public class SqlParser {
                         }
                         model.setParquetVersion(parquetVersion);
                         break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_COLUMNS:
+                        ExpressionNode bloomFilterColumnsExpr = expectStringLiteral(lexer);
+                        model.setBloomFilterColumns(GenericLexer.unquote(bloomFilterColumnsExpr.token), Chars.isQuoted(bloomFilterColumnsExpr.token) ? bloomFilterColumnsExpr.position + 1 : bloomFilterColumnsExpr.position);
+                        break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_FPP:
+                        double fpp = expectDouble(lexer);
+                        if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_fpp must be between 0 and 1 (exclusive)");
+                        }
+                        model.setBloomFilterFpp(fpp);
+                        break;
                     case ExportModel.COPY_OPTION_UNKNOWN:
                         throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
                                 .put(tok).put(']');
@@ -1428,7 +1463,8 @@ public class SqlParser {
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!tableNames.contains(baseTableNameStr)) {
-                if (cairoEngine.getTableTokenIfExists(baseTableNameStr).isView()) {
+                final TableToken baseTableToken = cairoEngine.getTableTokenIfExists(baseTableNameStr);
+                if (baseTableToken != null && baseTableToken.isView()) {
                     throw SqlException.position(baseTableNamePos)
                             .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
                 }
@@ -3425,9 +3461,9 @@ public class SqlParser {
             tok = optTok(lexer);
             if (tok != null) {
                 if (isIncludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(true, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(true);
                 } else if (isExcludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(false, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(false);
                 } else {
                     lexer.unparseLast();
                 }
