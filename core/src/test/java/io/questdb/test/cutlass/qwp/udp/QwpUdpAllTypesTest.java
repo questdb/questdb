@@ -63,7 +63,7 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpUdpAllTypesTest extends AbstractCairoTest {
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    private static final int PORT = 19002;
+    private static final int PORT = 19_002;
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -152,7 +152,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     tb.getOrCreateColumn("b_byte", TYPE_BYTE, false).addByte((byte) 42);
                     tb.getOrCreateColumn("b_short", TYPE_SHORT, false).addShort((short) 1234);
                     tb.getOrCreateColumn("b_char", TYPE_CHAR, false).addShort((short) 'X');
-                    tb.getOrCreateColumn("b_int", TYPE_INT, false).addInt(56789);
+                    tb.getOrCreateColumn("b_int", TYPE_INT, false).addInt(56_789);
                     tb.getOrCreateColumn("b_float", TYPE_FLOAT, false).addFloat(3.14f);
                     tb.getOrCreateColumn("b_long", TYPE_LONG, false).addLong(99_999L);
                     tb.getOrCreateColumn("b_date", TYPE_DATE, true).addLong(1_705_276_800_000L);
@@ -165,9 +165,9 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                             0x3333333333333333L, 0x4444444444444444L
                     );
                     tb.getOrCreateColumn("b_geo", TYPE_GEOHASH, true).addGeoHash(GeoHashes.fromString("s24se0"), 30);
-                    tb.getOrCreateColumn("b_dec64", TYPE_DECIMAL64, true).addDecimal64(new Decimal64(12345L, 2));
-                    tb.getOrCreateColumn("b_dec128", TYPE_DECIMAL128, true).addDecimal128(Decimal128.fromLong(123456789L, 4));
-                    tb.getOrCreateColumn("b_dec256", TYPE_DECIMAL256, true).addDecimal256(Decimal256.fromLong(9999912345L, 5));
+                    tb.getOrCreateColumn("b_dec64", TYPE_DECIMAL64, true).addDecimal64(new Decimal64(12_345L, 2));
+                    tb.getOrCreateColumn("b_dec128", TYPE_DECIMAL128, true).addDecimal128(Decimal128.fromLong(123_456_789L, 4));
+                    tb.getOrCreateColumn("b_dec256", TYPE_DECIMAL256, true).addDecimal256(Decimal256.fromLong(9_999_912_345L, 5));
                     tb.getOrCreateColumn("b_darr", TYPE_DOUBLE_ARRAY, true).addDoubleArray(new double[]{1.0, 2.0, 3.0});
                     tb.getOrCreateColumn("b_ts", TYPE_TIMESTAMP, true).addLong(1_705_276_800_000_000L);
                     tb.getOrCreateColumn("b_tsns", TYPE_TIMESTAMP_NANOS, true).addLong(1_705_276_800_000_000_123L);
@@ -296,7 +296,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dec128")
-                            .decimalColumn("val", Decimal128.fromLong(123456789L, 4))
+                            .decimalColumn("val", Decimal128.fromLong(123_456_789L, 4))
                             .at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -317,7 +317,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dec256")
-                            .decimalColumn("val", Decimal256.fromLong(9999912345L, 5))
+                            .decimalColumn("val", Decimal256.fromLong(9_999_912_345L, 5))
                             .at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -338,7 +338,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dec64")
-                            .decimalColumn("val", new Decimal64(12345L, 2))
+                            .decimalColumn("val", new Decimal64(12_345L, 2))
                             .at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -500,7 +500,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_int", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_INT, false);
-                    col.addInt(12345);
+                    col.addInt(12_345);
                     QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
                     ts.addLong(1_000_000L);
                     tb.nextRow();

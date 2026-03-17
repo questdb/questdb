@@ -1216,7 +1216,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     private static @NotNull WalWriter commitRow(TestServerMain serverMain, TableToken tableToken, int in) {
         WalWriter ww = serverMain.getEngine().getWalWriter(tableToken);
         try {
-            var row = ww.newRow(1234567890L);
+            var row = ww.newRow(1_234_567_890L);
             row.putInt(1, in + 1);
             row.append();
             ww.commit();

@@ -88,7 +88,7 @@ public class QwpSchemaCacheTest {
     public void testCacheEmpty() {
         QwpSchemaCache cache = new QwpSchemaCache();
         Assert.assertEquals(0, cache.size());
-        Assert.assertNull(cache.get("nonexistent", 12345L));
+        Assert.assertNull(cache.get("nonexistent", 12_345L));
     }
 
     @Test
@@ -172,7 +172,7 @@ public class QwpSchemaCacheTest {
         cache.get("test_table", schema.getSchemaHash());
 
         // 2 misses
-        cache.get("test_table", 99999L);
+        cache.get("test_table", 99_999L);
         cache.get("other_table", schema.getSchemaHash());
 
         Assert.assertEquals(3, cache.getHits());
@@ -187,7 +187,7 @@ public class QwpSchemaCacheTest {
 
         cache.put(new Utf8String("test_table"), schema);
 
-        cache.get("test_table", 99999L); // Miss (wrong hash)
+        cache.get("test_table", 99_999L); // Miss (wrong hash)
         cache.get("other_table", schema.getSchemaHash()); // Miss (wrong table)
 
         Assert.assertEquals(0, cache.getHits());

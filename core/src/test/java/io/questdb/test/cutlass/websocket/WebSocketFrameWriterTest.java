@@ -74,15 +74,15 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
         Assert.assertEquals(2, WebSocketFrameWriter.headerSize(0, false));
         Assert.assertEquals(2, WebSocketFrameWriter.headerSize(125, false));
         Assert.assertEquals(4, WebSocketFrameWriter.headerSize(126, false));
-        Assert.assertEquals(4, WebSocketFrameWriter.headerSize(65535, false));
-        Assert.assertEquals(10, WebSocketFrameWriter.headerSize(65536, false));
-        Assert.assertEquals(10, WebSocketFrameWriter.headerSize(1000000, false));
+        Assert.assertEquals(4, WebSocketFrameWriter.headerSize(65_535, false));
+        Assert.assertEquals(10, WebSocketFrameWriter.headerSize(65_536, false));
+        Assert.assertEquals(10, WebSocketFrameWriter.headerSize(1_000_000, false));
 
         // With masking
         Assert.assertEquals(6, WebSocketFrameWriter.headerSize(0, true));
         Assert.assertEquals(6, WebSocketFrameWriter.headerSize(125, true));
         Assert.assertEquals(8, WebSocketFrameWriter.headerSize(126, true));
-        Assert.assertEquals(14, WebSocketFrameWriter.headerSize(65536, true));
+        Assert.assertEquals(14, WebSocketFrameWriter.headerSize(65_536, true));
     }
 
     @Test
@@ -108,11 +108,11 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
         try {
             // Test boundary at 65535/65536
             int written65535 = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, 65535, false);
+                    WebSocketOpcode.BINARY, 65_535, false);
             Assert.assertEquals(4, written65535);
 
             int written65536 = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, 65536, false);
+                    WebSocketOpcode.BINARY, 65_536, false);
             Assert.assertEquals(10, written65536);
         } finally {
             freeBuffer(buf, 16);
@@ -241,7 +241,7 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     public void testWriteLargeFrame() {
         long buf = allocateBuffer(16);
         try {
-            long payloadLen = 100000L;
+            long payloadLen = 100_000L;
             int written = WebSocketFrameWriter.writeHeader(buf, true,
                     WebSocketOpcode.BINARY, payloadLen, false);
 

@@ -282,7 +282,7 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     private static byte[] createMaskedFrame(int opcode, byte[] payload, boolean fin) {
         byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
         int payloadLen = payload.length;
-        int headerLen = (payloadLen <= 125) ? 6 : (payloadLen <= 65535) ? 8 : 14;
+        int headerLen = (payloadLen <= 125) ? 6 : (payloadLen <= 65_535) ? 8 : 14;
 
         byte[] frame = new byte[headerLen + payloadLen];
         int offset = 0;
@@ -291,7 +291,7 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
 
         if (payloadLen <= 125) {
             frame[offset++] = (byte) (0x80 | payloadLen);
-        } else if (payloadLen <= 65535) {
+        } else if (payloadLen <= 65_535) {
             frame[offset++] = (byte) (0x80 | 126);
             frame[offset++] = (byte) ((payloadLen >> 8) & 0xFF);
             frame[offset++] = (byte) (payloadLen & 0xFF);

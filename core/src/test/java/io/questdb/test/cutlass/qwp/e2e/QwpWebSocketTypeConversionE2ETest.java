@@ -169,7 +169,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                 sender.table("tc_dec128_str")
-                        .decimalColumn("col", Decimal128.fromLong(12345, 2))  // 123.45
+                        .decimalColumn("col", Decimal128.fromLong(12_345, 2))  // 123.45
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec128_str")
@@ -241,21 +241,21 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                 sender.table("tc_dec256_str")
-                        .decimalColumn("col", Decimal256.fromLong(98765, 2))  // 987.65
+                        .decimalColumn("col", Decimal256.fromLong(98_765, 2))  // 987.65
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec256_str")
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec256_str")
-                        .decimalColumn("col", Decimal256.fromLong(-54321, 2))  // -543.21
+                        .decimalColumn("col", Decimal256.fromLong(-54_321, 2))  // -543.21
                         .at(1_000_000_000_002L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec256_str")
                         .at(1_000_000_000_003L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec256_str")
-                        .decimalColumn("col", Decimal256.fromLong(11111, 2))  // 111.11
+                        .decimalColumn("col", Decimal256.fromLong(11_111, 2))  // 111.11
                         .at(1_000_000_000_004L, ChronoUnit.MICROS);
             }
 
@@ -277,7 +277,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                 sender.table("tc_dec256_vc")
-                        .decimalColumn("col", Decimal256.fromLong(42000, 3))  // 42.000
+                        .decimalColumn("col", Decimal256.fromLong(42_000, 3))  // 42.000
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec256_vc")
@@ -291,7 +291,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                         .at(1_000_000_000_003L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec256_vc")
-                        .decimalColumn("col", Decimal256.fromLong(99999, 3))  // 99.999
+                        .decimalColumn("col", Decimal256.fromLong(99_999, 3))  // 99.999
                         .at(1_000_000_000_004L, ChronoUnit.MICROS);
             }
 
@@ -313,7 +313,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                 sender.table("tc_dec_dec128")
-                        .decimalColumn("col", Decimal128.fromLong(12345, 2))  // 123.45
+                        .decimalColumn("col", Decimal128.fromLong(12_345, 2))  // 123.45
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec_dec128")
@@ -349,21 +349,21 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                 sender.table("tc_dec_dec256")
-                        .decimalColumn("col", Decimal256.fromLong(98765, 2))  // 987.65
+                        .decimalColumn("col", Decimal256.fromLong(98_765, 2))  // 987.65
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec_dec256")
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec_dec256")
-                        .decimalColumn("col", Decimal256.fromLong(-54321, 2))  // -543.21
+                        .decimalColumn("col", Decimal256.fromLong(-54_321, 2))  // -543.21
                         .at(1_000_000_000_002L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec_dec256")
                         .at(1_000_000_000_003L, ChronoUnit.MICROS);
 
                 sender.table("tc_dec_dec256")
-                        .decimalColumn("col", Decimal256.fromLong(11111, 2))  // 111.11
+                        .decimalColumn("col", Decimal256.fromLong(11_111, 2))  // 111.11
                         .at(1_000_000_000_004L, ChronoUnit.MICROS);
             }
 
@@ -1153,14 +1153,14 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
                 sender.table("tc_long_str")
-                        .longColumn("col", 12345L)
+                        .longColumn("col", 12_345L)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("tc_long_str")
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 sender.table("tc_long_str")
-                        .longColumn("col", -67890L)
+                        .longColumn("col", -67_890L)
                         .at(1_000_000_000_002L, ChronoUnit.MICROS);
 
                 sender.table("tc_long_str")

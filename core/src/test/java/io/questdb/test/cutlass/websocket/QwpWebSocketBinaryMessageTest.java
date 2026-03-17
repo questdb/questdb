@@ -261,7 +261,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                 // Build a large message (many ILP lines)
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < 1000; i++) {
-                    sb.append("cpu,host=server").append(i).append(" usage=").append(50.0 + (i % 50)).append(" ").append(1234567890L + i).append("\n");
+                    sb.append("cpu,host=server").append(i).append(" usage=").append(50.0 + (i % 50)).append(" ").append(1_234_567_890L + i).append("\n");
                 }
                 byte[] data = sb.toString().getBytes(StandardCharsets.UTF_8);
                 ByteBuffer buffer = ByteBuffer.wrap(data);
@@ -327,7 +327,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                 // Send multiple binary messages
                 int numMessages = 10;
                 for (int i = 0; i < numMessages; i++) {
-                    String ilpLine = "cpu,host=server" + i + " usage=" + (50.0 + i) + " " + (1234567890L + i) + "\n";
+                    String ilpLine = "cpu,host=server" + i + " usage=" + (50.0 + i) + " " + (1_234_567_890L + i) + "\n";
                     byte[] data = ilpLine.getBytes(StandardCharsets.UTF_8);
                     ByteBuffer buffer = ByteBuffer.wrap(data);
 

@@ -1865,7 +1865,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 final RowInserter ins = new RowInserter() {
                     private long count;
-                    private long ts = 1000000000L;
+                    private long ts = 1_000_000_000L;
 
                     @Override
                     public long getCount() {
@@ -1935,7 +1935,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
                 TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
-                v1.create(path.of(root).concat("v1_drop"), 65897);
+                v1.create(path.of(root).concat("v1_drop"), 65_897);
                 v1.open(path);
 
                 assertIsDropped(v1, path, "v1_drop");
@@ -1955,7 +1955,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
                 TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
-                v2.create(path.of(root).concat("v2_drop"), 65897);
+                v2.create(path.of(root).concat("v2_drop"), 65_897);
                 v2.open(path);
 
                 assertIsDropped(v2, path, "v2_drop");
@@ -2371,7 +2371,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         record.getLong256(20, stringSink);
                         assertEquals(testSink.toString(), stringSink.toString());
 
-                        assertEquals(1654852426000000L + (i + 1) * (long) (Math.pow(10, 5 - (int) Math.log10(i + 1))), record.getTimestamp(21));
+                        assertEquals(1_654_852_426_000_000L + (i + 1) * (long) (Math.pow(10, 5 - (int) Math.log10(i + 1))), record.getTimestamp(21));
 
                         TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
                         TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
@@ -3292,7 +3292,7 @@ public class WalWriterTest extends AbstractCairoTest {
                                 - (eventsBytesPerTxn * txnCount)
                 ) / bytesPerRow;
 
-                long timestamp = 1694590000000000L;
+                long timestamp = 1_694_590_000_000_000L;
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     // Insert the one less than the maximum number of rows to cause a roll-over at the next row.
@@ -4377,7 +4377,7 @@ public class WalWriterTest extends AbstractCairoTest {
             walWriter.close();
             engine.releaseInactive();
 
-            final int newMaxTxn = 200000;
+            final int newMaxTxn = 200_000;
             try (
                     final Path walePath = new Path()
                             .of(configuration.getDbRoot())
@@ -5113,13 +5113,13 @@ public class WalWriterTest extends AbstractCairoTest {
 
             try (WalWriter walWriter = getWalWriter(tableName)) {
                 // Row 1: Add symbol, then CANCEL
-                TableWriter.Row row1 = walWriter.newRow(1000000L);
+                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
                 row1.putSym(0, "sym_cancelled");  // This increments localSymbolIds
                 row1.putInt(1, 100);
                 row1.cancel();  // Data rolled back, but localSymbolIds NOT reset!
 
                 // Row 2: Add different symbol, then COMMIT
-                TableWriter.Row row2 = walWriter.newRow(2000000L);
+                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
                 row2.putSym(0, "sym_committed");  // Gets key 1 (key 0 was "used" by cancelled row)
                 row2.putInt(1, 200);
                 row2.append();
@@ -5169,14 +5169,14 @@ public class WalWriterTest extends AbstractCairoTest {
             try (WalWriter walWriter = getWalWriter(tableName)) {
                 // Cancel 10 rows with unique symbols
                 for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = walWriter.newRow((i + 1) * 1000000L);
+                    TableWriter.Row row = walWriter.newRow((i + 1) * 1_000_000L);
                     row.putSym(0, "cancelled_" + i);  // Each increments localSymbolIds
                     row.putInt(1, i);
                     row.cancel();  // localSymbolIds keeps incrementing!
                 }
 
                 // Now add one real row
-                TableWriter.Row realRow = walWriter.newRow(100000000L);
+                TableWriter.Row realRow = walWriter.newRow(100_000_000L);
                 realRow.putSym(0, "real_symbol");  // Gets key 10 (keys 0-9 "wasted")
                 realRow.putInt(1, 999);
                 realRow.append();
@@ -5228,14 +5228,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             try (WalWriter walWriter = getWalWriter(tableName)) {
                 // Row 1: Add symbol, then CANCEL
-                TableWriter.Row row1 = walWriter.newRow(1000000L);
+                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
                 row1.putSym(0, "reused_symbol");
                 row1.putInt(1, 100);
                 row1.cancel();
 
                 // Row 2: Use SAME symbol, then COMMIT
                 // This should find it in symbolMaps cache and reuse the key
-                TableWriter.Row row2 = walWriter.newRow(2000000L);
+                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
                 row2.putSym(0, "reused_symbol");  // Should get same key from cache
                 row2.putInt(1, 200);
                 row2.append();

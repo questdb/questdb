@@ -205,7 +205,7 @@ public class QwpBitWriterReaderTest {
             writer.writeBits(0b110, 3);   // 3 bits: prefix for 9-bit bucket
             writer.writeSigned(100, 9);   // 9 bits: signed delta
             writer.writeBits(0b1111, 4);  // 4 bits: prefix for 32-bit bucket
-            writer.writeSigned(-1000000, 32); // 32 bits: signed delta
+            writer.writeSigned(-1_000_000, 32); // 32 bits: signed delta
             writer.flush();
 
             QwpBitReader reader = new QwpBitReader();
@@ -217,7 +217,7 @@ public class QwpBitWriterReaderTest {
             Assert.assertEquals(0b110, reader.readBits(3));
             Assert.assertEquals(100, reader.readSigned(9));
             Assert.assertEquals(0b1111, reader.readBits(4));
-            Assert.assertEquals(-1000000, reader.readSigned(32));
+            Assert.assertEquals(-1_000_000, reader.readSigned(32));
         } finally {
             Unsafe.free(addr, 64, MemoryTag.NATIVE_DEFAULT);
         }

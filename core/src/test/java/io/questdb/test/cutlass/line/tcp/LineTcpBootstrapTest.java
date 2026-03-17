@@ -80,7 +80,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                     sender.table("test_array_at_now")
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")
-                            .longColumn("l1", 23452345)
+                            .longColumn("l1", 23_452_345)
                             .doubleArray("a1", a1)
                             .atNow();
                     sender.flush();
@@ -108,7 +108,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                     sender.table("test_array_double")
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")
-                            .longColumn("l1", 23452345)
+                            .longColumn("l1", 23_452_345)
                             .doubleArray("a1", arr1d)
                             .doubleArray("a2", arr2d)
                             .doubleArray("a3", arr3d)
@@ -148,17 +148,17 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         for (int i = 0; i < 1; i++) {
                             sender.table("betfairRunners").symbol("remarks", "SAw,CkdRnUp&2").
                                     stringColumn("runner", "BallyMac Fifra")
-                                    .longColumn("id", 548738)
+                                    .longColumn("id", 548_738)
                                     .longColumn("age", 58)
                                     .at(MicrosFormatUtils.parseTimestamp("2024-06-30T00:00:00Z"), ChronoUnit.MICROS);
                             sender.table("betfairRunners").symbol("remarks", "Fcd-Ck1").
                                     stringColumn("runner", "BallyMac Fifra")
-                                    .longColumn("id", 548738)
+                                    .longColumn("id", 548_738)
                                     .longColumn("age", 58)
                                     .at(MicrosFormatUtils.parseTimestamp("2024-06-24T00:00:00Z"), ChronoUnit.MICROS);
                             sender.table("betfairRunners").symbol("remarks", "(R8) LdRnIn військові").
                                     stringColumn("runner", "BallyMac Fifra")
-                                    .longColumn("id", 548738)
+                                    .longColumn("id", 548_738)
                                     .longColumn("age", 58)
                                     .at(MicrosFormatUtils.parseTimestamp("2024-06-17T00:00:00Z"), ChronoUnit.MICROS);
                             sender.flush();
@@ -629,11 +629,11 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
                     sender.table("test_decimal_text_format_equivalence")
                             .decimalColumn("text_format", "123.450")
-                            .decimalColumn("binary_format", Decimal256.fromLong(123450, 3))
+                            .decimalColumn("binary_format", Decimal256.fromLong(123_450, 3))
                             .at(100_000_000_000L, ChronoUnit.MICROS);
                     sender.table("test_decimal_text_format_equivalence")
                             .decimalColumn("text_format", "-45.670")
-                            .decimalColumn("binary_format", Decimal256.fromLong(-45670, 3))
+                            .decimalColumn("binary_format", Decimal256.fromLong(-45_670, 3))
                             .at(100_000_000_001L, ChronoUnit.MICROS);
                     sender.table("test_decimal_text_format_equivalence")
                             .decimalColumn("text_format", "0.001")
@@ -766,12 +766,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
                     sender.table("test_insert_decimals")
-                            .decimalColumn("a", Decimal256.fromLong(12345, 0))
-                            .decimalColumn("b", Decimal256.fromLong(12345, 2))
+                            .decimalColumn("a", Decimal256.fromLong(12_345, 0))
+                            .decimalColumn("b", Decimal256.fromLong(12_345, 2))
                             .at(100_000_000_000L, ChronoUnit.MICROS);
                     sender.table("test_insert_decimals")
                             .decimalColumn("a", Decimal256.NULL_VALUE)
-                            .decimalColumn("b", Decimal256.fromLong(123456, 3))
+                            .decimalColumn("b", Decimal256.fromLong(123_456, 3))
                             .at(100_000_000_001L, ChronoUnit.MICROS);
                     sender.table("test_insert_decimals")
                             .longColumn("a", 42)
@@ -826,7 +826,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             .longColumn("x", 1234)
                             .at(100_000_000_000L, ChronoUnit.MICROS);
                     sender.table("test_invalid_decimal_test")
-                            .longColumn("y", 12345)
+                            .longColumn("y", 12_345)
                             .at(100_000_000_001L, ChronoUnit.MICROS);
                     sender.table("test_invalid_decimal_test")
                             .doubleColumn("x", 1.2345d)
@@ -841,14 +841,14 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             .stringColumn("x", "1E8")
                             .at(100_000_000_005L, ChronoUnit.MICROS);
                     sender.table("test_invalid_decimal_test")
-                            .decimalColumn("x", Decimal256.fromLong(12345678, 3))
+                            .decimalColumn("x", Decimal256.fromLong(12_345_678, 3))
                             .at(100_000_000_006L, ChronoUnit.MICROS);
                     sender.table("test_invalid_decimal_test")
-                            .decimalColumn("y", Decimal256.fromLong(12345, 0))
+                            .decimalColumn("y", Decimal256.fromLong(12_345, 0))
                             .at(100_000_000_007L, ChronoUnit.MICROS);
                     sender.flush();
                     sender.table("test_invalid_decimal_test")
-                            .decimalColumn("x", Decimal256.fromLong(123456, 4))
+                            .decimalColumn("x", Decimal256.fromLong(123_456, 4))
                             .at(100_000_000_007L, ChronoUnit.MICROS);
                     sender.flush();
                 }

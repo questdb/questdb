@@ -78,10 +78,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     public void test10000Rows() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 10000; i++) {
+                for (int i = 0; i < 10_000; i++) {
                     sender.table("ws_test_10000rows")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     // Flush every 1000 rows to avoid buffer overflow
                     if ((i + 1) % 1000 == 0) {
                         sender.flush();
@@ -103,7 +103,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_test_1000_rows")
                             .symbol("id", "row" + i)
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -121,7 +121,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_test_100_rows")
                             .symbol("id", "row" + i)
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -139,7 +139,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 for (int i = 0; i < 10; i++) {
                     sender.table("ws_test_10rows")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -155,7 +155,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_test_1d_double_array")
                         .doubleArray("values", new double[]{1.1, 2.2, 3.3, 4.4, 5.5})
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -171,7 +171,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 double[][] matrix = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
                 sender.table("ws_test_2d_double_array")
                         .doubleArray("matrix", matrix)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -187,7 +187,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 double[][][] cube = {{{1.0, 2.0}, {3.0, 4.0}}, {{5.0, 6.0}, {7.0, 8.0}}};
                 sender.table("ws_test_3d_double_array")
                         .doubleArray("cube", cube)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -202,14 +202,14 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_all_types")
                         .boolColumn("bool_col", true)
-                        .longColumn("long_col", 9999999999L)
-                        .longColumn("int_col", 123456L)
+                        .longColumn("long_col", 9_999_999_999L)
+                        .longColumn("int_col", 123_456L)
                         .doubleColumn("double_col", 3.14159265359)
                         .doubleColumn("float_col", 2.71828)
                         .stringColumn("string_col", "hello world")
                         .symbol("symbol_col", "sym_value")
-                        .timestampColumn("ts_col", 1609459200000000L, ChronoUnit.MICROS)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .timestampColumn("ts_col", 1_609_459_200_000_000L, ChronoUnit.MICROS)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -261,11 +261,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_all_numeric")
                             .longColumn("byte_col", i % 128)
                             .longColumn("short_col", i * 100)
-                            .longColumn("int_col", i * 10000)
-                            .longColumn("long_col", (long) i * 100000000L)
+                            .longColumn("int_col", i * 10_000)
+                            .longColumn("long_col", (long) i * 100_000_000L)
                             .doubleColumn("float_col", i * 1.1)
                             .doubleColumn("double_col", i * 1.111111)
-                            .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -386,7 +386,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE ws_custom_ts_at_table (sym SYMBOL, value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Ingest data using at() with explicit timestamp
-            long explicitTimestamp = 1700000000000000L; // 2023-11-14T22:13:20Z in micros
+            long explicitTimestamp = 1_700_000_000_000_000L; // 2023-11-14T22:13:20Z in micros
             try (Sender sender = createSender(port)) {
                 sender.table("ws_custom_ts_at_table")
                         .symbol("sym", "test")
@@ -448,7 +448,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("tag", "initial")
                         .longColumn("col_a", 100)
                         .longColumn("col_b", 200)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
             drainWalQueue();
@@ -465,7 +465,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("tag", "after_drop")
                         .longColumn("col_b", 300)
                         .longColumn("col_c", 999)  // New column - auto-created
-                        .at(1000000001000L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -502,7 +502,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("tag", "test")
                         .longColumn("existing_col", 100)
                         .longColumn("new_col", 42)  // New column - auto-created
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -629,7 +629,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_test_batch")
                             .symbol("id", "row" + i)
                             .longColumn("value", i)
-                            .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -645,17 +645,17 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (Sender sender = createSender(port)) {
                 sender.table("ws_bool_test")
                         .boolColumn("val", true)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("ws_bool_test")
                         .boolColumn("val", false)
-                        .at(1000001000000L, ChronoUnit.MICROS);
+                        .at(1_000_001_000_000L, ChronoUnit.MICROS);
 
                 // Alternating pattern
                 for (int i = 0; i < 10; i++) {
                     sender.table("ws_bool_test")
                             .boolColumn("val", i % 2 == 0)
-                            .at(1000002000000L + i * 1000000L, ChronoUnit.MICROS);
+                            .at(1_000_002_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
                 }
 
                 sender.flush();
@@ -710,7 +710,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_test_byte_range")
                         .symbol("id", "b1")
                         .longColumn("byte_val", 127)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -777,7 +777,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_char_test")
                         .symbol("tag", "test")
                         .stringColumn("x", "A")
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -827,7 +827,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_test_col_short")
                         .longColumn("x", 42)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -842,7 +842,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_test_col_underscore")
                         .longColumn("my_column", 42)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -897,7 +897,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .doubleColumn("ratio", i / 100.0)
                             .boolColumn("active", i % 2 == 0)
                             .stringColumn("status", "running")
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -950,7 +950,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 Decimal64 negative = new Decimal64(-5000, 2); // -50.00
                 sender.table("ws_test_decimal_negative")
                         .decimalColumn("loss", negative)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -967,7 +967,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_test_decimal_null")
                         .symbol("name", "test")
                         .decimalColumn("value", (Decimal64) null)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -988,7 +988,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
                 // Second value with scale 4 whose trailing digits would be lost
                 // when rescaling from scale 4 to scale 2 (1.2345 -> cannot be 1.23 exactly)
-                Decimal64 v2 = new Decimal64(12345, 4);
+                Decimal64 v2 = new Decimal64(12_345, 4);
                 try {
                     sender.table("ws_test_decimal_precision_loss")
                             .decimalColumn("price", v2)
@@ -1011,7 +1011,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .longColumn("quantity", 10)
                         .decimalColumn("price", price)
                         .doubleColumn("discount", 0.1)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1027,7 +1027,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 Decimal64 zero = new Decimal64(0, 2); // 0.00
                 sender.table("ws_test_decimal_zero")
                         .decimalColumn("balance", zero)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1062,7 +1062,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 .symbol("batch", "batch-" + batch)
                                 .symbol("ticker", i % 2 == 0 ? "AAPL" : "GOOG")
                                 .longColumn("value", batch * 10 + i)
-                                .at(1000000000000L + batch * 10 + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + batch * 10 + i, ChronoUnit.MICROS);
                     }
                     // Auto-flush triggers every 5 rows
                 }
@@ -1090,21 +1090,21 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_delta_no_sym")
                         .symbol("tag", "first")
                         .longColumn("value", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 2: no symbols at all
                 sender.table("ws_delta_no_sym_data")
                         .longColumn("value", 2)
                         .doubleColumn("metric", 3.14)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 3: symbols again
                 sender.table("ws_delta_no_sym")
                         .symbol("tag", "second")
                         .longColumn("value", 3)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1125,15 +1125,15 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_delta_empty_sym")
                         .symbol("tag", "")  // Empty symbol
                         .longColumn("value", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_delta_empty_sym")
                         .symbol("tag", "nonempty")
                         .longColumn("value", 2)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_delta_empty_sym")
                         .symbol("tag", "")  // Reuse empty
                         .longColumn("value", 3)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1164,7 +1164,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         sender.table("ws_delta_high_vol")
                                 .symbol("device", "device-" + symbolIdx)
                                 .longColumn("reading", row)
-                                .at(1000000000000L + row, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + row, ChronoUnit.MICROS);
                         row++;
                     }
                     sender.flush();
@@ -1193,12 +1193,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         sender.table("ws_delta_inter_a")
                                 .symbol("type", "even")
                                 .longColumn("idx", i)
-                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     } else {
                         sender.table("ws_delta_inter_b")
                                 .symbol("type", "odd")
                                 .longColumn("idx", i)
-                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     }
                 }
                 sender.flush();
@@ -1209,17 +1209,17 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         sender.table("ws_delta_inter_a")
                                 .symbol("type", "triple")  // New symbol
                                 .longColumn("idx", i)
-                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     } else if (i % 3 == 1) {
                         sender.table("ws_delta_inter_b")
                                 .symbol("type", "even")  // Reuse from table_a
                                 .longColumn("idx", i)
-                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     } else {
                         sender.table("ws_delta_inter_c")  // New table
                                 .symbol("type", "remainder")  // New symbol
                                 .longColumn("idx", i)
-                                .at(1000000000000L + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     }
                 }
                 sender.flush();
@@ -1256,21 +1256,21 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_delta_long_sym")
                         .symbol("tag", longSymbol1.toString())
                         .longColumn("value", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 2: add second long symbol
                 sender.table("ws_delta_long_sym")
                         .symbol("tag", longSymbol2.toString())
                         .longColumn("value", 2)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 3: reuse first
                 sender.table("ws_delta_long_sym")
                         .symbol("tag", longSymbol1.toString())
                         .longColumn("value", 3)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1296,7 +1296,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_delta_same_syms")
                             .symbol("ticker", i % 2 == 0 ? "AAPL" : "GOOG")
                             .longColumn("price", 100 + i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -1305,7 +1305,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_delta_same_syms")
                             .symbol("ticker", i % 2 == 0 ? "AAPL" : "GOOG")
                             .longColumn("price", 100 + i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -1314,7 +1314,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_delta_same_syms")
                             .symbol("ticker", i % 2 == 0 ? "GOOG" : "AAPL")
                             .longColumn("price", 100 + i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -1342,21 +1342,21 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("currency", "USD")
                         .symbol("status", "active")
                         .longColumn("value", 100)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
 
                 sender.table("ws_delta_multi_col")
                         .symbol("region", "eu")
                         .symbol("currency", "EUR")
                         .symbol("status", "active")  // Reuses "active"
                         .longColumn("value", 200)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 sender.table("ws_delta_multi_col")
                         .symbol("region", "asia")
                         .symbol("currency", "JPY")
                         .symbol("status", "pending")
                         .longColumn("value", 300)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
 
                 sender.flush();
             }
@@ -1383,31 +1383,31 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_delta_table_a")
                         .symbol("ticker", "AAPL")
                         .longColumn("value", 100)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_delta_table_a")
                         .symbol("ticker", "GOOG")
                         .longColumn("value", 200)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
                 // Table B uses AAPL, MSFT (AAPL is shared, MSFT is new)
                 sender.table("ws_delta_table_b")
                         .symbol("ticker", "AAPL")
                         .longColumn("price", 150)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.table("ws_delta_table_b")
                         .symbol("ticker", "MSFT")
                         .longColumn("price", 300)
-                        .at(1000000000003L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_003L, ChronoUnit.MICROS);
 
                 // Table C uses GOOG, MSFT (both already in dictionary)
                 sender.table("ws_delta_table_c")
                         .symbol("ticker", "GOOG")
                         .doubleColumn("metric", 2800.5)
-                        .at(1000000000004L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_004L, ChronoUnit.MICROS);
                 sender.table("ws_delta_table_c")
                         .symbol("ticker", "MSFT")
                         .doubleColumn("metric", 299.5)
-                        .at(1000000000005L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_005L, ChronoUnit.MICROS);
 
                 sender.flush();
             }
@@ -1435,40 +1435,40 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "AAPL")
                         .longColumn("price", 150)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 2: AAPL + GOOG (new)
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "AAPL")
                         .longColumn("price", 151)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "GOOG")
                         .longColumn("price", 2800)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 3: GOOG + MSFT (new)
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "GOOG")
                         .longColumn("price", 2801)
-                        .at(1000000000003L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_003L, ChronoUnit.MICROS);
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "MSFT")
                         .longColumn("price", 300)
-                        .at(1000000000004L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_004L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 4: All three symbols + TSLA (new)
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "AAPL")
                         .longColumn("price", 152)
-                        .at(1000000000005L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_005L, ChronoUnit.MICROS);
                 sender.table("ws_delta_progressive")
                         .symbol("ticker", "TSLA")
                         .longColumn("price", 700)
-                        .at(1000000000006L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_006L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1496,7 +1496,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 .symbol("cycle", "cycle-" + cycle)
                                 .symbol("idx", "idx-" + i)
                                 .longColumn("value", cycle * 100 + i)
-                                .at(1000000000000L + cycle * 10 + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + cycle * 10 + i, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -1523,7 +1523,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_delta_reconnect")
                             .symbol("region", i % 3 == 0 ? "us" : i % 3 == 1 ? "eu" : "asia")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -1535,7 +1535,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_delta_reconnect")
                             .symbol("region", i % 3 == 0 ? "us" : i % 3 == 1 ? "eu" : "asia")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -1557,22 +1557,22 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_delta_unicode")
                         .symbol("city", "東京")
                         .longColumn("temp", 20)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_delta_unicode")
                         .symbol("city", "北京")
                         .longColumn("temp", 15)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 2: reuse unicode symbols + add new
                 sender.table("ws_delta_unicode")
                         .symbol("city", "東京")  // Reuse
                         .longColumn("temp", 21)
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.table("ws_delta_unicode")
                         .symbol("city", "서울")  // New
                         .longColumn("temp", 18)
-                        .at(1000000000003L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1592,15 +1592,15 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     public void testDeltaSymbolDict_withArraysAndDecimals() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
-                Decimal64 price1 = new Decimal64(15099, 2);
-                Decimal64 price2 = new Decimal64(28005, 2);
+                Decimal64 price1 = new Decimal64(15_099, 2);
+                Decimal64 price2 = new Decimal64(28_005, 2);
 
                 // Batch 1
                 sender.table("ws_delta_complex")
                         .symbol("ticker", "AAPL")
                         .decimalColumn("price", price1)
                         .doubleArray("features", new double[]{1.0, 2.0, 3.0})
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Batch 2: new symbol + reuse
@@ -1608,12 +1608,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("ticker", "GOOG")
                         .decimalColumn("price", price2)
                         .doubleArray("features", new double[]{4.0, 5.0, 6.0})
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_delta_complex")
                         .symbol("ticker", "AAPL")  // Reuse
                         .decimalColumn("price", price1)
                         .doubleArray("features", new double[]{7.0, 8.0, 9.0})
-                        .at(1000000000002L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1631,7 +1631,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .doubleColumn("pi", Math.PI)
                         .doubleColumn("e", Math.E)
                         .doubleColumn("sqrt2", Math.sqrt(2))
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1847,7 +1847,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .boolColumn("c", true)
                         .boolColumn("d", true)
                         .boolColumn("e", true)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1867,7 +1867,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("d", "4")
                         .symbol("e", "5")
                         .longColumn("value", 42)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -1920,7 +1920,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 for (int i = 0; i < 10; i++) {
                     sender.table("ws_test_flush_each")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     sender.flush();
                 }
             }
@@ -1950,7 +1950,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 for (int i = 0; i < 100; i++) {
                     sender.table("ws_test_flush_10")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     if ((i + 1) % 10 == 0) {
                         sender.flush();
                     }
@@ -1969,7 +1969,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 for (int i = 0; i < 50; i++) {
                     sender.table("ws_test_flush_5")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     if ((i + 1) % 5 == 0) {
                         sender.flush();
                     }
@@ -2268,7 +2268,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
         runInContext((port) -> {
             int inFlightWindowSize = 100;
-            int totalRows = 10000;
+            int totalRows = 10_000;
 
             // Create sender with high in-flight window
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
@@ -2282,7 +2282,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 for (int i = 0; i < totalRows; i++) {
                     sender.table("ws_ack_test")
                             .longColumn("value", i)
-                            .at(1000000000000L + i * 1000000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
                 }
                 // This should succeed - cumulative ACKs handle the batch volume
                 sender.flush();
@@ -2376,12 +2376,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_interleave_a")
                             .symbol("id", "a" + i)
                             .longColumn("value", i)
-                            .at(1000000000000L + i * 2, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 2, ChronoUnit.MICROS);
 
                     sender.table("ws_interleave_b")
                             .symbol("id", "b" + i)
                             .longColumn("value", i * 10)
-                            .at(1000000000000L + i * 2 + 1, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 2 + 1, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2403,7 +2403,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 }
                 sender.table("ws_test_large_array")
                         .doubleArray("values", largeArray)
-                        .at(1000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2454,7 +2454,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_test_large_string")
                         .symbol("id", "row1")
                         .stringColumn("large_data", largeString)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2483,9 +2483,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_narrow_all")
                             .longColumn("byte_val", i % 128)
                             .longColumn("short_val", i * 100)
-                            .longColumn("int_val", i * 10000)
+                            .longColumn("int_val", i * 10_000)
                             .doubleColumn("float_val", i * 1.5)
-                            .at(1704067200000000L + i, ChronoUnit.MICROS);
+                            .at(1_704_067_200_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -2521,16 +2521,16 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_narrow_float")
                         .doubleColumn("value", 0.0)
-                        .at(1704067200000000L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_float")
                         .doubleColumn("value", 3.14159)
-                        .at(1704067200000001L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_float")
                         .doubleColumn("value", -2.71828)
-                        .at(1704067200000002L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_float")
                         .doubleColumn("value", 1000.5)
-                        .at(1704067200000003L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2560,16 +2560,16 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_narrow_byte")
                         .longColumn("value", 0)
-                        .at(1704067200000000L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_byte")
                         .longColumn("value", 127)
-                        .at(1704067200000001L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_byte")
                         .longColumn("value", -128)
-                        .at(1704067200000002L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_byte")
                         .longColumn("value", -1)
-                        .at(1704067200000003L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2598,16 +2598,16 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_narrow_int")
                         .longColumn("value", 0)
-                        .at(1704067200000000L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_int")
-                        .longColumn("value", 2147483647)
-                        .at(1704067200000001L, ChronoUnit.MICROS);
+                        .longColumn("value", 2_147_483_647)
+                        .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_int")
-                        .longColumn("value", -2147483648) // interpreted as null when INT
-                        .at(1704067200000002L, ChronoUnit.MICROS);
+                        .longColumn("value", -2_147_483_648) // interpreted as null when INT
+                        .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_int")
-                        .longColumn("value", 123456789)
-                        .at(1704067200000003L, ChronoUnit.MICROS);
+                        .longColumn("value", 123_456_789)
+                        .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2636,16 +2636,16 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_narrow_short")
                         .longColumn("value", 0)
-                        .at(1704067200000000L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_short")
-                        .longColumn("value", 32767)
-                        .at(1704067200000001L, ChronoUnit.MICROS);
+                        .longColumn("value", 32_767)
+                        .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_short")
-                        .longColumn("value", -32768)
-                        .at(1704067200000002L, ChronoUnit.MICROS);
+                        .longColumn("value", -32_768)
+                        .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
                 sender.table("ws_narrow_short")
                         .longColumn("value", 1000)
-                        .at(1704067200000003L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2663,11 +2663,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_test_negative")
-                        .longColumn("long_val", -12345L)
+                        .longColumn("long_val", -12_345L)
                         .longColumn("int_val", -999L)
                         .doubleColumn("double_val", -3.14)
                         .doubleColumn("float_val", -2.71)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -2703,7 +2703,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("non_wal_table")
                         .symbol("tag", "test")
                         .longColumn("value", 42)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
                 Assert.fail("Expected LineSenderException when writing to non-WAL table");
             } catch (LineSenderException e) {
@@ -2987,7 +2987,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_test_special_str")
                         .symbol("id", "row1")
                         .stringColumn("special", "hello\tworld\nnewline")
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3003,7 +3003,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_test_special_sym")
                         .symbol("special", "hello-world_123")
                         .longColumn("value", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3044,7 +3044,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .longColumn("v", 100)
                         .longColumn("w", 200)
                         .boolColumn("m", true)
-                        .at(1704067200000000L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
 
                 sender.table("ws_stac_q")
                         .symbol("s", "MSFT")
@@ -3054,7 +3054,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .longColumn("v", 50)
                         .longColumn("w", 75)
                         .boolColumn("m", false)
-                        .at(1704067200000001L, ChronoUnit.MICROS);
+                        .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
 
                 sender.flush();
             }
@@ -3083,11 +3083,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_a")
                         .longColumn("val", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_b")
                         .longColumn("val", 2)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 drainWalQueue();
@@ -3096,18 +3096,18 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_a")
                         .longColumn("val", 3)
-                        .at(1000000001000L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_b")
                         .longColumn("val", 4)
-                        .at(1000000001001L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Phase 3: Add sym_c (new symbol)
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_c")  // NEW
                         .longColumn("val", 5)
-                        .at(1000000002000L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_000L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Apply WAL - sym_c becomes committed, watermark changes
@@ -3119,30 +3119,30 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_a")  // Cache invalidated, repopulate
                         .longColumn("val", 6)
-                        .at(1000000003000L, ChronoUnit.MICROS);
+                        .at(1_000_000_003_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_b")  // Cache invalidated, repopulate
                         .longColumn("val", 7)
-                        .at(1000000003001L, ChronoUnit.MICROS);
+                        .at(1_000_000_003_001L, ChronoUnit.MICROS);
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_c")  // Now committed, can be cached
                         .longColumn("val", 8)
-                        .at(1000000003002L, ChronoUnit.MICROS);
+                        .at(1_000_000_003_002L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Phase 5: All three should now hit cache
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_a")  // CACHE HIT
                         .longColumn("val", 9)
-                        .at(1000000004000L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_b")  // CACHE HIT
                         .longColumn("val", 10)
-                        .at(1000000004001L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_001L, ChronoUnit.MICROS);
                 sender.table("ws_cache_invalidate")
                         .symbol("tag", "sym_c")  // CACHE HIT
                         .longColumn("val", 11)
-                        .at(1000000004002L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_002L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3168,7 +3168,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("level", levels[i % levels.length])
                             .symbol("source", sources[i % sources.length])
                             .longColumn("seq", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3180,7 +3180,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("level", levels[i % levels.length])
                             .symbol("source", sources[i % sources.length])
                             .longColumn("seq", i + 100)
-                            .at(1000000001000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3192,7 +3192,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 .symbol("level", levels[idx % levels.length])  // CACHE HIT
                                 .symbol("source", sources[idx % sources.length])  // CACHE HIT
                                 .longColumn("seq", idx + 1000)
-                                .at(1000000002000L + idx, ChronoUnit.MICROS);
+                                .at(1_000_000_002_000L + idx, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -3222,7 +3222,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("tag", symbols[i % symbols.length])
                             .longColumn("round", 1)
                             .longColumn("idx", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3236,7 +3236,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 .symbol("tag", symbols[i % symbols.length])
                                 .longColumn("round", round)
                                 .longColumn("idx", i)
-                                .at(1000000000000L + (round * 1000) + i, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + (round * 1000) + i, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
@@ -3264,11 +3264,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_a")
                         .longColumn("val", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_b")
                         .longColumn("val", 2)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 drainWalQueue();
@@ -3277,11 +3277,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_a")  // Cache miss -> populate
                         .longColumn("val", 3)
-                        .at(1000000001000L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_b")  // Cache miss -> populate
                         .longColumn("val", 4)
-                        .at(1000000001001L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 drainWalQueue();
@@ -3290,23 +3290,23 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_a")  // CACHE HIT (fast path)
                         .longColumn("val", 5)
-                        .at(1000000002000L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "new_c")  // NEW - cache miss, putSym
                         .longColumn("val", 6)
-                        .at(1000000002001L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_001L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_b")  // CACHE HIT (fast path)
                         .longColumn("val", 7)
-                        .at(1000000002002L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_002L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "new_d")  // NEW - cache miss, putSym
                         .longColumn("val", 8)
-                        .at(1000000002003L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_003L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_a")  // CACHE HIT (fast path)
                         .longColumn("val", 9)
-                        .at(1000000002004L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_004L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Round 4: All symbols now exist, but new_c and new_d not yet in cache
@@ -3317,30 +3317,30 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_cache_mixed")
                         .symbol("type", "new_c")  // Cache miss -> populate (now committed)
                         .longColumn("val", 10)
-                        .at(1000000003000L, ChronoUnit.MICROS);
+                        .at(1_000_000_003_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "new_d")  // Cache miss -> populate (now committed)
                         .longColumn("val", 11)
-                        .at(1000000003001L, ChronoUnit.MICROS);
+                        .at(1_000_000_003_001L, ChronoUnit.MICROS);
                 sender.flush();
 
                 // Round 6: All four symbols should now hit cache
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_a")  // CACHE HIT
                         .longColumn("val", 12)
-                        .at(1000000004000L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_000L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "existing_b")  // CACHE HIT
                         .longColumn("val", 13)
-                        .at(1000000004001L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_001L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "new_c")  // CACHE HIT
                         .longColumn("val", 14)
-                        .at(1000000004002L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_002L, ChronoUnit.MICROS);
                 sender.table("ws_cache_mixed")
                         .symbol("type", "new_d")  // CACHE HIT
                         .longColumn("val", 15)
-                        .at(1000000004003L, ChronoUnit.MICROS);
+                        .at(1_000_000_004_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3364,7 +3364,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("col_b", "b_val_" + (i % 3))  // 3 distinct
                             .symbol("col_c", "c_val_" + (i % 4))  // 4 distinct (but only 4 rows so actually max 4)
                             .longColumn("seq", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3377,7 +3377,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("col_b", "b_val_" + (i % 3))
                             .symbol("col_c", "c_val_" + (i % 4))
                             .longColumn("seq", i + 10)
-                            .at(1000000001000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3388,7 +3388,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("col_b", "b_val_" + (i % 3))  // CACHE HIT
                             .symbol("col_c", "c_val_" + (i % 4))  // CACHE HIT
                             .longColumn("seq", i + 20)
-                            .at(1000000002000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_002_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3399,7 +3399,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .symbol("col_b", "b_val_0")  // CACHE HIT
                         .symbol("col_c", "c_val_0")  // CACHE HIT
                         .longColumn("seq", 100)
-                        .at(1000000003000L, ChronoUnit.MICROS);
+                        .at(1_000_000_003_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3428,7 +3428,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("device", "device_" + (i % 3))  // 3 distinct values
                             .symbol("status", i % 2 == 0 ? "online" : "offline")  // 2 distinct values
                             .longColumn("seq", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3442,7 +3442,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("device", "device_" + (i % 3))  // Same 3 values
                             .symbol("status", i % 2 == 0 ? "online" : "offline")  // Same 2 values
                             .longColumn("seq", i + 100)
-                            .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3457,7 +3457,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("device", "device_" + (i % 3))  // Cache HIT!
                             .symbol("status", i % 2 == 0 ? "online" : "offline")  // Cache HIT!
                             .longColumn("seq", i + 200)
-                            .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3467,7 +3467,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("device", "device_" + (i % 3))  // Cache HIT!
                             .symbol("status", i % 2 == 0 ? "online" : "offline")  // Cache HIT!
                             .longColumn("seq", i + 300)
-                            .at(1000000003000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_003_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3487,7 +3487,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_cache_fast_path")
                             .symbol("device", "foo")
                             .longColumn("seq", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3497,7 +3497,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_cache_fast_path")
                             .symbol("device", "foo")
                             .longColumn("seq", i + 100)
-                            .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3507,7 +3507,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_cache_fast_path")
                             .symbol("device", "foo")
                             .longColumn("seq", i + 200)
-                            .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -3516,7 +3516,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_cache_fast_path")
                             .symbol("device", "foo")
                             .longColumn("seq", i + 300)
-                            .at(1000000003000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_003_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3547,7 +3547,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("host", hosts[i % hosts.length])
                             .longColumn("cpu_usage", i % 100)
                             .doubleColumn("memory_free", 1024.0 + (i % 512))
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
 
                     // Flush every 100 rows
                     if ((i + 1) % 100 == 0) {
@@ -3580,7 +3580,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("location", locations[i % locations.length])
                             .symbol("measurement_type", types[i % types.length])
                             .doubleColumn("value", 20.0 + (i % 30))
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3604,7 +3604,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_cache_table1")
                             .symbol("status", i % 2 == 0 ? "active" : "inactive")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
 
                 // Send to table2 with same symbol column name but different values
@@ -3612,7 +3612,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_cache_table2")
                             .symbol("status", i % 3 == 0 ? "running" : i % 3 == 1 ? "stopped" : "pending")
                             .longColumn("value", i * 10)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
 
                 sender.flush();
@@ -3643,7 +3643,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_reconnect_test")
                             .symbol("tag", "conn1_val" + (i % 3))
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3657,7 +3657,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_reconnect_test")
                             .symbol("tag", "conn2_val" + (i % 3))
                             .longColumn("value", i + 100)
-                            .at(1000000001000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3680,7 +3680,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_test_sym_dedup")
                             .symbol("region", i % 3 == 0 ? "us" : i % 3 == 1 ? "eu" : "asia")
                             .longColumn("value", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3702,12 +3702,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         sender.table("ws_alt_table_a")
                                 .symbol("color", i % 6 < 3 ? "red" : "blue")
                                 .longColumn("n", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                     } else {
                         sender.table("ws_alt_table_b")
                                 .symbol("size", i % 6 < 2 ? "small" : i % 6 < 4 ? "medium" : "large")
                                 .longColumn("n", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                     }
 
                     // Flush every 5 rows
@@ -3740,7 +3740,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("source", "conn1")
                             .symbol("type", i % 2 == 0 ? "typeA" : "typeB")
                             .longColumn("seq", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3755,7 +3755,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("source", "conn2")
                             .symbol("type", i % 3 == 0 ? "typeA" : i % 3 == 1 ? "typeB" : "typeC")
                             .longColumn("seq", i + 100)
-                            .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3769,7 +3769,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("source", i % 3 == 0 ? "conn1" : i % 3 == 1 ? "conn2" : "conn3")
                             .symbol("type", i % 4 == 0 ? "typeA" : i % 4 == 1 ? "typeB" : i % 4 == 2 ? "typeC" : "typeD")
                             .longColumn("seq", i + 200)
-                            .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3792,7 +3792,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_flush_each_row")
                             .symbol("tag", symbols[i % symbols.length])
                             .longColumn("value", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                     sender.flush();  // Flush after every single row
                 }
             }
@@ -3814,7 +3814,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("user_id", "user_" + i)  // High cardinality
                             .symbol("action", "action_" + (i % 5))  // Low cardinality
                             .longColumn("timestamp_ms", System.currentTimeMillis())
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
 
                     if ((i + 1) % 50 == 0) {
                         sender.flush();
@@ -3841,11 +3841,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_interleave_t1")
                             .symbol("sym", "t1_v" + (i % 2))
                             .longColumn("val", i)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     sender.table("ws_interleave_t2")
                             .symbol("sym", "t2_v" + (i % 3))
                             .longColumn("val", i * 10)
-                            .at(1000000000000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3859,12 +3859,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_interleave_t1")
                             .symbol("sym", "t1_v" + (i % 3))
                             .longColumn("val", i + 100)
-                            .at(1000000001000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
                     // Reuse t2_v0, t2_v1, t2_v2, add t2_v3
                     sender.table("ws_interleave_t2")
                             .symbol("sym", "t2_v" + (i % 4))
                             .longColumn("val", i * 10 + 100)
-                            .at(1000000001000L + i, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -3893,7 +3893,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .symbol("unique_tag", "tag_" + i)
                             .symbol("group", "group_" + (i % 10))
                             .longColumn("seq", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
 
                     // Flush every batchSize rows
                     if ((i + 1) % batchSize == 0) {
@@ -3925,11 +3925,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_a")
                         .longColumn("id", 1)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_b")
                         .longColumn("id", 2)
-                        .at(1000000000001L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3940,19 +3940,19 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_a")  // existing
                         .longColumn("id", 3)
-                        .at(1000000001000L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_c")  // NEW
                         .longColumn("id", 4)
-                        .at(1000000001001L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_001L, ChronoUnit.MICROS);
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_b")  // existing
                         .longColumn("id", 5)
-                        .at(1000000001002L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_002L, ChronoUnit.MICROS);
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_d")  // NEW
                         .longColumn("id", 6)
-                        .at(1000000001003L, ChronoUnit.MICROS);
+                        .at(1_000_000_001_003L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3963,11 +3963,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_e")  // NEW
                         .longColumn("id", 7)
-                        .at(1000000002000L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_000L, ChronoUnit.MICROS);
                 sender.table("ws_new_after_wal")
                         .symbol("category", "cat_a")  // existing from phase 1
                         .longColumn("id", 8)
-                        .at(1000000002001L, ChronoUnit.MICROS);
+                        .at(1_000_000_002_001L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -3998,7 +3998,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         row.symbol("optional", "val_" + (i % 5));
                     }
 
-                    row.at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    row.at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
 
                     if ((i + 1) % 10 == 0) {
                         sender.flush();
@@ -4032,7 +4032,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 .symbol("env", envs[idx % envs.length])
                                 .symbol("service", services[idx % services.length])
                                 .doubleColumn("latency", 10.0 + (idx % 100))
-                                .at(1000000000000L + idx * 1000L, ChronoUnit.MICROS);
+                                .at(1_000_000_000_000L + idx * 1000L, ChronoUnit.MICROS);
                     }
                     sender.flush();
 
@@ -4064,7 +4064,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_same_conn_wal")
                             .symbol("status", i % 2 == 0 ? "ok" : "error")
                             .longColumn("code", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -4075,7 +4075,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_same_conn_wal")
                             .symbol("status", i % 3 == 0 ? "ok" : i % 3 == 1 ? "error" : "warning")
                             .longColumn("code", i + 100)
-                            .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
 
@@ -4087,7 +4087,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_same_conn_wal")
                             .symbol("status", i % 4 == 0 ? "ok" : i % 4 == 1 ? "error" : i % 4 == 2 ? "warning" : "critical")
                             .longColumn("code", i + 200)
-                            .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -4115,7 +4115,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_wal_apply_test")
                             .symbol("region", i % 2 == 0 ? "east" : "west")
                             .longColumn("value", i)
-                            .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -4128,7 +4128,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_wal_apply_test")
                             .symbol("region", i % 3 == 0 ? "east" : i % 3 == 1 ? "west" : "central")
                             .longColumn("value", i + 100)
-                            .at(1000000001000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -4141,7 +4141,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     sender.table("ws_wal_apply_test")
                             .symbol("region", i % 4 == 0 ? "north" : i % 4 == 1 ? "south" : i % 4 == 2 ? "east" : "west")
                             .longColumn("value", i + 200)
-                            .at(1000000002000L + i * 1000L, ChronoUnit.MICROS);
+                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -4168,13 +4168,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
             // Send microsecond timestamp to nanos column
-            long tsMicros = 1704067200000000L;  // 2024-01-01 00:00:00 in micros
+            long tsMicros = 1_704_067_200_000_000L;  // 2024-01-01 00:00:00 in micros
 
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_ts_convert_nano")
                         .symbol("tag", "test")
                         .timestampColumn("ts_field", tsMicros, ChronoUnit.MICROS)  // Send as micros
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -4210,13 +4210,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             // Send nanosecond timestamp to micros column
             // 1704067200000000000 nanos = 1704067200000000 micros = 2024-01-01 00:00:00 UTC
-            long tsNanos = 1704067200000000000L;
+            long tsNanos = 1_704_067_200_000_000_000L;
 
             try (QwpWebSocketSender sender = createSender(port)) {
                 sender.table("ws_ts_convert")
                         .symbol("tag", "test")
                         .timestampColumn("ts_field", tsNanos, ChronoUnit.NANOS)  // Send as nanos
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 
@@ -4420,7 +4420,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     for (int col = 0; col < 100; col++) {
                         rowBuilder.longColumn("col" + col, row * 100 + col);
                     }
-                    rowBuilder.at(1000000000000L + row, ChronoUnit.MICROS);
+                    rowBuilder.at(1_000_000_000_000L + row, ChronoUnit.MICROS);
                 }
                 sender.flush();
             }
@@ -4439,7 +4439,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .longColumn("int_val", 0L)
                         .doubleColumn("double_val", 0.0)
                         .doubleColumn("float_val", 0.0)
-                        .at(1000000000000L, ChronoUnit.MICROS);
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
             }
 

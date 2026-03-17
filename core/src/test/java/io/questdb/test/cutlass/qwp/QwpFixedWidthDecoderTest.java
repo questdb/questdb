@@ -493,7 +493,7 @@ public class QwpFixedWidthDecoderTest {
 
     @Test
     public void testDecodeIntColumn() throws QwpParseException {
-        int[] values = {1, 65536, -1, Integer.MAX_VALUE, Integer.MIN_VALUE, 0};
+        int[] values = {1, 65_536, -1, Integer.MAX_VALUE, Integer.MIN_VALUE, 0};
         int rowCount = values.length;
 
         int size = rowCount * 4;

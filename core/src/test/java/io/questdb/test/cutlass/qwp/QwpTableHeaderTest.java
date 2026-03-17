@@ -109,7 +109,7 @@ public class QwpTableHeaderTest {
     public void testEncodeDecodeRoundTrip() throws QwpParseException {
         QwpTableHeader original = new QwpTableHeader();
         original.setTableName("sensors");
-        original.setRowCount(12345);
+        original.setRowCount(12_345);
         original.setColumnCount(8);
 
         byte[] buf = new byte[original.encodedSize()];

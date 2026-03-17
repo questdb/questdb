@@ -141,7 +141,7 @@ public class QwpTimestampDecoderTest {
     public void testDecodeGorillaDeltaHuge() throws Exception {
         // Huge DoD outside [-2047, 2048] -> 36-bit encoding
         // DoD = 10000
-        long[] timestamps = {1000L, 2000L, 13000L};
+        long[] timestamps = {1000L, 2000L, 13_000L};
         assertGorillaRoundTrip(timestamps, null);
     }
 
@@ -156,7 +156,7 @@ public class QwpTimestampDecoderTest {
     @Test
     public void testDecodeGorillaDeltaLargeNegative() throws Exception {
         // Negative large DoD = -1000
-        long[] timestamps = {10000L, 11000L, 11000L};
+        long[] timestamps = {10_000L, 11_000L, 11_000L};
         assertGorillaRoundTrip(timestamps, null);
     }
 
@@ -283,12 +283,12 @@ public class QwpTimestampDecoderTest {
         // Test with timestamps that produce negative DoD values in all ranges
         // These require proper sign extension during decoding
         long[] timestamps = {
-                10000L,   // t0
-                20000L,   // t1, delta=10000
-                29940L,   // t2, DoD=-60 (in 7-bit range)
-                39780L,   // t3, DoD=-100 (in 9-bit range)
-                48420L,   // t4, DoD=-1500 (in 12-bit range)
-                55000L,   // t5, DoD=-3000 (in 32-bit range)
+                10_000L,   // t0
+                20_000L,   // t1, delta=10000
+                29_940L,   // t2, DoD=-60 (in 7-bit range)
+                39_780L,   // t3, DoD=-100 (in 9-bit range)
+                48_420L,   // t4, DoD=-1500 (in 12-bit range)
+                55_000L,   // t5, DoD=-3000 (in 32-bit range)
         };
         assertGorillaRoundTrip(timestamps, null);
     }

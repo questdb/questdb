@@ -53,7 +53,7 @@ public abstract class AbstractWebSocketTest extends AbstractTest {
 
         if (payloadLen <= 125) {
             headerLen = 2 + 4; // 2 byte header + 4 byte mask
-        } else if (payloadLen <= 65535) {
+        } else if (payloadLen <= 65_535) {
             headerLen = 4 + 4; // 2 byte header + 2 byte extended length + 4 byte mask
         } else {
             headerLen = 10 + 4; // 2 byte header + 8 byte extended length + 4 byte mask
@@ -68,7 +68,7 @@ public abstract class AbstractWebSocketTest extends AbstractTest {
         // Second byte: MASK bit + payload length
         if (payloadLen <= 125) {
             frame[offset++] = (byte) (0x80 | payloadLen);
-        } else if (payloadLen <= 65535) {
+        } else if (payloadLen <= 65_535) {
             frame[offset++] = (byte) (0x80 | 126);
             frame[offset++] = (byte) ((payloadLen >> 8) & 0xFF);
             frame[offset++] = (byte) (payloadLen & 0xFF);

@@ -152,7 +152,7 @@ public class QwpZigZagTest {
         long[] testValues = {
                 0, 1, -1, 2, -2,
                 100, -100,
-                1000000, -1000000,
+                1_000_000, -1_000_000,
                 Long.MAX_VALUE, Long.MIN_VALUE,
                 Long.MAX_VALUE / 2, Long.MIN_VALUE / 2
         };

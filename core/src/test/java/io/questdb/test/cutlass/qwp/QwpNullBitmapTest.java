@@ -125,7 +125,7 @@ public class QwpNullBitmapTest {
         Assert.assertEquals(2, QwpNullBitmap.sizeInBytes(16));
         Assert.assertEquals(3, QwpNullBitmap.sizeInBytes(17));
         Assert.assertEquals(125, QwpNullBitmap.sizeInBytes(1000));
-        Assert.assertEquals(125000, QwpNullBitmap.sizeInBytes(1000000));
+        Assert.assertEquals(125_000, QwpNullBitmap.sizeInBytes(1_000_000));
     }
 
     @Test
@@ -213,7 +213,7 @@ public class QwpNullBitmapTest {
 
     @Test
     public void testLargeBitmap() {
-        int rowCount = 100000;
+        int rowCount = 100_000;
         int size = QwpNullBitmap.sizeInBytes(rowCount);
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -231,7 +231,7 @@ public class QwpNullBitmapTest {
             // Verify some random positions
             Assert.assertTrue(QwpNullBitmap.isNull(address, 0));
             Assert.assertTrue(QwpNullBitmap.isNull(address, 100));
-            Assert.assertTrue(QwpNullBitmap.isNull(address, 99900));
+            Assert.assertTrue(QwpNullBitmap.isNull(address, 99_900));
             Assert.assertFalse(QwpNullBitmap.isNull(address, 1));
             Assert.assertFalse(QwpNullBitmap.isNull(address, 99));
         } finally {

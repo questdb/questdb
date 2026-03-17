@@ -59,7 +59,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     }
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    private static final int PORT = 19002;
+    private static final int PORT = 19_002;
 
     private final ReceiverFactory receiverFactory;
 

@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class QwpUdpServerMainTest extends AbstractBootstrapTest {
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    private static final int QWP_UDP_PORT = 19007 + randomPortOffset;
+    private static final int QWP_UDP_PORT = 19_007 + randomPortOffset;
 
     @Override
     @Before

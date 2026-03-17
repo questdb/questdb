@@ -149,13 +149,13 @@ public class QwpVarintTest {
     public void testDecodeResultFromDirectMemory() throws QwpParseException {
         long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
         try {
-            long endAddr = QwpVarint.encode(addr, 999999);
+            long endAddr = QwpVarint.encode(addr, 999_999);
             int expectedLen = (int) (endAddr - addr);
 
             QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
             QwpVarint.decode(addr, endAddr, result);
 
-            Assert.assertEquals(999999, result.value);
+            Assert.assertEquals(999_999, result.value);
             Assert.assertEquals(expectedLen, result.bytesRead);
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
@@ -174,9 +174,9 @@ public class QwpVarintTest {
 
         // Reuse for second decode
         result.reset();
-        int len2 = QwpVarint.encode(buf, 0, 50000);
+        int len2 = QwpVarint.encode(buf, 0, 50_000);
         QwpVarint.decode(buf, 0, len2, result);
-        Assert.assertEquals(50000, result.value);
+        Assert.assertEquals(50_000, result.value);
     }
 
     @Test
@@ -222,20 +222,20 @@ public class QwpVarintTest {
     public void testEncodeDecode16383() throws QwpParseException {
         // 16383 (0x3FFF) is the maximum 2-byte value
         byte[] buf = new byte[10];
-        int len = QwpVarint.encode(buf, 0, 16383);
+        int len = QwpVarint.encode(buf, 0, 16_383);
         Assert.assertEquals(2, len);
         Assert.assertEquals(0xFF, buf[0] & 0xFF); // 127 + continuation bit
         Assert.assertEquals(0x7F, buf[1] & 0xFF); // 127
-        Assert.assertEquals(16383, QwpVarint.decode(buf, 0, len));
+        Assert.assertEquals(16_383, QwpVarint.decode(buf, 0, len));
     }
 
     @Test
     public void testEncodeDecode16384() throws QwpParseException {
         // 16384 (0x4000) is the minimum 3-byte value
         byte[] buf = new byte[10];
-        int len = QwpVarint.encode(buf, 0, 16384);
+        int len = QwpVarint.encode(buf, 0, 16_384);
         Assert.assertEquals(3, len);
-        Assert.assertEquals(16384, QwpVarint.decode(buf, 0, len));
+        Assert.assertEquals(16_384, QwpVarint.decode(buf, 0, len));
     }
 
     @Test
@@ -288,13 +288,13 @@ public class QwpVarintTest {
     public void testEncodeToDirectMemory() throws QwpParseException {
         long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
         try {
-            long endAddr = QwpVarint.encode(addr, 12345);
+            long endAddr = QwpVarint.encode(addr, 12_345);
             int len = (int) (endAddr - addr);
             Assert.assertTrue(len > 0);
 
             // Read back and verify
             long decoded = QwpVarint.decode(addr, endAddr);
-            Assert.assertEquals(12345, decoded);
+            Assert.assertEquals(12_345, decoded);
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
         }
@@ -306,8 +306,8 @@ public class QwpVarintTest {
         Assert.assertEquals(1, QwpVarint.encodedLength(1));
         Assert.assertEquals(1, QwpVarint.encodedLength(127));
         Assert.assertEquals(2, QwpVarint.encodedLength(128));
-        Assert.assertEquals(2, QwpVarint.encodedLength(16383));
-        Assert.assertEquals(3, QwpVarint.encodedLength(16384));
+        Assert.assertEquals(2, QwpVarint.encodedLength(16_383));
+        Assert.assertEquals(3, QwpVarint.encodedLength(16_384));
         // Long.MAX_VALUE = 0x7FFFFFFFFFFFFFFF (63 bits) needs ceil(63/7) = 9 bytes
         Assert.assertEquals(9, QwpVarint.encodedLength(Long.MAX_VALUE));
         // Test that actual encoding matches

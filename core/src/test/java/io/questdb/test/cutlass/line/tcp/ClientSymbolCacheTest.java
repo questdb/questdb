@@ -153,14 +153,14 @@ public class ClientSymbolCacheTest {
         ClientSymbolCache cache = new ClientSymbolCache(16); // Small initial capacity
 
         // Add many entries to trigger resizing
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < 10_000; i++) {
             cache.put(i, i * 2);
         }
 
-        assertEquals(10000, cache.size());
+        assertEquals(10_000, cache.size());
 
         // Verify all entries are retrievable
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < 10_000; i++) {
             assertEquals(i * 2, cache.get(i));
         }
     }
@@ -172,11 +172,11 @@ public class ClientSymbolCacheTest {
         // Large client IDs should work
         cache.put(Integer.MAX_VALUE, 10);
         cache.put(Integer.MAX_VALUE - 1, 20);
-        cache.put(1000000, 30);
+        cache.put(1_000_000, 30);
 
         assertEquals(10, cache.get(Integer.MAX_VALUE));
         assertEquals(20, cache.get(Integer.MAX_VALUE - 1));
-        assertEquals(30, cache.get(1000000));
+        assertEquals(30, cache.get(1_000_000));
     }
 
     @Test

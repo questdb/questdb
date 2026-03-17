@@ -50,7 +50,7 @@ import java.util.concurrent.TimeUnit;
 public class QwpUdpInsertTest extends AbstractCairoTest {
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    private static final int PORT = 19002;
+    private static final int PORT = 19_002;
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -895,7 +895,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     public void testTableSwitchTriggersFlush() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
-                try (QwpUdpSender sender = newSender(65535)) {
+                try (QwpUdpSender sender = newSender(65_535)) {
                     // Add rows to table "a"
                     for (int i = 0; i < 3; i++) {
                         sender.table("switch_a")

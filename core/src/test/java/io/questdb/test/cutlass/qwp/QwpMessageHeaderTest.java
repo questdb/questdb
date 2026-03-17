@@ -331,10 +331,10 @@ public class QwpMessageHeaderTest {
 
     @Test
     public void testTableCountMax() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 65535, 100);
+        byte[] header = createValidHeader(1, 0, 65_535, 100);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
-        Assert.assertEquals(65535, h.getTableCount());
+        Assert.assertEquals(65_535, h.getTableCount());
     }
 
     @Test

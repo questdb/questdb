@@ -120,7 +120,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 10;
-            long baseTimestamp = 1000000000L;
+            long baseTimestamp = 1_000_000_000L;
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // Write some data and commit - this will set rollSegmentOnNextRow=true
@@ -149,7 +149,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                     long[] timestamps = new long[rowCount];
                     for (int i = 0; i < rowCount; i++) {
-                        timestamps[i] = baseTimestamp + (i + 1) * 1000000L;
+                        timestamps[i] = baseTimestamp + (i + 1) * 1_000_000L;
                     }
 
                     // This should not throw - beginColumnarWrite should roll the segment
@@ -305,10 +305,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 50;
             int[] values = new int[rowCount];
             long[] timestamps = new long[rowCount];
-            long baseTimestamp = 1000000000L;
+            long baseTimestamp = 1_000_000_000L;
             for (int i = 0; i < rowCount; i++) {
                 values[i] = i * 10;
-                timestamps[i] = baseTimestamp + i * 1000000L;
+                timestamps[i] = baseTimestamp + i * 1_000_000L;
             }
 
             // Row path write
@@ -463,14 +463,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     .wal()
             );
 
-            int rowCount = 100000;
+            int rowCount = 100_000;
             long valuesAddr = Unsafe.malloc((long) rowCount * 4, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putInt(valuesAddr + (long) i * 4, i);
                 }
 
-                long baseTimestamp = 1000000000L;
+                long baseTimestamp = 1_000_000_000L;
                 long[] timestamps = new long[rowCount];
                 for (int i = 0; i < rowCount; i++) {
                     timestamps[i] = baseTimestamp + i * 1000L;
@@ -702,7 +702,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long valuesAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putInt(valuesAddr, 42);
-                long timestamp = 1000000000L;
+                long timestamp = 1_000_000_000L;
 
                 String walName;
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -761,7 +761,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             QwpTimestampColumnCursor tsCursor = new QwpTimestampColumnCursor();
 
-            long[] timestamps = {1000000L, 1001000L};
+            long[] timestamps = {1_000_000L, 1_001_000L};
 
             // Build wire format with Gorilla encoding
             // Wire format: [encoding byte (0x01)] [first timestamp] [second timestamp]
@@ -1325,7 +1325,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(0L));
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 8, Long.reverseBytes(1L));
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12345L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12_345L));
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256, false);
@@ -1369,7 +1369,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(0L));
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 8, Long.reverseBytes(0L));
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12345L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12_345L));
                 // Value 2: -9999 (= -99.99), sign-extended
                 offset = 33;
                 Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(-1L));
@@ -1426,7 +1426,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
                 // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
-                Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(12345L));
+                Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(12_345L));
                 Unsafe.getUnsafe().putLong(dataAddress + 9, Long.reverseBytes(-9999L));
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
@@ -1674,7 +1674,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 // Wire scale = 2
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
                 // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
-                Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(12345L));
+                Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(12_345L));
                 Unsafe.getUnsafe().putLong(dataAddress + 9, Long.reverseBytes(-9999L));
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
@@ -1999,9 +1999,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 100;
             long valuesAddr = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
             try {
-                long baseDate = 1640000000000L; // Milliseconds
+                long baseDate = 1_640_000_000_000L; // Milliseconds
                 for (int i = 0; i < rowCount; i++) {
-                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, baseDate + i * 86400000L);
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, baseDate + i * 86_400_000L);
                 }
 
                 long[] timestamps = makeTimestamps(rowCount);
@@ -2025,7 +2025,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                     int row = 0;
                     while (cursor.hasNext()) {
-                        assertEquals(baseDate + row * 86400000L, record.getDate(0));
+                        assertEquals(baseDate + row * 86_400_000L, record.getDate(0));
                         row++;
                     }
                     assertEquals(rowCount, row);
@@ -2707,7 +2707,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long valuesAddr = Unsafe.malloc((long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < rowCount; i++) {
-                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, (long) i * 1000000000L);
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, (long) i * 1_000_000_000L);
                 }
 
                 long[] timestamps = makeTimestamps(rowCount);
@@ -2731,7 +2731,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                     int row = 0;
                     while (cursor.hasNext()) {
-                        assertEquals((long) row * 1000000000L, record.getLong(0));
+                        assertEquals((long) row * 1_000_000_000L, record.getLong(0));
                         row++;
                     }
                     assertEquals(rowCount, row);
@@ -6208,10 +6208,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     Unsafe.getUnsafe().putInt(valuesAddr + (long) i * 4, i);
                 }
 
-                long baseTimestamp = 1640000000000000L;
+                long baseTimestamp = 1_640_000_000_000_000L;
                 long[] timestamps = new long[rowCount];
                 for (int i = 0; i < rowCount; i++) {
-                    timestamps[i] = baseTimestamp + i * 1000000L;
+                    timestamps[i] = baseTimestamp + i * 1_000_000L;
                 }
 
                 String walName;
@@ -6412,7 +6412,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long valuesAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putInt(valuesAddr, 42);
-                long timestamp = 1640000000000000L;
+                long timestamp = 1_640_000_000_000_000L;
 
                 String walName;
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -6461,8 +6461,8 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     Unsafe.getUnsafe().putInt(valuesAddr + (long) i * 4, i);
                 }
 
-                long baseTimestamp = 1640000000000000L;
-                long[] timestampValues = {baseTimestamp, baseTimestamp + 2000000L, baseTimestamp + 3000000L};
+                long baseTimestamp = 1_640_000_000_000_000L;
+                long[] timestampValues = {baseTimestamp, baseTimestamp + 2_000_000L, baseTimestamp + 3_000_000L};
 
                 int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
                 long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
