@@ -26,6 +26,8 @@ package io.questdb.cutlass.qwp.websocket;
 
 import io.questdb.std.Unsafe;
 
+import java.nio.ByteOrder;
+
 /**
  * Zero-allocation WebSocket frame parser.
  * Parses WebSocket frames according to RFC 6455.
@@ -59,6 +61,7 @@ public class WebSocketFrameParser {
     public static final int STATE_NEED_PAYLOAD = 2;
     // Frame header bits
     private static final int FIN_BIT = 0x80;
+    private static final boolean IS_BIG_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.BIG_ENDIAN;
     private static final int LENGTH_MASK = 0x7F;
     private static final int MASK_BIT = 0x80;
     // Control frame max payload size (RFC 6455)
@@ -230,7 +233,11 @@ public class WebSocketFrameParser {
                 state = STATE_NEED_MORE;
                 return 0;
             }
-            maskKey = Unsafe.getUnsafe().getInt(buf + offset);
+            // Read mask key in network byte order (big-endian) per RFC 6455
+            maskKey = ((Unsafe.getUnsafe().getByte(buf + offset) & 0xFF) << 24)
+                    | ((Unsafe.getUnsafe().getByte(buf + offset + 1) & 0xFF) << 16)
+                    | ((Unsafe.getUnsafe().getByte(buf + offset + 2) & 0xFF) << 8)
+                    | (Unsafe.getUnsafe().getByte(buf + offset + 3) & 0xFF);
             offset += 4;
         } else {
             maskKey = 0;
@@ -286,9 +293,13 @@ public class WebSocketFrameParser {
             return;
         }
 
-        // Process 8 bytes at a time when possible for better performance
+        // maskKey is in big-endian convention: MSB = wire byte 0 = mask byte for position 0.
+        // For bulk XOR via getInt/getLong (native byte order), convert to native order
+        // so that memory position 0 XORs with mask byte 0, position 1 with mask byte 1, etc.
+        int nativeMask = IS_BIG_ENDIAN ? maskKey : Integer.reverseBytes(maskKey);
+        long longMask = ((long) nativeMask << 32) | (nativeMask & 0xFFFFFFFFL);
+
         long i = 0;
-        long longMask = ((long) maskKey << 32) | (maskKey & 0xFFFFFFFFL);
 
         // Process 8-byte chunks
         while (i + 8 <= len) {
@@ -300,15 +311,14 @@ public class WebSocketFrameParser {
         // Process 4-byte chunk if remaining
         if (i + 4 <= len) {
             int value = Unsafe.getUnsafe().getInt(buf + i);
-            Unsafe.getUnsafe().putInt(buf + i, value ^ maskKey);
+            Unsafe.getUnsafe().putInt(buf + i, value ^ nativeMask);
             i += 4;
         }
 
-        // Process remaining bytes
+        // Process remaining bytes - extract mask byte in big-endian order
         while (i < len) {
             byte b = Unsafe.getUnsafe().getByte(buf + i);
-            int shift = ((int) (i % 4)) << 3;  // 0, 8, 16, or 24
-            byte maskByte = (byte) ((maskKey >> shift) & 0xFF);
+            int maskByte = (maskKey >>> ((3 - ((int) i & 3)) << 3)) & 0xFF;
             Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ maskByte));
             i++;
         }

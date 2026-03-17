@@ -434,7 +434,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
             Assert.assertEquals(frame.length, consumed);
             Assert.assertTrue(parser.isMasked());
-            Assert.assertEquals(0x78563412, parser.getMaskKey()); // Little-endian int
+            Assert.assertEquals(0x12345678, parser.getMaskKey());
         } finally {
             freeBuffer(buf, 32);
         }
@@ -738,7 +738,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
             }
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setMaskKey(0x44332211);  // Little-endian
+            parser.setMaskKey(0x11223344);
             parser.unmaskPayload(buf, len);
 
             byte[] result = readBytes(buf, len);
@@ -761,7 +761,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
             }
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setMaskKey(0x78563412);  // Little-endian
+            parser.setMaskKey(0x12345678);
             parser.unmaskPayload(buf, original.length);
 
             byte[] result = readBytes(buf, original.length);
@@ -786,7 +786,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
                 }
 
                 WebSocketFrameParser parser = new WebSocketFrameParser();
-                parser.setMaskKey(0xCDAB4237);  // Little-endian of 0x3742ABCD
+                parser.setMaskKey(0x3742ABCD);
                 parser.unmaskPayload(buf, len);
 
                 byte[] result = readBytes(buf, len);
