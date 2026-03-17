@@ -619,6 +619,131 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRewriteCleanupOnCopyRowGroupFailure() throws Exception {
+        // Test that the inner catch cleans up the new directory when copyRowGroup()
+        // fails mid-rewrite, leaving the original partition intact.
+        //
+        // Strategy: override openRW to return a read-only fd for the new data.parquet
+        // in rewrite mode. ParquetUpdater.of() succeeds (no writes in the constructor
+        // for rewrite mode), but the first write attempt in copyRowGroup() fails with
+        // EBADF, exercising the error recovery path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // Create the file normally, then close it and re-open as
+                    // read-only. The Rust writer gets an O_RDONLY fd: init
+                    // succeeds (no writes), but copyRowGroup's first write
+                    // fails with EBADF.
+                    long rwFd = super.openRW(name, opts);
+                    super.close(rwFd);
+                    return super.openRO(name);
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows with row group size 4 → 2 row groups.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // First O3: UPDATE mode. Merges into rg0, accumulating dead space.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+            File tableDir = new File(root, tableToken.getDirName());
+
+            // Arm the failure injection before the rewrite-triggering O3.
+            armed.set(true);
+
+            // Second O3: accumulated unused_bytes > 100 → REWRITE mode.
+            // O3 data hits rg1, so the first merge action is
+            // COPY_ROW_GROUP_SLICE for unmodified rg0 → copyRowGroup() fails.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (11, '2020-01-01T04:30:00.000Z'),
+                            (12, '2020-01-01T05:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Table should be suspended due to O3 error.
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // The inner catch should have cleaned up the new directory.
+            int partDirsAfterFailure = countPartitionDirs(tableDir, "2020-01-01");
+            Assert.assertEquals(
+                    "orphaned rewrite directory left on disk",
+                    1,
+                    partDirsAfterFailure
+            );
+
+            // Disarm, resume, and retry.
+            armed.set(false);
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+
+            // After successful retry, data should be correct.
+            assertSql(
+                    """
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            9\t2020-01-01T00:30:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            10\t2020-01-01T01:30:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            11\t2020-01-01T04:30:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            12\t2020-01-01T05:30:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteCleanupOnUpdateParquetIndexesFailure() throws Exception {
         // Regression test for orphaned directory when updateParquetIndexes() fails
         // in rewrite mode.
