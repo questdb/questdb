@@ -405,6 +405,10 @@ public class QwpWalAppender implements QuietCloseable {
                         if (needsNanosToMicros) {
                             ts = ts / 1000;
                         } else if (needsMicrosToNanos) {
+                            if (ts > Long.MAX_VALUE / 1000 || ts < Long.MIN_VALUE / 1000) {
+                                throw CairoException.nonCritical()
+                                        .put("timestamp overflow converting micros to nanos: ").put(ts);
+                            }
                             ts = ts * 1000;
                         }
                         if (ts < minTimestamp) minTimestamp = ts;
