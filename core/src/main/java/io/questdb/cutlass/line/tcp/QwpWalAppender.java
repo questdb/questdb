@@ -457,20 +457,17 @@ public class QwpWalAppender implements QuietCloseable {
                         if (wireIsNanos != columnIsNanos || !tsCursor.supportsDirectAccess()) {
                             // Precision mismatch or Gorilla-encoded - must iterate with conversion
                             appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
-                                    ilpType, columnType, true, walWriter.getSegmentRowCount(),
-                                    serverTimestamp);
+                                    ilpType, columnType, true, serverTimestamp);
                         } else {
                             // Direct access, no conversion needed
                             appender.putTimestampColumn(columnIndex, tsCursor.getValuesAddress(),
                                     tsCursor.getValueCount(), tsCursor.getNullBitmapAddress(),
-                                    rowCount, walWriter.getSegmentRowCount(),
-                                    serverTimestamp);
+                                    rowCount, serverTimestamp);
                         }
                     } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
                         appender.putTimestampColumn(columnIndex, fixedCursor.getValuesAddress(),
                                 fixedCursor.getValueCount(), fixedCursor.getNullBitmapAddress(),
-                                rowCount, walWriter.getSegmentRowCount(),
-                                serverTimestamp);
+                                rowCount, serverTimestamp);
                     }
                     continue;
                 }
@@ -546,8 +543,7 @@ public class QwpWalAppender implements QuietCloseable {
                             if (wireIsNanos != columnIsNanos || !tsCursor.supportsDirectAccess()) {
                                 // Precision mismatch or Gorilla-encoded - must iterate with conversion
                                 appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
-                                        ilpType, columnType, false, walWriter.getSegmentRowCount(),
-                                        Numbers.LONG_NULL);
+                                        ilpType, columnType, false, Numbers.LONG_NULL);
                             } else {
                                 // Direct access, no conversion needed
                                 appender.putFixedColumn(columnIndex, tsCursor.getValuesAddress(),

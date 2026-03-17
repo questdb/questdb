@@ -642,11 +642,10 @@ public interface ColumnarRowAppender {
      * @param valueCount            number of non-null values
      * @param nullBitmapAddress     address of null bitmap (0 if not nullable)
      * @param rowCount              total number of rows
-     * @param startRowId            starting row ID for this batch
      * @param serverTimestampMicros server timestamp to use for null rows, or Numbers.LONG_NULL
      */
     void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
-                            long nullBitmapAddress, int rowCount, long startRowId,
+                            long nullBitmapAddress, int rowCount,
                             long serverTimestampMicros);
 
     /**
@@ -667,7 +666,6 @@ public interface ColumnarRowAppender {
      * @param ilpType         the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
      * @param columnType      the target QuestDB column type
      * @param isDesignated    whether this is the designated timestamp column
-     * @param startRowId      starting row ID (needed for designated timestamps)
      * @param serverTimestamp server timestamp to use for null designated rows, or Numbers.LONG_NULL
      * @throws QwpParseException if cursor iteration fails
      */
@@ -678,7 +676,6 @@ public interface ColumnarRowAppender {
             byte ilpType,
             int columnType,
             boolean isDesignated,
-            long startRowId,
             long serverTimestamp
     ) throws QwpParseException;
 

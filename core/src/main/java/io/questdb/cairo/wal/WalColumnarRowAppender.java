@@ -1707,7 +1707,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int valueCount,
             long nullBitmapAddress,
             int rowCount,
-            long startRowId,
             long serverTimestampMicros
     ) {
         checkInColumnarWrite();
@@ -1758,7 +1757,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             byte ilpType,
             int columnType,
             boolean isDesignated,
-            long startRowId,
             long serverTimestamp
     ) throws QwpParseException {
         checkInColumnarWrite();
