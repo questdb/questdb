@@ -25,7 +25,7 @@ use questdbr::parquet_write::bench::{
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::sync::atomic::AtomicUsize;
 
@@ -178,7 +178,6 @@ fn write_options() -> WriteOptions {
         row_group_size: None,
         data_page_size: None,
         raw_array_encoding: true,
-        bloom_filter_columns: HashSet::new(),
         bloom_filter_fpp: 0.01,
     }
 }

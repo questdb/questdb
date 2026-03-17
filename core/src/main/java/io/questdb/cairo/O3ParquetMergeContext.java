@@ -165,4 +165,13 @@ public class O3ParquetMergeContext implements Closeable {
         srcPtrs.fill(0, requiredLen, 0);
         return srcPtrs;
     }
+
+    /**
+     * Releases expensive native resources (file descriptors) held by the context
+     * while keeping the context pooled for reuse. Call this after each
+     * processParquetPartition() invocation to avoid lingering fds.
+     */
+    public void releaseResources() {
+        partitionUpdater.close();
+    }
 }

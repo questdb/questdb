@@ -98,6 +98,7 @@ pub struct ParquetUpdater {
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
     bloom_filter_columns: HashSet<usize>,
+    copy_buffer: Vec<u8>,
     file_metadata: FileMetaData,
     accumulated_unused_bytes: u64,
     old_footer_size: u64,
@@ -261,6 +262,7 @@ impl ParquetUpdater {
             row_group_size,
             data_page_size,
             bloom_filter_columns,
+            copy_buffer: Vec::new(),
             file_metadata,
             accumulated_unused_bytes,
             old_footer_size,
@@ -288,6 +290,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &self.bloom_filter_columns,
             false,
         )?;
 
@@ -352,6 +355,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &self.bloom_filter_columns,
             false,
         )?;
 
@@ -396,11 +400,11 @@ impl ParquetUpdater {
             ));
         }
 
-        // Read the raw bytes from the reader file.
+        // Read the raw bytes from the reader file, reusing the buffer across copies.
         let raw_len = (rg_end - rg_start) as usize;
-        let mut raw_bytes = vec![0u8; raw_len];
+        self.copy_buffer.resize(raw_len, 0);
         self.reader.seek(SeekFrom::Start(rg_start))?;
-        self.reader.read_exact(&mut raw_bytes)?;
+        self.reader.read_exact(&mut self.copy_buffer)?;
 
         // Ensure the PAR1 file header is written before computing offsets.
         // Without this, current_offset() returns 0, but write_raw_row_group()
@@ -444,7 +448,7 @@ impl ParquetUpdater {
         }
 
         self.parquet_file
-            .write_raw_row_group(&raw_bytes, thrift_rg)
+            .write_raw_row_group(&self.copy_buffer, thrift_rg)
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),
@@ -525,7 +529,6 @@ impl ParquetUpdater {
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
-            bloom_filter_columns: self.bloom_filter_columns.clone(),
             bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
         }
     }
@@ -629,9 +632,9 @@ mod tests {
             row_group_size: None,
             data_page_size: None,
             raw_array_encoding: false,
-            bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
+        let bloom_filter_columns = HashSet::new();
 
         let options = write::WriteOptions {
             write_statistics: true,
@@ -645,7 +648,8 @@ mod tests {
             col1_extra.len(),
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
-            foptions.clone(),
+            foptions,
+            &bloom_filter_columns,
             false,
         )?;
 
@@ -656,6 +660,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &bloom_filter_columns,
             false,
         )?;
 
@@ -762,7 +767,6 @@ mod tests {
             row_group_size: None,
             data_page_size: None,
             raw_array_encoding: false,
-            bloom_filter_columns: bloom_cols.clone(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
@@ -778,7 +782,8 @@ mod tests {
             col0_rg0.len(),
             schema.fields(),
             &encodings,
-            foptions.clone(),
+            foptions,
+            &bloom_cols,
             false,
         )?;
         let (rg1, bloom1) = create_row_group(
@@ -787,7 +792,8 @@ mod tests {
             col0_rg1.len(),
             schema.fields(),
             &encodings,
-            foptions.clone(),
+            foptions,
+            &bloom_cols,
             false,
         )?;
 
@@ -882,7 +888,8 @@ mod tests {
             col0_new.len(),
             schema.fields(),
             &to_encodings(&partition_new),
-            foptions.clone(),
+            foptions,
+            &bloom_cols,
             false,
         )?;
 

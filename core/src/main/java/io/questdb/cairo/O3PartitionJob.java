@@ -462,6 +462,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
+            ctx.releaseResources();
             // Determine the parquet file size from the correct path.
             path.of(pathToTable);
             if (isRewrite) {
