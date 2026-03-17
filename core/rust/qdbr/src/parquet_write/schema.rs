@@ -23,9 +23,14 @@ pub fn column_type_to_parquet_type(
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
     // Types that don't have null values in QuestDB always use Required repetition.
-    // All other types use Optional so the file-level schema is stable across O3
-    // merges — this avoids a REQUIRED→OPTIONAL transition that would break
-    // copy_row_group (raw-copied pages already have def levels encoded).
+    // All other types — including Symbol — use Optional so the file-level schema
+    // is stable across O3 merges. This avoids a REQUIRED→OPTIONAL transition that
+    // would break copy_row_group (raw-copied pages already have def levels encoded).
+    //
+    // Symbol columns are always Optional even when Column::required is true (no
+    // nulls). The `required` flag is only a write-time hint that lets the encoder
+    // emit a fast all-ones RLE run for definition levels instead of computing
+    // per-row values. See symbol_to_pages() in symbol.rs.
     let is_notnull_type = matches!(
         column_type.tag(),
         ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
@@ -327,8 +332,11 @@ pub struct Column {
     pub secondary_data: &'static [u8],
     pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
-    /// Passed by QuestDB during writes to indicate that the column contains no null values.
-    /// Currently only Symbol dataType columns support this flag.
+    /// Hint from QuestDB indicating that the column currently contains no null values.
+    /// Only Symbol columns use this flag. It does NOT affect the parquet schema
+    /// Repetition (symbols are always Optional) — it only lets the encoder take a
+    /// fast path that writes an all-ones RLE run for definition levels instead of
+    /// computing per-row values.
     pub required: bool,
     pub designated_timestamp_ascending: bool,
 }

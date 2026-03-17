@@ -267,14 +267,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // when the symbol map has no null flag — this propagates to
                     // Repetition::Required in the Parquet schema, matching how
                     // the original file encoded the column (no definition levels).
-                    final PartitionDescriptor schemaDesc = new PartitionDescriptor();
-                    try {
+                    try (PartitionDescriptor schemaDesc = new PartitionDescriptor()) {
                         schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
                         for (int i = 0; i < columnCount; i++) {
                             int colType = tableWriterMetadata.getColumnType(i);
                             if (colType < 0) {
                                 continue;
                             }
+                            // The high bit is a write-time hint telling the Rust encoder
+                            // that this symbol column has no nulls, so it can emit a fast
+                            // all-ones RLE run for definition levels. It does NOT change
+                            // the parquet schema Repetition — symbols are always Optional.
                             if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
                                 colType |= Integer.MIN_VALUE;
                             }
@@ -287,8 +290,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
                         }
                         partitionUpdater.setTargetSchema(schemaDesc);
-                    } finally {
-                        schemaDesc.close();
                     }
                 }
 
@@ -1590,6 +1591,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long valuesMemSize = offsetsMem.getLong(offset);
                     assert valuesMemSize <= valuesMem.size();
 
+                    // High bit = no-null hint for def level encoding, not schema Repetition.
                     int encodeColumnType = columnType;
                     if (!symbolMapWriter.getNullFlag()) {
                         encodeColumnType |= Integer.MIN_VALUE;
@@ -2336,6 +2338,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long valuesMemSize = offsetsMem.getLong(offset);
                             assert valuesMemSize <= valuesMem.size();
 
+                            // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
                             if (!symbolMapWriter.getNullFlag()) {
                                 encodeColumnType |= Integer.MIN_VALUE;

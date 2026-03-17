@@ -144,9 +144,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -1453,9 +1453,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("converting partition to parquet [path=").$substr(pathRootSize, path).I$();
         long parquetFileLength;
+        final long partitionRowCount = getPartitionSize(partitionIndex);
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
-                final long partitionRowCount = getPartitionSize(partitionIndex);
                 final int timestampIndex = metadata.getTimestampIndex();
                 partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex);
 
@@ -1475,6 +1475,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             final MapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
+                            // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
                             if (!symbolMapWriter.getNullFlag()) {
                                 encodeColumnType |= Integer.MIN_VALUE;
@@ -1645,6 +1646,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 parquetFileLength = ff.length(other.$());
             }
+
+            // Before updating column top, check and re-build indexes.
+            // copyOrRebuildColumnIndexes() must be called before zeroColumnTopsAfterParquetRewrite()
+            // and use the same logic that zeros the column top to re-write indexes.
+            copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), partitionRowCount);
+            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, false);
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to parquet [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -1652,7 +1659,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove parquet file [path=").$(other).I$();
+                LOG.error().$("could not remove partition dir [path=").$(other).I$();
             }
             throw e;
         } finally {
@@ -1660,15 +1667,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             other.trimTo(pathSize);
         }
 
-        final long originalSize = getPartitionSize(partitionIndex);
-        // Before updating column top, check and re-build inexes
-        // copyOrRebuildColumnIndexes() should be called before zeroColumnTopsAfterParquetRewrite()
-        // and use the same logic that zeros the column top to re-write indexes
-        copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), originalSize);
-        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, originalSize, false);
         columnVersionWriter.commit();
         // used to update txn and bump recordStructureVersion
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpPartitionTableVersion();
@@ -2421,10 +2422,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getPartitionNameTxn(int partitionIndex) {
         return txWriter.getPartitionNameTxn(partitionIndex);
-    }
-
-    public long getPartitionNameTxnByPartitionTimestamp(long partitionTimestamp) {
-        return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -1L);
     }
 
     public long getPartitionO3SplitThreshold() {

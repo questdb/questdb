@@ -784,6 +784,15 @@ impl ParquetUpdater {
     /// (Required in the schema). Only safe in rewrite mode where all row groups
     /// are re-encoded; in update mode untouched row groups would have data
     /// encoded with the old schema.
+    /// Handles a legacy edge case during rewrite: old parquet files may have
+    /// Symbol columns marked as Required in the schema (written before the
+    /// convention was established that symbols are always Optional). If the
+    /// current data now contains nulls (`!col.required`), the schema must be
+    /// downgraded to Optional so the rewritten pages include definition levels.
+    ///
+    /// New files always write symbols as Optional (see `column_type_to_parquet_type`
+    /// in schema.rs). The `Column::required` flag is only a write-time hint for
+    /// the encoder to emit a fast all-ones RLE run for definition levels.
     fn ensure_schema_matches_columns(&mut self, partition: &Partition) {
         if self.schema_updated || !self.is_rewrite {
             return;
