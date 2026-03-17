@@ -1560,8 +1560,7 @@ fn build_cases() -> Vec<BenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_int96_data(ROW_COUNT, null_pct);
             let page = data_page_from(
-                bytes_to_page(&data, false, 0, options, int96_pt.clone(), None)
-                    .expect("page"),
+                bytes_to_page(&data, false, 0, options, int96_pt.clone(), None).expect("page"),
             );
             cases.push(build_case(
                 format!("timestamp_int96_plain_n{null_pct}"),
@@ -1885,15 +1884,9 @@ fn build_cases() -> Vec<BenchCase> {
             let primitive_type = primitive_type_for(column_type);
             let mut dict = None;
             let mut data_page = None;
-            let iter = varchar_to_dict_pages(
-                &data.aux,
-                &data.data,
-                0,
-                options,
-                primitive_type,
-                None,
-            )
-            .expect("varchar dict pages");
+            let iter =
+                varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type, None)
+                    .expect("varchar dict pages");
             for page in iter {
                 let page = page.expect("page");
                 match page {
@@ -1923,15 +1916,9 @@ fn build_cases() -> Vec<BenchCase> {
             let primitive_type = primitive_type_for(varchar_type);
             let mut dict = None;
             let mut data_page = None;
-            let iter = varchar_to_dict_pages(
-                &data.aux,
-                &data.data,
-                0,
-                options,
-                primitive_type,
-                None,
-            )
-            .expect("varchar dict pages");
+            let iter =
+                varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type, None)
+                    .expect("varchar dict pages");
             for page in iter {
                 let page = page.expect("page");
                 match page {
@@ -2026,15 +2013,8 @@ fn build_cases() -> Vec<BenchCase> {
             let column_type = encode_array_type(ColumnTypeTag::Double, 1).expect("array type");
             let primitive_type = primitive_type_for(column_type);
             let page = data_page_from(
-                array_to_raw_page(
-                    &data.aux,
-                    &data.data,
-                    0,
-                    options,
-                    primitive_type,
-                    encoding,
-                )
-                .expect("page"),
+                array_to_raw_page(&data.aux, &data.data, 0, options, primitive_type, encoding)
+                    .expect("page"),
             );
             cases.push(build_case(
                 format!("array_{enc}_n{null_pct}"),
