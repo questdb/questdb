@@ -267,30 +267,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // when the symbol map has no null flag — this propagates to
                     // Repetition::Required in the Parquet schema, matching how
                     // the original file encoded the column (no definition levels).
-                    try (PartitionDescriptor schemaDesc = new PartitionDescriptor()) {
-                        schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
-                        for (int i = 0; i < columnCount; i++) {
-                            int colType = tableWriterMetadata.getColumnType(i);
-                            if (colType < 0) {
-                                continue;
-                            }
-                            // The high bit is a write-time hint telling the Rust encoder
-                            // that this symbol column has no nulls, so it can emit a fast
-                            // all-ones RLE run for definition levels. It does NOT change
-                            // the parquet schema Repetition — symbols are always Optional.
-                            if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
-                                colType |= Integer.MIN_VALUE;
-                            }
-                            final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                            schemaDesc.addColumn(
-                                    tableWriterMetadata.getColumnName(i),
-                                    colType,
-                                    colId,
-                                    0
-                            );
+                    final PartitionDescriptor schemaDesc = ctx.getChunkDescriptor();
+                    schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
+                    for (int i = 0; i < columnCount; i++) {
+                        int colType = tableWriterMetadata.getColumnType(i);
+                        if (colType < 0) {
+                            continue;
                         }
-                        partitionUpdater.setTargetSchema(schemaDesc);
+                        // The high bit is a write-time hint telling the Rust encoder
+                        // that this symbol column has no nulls, so it can emit a fast
+                        // all-ones RLE run for definition levels. It does NOT change
+                        // the parquet schema Repetition — symbols are always Optional.
+                        if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
+                            colType |= Integer.MIN_VALUE;
+                        }
+                        final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
+                        schemaDesc.addColumn(
+                                tableWriterMetadata.getColumnName(i),
+                                colType,
+                                colId,
+                                0
+                        );
                     }
+                    partitionUpdater.setTargetSchema(schemaDesc);
+                    schemaDesc.clear();
                 }
 
                 // Build row group bounds for merge strategy computation.
