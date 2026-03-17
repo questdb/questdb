@@ -622,6 +622,161 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
         }
     }
 
+    // ===== Concurrent read safety tests =====
+
+    @Test
+    public void testReaderSurvivesWriterSeal() {
+        // A reader with an active cursor must not be corrupted when the writer
+        // seals (which now appends rather than overwriting offset 0).
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            int numBatches = 4;
+            int valuesPerBatch = BP_BATCH; // 64
+            int totalValues = numBatches * valuesPerBatch; // 256
+
+            // Phase 1: populate key 0 with multiple commits to create multiple gens
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path.trimTo(plen), "bp_seal_conc", COLUMN_NAME_TXN_NONE)) {
+                for (int batch = 0; batch < numBatches; batch++) {
+                    for (int v = 0; v < valuesPerBatch; v++) {
+                        writer.add(0, (long) batch * valuesPerBatch + v);
+                    }
+                    writer.commit();
+                }
+                writer.setMaxValue(totalValues - 1);
+
+                // Phase 2: open a reader and start iterating key 0
+                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                        configuration, path.trimTo(plen), "bp_seal_conc", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    reader.reloadConditionally();
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+
+                    // Read half the values from the cursor
+                    LongList partialValues = new LongList();
+                    int halfCount = totalValues / 2;
+                    for (int i = 0; i < halfCount && cursor.hasNext(); i++) {
+                        partialValues.add(cursor.next());
+                    }
+                    Assert.assertTrue("should have read some values", partialValues.size() > 0);
+
+                    // Phase 3: writer seals while reader cursor is mid-iteration
+                    writer.seal();
+
+                    // Phase 4: continue reading from the cursor — must not crash or return garbage
+                    LongList remainingValues = new LongList();
+                    while (cursor.hasNext()) {
+                        remainingValues.add(cursor.next());
+                    }
+
+                    // Verify all values are sequential 0..totalValues-1
+                    LongList allValues = new LongList();
+                    allValues.addAll(partialValues);
+                    allValues.addAll(remainingValues);
+                    Assert.assertEquals("total value count for key 0", totalValues, allValues.size());
+                    for (int i = 0; i < totalValues; i++) {
+                        Assert.assertEquals("value mismatch at " + i, (long) i, allValues.getQuick(i));
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testCompactOnReopen() {
+        // After seal + close, reopening should compact dead space and produce correct data.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            int numBatches = 4;
+            int totalValues = numBatches * BP_BATCH; // 256
+
+            // Write key 0 with multiple commits, then seal
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path.trimTo(plen), "bp_compact", COLUMN_NAME_TXN_NONE)) {
+                for (int batch = 0; batch < numBatches; batch++) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, (long) batch * BP_BATCH + v);
+                    }
+                    writer.commit();
+                }
+                writer.setMaxValue(totalValues - 1);
+                writer.seal();
+                Assert.assertEquals(1, writer.getGenCount());
+            }
+            // close() calls seal() again but genCount==1 so it's a no-op
+
+            // Reopen — compaction should move gen 0 to offset 0
+            try (PostingsIndexWriter writer2 = new PostingsIndexWriter(configuration)) {
+                writer2.of(path.trimTo(plen), "bp_compact", COLUMN_NAME_TXN_NONE, false);
+                Assert.assertEquals(1, writer2.getGenCount());
+
+                // Verify data via writer cursor
+                RowCursor cursor = writer2.getCursor(0);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("value " + count, (long) count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("total count", totalValues, count);
+            }
+
+            // Also verify via reader
+            LongList vals = readAllBP(path.trimTo(plen), "bp_compact", 0);
+            Assert.assertEquals("reader count", totalValues, vals.size());
+            for (int i = 0; i < totalValues; i++) {
+                Assert.assertEquals("reader value " + i, (long) i, vals.getQuick(i));
+            }
+        }
+    }
+
+    @Test
+    public void testSealCommitSealCycle() {
+        // Seal → more commits → seal again. Verifies append-only seal handles
+        // the case where gen 0 already has a non-zero fileOffset.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path.trimTo(plen), "bp_cycle", COLUMN_NAME_TXN_NONE)) {
+                // First batch: 4 commits of 64 values for key 0 = 256 values
+                long rowId = 0;
+                for (int batch = 0; batch < 4; batch++) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, rowId++);
+                    }
+                    writer.commit();
+                }
+                writer.setMaxValue(rowId - 1);
+                writer.seal();
+                Assert.assertEquals(1, writer.getGenCount());
+
+                // Second batch: 3 more commits = 192 more values (total 448)
+                for (int batch = 0; batch < 3; batch++) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, rowId++);
+                    }
+                    writer.commit();
+                }
+                writer.setMaxValue(rowId - 1);
+                writer.seal();
+                Assert.assertEquals(1, writer.getGenCount());
+
+                // Verify: key 0 should have 7 * 64 = 448 sequential values
+                int totalValues = 7 * BP_BATCH;
+                RowCursor cursor = writer.getCursor(0);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("val " + count, (long) count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("total count", totalValues, count);
+            }
+
+            // Verify via reader after close
+            LongList vals = readAllBP(path.trimTo(plen), "bp_cycle", 0);
+            Assert.assertEquals("reader count", 7 * BP_BATCH, vals.size());
+            for (int i = 0; i < vals.size(); i++) {
+                Assert.assertEquals("reader val " + i, (long) i, vals.getQuick(i));
+            }
+        }
+    }
+
     // ===== Helpers =====
 
     private LongList readAllLegacy(Path path, CharSequence name, int key) {

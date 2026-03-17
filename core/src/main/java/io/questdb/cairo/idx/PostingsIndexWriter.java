@@ -301,14 +301,19 @@ public class PostingsIndexWriter implements IndexWriter {
         long mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
-            valueMem.jumpTo(0);
+            // Append-only seal: write sealed data AFTER existing data so that
+            // concurrent readers with active cursors are never rugpulled.
+            // Old generation data at [0..sealOffset) becomes dead space but
+            // remains valid for any in-flight reader mmap pages.
+            long sealOffset = valueMemSize;
+            valueMem.jumpTo(sealOffset);
             // Reserve stride index
             for (int i = 0; i < siSize; i += Integer.BYTES) {
                 valueMem.putInt(0);
             }
 
             for (int s = 0; s < sc; s++) {
-                int strideOff = (int) (valueMem.getAppendOffset() - siSize);
+                int strideOff = (int) (valueMem.getAppendOffset() - sealOffset - siSize);
                 Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
 
                 if (!dirtyStrides[s]) {
@@ -323,19 +328,19 @@ public class PostingsIndexWriter implements IndexWriter {
             }
 
             // Sentinel
-            int totalStrideBlocksSize = (int) (valueMem.getAppendOffset() - siSize);
+            int totalStrideBlocksSize = (int) (valueMem.getAppendOffset() - sealOffset - siSize);
             Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
 
             // Copy stride index
-            long strideIndexAddr = valueMem.addressOf(0);
+            long strideIndexAddr = valueMem.addressOf(sealOffset);
             Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
 
             valueMemSize = valueMem.getAppendOffset();
 
             genCount = 1;
             long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
-            keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
-            keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) valueMemSize);
+            keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
+            keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
             keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
             keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
             keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
@@ -853,8 +858,12 @@ public class PostingsIndexWriter implements IndexWriter {
                     int sc = PostingsIndexUtils.strideCount(keyCount);
                     int siSize = PostingsIndexUtils.strideIndexSize(keyCount);
 
-                    // Reserve stride index space at beginning of valueMem
-                    valueMem.jumpTo(0);
+                    // Append-only seal: write sealed data AFTER existing data so that
+                    // concurrent readers with active cursors are never rugpulled.
+                    // Old generation data at [0..sealOffset) becomes dead space but
+                    // remains valid for any in-flight reader mmap pages.
+                    long sealOffset = valueMemSize;
+                    valueMem.jumpTo(sealOffset);
                     for (int i = 0; i < siSize; i += Integer.BYTES) {
                         valueMem.putInt(0);
                     }
@@ -932,7 +941,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             boolean usePacked = packedSize < bpSize;
 
                             // Record stride offset (relative to end of stride index)
-                            int strideOff = (int) (valueMem.getAppendOffset() - siSize);
+                            int strideOff = (int) (valueMem.getAppendOffset() - sealOffset - siSize);
                             Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
 
                             if (usePacked) {
@@ -1048,11 +1057,11 @@ public class PostingsIndexWriter implements IndexWriter {
                         }
 
                         // Sentinel: total size of all stride blocks
-                        int totalStrideBlocksSize = (int) (valueMem.getAppendOffset() - siSize);
+                        int totalStrideBlocksSize = (int) (valueMem.getAppendOffset() - sealOffset - siSize);
                         Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
 
                         // Copy stride index into value file
-                        long strideIndexAddr = valueMem.addressOf(0);
+                        long strideIndexAddr = valueMem.addressOf(sealOffset);
                         Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
 
                         valueMemSize = valueMem.getAppendOffset();
@@ -1066,8 +1075,8 @@ public class PostingsIndexWriter implements IndexWriter {
 
                     genCount = 1;
                     long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
-                    keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
-                    keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) valueMemSize);
+                    keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
+                    keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
                     keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
                     keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
                     keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
@@ -1267,6 +1276,7 @@ public class PostingsIndexWriter implements IndexWriter {
                 valueMem.of(ff, valueFd, false, null, valueAppendPageSize, valueMemSize, MemoryTag.MMAP_INDEX_WRITER);
                 if (valueMemSize > 0) {
                     valueMem.jumpTo(valueMemSize);
+                    compactValueFile();
                 }
             }
 
@@ -1387,6 +1397,7 @@ public class PostingsIndexWriter implements IndexWriter {
 
             if (!init && valueMemSize > 0) {
                 valueMem.jumpTo(valueMemSize);
+                compactValueFile();
             }
 
             allocateNativeBuffers();
@@ -1412,6 +1423,48 @@ public class PostingsIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
         allocateNativeBuffers();
+    }
+
+    /**
+     * Reclaims dead space left by append-only seal. Copies the single live
+     * generation to file offset 0 so future appends start from a compact base.
+     * <p>
+     * Safe for concurrent readers: the source region [gen0Offset, gen0Offset+gen0Size)
+     * is NOT overwritten (destination [0, gen0Size) doesn't overlap when gen0Size <= gen0Offset,
+     * which is the typical case since sealing compresses data). Old readers with cached
+     * offsets continue to read valid data. We do NOT truncate here — close() handles that.
+     */
+    private void compactValueFile() {
+        if (genCount != 1 || keyCount == 0) {
+            return;
+        }
+        long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
+        long gen0Offset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+        if (gen0Offset == 0) {
+            return; // already compact
+        }
+        int gen0Size = keyMem.getInt(dirOffset + GEN_DIR_OFFSET_SIZE);
+        if (gen0Size <= 0) {
+            return;
+        }
+        if (gen0Size > gen0Offset) {
+            // Sealed data is larger than dead space — regions would overlap.
+            // Skip compaction; append-only seal is still safe, just wastes space.
+            return;
+        }
+
+        long src = valueMem.addressOf(gen0Offset);
+        long dst = valueMem.addressOf(0);
+        Unsafe.getUnsafe().copyMemory(src, dst, gen0Size);
+
+        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
+        valueMemSize = gen0Size;
+        valueMem.jumpTo(valueMemSize);
+
+        updateHeaderAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE));
+
+        LOG.info().$("compacted BP index [deadSpace=").$(gen0Offset)
+                .$(", liveSize=").$(gen0Size).$(']').$();
     }
 
     private void allocateNativeBuffers() {
