@@ -400,7 +400,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Returns the data memory for a column. Used by columnar appender.
      */
-    public MemoryMA getDataColumn(int column) {
+    MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
     }
@@ -578,6 +578,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             distressed = true;
             throw th;
         }
+    }
+
+    /**
+     * Writes server-assigned timestamp for all rows (atNow case).
+     * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
+     * Each row gets a fresh timestamp from getTicks() to match row-by-row behavior.
+     */
+    public void putServerAssignedTimestampColumnar(int rowCount) {
+        MemoryMA dataMem = getDataColumn(timestampIndex);
+        long startRowId = getSegmentRowCount();
+        for (int row = 0; row < rowCount; row++) {
+            long timestamp = timestampDriver.getTicks();
+            dataMem.putLong128(timestamp, startRowId + row);
+        }
+        setRowValueNotNullColumnar(timestampIndex, startRowId + rowCount - 1);
     }
 
     @TestOnly

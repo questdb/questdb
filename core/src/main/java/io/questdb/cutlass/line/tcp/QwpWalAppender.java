@@ -31,7 +31,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
@@ -748,7 +747,7 @@ public class QwpWalAppender implements QuietCloseable {
             if (timestampColumnInBlock < 0) {
                 int timestampIndex = walWriter.getMetadata().getTimestampIndex();
                 if (timestampIndex >= 0) {
-                    putServerAssignedTimestamp(walWriter, timestampIndex, tud, rowCount);
+                    walWriter.putServerAssignedTimestampColumnar(rowCount);
                 }
             }
 
@@ -855,27 +854,6 @@ public class QwpWalAppender implements QuietCloseable {
         // Writer is always a WalWriter in this context (QWP v1 only supports WAL tables)
         WalWriter walWriter = (WalWriter) writer;
         appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
-    }
-
-    /**
-     * Writes server-assigned timestamp for all rows (atNow case).
-     * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
-     * Each row gets a fresh timestamp from getTicks() to match row-by-row behavior.
-     */
-    private void putServerAssignedTimestamp(
-            WalWriter walWriter,
-            int columnIndex,
-            TableUpdateDetails tud,
-            int rowCount
-    ) {
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        long startRowId = walWriter.getSegmentRowCount();
-
-        for (int row = 0; row < rowCount; row++) {
-            long timestamp = tud.getTimestampDriver().getTicks();  // Per-row timestamp
-            dataMem.putLong128(timestamp, startRowId + row);
-        }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
 }
