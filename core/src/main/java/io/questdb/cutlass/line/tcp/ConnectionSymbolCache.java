@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
 
@@ -53,6 +54,7 @@ public class ConnectionSymbolCache {
     private static final ClearConsumer CLEAR_CONSUMER = new ClearConsumer();
     private static final int DEFAULT_COLUMN_CAPACITY = 8;
     private static final int DEFAULT_TABLE_CAPACITY = 8;
+    private static final int MAX_COLUMN_INDEX = 2048;
     // Map: tableToken → list of caches (indexed by columnIndex)
     private final LongObjHashMap<ObjList<ClientSymbolCache>> tableColumnCaches;
 
@@ -95,6 +97,12 @@ public class ConnectionSymbolCache {
             // First access for this table - create column cache list
             columnCaches = new ObjList<>(DEFAULT_COLUMN_CAPACITY);
             tableColumnCaches.put(tableToken, columnCaches);
+        }
+
+        if (columnIndex < 0 || columnIndex > MAX_COLUMN_INDEX) {
+            throw CairoException.nonCritical()
+                    .put("column index out of range [columnIndex=").put(columnIndex)
+                    .put(", max=").put(MAX_COLUMN_INDEX).put(']');
         }
 
         // Ensure capacity for this column index
