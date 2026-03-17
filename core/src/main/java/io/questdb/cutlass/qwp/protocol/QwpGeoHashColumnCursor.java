@@ -129,6 +129,12 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + (long) bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "geohash column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
@@ -150,9 +156,16 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
         }
 
         this.valueSize = (precision + 7) / 8;
-        this.valuesAddress = dataAddress + offset;
         int valueCount = rowCount - nullCount;
-        offset += valueCount * valueSize;
+        long valuesSize = (long) valueCount * valueSize;
+        if (offset + valuesSize > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "geohash column data truncated: expected " + valueCount + " values"
+            );
+        }
+        this.valuesAddress = dataAddress + offset;
+        offset += (int) valuesSize;
 
         resetRowPosition();
         return offset;
