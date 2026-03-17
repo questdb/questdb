@@ -78,7 +78,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
         int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
 
-        if (endOffset < startOffset) {
+        if (startOffset < 0 || endOffset < startOffset) {
             throw CairoException.nonCritical()
                     .put("invalid QWP string offset array: offset[")
                     .put(currentValueIndex + 1)
