@@ -3273,6 +3273,92 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleBy27mFromWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence_ns('2021-03-01T00:00:00.000000000Z', 600_000_000_000) " +
+                            "FROM long_sequence(48);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t5\t5\t2021-03-01T00:15:00.000000000Z
+                            6\t7\t2\t2021-03-01T00:42:00.000000000Z
+                            8\t10\t3\t2021-03-01T01:09:00.000000000Z
+                            11\t13\t3\t2021-03-01T01:36:00.000000000Z
+                            14\t15\t2\t2021-03-01T02:03:00.000000000Z
+                            16\t18\t3\t2021-03-01T02:30:00.000000000Z
+                            19\t21\t3\t2021-03-01T02:57:00.000000000Z
+                            22\t24\t3\t2021-03-01T03:24:00.000000000Z
+                            25\t26\t2\t2021-03-01T03:51:00.000000000Z
+                            27\t29\t3\t2021-03-01T04:18:00.000000000Z
+                            30\t32\t3\t2021-03-01T04:45:00.000000000Z
+                            33\t34\t2\t2021-03-01T05:12:00.000000000Z
+                            35\t37\t3\t2021-03-01T05:39:00.000000000Z
+                            38\t40\t3\t2021-03-01T06:06:00.000000000Z
+                            41\t42\t2\t2021-03-01T06:33:00.000000000Z
+                            43\t45\t3\t2021-03-01T07:00:00.000000000Z
+                            46\t48\t3\t2021-03-01T07:27:00.000000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBy27mFromWithOffsetTimezoneDst() throws Exception {
+        // America/Anchorage: AKST (UTC-9) -> AKDT (UTC-8)
+        // Spring forward: March 14, 2021 at 2:00 AM AKST = 11:00 UTC
+        // Clocks jump from 2:00 AM to 3:00 AM local.
+        //
+        // With OFFSET '-00:20', bucket boundaries shift by -20 minutes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence_ns('2021-03-14T09:00:00.000000000Z', 600_000_000_000) " +
+                            "FROM long_sequence(48);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t3\t3\t2021-03-14T08:58:00.000000000Z
+                            4\t6\t3\t2021-03-14T09:25:00.000000000Z
+                            7\t8\t2\t2021-03-14T09:52:00.000000000Z
+                            9\t11\t3\t2021-03-14T10:19:00.000000000Z
+                            12\t14\t3\t2021-03-14T10:46:00.000000000Z
+                            15\t16\t2\t2021-03-14T11:13:00.000000000Z
+                            17\t19\t3\t2021-03-14T11:40:00.000000000Z
+                            20\t22\t3\t2021-03-14T12:07:00.000000000Z
+                            23\t25\t3\t2021-03-14T12:34:00.000000000Z
+                            26\t27\t2\t2021-03-14T13:01:00.000000000Z
+                            28\t30\t3\t2021-03-14T13:28:00.000000000Z
+                            31\t33\t3\t2021-03-14T13:55:00.000000000Z
+                            34\t35\t2\t2021-03-14T14:22:00.000000000Z
+                            36\t38\t3\t2021-03-14T14:49:00.000000000Z
+                            39\t41\t3\t2021-03-14T15:16:00.000000000Z
+                            42\t43\t2\t2021-03-14T15:43:00.000000000Z
+                            44\t46\t3\t2021-03-14T16:10:00.000000000Z
+                            47\t48\t2\t2021-03-14T16:37:00.000000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 27m FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleByAlignToCalendarDSTGapNoBackwardJumps() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (i int, ts timestamp_ns) timestamp(ts) PARTITION by day;");
@@ -4944,7 +5030,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -4961,7 +5047,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T10:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -14478,6 +14564,68 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 "SELECT ts, count() c FROM x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE '" + tz + "')"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence_ns('2021-03-01T00:00:00.000000000Z', 3_600_000_000_000) " +
+                            "FROM long_sequence(120);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t25\t25\t2021-03-01T00:15:00.000000000Z
+                            26\t49\t24\t2021-03-02T00:15:00.000000000Z
+                            50\t73\t24\t2021-03-03T00:15:00.000000000Z
+                            74\t97\t24\t2021-03-04T00:15:00.000000000Z
+                            98\t120\t23\t2021-03-05T00:15:00.000000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByDayFromWithOffsetTimezoneDst() throws Exception {
+        // America/Anchorage: AKST (UTC-9) -> AKDT (UTC-8)
+        // Spring forward: March 14, 2021 at 2:00 AM AKST = 11:00 UTC
+        // Clocks jump from 2:00 AM to 3:00 AM local.
+        //
+        // 1d stride with OFFSET '-00:20' shifts day boundaries by -20 minutes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x " +
+                            "SELECT x::INT, timestamp_sequence_ns('2021-03-12T09:00:00.000000000Z', 3_600_000_000_000) " +
+                            "FROM long_sequence(120);"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount\tts
+                            1\t24\t24\t2021-03-12T08:40:00.000000000Z
+                            25\t48\t24\t2021-03-13T08:40:00.000000000Z
+                            49\t71\t23\t2021-03-14T08:40:00.000000000Z
+                            72\t95\t24\t2021-03-15T07:40:00.000000000Z
+                            96\t119\t24\t2021-03-16T07:40:00.000000000Z
+                            120\t120\t1\t2021-03-17T07:40:00.000000000Z
+                            """,
+                    "SELECT min(i), max(i), count(), ts FROM x " +
+                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 

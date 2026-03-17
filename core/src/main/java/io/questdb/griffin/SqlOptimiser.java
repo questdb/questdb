@@ -7862,17 +7862,7 @@ public class SqlOptimiser implements Mutable {
                     nullTimezone.precedence = 0;
                     tsFloorFunc.args.add(nullTimezone);
                 }
-                // FROM already anchors the buckets, so the offset is redundant
-                // and must be elided.
-                if (sampleByFrom != null) {
-                    final ExpressionNode zeroOffset = expressionNodePool.next();
-                    zeroOffset.type = CONSTANT;
-                    zeroOffset.token = "'00:00'";
-                    zeroOffset.precedence = 0;
-                    tsFloorFunc.args.add(zeroOffset);
-                } else {
-                    tsFloorFunc.args.add(sampleByOffset);
-                }
+                tsFloorFunc.args.add(sampleByOffset);
                 // If SAMPLE BY FROM ... is present, we need to include it in the timestamp_floor() call.
                 // This value is populated from the FROM clause and anchors the calendar-aligned buckets
                 // to an offset other than the unix epoch.
