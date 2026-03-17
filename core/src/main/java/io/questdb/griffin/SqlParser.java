@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -3446,9 +3446,9 @@ public class SqlParser {
             tok = optTok(lexer);
             if (tok != null) {
                 if (isIncludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(true, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(true);
                 } else if (isExcludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(false, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(false);
                 } else {
                     lexer.unparseLast();
                 }
