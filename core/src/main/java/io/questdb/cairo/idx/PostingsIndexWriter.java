@@ -80,6 +80,17 @@ public class PostingsIndexWriter implements IndexWriter {
     private int keyCount;
     private long pendingCountsAddr;
     private long pendingValuesAddr;
+    // Spill buffer: when a key's pending buffer overflows, its values are
+    // copied here (raw longs) instead of triggering a global flush.
+    // This avoids creating a gen per hot-key overflow.
+    // Layout: per-key contiguous regions. Each key gets a growing slot.
+    // spillKeyAddrs[key] → native address of this key's spill values (or 0)
+    // spillKeyCounts[key] → number of spilled values
+    // spillKeyCapacities[key] → allocated capacity in longs
+    private long[] spillKeyAddrs;
+    private int[] spillKeyCounts;
+    private int[] spillKeyCapacities;
+    private boolean hasSpillData;
     private long valueMemSize;
 
     public PostingsIndexWriter(CairoConfiguration configuration) {
@@ -123,8 +134,10 @@ public class PostingsIndexWriter implements IndexWriter {
         int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
 
         if (count >= blockCapacity) {
-            // Buffer full for this key — flush all pending data to make room.
-            flushAllPending();
+            // Buffer full for this key — spill its values to the overflow buffer
+            // instead of flushing ALL keys. This prevents gen-count explosion
+            // when a single hot key drives all overflows.
+            spillKey(key, count);
             count = 0;
         }
 
@@ -136,8 +149,8 @@ public class PostingsIndexWriter implements IndexWriter {
                         .put("index values must be added in ascending order [lastValue=")
                         .put(lastVal).put(", newValue=").put(value).put(']');
             }
-        } else {
-            // First value for this key in this batch — track it
+        } else if (getSpillCount(key) == 0) {
+            // First value for this key in this batch (and no prior spills) — track it
             if (activeKeyCount >= activeKeyIds.length) {
                 activeKeyIds = Arrays.copyOf(activeKeyIds, activeKeyIds.length * 2);
             }
@@ -1431,16 +1444,18 @@ public class PostingsIndexWriter implements IndexWriter {
             Arrays.sort(activeKeyIds, 0, activeKeyCount);
         }
 
-        // Count total values from active keys only
-        int totalValues = 0;
+        // Count total values from active keys (pending + spilled)
+        long totalValues = 0;
         for (int i = 0; i < activeKeyCount; i++) {
             int key = activeKeyIds[i];
             totalValues += Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            totalValues += getSpillCount(key);
         }
 
         if (totalValues == 0) {
             hasPendingData = false;
             activeKeyCount = 0;
+            resetSpill();
             return;
         }
 
@@ -1458,16 +1473,6 @@ public class PostingsIndexWriter implements IndexWriter {
             flushHeaderBuf = Unsafe.malloc(flushHeaderBufCapacity, MemoryTag.NATIVE_DEFAULT);
         }
 
-        // Reuse encode buffer, growing if needed
-        int perKeyBufSize = PostingsIndexUtils.computeMaxEncodedSize(blockCapacity);
-        if (perKeyBufSize > flushTmpBufCapacity) {
-            if (flushTmpBuf != 0) {
-                Unsafe.free(flushTmpBuf, flushTmpBufCapacity, MemoryTag.NATIVE_DEFAULT);
-            }
-            flushTmpBufCapacity = Math.max(perKeyBufSize, flushTmpBufCapacity * 2);
-            flushTmpBuf = Unsafe.malloc(flushTmpBufCapacity, MemoryTag.NATIVE_DEFAULT);
-        }
-
         Unsafe.getUnsafe().setMemory(flushHeaderBuf, headerSize, (byte) 0);
         long keyIdsBase = flushHeaderBuf;
         long countsBase = flushHeaderBuf + (long) activeKeyCount * Integer.BYTES;
@@ -1478,7 +1483,8 @@ public class PostingsIndexWriter implements IndexWriter {
         long maxDataSize = 0;
         for (int i = 0; i < activeKeyCount; i++) {
             int key = activeKeyIds[i];
-            int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES)
+                    + getSpillCount(key);
             maxDataSize += PostingsIndexUtils.computeMaxEncodedSize(count);
         }
         long maxGenSize = headerSize + maxDataSize;
@@ -1491,24 +1497,59 @@ public class PostingsIndexWriter implements IndexWriter {
         int encodedOffset = 0;
         for (int idx = 0; idx < activeKeyCount; idx++) {
             int key = activeKeyIds[idx];
-            int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            int spillCount = getSpillCount(key);
+            int count = pendingCount + spillCount;
 
             Unsafe.getUnsafe().putInt(keyIdsBase + (long) idx * Integer.BYTES, key);
             Unsafe.getUnsafe().putInt(countsBase + (long) idx * Integer.BYTES, count);
             Unsafe.getUnsafe().putInt(offsetsBase + (long) idx * Integer.BYTES, encodedOffset);
 
-            long keyValuesAddr = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
-
-            // Encode directly from native memory into valueMem's mapped region
             long destAddr = valueMem.addressOf(genOffset + headerSize + encodedOffset);
-            encodeCtx.ensureCapacity(count);
-            int bytesWritten = PostingsIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
-            encodedOffset += bytesWritten;
+            int bytesWritten;
 
-            long lastVal = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) (count - 1) * Long.BYTES);
-            if (lastVal > maxValue) {
-                maxValue = lastVal;
+            if (spillCount == 0) {
+                // No spill — encode directly from pending buffer
+                long keyValuesAddr = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
+                encodeCtx.ensureCapacity(count);
+                bytesWritten = PostingsIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
+
+                if (pendingCount > 0) {
+                    long lastVal = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) (pendingCount - 1) * Long.BYTES);
+                    if (lastVal > maxValue) {
+                        maxValue = lastVal;
+                    }
+                }
+            } else {
+                // Has spill — merge spill + pending into the spill buffer, then encode from it.
+                // The spill buffer already has the earlier values; append pending values to it.
+                if (pendingCount > 0) {
+                    ensureSpillArrays(key);
+                    int needed = spillCount + pendingCount;
+                    if (needed > spillKeyCapacities[key]) {
+                        int newCap = Math.max(needed, spillKeyCapacities[key] * 2);
+                        long oldSize = (long) spillKeyCapacities[key] * Long.BYTES;
+                        long newSize = (long) newCap * Long.BYTES;
+                        spillKeyAddrs[key] = Unsafe.realloc(spillKeyAddrs[key], oldSize, newSize, MemoryTag.NATIVE_DEFAULT);
+                        spillKeyCapacities[key] = newCap;
+                    }
+                    // Append pending values after spill values
+                    long pendingSrc = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
+                    Unsafe.getUnsafe().copyMemory(pendingSrc,
+                            spillKeyAddrs[key] + (long) spillCount * Long.BYTES,
+                            (long) pendingCount * Long.BYTES);
+                }
+                // Encode from the spill buffer (which now holds all values in order)
+                encodeCtx.ensureCapacity(count);
+                bytesWritten = PostingsIndexUtils.encodeKeyNative(spillKeyAddrs[key], count, destAddr, encodeCtx);
+
+                long lastVal = Unsafe.getUnsafe().getLong(
+                        spillKeyAddrs[key] + (long) (count - 1) * Long.BYTES);
+                if (lastVal > maxValue) {
+                    maxValue = lastVal;
+                }
             }
+            encodedOffset += bytesWritten;
         }
 
         int totalGenSize = headerSize + encodedOffset;
@@ -1534,17 +1575,75 @@ public class PostingsIndexWriter implements IndexWriter {
 
         updateHeaderAtomically(genCount, maxValue);
 
-        // Clear only the active keys' counts (not the entire array)
+        // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
             int key = activeKeyIds[i];
             Unsafe.getUnsafe().putInt(pendingCountsAddr + (long) key * Integer.BYTES, 0);
         }
+        resetSpill();
         hasPendingData = false;
         activeKeyCount = 0;
 
         if (genCount > MAX_GEN_COUNT) {
             seal();
         }
+    }
+
+    private void spillKey(int key, int count) {
+        ensureSpillArrays(key);
+        int prevCount = spillKeyCounts[key];
+        int needed = prevCount + count;
+        // Grow per-key spill buffer if needed
+        if (needed > spillKeyCapacities[key]) {
+            int newCap = Math.max(needed, spillKeyCapacities[key] * 2);
+            newCap = Math.max(newCap, 256); // minimum 256 values
+            long oldSize = (long) spillKeyCapacities[key] * Long.BYTES;
+            long newSize = (long) newCap * Long.BYTES;
+            spillKeyAddrs[key] = Unsafe.realloc(spillKeyAddrs[key], oldSize, newSize, MemoryTag.NATIVE_DEFAULT);
+            spillKeyCapacities[key] = newCap;
+        }
+        // Copy values from pending buffer to this key's spill
+        long srcAddr = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
+        Unsafe.getUnsafe().copyMemory(srcAddr, spillKeyAddrs[key] + (long) prevCount * Long.BYTES,
+                (long) count * Long.BYTES);
+        spillKeyCounts[key] = needed;
+        hasSpillData = true;
+        // Reset pending count
+        Unsafe.getUnsafe().putInt(pendingCountsAddr + (long) key * Integer.BYTES, 0);
+    }
+
+    private void ensureSpillArrays(int key) {
+        if (spillKeyAddrs == null) {
+            spillKeyAddrs = new long[keyCapacity];
+            spillKeyCounts = new int[keyCapacity];
+            spillKeyCapacities = new int[keyCapacity];
+        } else if (key >= spillKeyAddrs.length) {
+            int newLen = Math.max(keyCapacity, key + 1);
+            spillKeyAddrs = Arrays.copyOf(spillKeyAddrs, newLen);
+            spillKeyCounts = Arrays.copyOf(spillKeyCounts, newLen);
+            spillKeyCapacities = Arrays.copyOf(spillKeyCapacities, newLen);
+        }
+    }
+
+    private int getSpillCount(int key) {
+        if (spillKeyCounts == null || key >= spillKeyCounts.length) {
+            return 0;
+        }
+        return spillKeyCounts[key];
+    }
+
+    private void resetSpill() {
+        if (!hasSpillData || spillKeyCounts == null) {
+            return;
+        }
+        for (int i = 0; i < activeKeyCount; i++) {
+            int key = activeKeyIds[i];
+            if (key < spillKeyCounts.length) {
+                spillKeyCounts[key] = 0;
+                // Keep the allocated buffer for reuse, just reset count
+            }
+        }
+        hasSpillData = false;
     }
 
     private void freeNativeBuffers() {
@@ -1555,6 +1654,18 @@ public class PostingsIndexWriter implements IndexWriter {
         if (pendingCountsAddr != 0) {
             Unsafe.free(pendingCountsAddr, (long) keyCapacity * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             pendingCountsAddr = 0;
+        }
+        if (spillKeyAddrs != null) {
+            for (int i = 0; i < spillKeyAddrs.length; i++) {
+                if (spillKeyAddrs[i] != 0) {
+                    Unsafe.free(spillKeyAddrs[i], (long) spillKeyCapacities[i] * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    spillKeyAddrs[i] = 0;
+                }
+            }
+            spillKeyAddrs = null;
+            spillKeyCounts = null;
+            spillKeyCapacities = null;
+            hasSpillData = false;
         }
         if (flushHeaderBuf != 0) {
             Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_DEFAULT);
