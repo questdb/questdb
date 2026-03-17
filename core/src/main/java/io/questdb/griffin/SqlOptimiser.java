@@ -7986,8 +7986,14 @@ public class SqlOptimiser implements Mutable {
                 tsFloorTsParam.paramCount = 0;
                 tsFloorTsParam.type = LITERAL;
 
-                boolean isSubDay = sampleBy.token.length() > 0 && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+                boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
 
+                // Pass the timezone to timestamp_floor_utc so it can anchor buckets at local
+                // hour boundaries (important for non-hour-aligned timezones like Asia/Kolkata
+                // or Asia/Kathmandu). However, when both a sub-day interval and FROM are present,
+                // the timezone is redundant: to_utc(FROM, tz) already converts the user's local
+                // anchor to UTC, and sub-day bucketing from that anchor is purely uniform intervals
+                // in UTC space. Passing the timezone again would double-apply the offset.
                 if (sampleByTimezoneName != null && !(isSubDay && sampleByFrom != null)) {
                     tsFloorFunc.args.add(sampleByTimezoneName);
                 } else {
