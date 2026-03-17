@@ -1495,6 +1495,10 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 try {
                     long micros = MicrosFormatUtils.parseTimestamp(value.asAsciiCharSequence());
                     if (columnIsNanos) {
+                        if (micros > Long.MAX_VALUE / 1000 || micros < Long.MIN_VALUE / 1000) {
+                            throw CairoException.nonCritical()
+                                    .put("timestamp overflow converting micros to nanos: ").put(micros);
+                        }
                         dataMem.putLong(micros * 1000);
                     } else {
                         dataMem.putLong(micros);
@@ -1781,6 +1785,10 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     timestamp = timestamp / 1000;
                 } else if (!wireIsNanos && columnIsNanos) {
                     // Wire is micros, column is nanos: multiply by 1000
+                    if (timestamp > Long.MAX_VALUE / 1000 || timestamp < Long.MIN_VALUE / 1000) {
+                        throw CairoException.nonCritical()
+                                .put("timestamp overflow converting micros to nanos: ").put(timestamp);
+                    }
                     timestamp = timestamp * 1000;
                 }
             } else {
