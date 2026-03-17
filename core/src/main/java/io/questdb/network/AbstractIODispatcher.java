@@ -127,31 +127,31 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             this.oomResponseBufLen = 0;
         }
 
+        this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
+        this.interestPubSeq = new MPSequence(interestQueue.getCycle());
+        this.interestSubSeq = new SCSequence();
+        this.interestPubSeq.then(interestSubSeq).then(interestPubSeq);
+
+        this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
+        this.ioEventPubSeq = new SPSequence(ioEventQueue.getCycle());
+        this.ioEventSubSeq = new MCSequence(ioEventQueue.getCycle());
+        this.ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
+
+        this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
+        this.disconnectPubSeq = new MPSequence(disconnectQueue.getCycle());
+        this.disconnectSubSeq = new SCSequence();
+        this.disconnectPubSeq.then(disconnectSubSeq).then(disconnectPubSeq);
+
+        this.clock = configuration.getClock();
+        this.ioContextFactory = ioContextFactory;
+        this.initialBias = configuration.getInitialBias();
+        this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
+        this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
+        this.peerNoLinger = configuration.getPeerNoLinger();
+        this.port = 0;
+        this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
+
         try {
-            this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
-            this.interestPubSeq = new MPSequence(interestQueue.getCycle());
-            this.interestSubSeq = new SCSequence();
-            this.interestPubSeq.then(interestSubSeq).then(interestPubSeq);
-
-            this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-            this.ioEventPubSeq = new SPSequence(ioEventQueue.getCycle());
-            this.ioEventSubSeq = new MCSequence(ioEventQueue.getCycle());
-            this.ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
-
-            this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-            this.disconnectPubSeq = new MPSequence(disconnectQueue.getCycle());
-            this.disconnectSubSeq = new SCSequence();
-            this.disconnectPubSeq.then(disconnectSubSeq).then(disconnectPubSeq);
-
-            this.clock = configuration.getClock();
-            this.ioContextFactory = ioContextFactory;
-            this.initialBias = configuration.getInitialBias();
-            this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
-            this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
-            this.peerNoLinger = configuration.getPeerNoLinger();
-            this.port = 0;
-            this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
-
             createListenerFd();
         } catch (Throwable th) {
             close();
@@ -261,8 +261,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void setup() {
-        if (ioContextFactory instanceof EagerThreadSetup) {
-            ((EagerThreadSetup) ioContextFactory).setup();
+        if (ioContextFactory instanceof EagerThreadSetup ets) {
+            ets.setup();
         }
     }
 
