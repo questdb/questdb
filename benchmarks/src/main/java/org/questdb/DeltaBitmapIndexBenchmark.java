@@ -103,6 +103,11 @@ public class DeltaBitmapIndexBenchmark {
     private static final int ST_ACTIVE_KEYS_PER_COMMIT = (int) (ST_KEY_COUNT * ST_KEY_ACTIVITY_RATIO); // 1000
     private static final int ST_LEGACY_BLOCK_CAPACITY = 64;
 
+    // === Scenario 4: Ultra-High Cardinality (configurable keys, 4-8 values/key) ===
+    private static final int UHC_MIN_VALUES = 4;
+    private static final int UHC_MAX_VALUES = 8;
+    private static final int UHC_AVG_VALUES = (UHC_MIN_VALUES + UHC_MAX_VALUES) / 2;  // 6
+
     // LZ4 page sizes to test (powers of 2)
     private static final int[] PAGE_SIZES = {4096, 8192, 16384, 32768, 65536};
 
@@ -127,6 +132,16 @@ public class DeltaBitmapIndexBenchmark {
         System.out.printf("    %,d keys, %d commits, %d active keys/commit, %d values/active key%n%n",
                 ST_KEY_COUNT, ST_COMMITS, ST_ACTIVE_KEYS_PER_COMMIT, ST_VALUES_PER_ACTIVE_KEY);
         runStreaming(config, tmpDir);
+
+        if (args.length > 0 && ("scale".equals(args[0]) || "all".equals(args[0]))) {
+            int uhcKeyCount = Integer.getInteger("uhc.keys", 10_000_000);
+            long uhcTotalRows = (long) uhcKeyCount * UHC_AVG_VALUES;
+            System.out.println();
+            System.out.println("=== Scenario 4: Ultra-High Cardinality ===");
+            System.out.printf("    %,d keys, %d-%d values/key, ~%,d total rows%n%n",
+                    uhcKeyCount, UHC_MIN_VALUES, UHC_MAX_VALUES, uhcTotalRows);
+            runUltraHighCardinality(config, tmpDir, uhcKeyCount);
+        }
     }
 
     // ========================= Scenario 1: High-Cardinality =========================
@@ -897,6 +912,145 @@ public class DeltaBitmapIndexBenchmark {
                     System.out.printf("Full scan after seal (%,d keys):%n", ST_KEY_COUNT);
                     scanAll(bpReader, ST_KEY_COUNT);
                     measureReadLatency("BP (sealed) scan", () -> scanAll(bpReader, ST_KEY_COUNT));
+                }
+            }
+        } finally {
+            deleteDir(legacyDir);
+            deleteDir(bpDir);
+        }
+    }
+
+    // ========================= Scenario 4: Ultra-High Cardinality =========================
+
+    private static void runUltraHighCardinality(CairoConfiguration config, String tmpDir, int UHC_KEY_COUNT) {
+        Rnd rnd = new Rnd(99999, 88888);
+
+        // Per-key value counts: uniform random in [MIN, MAX]
+        int range = UHC_MAX_VALUES - UHC_MIN_VALUES + 1;
+        // Don't allocate 70M-element array, stream writes
+        String legacyDir = tmpDir + File.separator + "uhc_legacy_" + System.nanoTime();
+        String bpDir = tmpDir + File.separator + "uhc_bp_" + System.nanoTime();
+        new File(legacyDir).mkdirs();
+        new File(bpDir).mkdirs();
+
+        try {
+            // Legacy write
+            System.out.println("Storage & write time:");
+            long legacySize = buildAndMeasure("Legacy (block=8)", config, legacyDir, () -> {
+                try (Path path = new Path().of(legacyDir)) {
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
+                        writer.of(path, "test", COLUMN_NAME_TXN, 8);
+                        Rnd writeRnd = new Rnd(99999, 88888);
+                        long rowId = 0;
+                        for (int key = 0; key < UHC_KEY_COUNT; key++) {
+                            int valCount = UHC_MIN_VALUES + writeRnd.nextPositiveInt() % range;
+                            for (int v = 0; v < valCount; v++) {
+                                writer.add(key, rowId++);
+                            }
+                        }
+                    }
+                }
+            });
+
+            // BP write — commit every 1M keys to bound memory
+            long bpWriteStart = System.nanoTime();
+            int bpCommitInterval = 1_000_000; // keys between commits
+            createBPIndex(config, bpDir, BPBitmapIndexUtils.BLOCK_CAPACITY);
+            try (Path path = new Path().of(bpDir)) {
+                try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
+                    writer.of(path, "test", COLUMN_NAME_TXN, false);
+                    Rnd writeRnd = new Rnd(99999, 88888);
+                    long rowId = 0;
+                    for (int key = 0; key < UHC_KEY_COUNT; key++) {
+                        int valCount = UHC_MIN_VALUES + writeRnd.nextPositiveInt() % range;
+                        for (int v = 0; v < valCount; v++) {
+                            writer.add(key, rowId++);
+                        }
+                        if ((key + 1) % bpCommitInterval == 0) {
+                            writer.commit();
+                        }
+                    }
+                    if (UHC_KEY_COUNT % bpCommitInterval != 0) {
+                        writer.commit();
+                    }
+                    long bpWriteElapsed = System.nanoTime() - bpWriteStart;
+                    int bpGenCount = (UHC_KEY_COUNT + bpCommitInterval - 1) / bpCommitInterval;
+
+                    long bpSize = getDirectorySize(bpDir);
+                    System.out.printf("  %-40s %8.1f MB in %5.2f s (%d gens)%n",
+                            "BP", bpSize / (1024.0 * 1024.0), bpWriteElapsed / 1e9, bpGenCount);
+
+                    // Read latency — 10K random keys
+                    int readKeyCount = 10_000;
+                    int[] readKeys = new int[readKeyCount];
+                    for (int i = 0; i < readKeyCount; i++) {
+                        readKeys[i] = rnd.nextPositiveInt() % UHC_KEY_COUNT;
+                    }
+
+                    System.out.println();
+                    System.out.printf("Read latency (%,d random keys, %d-%d values each):%n", readKeyCount, UHC_MIN_VALUES, UHC_MAX_VALUES);
+
+                    try (Path legacyPath = new Path().of(legacyDir);
+                         Path bpPath = new Path().of(bpDir)) {
+                        try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
+                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            readBatch(legacyReader, readKeys);
+                            readBatch(bpReader, readKeys);
+
+                            measureReadLatency("Legacy", () -> readBatch(legacyReader, readKeys));
+                            measureReadLatency("BP", () -> readBatch(bpReader, readKeys));
+                        }
+                    }
+
+                    // Partial scan — first 1M keys
+                    int scanKeys = Math.min(1_000_000, UHC_KEY_COUNT);
+                    System.out.println();
+                    System.out.printf("Partial scan (%,d of %,d keys):%n", scanKeys, UHC_KEY_COUNT);
+
+                    try (Path legacyPath = new Path().of(legacyDir);
+                         Path bpPath = new Path().of(bpDir)) {
+                        try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
+                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            scanAll(legacyReader, scanKeys);
+                            scanAll(bpReader, scanKeys);
+
+                            measureReadLatency("Legacy scan (1M keys)", () -> scanAll(legacyReader, scanKeys));
+                            measureReadLatency("BP scan (1M keys)", () -> scanAll(bpReader, scanKeys));
+                        }
+                    }
+
+                    // Seal
+                    long sealT0 = System.nanoTime();
+                    writer.seal();
+                    long sealTime = System.nanoTime() - sealT0;
+
+                    long bpSealedSize = getDirectorySize(bpDir);
+                    System.out.println();
+                    System.out.printf("  BP sealed: %5.1f MB (seal took %.1f ms)%n",
+                            bpSealedSize / (1024.0 * 1024.0), sealTime / 1e6);
+
+                    // Summary
+                    System.out.println();
+                    System.out.printf("  %-25s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
+                    System.out.println("  " + "-".repeat(47));
+                    printRow("Legacy", legacySize, legacySize);
+                    printRow("BP", bpSize, legacySize);
+                    printRow("BP (sealed)", bpSealedSize, legacySize);
+                }
+            }
+
+            // Post-seal reads
+            System.out.println();
+            int readKeyCount = 10_000;
+            int[] readKeys = new int[readKeyCount];
+            for (int i = 0; i < readKeyCount; i++) {
+                readKeys[i] = rnd.nextPositiveInt() % UHC_KEY_COUNT;
+            }
+            System.out.printf("Read latency after seal (%,d random keys):%n", readKeyCount);
+            try (Path bpPath = new Path().of(bpDir)) {
+                try (BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    readBatch(bpReader, readKeys);
+                    measureReadLatency("BP (sealed)", () -> readBatch(bpReader, readKeys));
                 }
             }
         } finally {

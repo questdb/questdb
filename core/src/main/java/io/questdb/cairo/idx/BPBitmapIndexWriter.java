@@ -1402,8 +1402,18 @@ public class BPBitmapIndexWriter implements IndexWriter {
             return;
         }
 
-        // Sort active keys for the sparse format (requires ascending keyIds)
-        Arrays.sort(activeKeyIds, 0, activeKeyCount);
+        // Sort active keys for the sparse format (requires ascending keyIds).
+        // Skip sort if keys were added in order (common for sequential writes).
+        boolean isSorted = true;
+        for (int i = 1; i < activeKeyCount; i++) {
+            if (activeKeyIds[i] < activeKeyIds[i - 1]) {
+                isSorted = false;
+                break;
+            }
+        }
+        if (!isSorted) {
+            Arrays.sort(activeKeyIds, 0, activeKeyCount);
+        }
 
         // Count total values from active keys only
         int totalValues = 0;
@@ -1447,10 +1457,15 @@ public class BPBitmapIndexWriter implements IndexWriter {
         long countsBase = flushHeaderBuf + (long) activeKeyCount * Integer.BYTES;
         long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
 
-        // Reserve header + worst-case data space in valueMem so we can encode directly into it
+        // Reserve header + data space in valueMem. Use actual value counts for tighter bound.
         long genOffset = valueMemSize;
-        int perKeyMaxEncoded = BPBitmapIndexUtils.computeMaxEncodedSize(blockCapacity);
-        long maxGenSize = headerSize + (long) activeKeyCount * perKeyMaxEncoded;
+        long maxDataSize = 0;
+        for (int i = 0; i < activeKeyCount; i++) {
+            int key = activeKeyIds[i];
+            int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            maxDataSize += BPBitmapIndexUtils.computeMaxEncodedSize(count);
+        }
+        long maxGenSize = headerSize + maxDataSize;
         valueMem.jumpTo(genOffset);
         // Extend to guarantee contiguous mapped region for direct encoding
         valueMem.jumpTo(genOffset + maxGenSize);
