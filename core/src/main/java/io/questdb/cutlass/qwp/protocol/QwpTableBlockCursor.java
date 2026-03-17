@@ -429,66 +429,56 @@ public class QwpTableBlockCursor implements Mutable {
 
         QwpColumnCursor cursor = columnCursors.getQuick(colIndex);
 
-        switch (type) {
-            case TYPE_BOOLEAN:
+        return switch (type) {
+            case TYPE_BOOLEAN -> {
                 QwpBooleanColumnCursor boolCursor;
-                if (cursor instanceof QwpBooleanColumnCursor) {
-                    boolCursor = (QwpBooleanColumnCursor) cursor;
+                if (cursor instanceof QwpBooleanColumnCursor c) {
+                    boolCursor = c;
                 } else {
                     boolCursor = new QwpBooleanColumnCursor();
                     columnCursors.setQuick(colIndex, boolCursor);
                 }
                 booleanColumnIndices[booleanColumnCount++] = colIndex;
-                return boolCursor.of(dataAddress, dataLength, rowCount, nullable);
-
-            case TYPE_BYTE:
-            case TYPE_SHORT:
-            case TYPE_CHAR:
-            case TYPE_INT:
-            case TYPE_LONG:
-            case TYPE_FLOAT:
-            case TYPE_DOUBLE:
-            case TYPE_DATE:
-            case TYPE_UUID:
-            case TYPE_LONG256:
+                yield boolCursor.of(dataAddress, dataLength, rowCount, nullable);
+            }
+            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_LONG,
+                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> {
                 QwpFixedWidthColumnCursor fixedCursor;
-                if (cursor instanceof QwpFixedWidthColumnCursor) {
-                    fixedCursor = (QwpFixedWidthColumnCursor) cursor;
+                if (cursor instanceof QwpFixedWidthColumnCursor c) {
+                    fixedCursor = c;
                 } else {
                     fixedCursor = new QwpFixedWidthColumnCursor();
                     columnCursors.setQuick(colIndex, fixedCursor);
                 }
                 fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
-                return fixedCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
-
-            case TYPE_TIMESTAMP:
-            case TYPE_TIMESTAMP_NANOS:
+                yield fixedCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
+            }
+            case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> {
                 QwpTimestampColumnCursor tsCursor;
-                if (cursor instanceof QwpTimestampColumnCursor) {
-                    tsCursor = (QwpTimestampColumnCursor) cursor;
+                if (cursor instanceof QwpTimestampColumnCursor c) {
+                    tsCursor = c;
                 } else {
                     tsCursor = new QwpTimestampColumnCursor();
                     columnCursors.setQuick(colIndex, tsCursor);
                 }
                 timestampColumnIndices[timestampColumnCount++] = colIndex;
-                return tsCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, gorillaEnabled);
-
-            case TYPE_STRING:
-            case TYPE_VARCHAR:
+                yield tsCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, gorillaEnabled);
+            }
+            case TYPE_STRING, TYPE_VARCHAR -> {
                 QwpStringColumnCursor strCursor;
-                if (cursor instanceof QwpStringColumnCursor) {
-                    strCursor = (QwpStringColumnCursor) cursor;
+                if (cursor instanceof QwpStringColumnCursor c) {
+                    strCursor = c;
                 } else {
                     strCursor = new QwpStringColumnCursor();
                     columnCursors.setQuick(colIndex, strCursor);
                 }
                 stringColumnIndices[stringColumnCount++] = colIndex;
-                return strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
-
-            case TYPE_SYMBOL:
+                yield strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
+            }
+            case TYPE_SYMBOL -> {
                 QwpSymbolColumnCursor symCursor;
-                if (cursor instanceof QwpSymbolColumnCursor) {
-                    symCursor = (QwpSymbolColumnCursor) cursor;
+                if (cursor instanceof QwpSymbolColumnCursor c) {
+                    symCursor = c;
                 } else {
                     symCursor = new QwpSymbolColumnCursor();
                     columnCursors.setQuick(colIndex, symCursor);
@@ -496,49 +486,45 @@ public class QwpTableBlockCursor implements Mutable {
                 symbolColumnIndices[symbolColumnCount++] = colIndex;
                 // In delta mode, pass connection dictionary; otherwise null (per-column dict)
                 ObjList<String> dictForSymbol = deltaSymbolDictEnabled ? connectionSymbolDict : null;
-                return symCursor.of(dataAddress, dataLength, rowCount, nullable, dictForSymbol);
-
-            case TYPE_GEOHASH:
+                yield symCursor.of(dataAddress, dataLength, rowCount, nullable, dictForSymbol);
+            }
+            case TYPE_GEOHASH -> {
                 QwpGeoHashColumnCursor geoCursor;
-                if (cursor instanceof QwpGeoHashColumnCursor) {
-                    geoCursor = (QwpGeoHashColumnCursor) cursor;
+                if (cursor instanceof QwpGeoHashColumnCursor c) {
+                    geoCursor = c;
                 } else {
                     geoCursor = new QwpGeoHashColumnCursor();
                     columnCursors.setQuick(colIndex, geoCursor);
                 }
                 geoHashColumnIndices[geoHashColumnCount++] = colIndex;
-                return geoCursor.of(dataAddress, dataLength, rowCount, nullable);
-
-            case TYPE_DOUBLE_ARRAY:
-            case TYPE_LONG_ARRAY:
+                yield geoCursor.of(dataAddress, dataLength, rowCount, nullable);
+            }
+            case TYPE_DOUBLE_ARRAY, TYPE_LONG_ARRAY -> {
                 QwpArrayColumnCursor arrCursor;
-                if (cursor instanceof QwpArrayColumnCursor) {
-                    arrCursor = (QwpArrayColumnCursor) cursor;
+                if (cursor instanceof QwpArrayColumnCursor c) {
+                    arrCursor = c;
                 } else {
                     arrCursor = new QwpArrayColumnCursor();
                     columnCursors.setQuick(colIndex, arrCursor);
                 }
                 arrayColumnIndices[arrayColumnCount++] = colIndex;
-                return arrCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
-
-            case TYPE_DECIMAL64:
-            case TYPE_DECIMAL128:
-            case TYPE_DECIMAL256:
+                yield arrCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
+            }
+            case TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> {
                 QwpDecimalColumnCursor decCursor;
-                if (cursor instanceof QwpDecimalColumnCursor) {
-                    decCursor = (QwpDecimalColumnCursor) cursor;
+                if (cursor instanceof QwpDecimalColumnCursor c) {
+                    decCursor = c;
                 } else {
                     decCursor = new QwpDecimalColumnCursor();
                     columnCursors.setQuick(colIndex, decCursor);
                 }
                 decimalColumnIndices[decimalColumnCount++] = colIndex;
-                return decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
-
-            default:
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
-                        "unknown column type: " + type
-                );
-        }
+                yield decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
+            }
+            default -> throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
+                    "unknown column type: " + type
+            );
+        };
     }
 }
