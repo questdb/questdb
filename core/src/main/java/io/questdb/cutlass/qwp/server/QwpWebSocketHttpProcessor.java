@@ -58,6 +58,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * The WebSocket magic GUID used in the Sec-WebSocket-Accept calculation.
      */
     public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     /**
      * The required WebSocket version (RFC 6455).
      */
@@ -102,7 +103,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             keyBytes[i] = key.byteAt(i);
         }
         sha1.update(keyBytes);
-        sha1.update(WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII));
+        sha1.update(WEBSOCKET_GUID_BYTES);
 
         // Compute SHA-1 hash and base64 encode
         byte[] hash = sha1.digest();
