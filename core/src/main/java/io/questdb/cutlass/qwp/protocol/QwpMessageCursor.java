@@ -26,7 +26,6 @@ package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
@@ -54,8 +53,7 @@ public class QwpMessageCursor implements Mutable {
     private static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
     private final QwpTableBlockCursor tableBlockCursor = new QwpTableBlockCursor();
-    // Reusable array for varint parsing: [0]=value, [1]=bytes consumed
-    private final long[] varintResult = new long[2];
+    private final QwpVarint.DecodeResult varintResult = new QwpVarint.DecodeResult();
     private ObjList<String> connectionSymbolDict;
     private long currentTableAddress;
     private int currentTableIndex;
@@ -182,14 +180,14 @@ public class QwpMessageCursor implements Mutable {
         }
 
         // Read deltaStartId
-        readVarint(address, varintResult);
-        int deltaStartId = (int) varintResult[0];
-        address += varintResult[1];
+        QwpVarint.decode(address, payloadEnd, varintResult);
+        int deltaStartId = (int) varintResult.value;
+        address += varintResult.bytesRead;
 
         // Read deltaCount
-        readVarint(address, varintResult);
-        int deltaCount = (int) varintResult[0];
-        address += varintResult[1];
+        QwpVarint.decode(address, payloadEnd, varintResult);
+        int deltaCount = (int) varintResult.value;
+        address += varintResult.bytesRead;
 
         if (deltaStartId < 0 || deltaCount < 0) {
             throw QwpParseException.create(
@@ -223,9 +221,9 @@ public class QwpMessageCursor implements Mutable {
             }
 
             // Read symbol length
-            readVarint(address, varintResult);
-            int symbolLen = (int) varintResult[0];
-            address += varintResult[1];
+            QwpVarint.decode(address, payloadEnd, varintResult);
+            int symbolLen = (int) varintResult.value;
+            address += varintResult.bytesRead;
 
             if (address + symbolLen > payloadEnd) {
                 throw QwpParseException.create(
@@ -245,38 +243,4 @@ public class QwpMessageCursor implements Mutable {
         return address;
     }
 
-    /**
-     * Reads a varint from direct memory.
-     *
-     * @param address memory address
-     * @param result  output array: [0]=value, [1]=bytes consumed
-     */
-    private void readVarint(long address, long[] result) throws QwpParseException {
-        long value = 0;
-        int shift = 0;
-        int bytesRead = 0;
-
-        while (address + bytesRead < payloadEnd) {
-            byte b = Unsafe.getUnsafe().getByte(address + bytesRead);
-            bytesRead++;
-            value |= (long) (b & 0x7F) << shift;
-            if ((b & 0x80) == 0) {
-                result[0] = value;
-                result[1] = bytesRead;
-                return;
-            }
-            shift += 7;
-            if (shift > 63) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.VARINT_OVERFLOW,
-                        "varint overflow"
-                );
-            }
-        }
-
-        throw QwpParseException.create(
-                QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                "truncated varint"
-        );
-    }
 }
