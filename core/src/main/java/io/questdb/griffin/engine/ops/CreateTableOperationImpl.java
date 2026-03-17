@@ -72,8 +72,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
-    private final IntList parquetEncodingConfigs = new IntList();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
+    private final IntList parquetEncodingConfigs = new IntList();
     private final String selectText;
     private final String sqlText;
     private long batchO3MaxLag;
@@ -319,10 +319,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return batchSize;
     }
 
-    public void setBatchSize(long batchSize) {
-        this.batchSize = batchSize;
-    }
-
     @Override
     public int getColumnCount() {
         return columnNames.size();
@@ -527,6 +523,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return needRegister;
     }
 
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
+    }
+
     @Override
     public void setCopyDataProgressReporter(CopyDataProgressReporter reporter) {
         this.reporter = reporter;
@@ -679,6 +679,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean symbolIndexed;
             boolean isDedupKey;
             int indexBlockCapacity;
+            int parquetEncodingConfig;
             if (augMeta != null) {
                 final int fromType = metadata.getColumnType(i);
                 columnType = augMeta.getColumnType();
@@ -693,6 +694,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolIndexed = augMeta.isSymbolIndexFlag();
                 isDedupKey = augMeta.isDedupKeyFlag();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
+                parquetEncodingConfig = augMeta.getParquetEncodingConfig();
             } else {
                 columnType = metadata.getColumnType(i);
                 if (ColumnType.isNull(columnType)) {
@@ -705,6 +707,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolIndexed = false;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
+                parquetEncodingConfig = 0;
             }
 
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
@@ -723,7 +726,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     symbolCapacity,
                     symbolIndexed,
                     indexBlockCapacity,
-                    isDedupKey
+                    isDedupKey,
+                    parquetEncodingConfig
             );
         }
         if (hasDedup && !isTimestampDeduped) {
@@ -738,17 +742,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             throw SqlException.position(firstDedupColumnPos)
                     .put("deduplicate key list must include dedicated timestamp column");
         }
-    }
-
-    private void addColumnBits(
-            int columnType,
-            boolean symbolCacheFlag,
-            int symbolCapacity,
-            boolean indexFlag,
-            int indexBlockCapacity,
-            boolean dedupFlag
-    ) {
-        addColumnBits(columnType, symbolCacheFlag, symbolCapacity, indexFlag, indexBlockCapacity, dedupFlag, 0);
     }
 
     private void addColumnBits(
