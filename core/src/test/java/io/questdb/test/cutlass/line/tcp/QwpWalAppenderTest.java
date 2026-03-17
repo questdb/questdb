@@ -36,8 +36,6 @@ import static org.junit.Assert.*;
  */
 public class QwpWalAppenderTest {
 
-    // ==================== Type Mapping Tests ====================
-
     @Test
     public void testConstructor() {
         QwpWalAppender appender = new QwpWalAppender(true, 127);
@@ -119,8 +117,6 @@ public class QwpWalAppenderTest {
     public void testMapQuestDBTypeToQwpString() {
         assertEquals(QwpConstants.TYPE_STRING, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.STRING));
     }
-
-    // ==================== Reverse Mapping Tests ====================
 
     @Test
     public void testMapQuestDBTypeToQwpSymbol() {
@@ -219,8 +215,6 @@ public class QwpWalAppenderTest {
         assertEquals(ColumnType.UUID, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_UUID));
     }
 
-    // ==================== Round-trip Tests ====================
-
     @Test(expected = IllegalArgumentException.class)
     public void testMapQwpTypeToQuestDBUnknown() {
         QwpWalAppender.mapQwpTypeToQuestDB(0xFF);
@@ -230,8 +224,6 @@ public class QwpWalAppenderTest {
     public void testMapQwpTypeToQuestDBVarchar() {
         assertEquals(ColumnType.VARCHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_VARCHAR));
     }
-
-    // ==================== Constructor Test ====================
 
     @Test
     public void testRoundTripAllTypes() {

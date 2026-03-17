@@ -390,8 +390,6 @@ public class QwpMessageHeaderTest {
         Assert.assertEquals(1, h.getVersion());
     }
 
-    // ==================== Helper Methods ====================
-
     private void assertInvalidMagic(QwpMessageHeader h, byte[] header) {
         try {
             h.parse(header, 0, header.length);
