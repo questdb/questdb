@@ -28,6 +28,7 @@ import io.questdb.std.LongObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 /**
@@ -43,6 +44,7 @@ import io.questdb.std.str.Utf8s;
 public class QwpSchemaCache {
 
     private final LongObjHashMap<Entry> cache;
+    private final Utf8StringSink lookupSink = new Utf8StringSink();
     private long hits;
     private long misses;
 
@@ -68,10 +70,11 @@ public class QwpSchemaCache {
     }
 
     public QwpSchema get(String tableName, long schemaHash) {
-        Utf8String utf8Name = new Utf8String(tableName);
-        long key = combineKey(Utf8s.hashCode(utf8Name), schemaHash);
+        lookupSink.clear();
+        lookupSink.put(tableName);
+        long key = combineKey(Utf8s.hashCode(lookupSink), schemaHash);
         Entry entry = cache.get(key);
-        if (entry != null && Utf8s.equals(utf8Name, entry.tableName)) {
+        if (entry != null && Utf8s.equals(lookupSink, entry.tableName)) {
             hits++;
             return entry.schema;
         }
