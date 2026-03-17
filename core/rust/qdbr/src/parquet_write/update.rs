@@ -299,6 +299,13 @@ impl ParquetUpdater {
                 })
         } else {
             // Track the old row group's bytes that will become dead space.
+            if row_group_id < 0 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "replace_row_group: negative row_group_id: {}",
+                    row_group_id
+                ));
+            }
             let rg_idx = row_group_id as usize;
             if rg_idx < self.file_metadata.row_groups.len() {
                 let old_rg = &self.file_metadata.row_groups[rg_idx];

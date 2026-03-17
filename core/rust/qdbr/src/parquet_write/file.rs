@@ -407,10 +407,12 @@ pub fn create_row_group_from_partitions(
     options: WriteOptions,
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
-    // Both JNI call sites guard against empty partitions before reaching here:
-    // write_pending_row_group() iterates pending_partitions to build the slice,
-    // and finish() checks `!encoder.pending_partitions.is_empty()` first.
-    debug_assert!(!partitions.is_empty(), "partitions cannot be empty");
+    if partitions.is_empty() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "create_row_group_from_partitions: partitions cannot be empty"
+        ));
+    }
     let num_columns = partitions[0].columns.len();
     let num_partitions = partitions.len();
 

@@ -350,22 +350,27 @@ impl Column {
         designated_timestamp: bool,
         designated_timestamp_ascending: bool,
     ) -> ParquetResult<Self> {
-        // The Java JNI caller packs pointer/size pairs from column memory mappings.
-        // A null pointer with non-zero size would indicate a bug in the Java packing
-        // logic, which is not possible under normal operation. The code below (lines
-        // 366-380) safely handles null pointers by returning empty slices.
-        debug_assert!(
-            !primary_data_ptr.is_null() || primary_data_size == 0,
-            "primary_data_ptr inconsistent with primary_data_size"
-        );
-        debug_assert!(
-            !secondary_data_ptr.is_null() || secondary_data_size == 0,
-            "secondary_data_ptr inconsistent with secondary_data_size"
-        );
-        debug_assert!(
-            !symbol_offsets_ptr.is_null() || symbol_offsets_count == 0,
-            "symbol_offsets_ptr inconsistent with symbol_offsets_count"
-        );
+        if primary_data_ptr.is_null() && primary_data_size != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "from_raw_data: null primary_data_ptr with non-zero size {}",
+                primary_data_size
+            ));
+        }
+        if secondary_data_ptr.is_null() && secondary_data_size != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "from_raw_data: null secondary_data_ptr with non-zero size {}",
+                secondary_data_size
+            ));
+        }
+        if symbol_offsets_ptr.is_null() && symbol_offsets_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "from_raw_data: null symbol_offsets_ptr with non-zero count {}",
+                symbol_offsets_count
+            ));
+        }
 
         let required = column_type < 0;
         let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;

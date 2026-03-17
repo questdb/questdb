@@ -188,8 +188,20 @@ pub fn symbol_to_data_page_only(
     // across O3 merges.  When there are no nulls (required=true), a
     // single RLE run of 1s is ~3 bytes regardless of row count.
     let definition_levels_byte_length = if required {
-        debug_assert_eq!(column_top, 0, "required column should not have column_top");
-        debug_assert_eq!(data_null_count, 0, "required column should not have nulls");
+        if column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_data_page_only: required column has column_top {}",
+                column_top
+            ));
+        }
+        if data_null_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_data_page_only: required column has {} nulls",
+                data_null_count
+            ));
+        }
         encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
         data_buffer.len()
     } else {
@@ -387,8 +399,20 @@ pub fn symbol_to_pages(
     // across O3 merges.  When there are no nulls (required=true), a
     // single RLE run of 1s is ~3 bytes regardless of row count.
     let definition_levels_byte_length = if required {
-        debug_assert_eq!(column_top, 0, "required column should not have column_top");
-        debug_assert_eq!(data_null_count, 0, "required column should not have nulls");
+        if column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_pages: required column has column_top {}",
+                column_top
+            ));
+        }
+        if data_null_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_pages: required column has {} nulls",
+                data_null_count
+            ));
+        }
         encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
         data_buffer.len()
     } else {
