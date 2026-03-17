@@ -373,9 +373,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
             return;
         }
         if (format == COPY_FORMAT_PARQUET && compressionCodec >= 0) {
-            if (compressionLevel != -1) {
-                ParquetCompression.validateCompressionLevel(compressionCodec, compressionLevel, compressionLevelPos);
-            }
+            ParquetCompression.validateCompressionLevel(compressionCodec, compressionLevel, compressionLevelPos);
         }
     }
 
