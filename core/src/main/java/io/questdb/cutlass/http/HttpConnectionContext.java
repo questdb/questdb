@@ -225,9 +225,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         Misc.free(multipartContentParser);
         Misc.free(multipartContentHeaderParser);
         Misc.free(headerParser);
-        if (localValueMap != null) {
-            this.localValueMap.close();
-        }
+        this.localValueMap.close();
         this.httpCircuitBreaker = Misc.free(httpCircuitBreaker);
         this.httpSqlExecutionContext = Misc.free(httpSqlExecutionContext);
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
@@ -236,9 +234,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        if (sessionIdSink != null) {
-            this.sessionIdSink.clear();
-        }
+        this.sessionIdSink.clear();
         if (authenticator != null) {
             this.authenticator.close();
         }
