@@ -903,7 +903,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (forceRenamePartitionDir && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
-                    attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
+                    // Skip native column validation for parquet-only partitions
+                    if (!isParquet) {
+                        attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
+                    }
                 }
 
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
@@ -930,7 +933,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
                 // of the attached partition
                 this.attachPartitionTimestamp = timestamp;
-                ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                if (isParquet) {
+                    // Parquet partitions have no native column files to iterate.
+                    // Set column_top=0 for all columns so the reader knows all
+                    // rows have data.
+                    for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                        if (metadata.getColumnType(colIdx) > 0) {
+                            columnVersionWriter.upsert(timestamp, colIdx, getTxn(), 0);
+                        }
+                    }
+                } else {
+                    ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                }
 
                 checkPassed = true;
             } else {
@@ -971,7 +985,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("partition attached [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
 
-            if (appendPartitionAttached) {
+            if (appendPartitionAttached && !isParquet) {
                 LOG.info().$("switch partition after partition attach [tableName=").$(tableToken)
                         .$(", partition=").$ts(timestampDriver, timestamp).I$();
                 freeColumns(true);
