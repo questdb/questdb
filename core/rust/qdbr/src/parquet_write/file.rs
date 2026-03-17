@@ -442,10 +442,7 @@ pub fn create_row_group_from_partitions(
         let first_partition_column = partitions[0].columns[col_idx];
 
         let options = if first_partition_column.designated_timestamp {
-            &WriteOptions {
-                write_statistics: true,
-                ..options.clone()
-            }
+            &WriteOptions { write_statistics: true, ..options.clone() }
         } else {
             options
         };
