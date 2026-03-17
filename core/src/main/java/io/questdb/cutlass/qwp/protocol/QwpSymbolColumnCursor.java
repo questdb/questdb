@@ -225,6 +225,12 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "symbol column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             offset += bitmapSize;
         } else {
@@ -238,6 +244,12 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             // Standard mode: parse per-column dictionary
             // Parse dictionary size
             QwpVarint.decode(dataAddress + offset, limit, decodeResult);
+            if (decodeResult.value > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "dictionary size exceeds data length: " + decodeResult.value
+                );
+            }
             this.dictionarySize = (int) decodeResult.value;
             offset += decodeResult.bytesRead;
 
@@ -245,15 +257,15 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             ensureDictionaryCapacity(dictionarySize);
             for (int i = 0; i < dictionarySize; i++) {
                 QwpVarint.decode(dataAddress + offset, limit, decodeResult);
-                int stringLen = (int) decodeResult.value;
                 offset += decodeResult.bytesRead;
 
-                if (stringLen < 0 || stringLen > dataLength - offset) {
+                if (decodeResult.value > dataLength - offset) {
                     throw QwpParseException.create(
                             QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                            "dictionary string length out of bounds: " + stringLen
+                            "dictionary string length out of bounds: " + decodeResult.value
                     );
                 }
+                int stringLen = (int) decodeResult.value;
 
                 DirectUtf8String entry = dictionaryUtf8.getQuick(i);
                 long strLo = dataAddress + offset;
