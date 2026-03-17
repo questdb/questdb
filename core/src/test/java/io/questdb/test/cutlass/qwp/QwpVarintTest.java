@@ -134,24 +134,6 @@ public class QwpVarintTest {
     }
 
     @Test
-    public void testDecodeValid10thByte() throws QwpParseException {
-        // 10th byte with data nibble 0x01 is valid — encodes values with bit 63 set.
-        // This is the encoding of Long.MIN_VALUE (0x8000000000000000 unsigned).
-        byte[] buf = new byte[]{
-                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
-                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01
-        };
-        Assert.assertEquals(Long.MIN_VALUE, QwpVarint.decode(buf, 0, 10));
-
-        // 10th byte with data nibble 0x00 is valid (redundant encoding of 0).
-        byte[] buf2 = new byte[]{
-                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
-                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x00
-        };
-        Assert.assertEquals(0, QwpVarint.decode(buf2, 0, 10));
-    }
-
-    @Test
     public void testDecodeResult() throws QwpParseException {
         byte[] buf = new byte[10];
         int len = QwpVarint.encode(buf, 0, 300);
@@ -195,6 +177,24 @@ public class QwpVarintTest {
         int len2 = QwpVarint.encode(buf, 0, 50000);
         QwpVarint.decode(buf, 0, len2, result);
         Assert.assertEquals(50000, result.value);
+    }
+
+    @Test
+    public void testDecodeValid10thByte() throws QwpParseException {
+        // 10th byte with data nibble 0x01 is valid — encodes values with bit 63 set.
+        // This is the encoding of Long.MIN_VALUE (0x8000000000000000 unsigned).
+        byte[] buf = new byte[]{
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01
+        };
+        Assert.assertEquals(Long.MIN_VALUE, QwpVarint.decode(buf, 0, 10));
+
+        // 10th byte with data nibble 0x00 is valid (redundant encoding of 0).
+        byte[] buf2 = new byte[]{
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
+                (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x00
+        };
+        Assert.assertEquals(0, QwpVarint.decode(buf2, 0, 10));
     }
 
     @Test

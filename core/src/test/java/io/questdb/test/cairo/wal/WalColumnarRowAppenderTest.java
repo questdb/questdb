@@ -3367,57 +3367,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutFixedToStringColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            TableToken tableToken = createTable(new TableModel(configuration, "test_long_str", PartitionBy.HOUR)
-                    .col("value", ColumnType.STRING)
-                    .timestamp("ts")
-                    .wal()
-            );
-
-            int rowCount = 3;
-            long[] values = {42, -100, 0};
-
-            int dataLength = rowCount * 8;
-            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < rowCount; i++) {
-                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
-                }
-
-                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_LONG, false);
-
-                long[] timestamps = makeTimestamps(rowCount);
-
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
-
-                    appender.beginColumnarWrite(rowCount);
-                    appender.putFixedToStringColumn(0, cursor, rowCount);
-                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
-                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
-
-                    walWriter.commit();
-                }
-
-                drainWalQueue();
-                assertSql(
-                        """
-                                value
-                                42
-                                -100
-                                0
-                                """,
-                        "SELECT value FROM test_long_str ORDER BY ts"
-                );
-            } finally {
-                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
     public void testPutFixedToSmallDecimalColumn_Decimal16_NoNulls() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL16: precision 3-4 (2 bytes storage), scale 1
@@ -3628,6 +3577,57 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFixedToStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long_str", PartitionBy.HOUR)
+                    .col("value", ColumnType.STRING)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            long[] values = {42, -100, 0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putLong(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_LONG, false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedToStringColumn(0, cursor, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                42
+                                -100
+                                0
+                                """,
+                        "SELECT value FROM test_long_str ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testPutFixedToSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_long_sym", PartitionBy.HOUR)
@@ -3728,164 +3728,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutFloatToDecimal8Column_NoNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            // precision 2 -> DECIMAL8
-            int columnType = ColumnType.getDecimalType(2, 1);
-            TableToken tableToken = createTable(new TableModel(configuration, "test_float_dec8", PartitionBy.HOUR)
-                    .col("value", columnType)
-                    .timestamp("ts")
-                    .wal()
-            );
-
-            int rowCount = 5;
-            // Values that fit in DECIMAL8 with precision=2, scale=1: range -9.9 .. 9.9
-            double[] values = {1.5, 2.5, 0.0, -3.5, 9.0};
-
-            int dataLength = rowCount * 8;
-            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < rowCount; i++) {
-                    Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
-                }
-
-                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
-                        false);
-
-                long[] timestamps = makeTimestamps(rowCount);
-
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
-
-                    appender.beginColumnarWrite(rowCount);
-                    appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
-                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
-                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
-
-                    walWriter.commit();
-                }
-
-                drainWalQueue();
-                assertSql(
-                        """
-                                value
-                                1.5
-                                2.5
-                                0.0
-                                -3.5
-                                9.0
-                                """,
-                        "SELECT value FROM test_float_dec8 ORDER BY ts"
-                );
-            } finally {
-                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testPutFloatToDecimal8Column_NonFinite() throws Exception {
+    public void testPutFloatToDecimal128Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
-                ColumnType.getDecimalType(2, 1), "test_float_dec8_nonf",
-                1.5, 2.5, "value\n\n1.5\n\n2.5\n"
+                ColumnType.getDecimalType(38, 2), "test_float_dec128_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
         );
-    }
-
-    @Test
-    public void testPutFloatToDecimal8Column_PrecisionError() throws Exception {
-        assertMemoryLeak(() -> {
-            // precision=2, scale=1 -> max value 9.9; 12.5 exceeds precision
-            int columnType = ColumnType.getDecimalType(2, 1);
-            TableToken tableToken = createTable(new TableModel(configuration, "test_float_dec8_err", PartitionBy.HOUR)
-                    .col("value", columnType)
-                    .timestamp("ts")
-                    .wal()
-            );
-
-            int rowCount = 1;
-            int dataLength = rowCount * 8;
-            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            try {
-                Unsafe.getUnsafe().putDouble(dataAddress, 12.5);
-
-                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
-                        false);
-
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
-
-                    appender.beginColumnarWrite(rowCount);
-                    try {
-                        appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
-                        fail("Expected CairoException");
-                    } catch (CairoException e) {
-                        assertTrue(e.getMessage().contains("cannot be converted to"));
-                    }
-                    appender.cancelColumnarWrite();
-                }
-            } finally {
-                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testPutFloatToDecimal8Column_WithNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            // precision 2 -> DECIMAL8
-            int columnType = ColumnType.getDecimalType(2, 1);
-            TableToken tableToken = createTable(new TableModel(configuration, "test_float_dec8_nulls", PartitionBy.HOUR)
-                    .col("value", columnType)
-                    .timestamp("ts")
-                    .wal()
-            );
-
-            int rowCount = 4;
-            // Pattern: [NULL, 1.5, NULL, 2.5]
-            double[] nonNullValues = {1.5, 2.5};
-            int valueCount = nonNullValues.length;
-
-            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            int dataLength = bitmapSize + valueCount * 8;
-            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            try {
-                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
-                QwpNullBitmap.setNull(dataAddress, 0);
-                QwpNullBitmap.setNull(dataAddress, 2);
-
-                long valuesStart = dataAddress + bitmapSize;
-                for (int i = 0; i < valueCount; i++) {
-                    Unsafe.getUnsafe().putDouble(valuesStart + (long) i * 8, nonNullValues[i]);
-                }
-
-                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
-                        true);
-
-                long[] timestamps = makeTimestamps(rowCount);
-
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
-
-                    appender.beginColumnarWrite(rowCount);
-                    appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
-                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
-                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
-
-                    walWriter.commit();
-                }
-
-                drainWalQueue();
-                assertSql(
-                        "value\n\n1.5\n\n2.5\n",
-                        "SELECT value FROM test_float_dec8_nulls ORDER BY ts"
-                );
-            } finally {
-                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
     }
 
     @Test
@@ -4050,6 +3897,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFloatToDecimal256Column_NonFinite() throws Exception {
+        assertPutFloatToDecimalNonFinite(
+                ColumnType.getDecimalType(76, 2), "test_float_dec256_nonf",
+                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+        );
+    }
+
+    @Test
     public void testPutFloatToDecimal32Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(9, 2), "test_float_dec32_nonf",
@@ -4058,19 +3913,164 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutFloatToDecimal128Column_NonFinite() throws Exception {
+    public void testPutFloatToDecimal8Column_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // precision 2 -> DECIMAL8
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_float_dec8", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            // Values that fit in DECIMAL8 with precision=2, scale=1: range -9.9 .. 9.9
+            double[] values = {1.5, 2.5, 0.0, -3.5, 9.0};
+
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
+                        false);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        """
+                                value
+                                1.5
+                                2.5
+                                0.0
+                                -3.5
+                                9.0
+                                """,
+                        "SELECT value FROM test_float_dec8 ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFloatToDecimal8Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
-                ColumnType.getDecimalType(38, 2), "test_float_dec128_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+                ColumnType.getDecimalType(2, 1), "test_float_dec8_nonf",
+                1.5, 2.5, "value\n\n1.5\n\n2.5\n"
         );
     }
 
     @Test
-    public void testPutFloatToDecimal256Column_NonFinite() throws Exception {
-        assertPutFloatToDecimalNonFinite(
-                ColumnType.getDecimalType(76, 2), "test_float_dec256_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
-        );
+    public void testPutFloatToDecimal8Column_PrecisionError() throws Exception {
+        assertMemoryLeak(() -> {
+            // precision=2, scale=1 -> max value 9.9; 12.5 exceeds precision
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_float_dec8_err", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int dataLength = rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putDouble(dataAddress, 12.5);
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
+                        false);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("cannot be converted to"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFloatToDecimal8Column_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // precision 2 -> DECIMAL8
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_float_dec8_nulls", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            // Pattern: [NULL, 1.5, NULL, 2.5]
+            double[] nonNullValues = {1.5, 2.5};
+            int valueCount = nonNullValues.length;
+
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            int dataLength = bitmapSize + valueCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
+                QwpNullBitmap.setNull(dataAddress, 0);
+                QwpNullBitmap.setNull(dataAddress, 2);
+
+                long valuesStart = dataAddress + bitmapSize;
+                for (int i = 0; i < valueCount; i++) {
+                    Unsafe.getUnsafe().putDouble(valuesStart + (long) i * 8, nonNullValues[i]);
+                }
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
+                        true);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFloatToDecimalColumn(0, cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                drainWalQueue();
+                assertSql(
+                        "value\n\n1.5\n\n2.5\n",
+                        "SELECT value FROM test_float_dec8_nulls ORDER BY ts"
+                );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
@@ -5267,37 +5267,31 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutStringToDecimal8Column_WithNulls() throws Exception {
+    public void testPutStringToDecimal128Column_ParseError() throws Exception {
         assertMemoryLeak(() -> {
-            int columnType = ColumnType.getDecimalType(2, 1);
-            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec8_nulls", PartitionBy.HOUR)
+            int columnType = ColumnType.getDecimalType(38, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec128_err", PartitionBy.HOUR)
                     .col("value", columnType)
                     .timestamp("ts")
                     .wal()
             );
 
-            int rowCount = 4;
-            String[] values = {"1.5", null, "2.5", null};
-
-            long[] timestamps = makeTimestamps(rowCount);
+            int rowCount = 1;
+            String[] values = {"not_a_number"};
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
-                putTimestampColumn(appender, walWriter, timestamps, rowCount);
-                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
-
-                walWriter.commit();
+                try {
+                    appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
+                    fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot parse decimal from string"));
+                }
+                appender.cancelColumnarWrite();
             }
-
-            drainWalQueue();
-            assertSql(
-                    "value\n1.5\n\n2.5\n\n",
-                    "SELECT value FROM test_str_dec8_nulls ORDER BY ts"
-            );
         });
     }
 
@@ -5337,31 +5331,37 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPutStringToDecimal128Column_ParseError() throws Exception {
+    public void testPutStringToDecimal8Column_WithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            int columnType = ColumnType.getDecimalType(38, 2);
-            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec128_err", PartitionBy.HOUR)
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_str_dec8_nulls", PartitionBy.HOUR)
                     .col("value", columnType)
                     .timestamp("ts")
                     .wal()
             );
 
-            int rowCount = 1;
-            String[] values = {"not_a_number"};
+            int rowCount = 4;
+            String[] values = {"1.5", null, "2.5", null};
+
+            long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                try {
-                    appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
-                    fail("Expected CairoException");
-                } catch (CairoException e) {
-                    assertTrue(e.getMessage().contains("cannot parse decimal from string"));
-                }
-                appender.cancelColumnarWrite();
+                appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
             }
+
+            drainWalQueue();
+            assertSql(
+                    "value\n1.5\n\n2.5\n\n",
+                    "SELECT value FROM test_str_dec8_nulls ORDER BY ts"
+            );
         });
     }
 
@@ -6978,6 +6978,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         });
     }
 
+    private static long[] makeTimestamps(int rowCount) {
+        long baseTimestamp = 1_000_000_000L;
+        long[] timestamps = new long[rowCount];
+        for (int i = 0; i < rowCount; i++) {
+            timestamps[i] = baseTimestamp + i * 1_000_000L;
+        }
+        return timestamps;
+    }
+
     private void assertPutFloatToDecimalNonFinite(
             int columnType,
             String tableName,
@@ -7025,15 +7034,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }
         });
-    }
-
-    private static long[] makeTimestamps(int rowCount) {
-        long baseTimestamp = 1_000_000_000L;
-        long[] timestamps = new long[rowCount];
-        for (int i = 0; i < rowCount; i++) {
-            timestamps[i] = baseTimestamp + i * 1_000_000L;
-        }
-        return timestamps;
     }
 
     /**

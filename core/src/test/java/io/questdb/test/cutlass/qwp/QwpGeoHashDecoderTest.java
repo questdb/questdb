@@ -658,6 +658,27 @@ public class QwpGeoHashDecoderTest {
         });
     }
 
+    private static int findGeoHashColumnIndex(QwpTableBlockCursor table) {
+        for (int c = 0; c < table.getColumnCount(); c++) {
+            if (table.getColumnDef(c).getTypeCode() == TYPE_GEOHASH) {
+                return c;
+            }
+        }
+        return -1;
+    }
+
+    private static int getStorageSize(int precision) {
+        if (precision <= ColumnType.GEOBYTE_MAX_BITS) {
+            return 1;
+        } else if (precision <= ColumnType.GEOSHORT_MAX_BITS) {
+            return 2;
+        } else if (precision <= ColumnType.GEOINT_MAX_BITS) {
+            return 4;
+        } else {
+            return 8;
+        }
+    }
+
     private void assertEncoderRoundTrip(long[] values, int precision) throws QwpParseException {
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             QwpTableBuffer buffer = new QwpTableBuffer("test_geohash");
@@ -750,27 +771,6 @@ public class QwpGeoHashDecoderTest {
                 }
                 Assert.assertFalse(table.hasNextRow());
             }
-        }
-    }
-
-    private static int findGeoHashColumnIndex(QwpTableBlockCursor table) {
-        for (int c = 0; c < table.getColumnCount(); c++) {
-            if (table.getColumnDef(c).getTypeCode() == TYPE_GEOHASH) {
-                return c;
-            }
-        }
-        return -1;
-    }
-
-    private static int getStorageSize(int precision) {
-        if (precision <= ColumnType.GEOBYTE_MAX_BITS) {
-            return 1;
-        } else if (precision <= ColumnType.GEOSHORT_MAX_BITS) {
-            return 2;
-        } else if (precision <= ColumnType.GEOINT_MAX_BITS) {
-            return 4;
-        } else {
-            return 8;
         }
     }
 }

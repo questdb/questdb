@@ -48,6 +48,34 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class QwpSymbolDecoderTest {
 
     @Test
+    public void testDecodeEmptySymbolColumn() throws Exception {
+        // The cursor always parses the dictionary, even for 0 rows.
+        // Allocate a buffer with an empty dictionary (varint 0) for 0 rows.
+        int allocSize = QwpVarint.encodedLength(0);
+        long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpVarint.encode(address, 0); // empty dictionary
+            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
+            int consumed = cursor.of(address, allocSize, 0, false);
+            Assert.assertEquals(allocSize, consumed);
+        } finally {
+            Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeMultipleSymbols() throws Exception {
+        String[] values = {"apple", "banana", "cherry", "date"};
+        assertRoundTrip(values, null);
+    }
+
+    @Test
+    public void testDecodeSingleSymbol() throws Exception {
+        String[] values = {"symbol_a"};
+        assertRoundTrip(values, null);
+    }
+
+    @Test
     public void testDeltaSymbolDictExcessiveStartId() throws Exception {
         // A malicious client sends deltaStartId = 100_001, deltaCount = 0.
         // The while loop in parseDeltaSymbolDict() grows connectionSymbolDict
@@ -131,34 +159,6 @@ public class QwpSymbolDecoderTest {
                 Unsafe.free(address, totalSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
-    }
-
-    @Test
-    public void testDecodeEmptySymbolColumn() throws Exception {
-        // The cursor always parses the dictionary, even for 0 rows.
-        // Allocate a buffer with an empty dictionary (varint 0) for 0 rows.
-        int allocSize = QwpVarint.encodedLength(0);
-        long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpVarint.encode(address, 0); // empty dictionary
-            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            int consumed = cursor.of(address, allocSize, 0, false);
-            Assert.assertEquals(allocSize, consumed);
-        } finally {
-            Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testDecodeMultipleSymbols() throws Exception {
-        String[] values = {"apple", "banana", "cherry", "date"};
-        assertRoundTrip(values, null);
-    }
-
-    @Test
-    public void testDecodeSingleSymbol() throws Exception {
-        String[] values = {"symbol_a"};
-        assertRoundTrip(values, null);
     }
 
     @Test
@@ -383,6 +383,15 @@ public class QwpSymbolDecoderTest {
         assertRoundTrip(values, nulls);
     }
 
+    private static int findSymbolColumnIndex(QwpTableBlockCursor table) {
+        for (int c = 0; c < table.getColumnCount(); c++) {
+            if (table.getColumnDef(c).getTypeCode() == TYPE_SYMBOL) {
+                return c;
+            }
+        }
+        return -1;
+    }
+
     private void assertRoundTrip(String[] values, boolean[] nulls) throws Exception {
         assertMemoryLeak(() -> {
             boolean nullable = nulls != null;
@@ -427,14 +436,5 @@ public class QwpSymbolDecoderTest {
                 }
             }
         });
-    }
-
-    private static int findSymbolColumnIndex(QwpTableBlockCursor table) {
-        for (int c = 0; c < table.getColumnCount(); c++) {
-            if (table.getColumnDef(c).getTypeCode() == TYPE_SYMBOL) {
-                return c;
-            }
-        }
-        return -1;
     }
 }

@@ -25,11 +25,12 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 /**
  * Tests for QwpWalAppender.

@@ -36,6 +36,51 @@ import static org.junit.Assert.*;
 public class ConnectionSymbolCacheTest {
 
     @Test
+    public void testClearPreservesStructureButClearsData() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        // Get references before clear
+        ClientSymbolCache cache1 = connCache.getCache(1L, 0);
+        cache1.put(0, 10);
+
+        // Clear
+        connCache.clear();
+
+        // Get a new cache - should be different instance
+        ClientSymbolCache cache2 = connCache.getCache(1L, 0);
+        assertNotSame(cache1, cache2);
+
+        // New cache should be empty
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache2.get(0));
+    }
+
+    @Test
+    public void testClear_removesAllTables() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        // Set up multiple tables
+        ClientSymbolCache table1Cache = connCache.getCache(1L, 0);
+        ClientSymbolCache table2Cache = connCache.getCache(2L, 0);
+        ClientSymbolCache table3Cache = connCache.getCache(3L, 0);
+
+        table1Cache.put(0, 10);
+        table2Cache.put(0, 20);
+        table3Cache.put(0, 30);
+
+        assertEquals(3, connCache.getTableCount());
+
+        // Clear everything
+        connCache.clear();
+
+        assertEquals(0, connCache.getTableCount());
+
+        // Getting cache again should create new instances
+        ClientSymbolCache newCache1 = connCache.getCache(1L, 0);
+        assertNotSame(table1Cache, newCache1);
+        assertEquals(ClientSymbolCache.NO_ENTRY, newCache1.get(0));
+    }
+
+    @Test
     public void testGetCache_createsCacheOnFirstAccess() {
         ConnectionSymbolCache connCache = new ConnectionSymbolCache();
 
@@ -48,17 +93,6 @@ public class ConnectionSymbolCacheTest {
         assertNotNull(cache);
         assertEquals(1, connCache.getTableCount());
         assertEquals(1, connCache.getColumnCacheCount(1L));
-    }
-
-    @Test
-    public void testGetCache_returnsSameCacheOnSubsequentAccess() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        ClientSymbolCache cache1 = connCache.getCache(1L, 0);
-        ClientSymbolCache cache2 = connCache.getCache(1L, 0);
-
-        // Should return the same cache instance
-        assertSame(cache1, cache2);
     }
 
     @Test
@@ -102,6 +136,37 @@ public class ConnectionSymbolCacheTest {
     }
 
     @Test
+    public void testGetCache_returnsSameCacheOnSubsequentAccess() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        ClientSymbolCache cache1 = connCache.getCache(1L, 0);
+        ClientSymbolCache cache2 = connCache.getCache(1L, 0);
+
+        // Should return the same cache instance
+        assertSame(cache1, cache2);
+    }
+
+    @Test
+    public void testGetColumnCacheCount_nonExistentTable() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        assertEquals(0, connCache.getColumnCacheCount(999L));
+    }
+
+    @Test
+    public void testGetColumnCacheCount_sparseColumns() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        // Create caches for non-contiguous column indices
+        connCache.getCache(1L, 0);
+        connCache.getCache(1L, 5);
+        connCache.getCache(1L, 10);
+
+        // Should count only the actually created caches
+        assertEquals(3, connCache.getColumnCacheCount(1L));
+    }
+
+    @Test
     public void testInvalidateTable_clearsOnlyThatTable() {
         ConnectionSymbolCache connCache = new ConnectionSymbolCache();
 
@@ -138,96 +203,6 @@ public class ConnectionSymbolCacheTest {
 
         // Original cache should be unaffected
         assertEquals(10, cache.get(0));
-    }
-
-    @Test
-    public void testClear_removesAllTables() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        // Set up multiple tables
-        ClientSymbolCache table1Cache = connCache.getCache(1L, 0);
-        ClientSymbolCache table2Cache = connCache.getCache(2L, 0);
-        ClientSymbolCache table3Cache = connCache.getCache(3L, 0);
-
-        table1Cache.put(0, 10);
-        table2Cache.put(0, 20);
-        table3Cache.put(0, 30);
-
-        assertEquals(3, connCache.getTableCount());
-
-        // Clear everything
-        connCache.clear();
-
-        assertEquals(0, connCache.getTableCount());
-
-        // Getting cache again should create new instances
-        ClientSymbolCache newCache1 = connCache.getCache(1L, 0);
-        assertNotSame(table1Cache, newCache1);
-        assertEquals(ClientSymbolCache.NO_ENTRY, newCache1.get(0));
-    }
-
-    @Test
-    public void testStatistics_recordHitAndMiss() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        assertEquals(0, connCache.getCacheHits());
-        assertEquals(0, connCache.getCacheMisses());
-
-        connCache.recordHit();
-        connCache.recordHit();
-        connCache.recordMiss();
-
-        assertEquals(2, connCache.getCacheHits());
-        assertEquals(1, connCache.getCacheMisses());
-    }
-
-    @Test
-    public void testStatistics_hitRatePercent() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        // No lookups - rate should be 0
-        assertEquals(0.0, connCache.getHitRatePercent(), 0.001);
-
-        // 3 hits, 1 miss = 75%
-        connCache.recordHit();
-        connCache.recordHit();
-        connCache.recordHit();
-        connCache.recordMiss();
-
-        assertEquals(75.0, connCache.getHitRatePercent(), 0.001);
-    }
-
-    @Test
-    public void testStatistics_clearedOnClear() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        connCache.recordHit();
-        connCache.recordMiss();
-
-        connCache.clear();
-
-        assertEquals(0, connCache.getCacheHits());
-        assertEquals(0, connCache.getCacheMisses());
-    }
-
-    @Test
-    public void testGetColumnCacheCount_sparseColumns() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        // Create caches for non-contiguous column indices
-        connCache.getCache(1L, 0);
-        connCache.getCache(1L, 5);
-        connCache.getCache(1L, 10);
-
-        // Should count only the actually created caches
-        assertEquals(3, connCache.getColumnCacheCount(1L));
-    }
-
-    @Test
-    public void testGetColumnCacheCount_nonExistentTable() {
-        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
-
-        assertEquals(0, connCache.getColumnCacheCount(999L));
     }
 
     @Test
@@ -268,21 +243,46 @@ public class ConnectionSymbolCacheTest {
     }
 
     @Test
-    public void testClearPreservesStructureButClearsData() {
+    public void testStatistics_clearedOnClear() {
         ConnectionSymbolCache connCache = new ConnectionSymbolCache();
 
-        // Get references before clear
-        ClientSymbolCache cache1 = connCache.getCache(1L, 0);
-        cache1.put(0, 10);
+        connCache.recordHit();
+        connCache.recordMiss();
 
-        // Clear
         connCache.clear();
 
-        // Get a new cache - should be different instance
-        ClientSymbolCache cache2 = connCache.getCache(1L, 0);
-        assertNotSame(cache1, cache2);
+        assertEquals(0, connCache.getCacheHits());
+        assertEquals(0, connCache.getCacheMisses());
+    }
 
-        // New cache should be empty
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache2.get(0));
+    @Test
+    public void testStatistics_hitRatePercent() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        // No lookups - rate should be 0
+        assertEquals(0.0, connCache.getHitRatePercent(), 0.001);
+
+        // 3 hits, 1 miss = 75%
+        connCache.recordHit();
+        connCache.recordHit();
+        connCache.recordHit();
+        connCache.recordMiss();
+
+        assertEquals(75.0, connCache.getHitRatePercent(), 0.001);
+    }
+
+    @Test
+    public void testStatistics_recordHitAndMiss() {
+        ConnectionSymbolCache connCache = new ConnectionSymbolCache();
+
+        assertEquals(0, connCache.getCacheHits());
+        assertEquals(0, connCache.getCacheMisses());
+
+        connCache.recordHit();
+        connCache.recordHit();
+        connCache.recordMiss();
+
+        assertEquals(2, connCache.getCacheHits());
+        assertEquals(1, connCache.getCacheMisses());
     }
 }

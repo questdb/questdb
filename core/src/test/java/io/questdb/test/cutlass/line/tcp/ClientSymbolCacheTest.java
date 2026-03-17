@@ -35,110 +35,6 @@ import static org.junit.Assert.*;
 public class ClientSymbolCacheTest {
 
     @Test
-    public void testGetMiss_returnsNoEntry() {
-        ClientSymbolCache cache = new ClientSymbolCache();
-
-        // Empty cache should return NO_ENTRY for any key
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(0));
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(1));
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(100));
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(Integer.MAX_VALUE));
-    }
-
-    @Test
-    public void testPutAndGet_returnsValue() {
-        ClientSymbolCache cache = new ClientSymbolCache();
-
-        // Put some entries
-        cache.put(0, 10);
-        cache.put(1, 20);
-        cache.put(5, 50);
-
-        // Verify retrieval
-        assertEquals(10, cache.get(0));
-        assertEquals(20, cache.get(1));
-        assertEquals(50, cache.get(5));
-
-        // Other keys still return NO_ENTRY
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(2));
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(3));
-    }
-
-    @Test
-    public void testPutOverwrite_updatesValue() {
-        ClientSymbolCache cache = new ClientSymbolCache();
-
-        cache.put(0, 10);
-        assertEquals(10, cache.get(0));
-
-        // Overwrite with new value
-        cache.put(0, 100);
-        assertEquals(100, cache.get(0));
-
-        // Overwrite again
-        cache.put(0, 999);
-        assertEquals(999, cache.get(0));
-    }
-
-    @Test
-    public void testClear_removesAllEntries() {
-        ClientSymbolCache cache = new ClientSymbolCache();
-
-        // Add several entries
-        cache.put(0, 10);
-        cache.put(1, 20);
-        cache.put(2, 30);
-
-        assertEquals(3, cache.size());
-        assertEquals(10, cache.get(0));
-
-        // Clear the cache
-        cache.clear();
-
-        assertEquals(0, cache.size());
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(0));
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(1));
-        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(2));
-    }
-
-    @Test
-    public void testSize_tracksEntryCount() {
-        ClientSymbolCache cache = new ClientSymbolCache();
-
-        assertEquals(0, cache.size());
-
-        cache.put(0, 10);
-        assertEquals(1, cache.size());
-
-        cache.put(1, 20);
-        assertEquals(2, cache.size());
-
-        cache.put(2, 30);
-        assertEquals(3, cache.size());
-
-        // Overwrite doesn't change size
-        cache.put(1, 200);
-        assertEquals(3, cache.size());
-    }
-
-    @Test
-    public void testHighVolume_manyEntries() {
-        ClientSymbolCache cache = new ClientSymbolCache(16); // Small initial capacity
-
-        // Add many entries to trigger resizing
-        for (int i = 0; i < 10000; i++) {
-            cache.put(i, i * 2);
-        }
-
-        assertEquals(10000, cache.size());
-
-        // Verify all entries are retrievable
-        for (int i = 0; i < 10000; i++) {
-            assertEquals(i * 2, cache.get(i));
-        }
-    }
-
-    @Test
     public void testCheckAndInvalidate_firstCall_recordsWatermark() {
         ClientSymbolCache cache = new ClientSymbolCache();
 
@@ -208,6 +104,27 @@ public class ClientSymbolCacheTest {
     }
 
     @Test
+    public void testClear_removesAllEntries() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        // Add several entries
+        cache.put(0, 10);
+        cache.put(1, 20);
+        cache.put(2, 30);
+
+        assertEquals(3, cache.size());
+        assertEquals(10, cache.get(0));
+
+        // Clear the cache
+        cache.clear();
+
+        assertEquals(0, cache.size());
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(0));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(1));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(2));
+    }
+
+    @Test
     public void testClear_resetsWatermark() {
         ClientSymbolCache cache = new ClientSymbolCache();
 
@@ -218,6 +135,34 @@ public class ClientSymbolCacheTest {
 
         // Watermark should be reset to -1
         assertEquals(-1, cache.getLastKnownWatermark());
+    }
+
+    @Test
+    public void testGetMiss_returnsNoEntry() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        // Empty cache should return NO_ENTRY for any key
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(0));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(1));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(100));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(Integer.MAX_VALUE));
+    }
+
+    @Test
+    public void testHighVolume_manyEntries() {
+        ClientSymbolCache cache = new ClientSymbolCache(16); // Small initial capacity
+
+        // Add many entries to trigger resizing
+        for (int i = 0; i < 10000; i++) {
+            cache.put(i, i * 2);
+        }
+
+        assertEquals(10000, cache.size());
+
+        // Verify all entries are retrievable
+        for (int i = 0; i < 10000; i++) {
+            assertEquals(i * 2, cache.get(i));
+        }
     }
 
     @Test
@@ -232,6 +177,61 @@ public class ClientSymbolCacheTest {
         assertEquals(10, cache.get(Integer.MAX_VALUE));
         assertEquals(20, cache.get(Integer.MAX_VALUE - 1));
         assertEquals(30, cache.get(1000000));
+    }
+
+    @Test
+    public void testPutAndGet_returnsValue() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        // Put some entries
+        cache.put(0, 10);
+        cache.put(1, 20);
+        cache.put(5, 50);
+
+        // Verify retrieval
+        assertEquals(10, cache.get(0));
+        assertEquals(20, cache.get(1));
+        assertEquals(50, cache.get(5));
+
+        // Other keys still return NO_ENTRY
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(2));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(3));
+    }
+
+    @Test
+    public void testPutOverwrite_updatesValue() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        cache.put(0, 10);
+        assertEquals(10, cache.get(0));
+
+        // Overwrite with new value
+        cache.put(0, 100);
+        assertEquals(100, cache.get(0));
+
+        // Overwrite again
+        cache.put(0, 999);
+        assertEquals(999, cache.get(0));
+    }
+
+    @Test
+    public void testSize_tracksEntryCount() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        assertEquals(0, cache.size());
+
+        cache.put(0, 10);
+        assertEquals(1, cache.size());
+
+        cache.put(1, 20);
+        assertEquals(2, cache.size());
+
+        cache.put(2, 30);
+        assertEquals(3, cache.size());
+
+        // Overwrite doesn't change size
+        cache.put(1, 200);
+        assertEquals(3, cache.size());
     }
 
     @Test
