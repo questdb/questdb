@@ -185,11 +185,11 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 long srcAddr = cursor.getValuesAddress();
                 if (cursor.isDoubleArray()) {
                     for (int i = 0; i < totalElements; i++) {
-                        arrayMem.putDouble(io.questdb.std.Unsafe.getUnsafe().getDouble(srcAddr + (long) i * 8));
+                        arrayMem.putDouble(Unsafe.getUnsafe().getDouble(srcAddr + (long) i * 8));
                     }
                 } else {
                     for (int i = 0; i < totalElements; i++) {
-                        arrayMem.putLong(io.questdb.std.Unsafe.getUnsafe().getLong(srcAddr + (long) i * 8));
+                        arrayMem.putLong(Unsafe.getUnsafe().getLong(srcAddr + (long) i * 8));
                     }
                 }
 
