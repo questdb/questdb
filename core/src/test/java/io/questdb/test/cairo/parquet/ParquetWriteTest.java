@@ -807,8 +807,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Table should be suspended due to O3 error.
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            // BUG: the outer catch does not clean up the rewrite directory.
-            // The new txn-named directory is left orphaned on disk.
             int partDirsAfterFailure = countPartitionDirs(tableDir, "2020-01-01");
             Assert.assertEquals(
                     "orphaned rewrite directory left on disk",
