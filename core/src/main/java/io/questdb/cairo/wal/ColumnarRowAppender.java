@@ -571,15 +571,14 @@ public interface ColumnarRowAppender {
     /**
      * Writes a SYMBOL column.
      * <p>
-     * Symbol values need to be resolved through the symbol table. Returns false
-     * if symbol resolution fails (e.g., new symbol that can't be created).
+     * Symbol values are resolved through the symbol table. Throws
+     * {@link io.questdb.cairo.CairoException} if symbol resolution fails.
      *
      * @param columnIndex the column index in the table
      * @param cursor      the symbol column cursor
      * @param rowCount    total number of rows
-     * @return true if all symbols were written successfully, false if resolution failed
      */
-    boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
+    void putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount);
 
     /**
      * Writes a SYMBOL column with optional caching support.
@@ -601,9 +600,8 @@ public interface ColumnarRowAppender {
      * @param symbolCache        connection-level symbol cache (null to disable caching)
      * @param tableId            table ID for per-column cache lookup
      * @param initialSymbolCount committed symbol count for stability check
-     * @return true if all symbols written successfully
      */
-    boolean putSymbolColumn(
+    void putSymbolColumn(
             int columnIndex,
             QwpSymbolColumnCursor cursor,
             int rowCount,

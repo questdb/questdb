@@ -1541,12 +1541,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public boolean putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
-        return putSymbolColumn(columnIndex, cursor, rowCount, null, 0, 0);
+    public void putSymbolColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
+        putSymbolColumn(columnIndex, cursor, rowCount, null, 0, 0);
     }
 
     @Override
-    public boolean putSymbolColumn(
+    public void putSymbolColumn(
             int columnIndex,
             QwpSymbolColumnCursor cursor,
             int rowCount,
@@ -1633,7 +1633,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
-        return true;
     }
 
     @Override

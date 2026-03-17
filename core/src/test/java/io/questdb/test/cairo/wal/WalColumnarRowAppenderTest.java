@@ -5817,7 +5817,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                assertTrue(appender.putSymbolColumn(0, wireFormat.cursor, rowCount));
+                appender.putSymbolColumn(0, wireFormat.cursor, rowCount);
                 putTimestampColumn(appender, walWriter, timestamps, rowCount);
                 appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
 
@@ -5862,7 +5862,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                assertTrue(appender.putSymbolColumn(0, wireFormat.cursor, rowCount));
+                appender.putSymbolColumn(0, wireFormat.cursor, rowCount);
                 putTimestampColumn(appender, walWriter, timestamps, rowCount);
                 appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
 
@@ -5906,9 +5906,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                // Verify putSymbolColumn returns true on success
-                boolean result = appender.putSymbolColumn(0, wireFormat.cursor, rowCount);
-                assertTrue("putSymbolColumn should return true on success", result);
+                appender.putSymbolColumn(0, wireFormat.cursor, rowCount);
                 putTimestampColumn(appender, walWriter, timestamps, rowCount);
                 appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
 
@@ -5976,7 +5974,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                assertTrue(appender.putSymbolColumn(0, wireFormat.cursor, rowCount));
+                appender.putSymbolColumn(0, wireFormat.cursor, rowCount);
                 putTimestampColumn(appender, walWriter, timestamps, rowCount);
                 appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
 
@@ -6025,7 +6023,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
-                assertTrue(appender.putSymbolColumn(0, wireFormat.cursor, rowCount));
+                appender.putSymbolColumn(0, wireFormat.cursor, rowCount);
                 putTimestampColumn(appender, walWriter, timestamps, rowCount);
                 appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
 
