@@ -238,16 +238,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
 
                 // Build row group bounds for merge strategy computation.
-                // Use rowGroupMinTimestamp/rowGroupMaxTimestamp which fall back to
-                // decoding actual data when parquet statistics are absent
-                // (cairo.partition.encoder.parquet.statistics.enabled=false).
+                // Read timestamp statistics when available (fast path). Fall back
+                // to rowGroupMinTimestamp/rowGroupMaxTimestamp which decode actual
+                // data when statistics are absent
                 final LongList rowGroupBounds = ctx.getRowGroupBounds();
+                parquetColumns.add(timestampIndex);
+                parquetColumns.add(timestampColumnType);
+
                 for (int rg = 0; rg < rowGroupCount; rg++) {
-                    final long rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampIndex);
-                    final long rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampIndex);
+                    final long rgMin, rgMax;
+                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rg);
+                    boolean hasTimestampStats = rowGroupStatBuffers.getMinValueSize(0) == Long.BYTES;
+                    if (hasTimestampStats) {
+                        rgMin = rowGroupStatBuffers.getMinValueLong(0);
+                        rgMax = rowGroupStatBuffers.getMaxValueLong(0);
+                    } else {
+                        rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampIndex);
+                        rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampIndex);
+                    }
                     final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(rg);
                     O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
                 }
+                parquetColumns.clear();
 
                 // Compute merge actions (scratch lists are reused across calls within the same partition)
                 final ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf = ctx.getActionsBuf();
