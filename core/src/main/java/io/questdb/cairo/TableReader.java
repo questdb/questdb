@@ -1014,8 +1014,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                             reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toBase, i, partitionRowCount);
                         } else {
                             final int fromColumnIndex = transitionIndex.getCopyFromIndex(i);
-                            assert fromColumnIndex < this.columnCount;
-                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
+                            if (fromColumnIndex != Integer.MIN_VALUE) {
+                                assert fromColumnIndex < this.columnCount;
+                                copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
+                            }
+                            // else: replaced/vacated position, column moved to a different dense index
                         }
                     }
                 }

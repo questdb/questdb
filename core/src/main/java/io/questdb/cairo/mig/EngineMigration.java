@@ -45,6 +45,7 @@ import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
 public class EngineMigration {
 
+    private static final String LEGACY_META_FILE_NAME = TableUtils.META_FILE_NAME;
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final IntObjHashMap<MigrationAction> MIGRATIONS = new IntObjHashMap<>();
 
@@ -170,7 +171,7 @@ public class EngineMigration {
                     copyPath.concat(pUtf8NameZ);
                     final int tablePlen = path.size();
 
-                    if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
+                    if (ff.exists(path.concat(LEGACY_META_FILE_NAME).$())) {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
@@ -188,7 +189,7 @@ public class EngineMigration {
                                     LOG.info().$("backing up meta file [path=").$(path)
                                             .$(", toPath=").$(copyPath)
                                             .I$();
-                                    backupFile(ff, path, copyPath, TableUtils.META_FILE_NAME, currentTableVersion);
+                                    backupFile(ff, path, copyPath, LEGACY_META_FILE_NAME, currentTableVersion);
                                 }
 
                                 path.trimTo(tablePlen);
@@ -213,7 +214,7 @@ public class EngineMigration {
                                     }
 
                                     if (ver <= latestTableVersion) {
-                                        path.trimTo(tablePlen).concat(TableUtils.META_FILE_NAME).$();
+                                        path.trimTo(tablePlen).concat(LEGACY_META_FILE_NAME).$();
                                         LOG.info().$("upgrading table _meta [path=").$(path).$(", toVersion=").$(ver).I$();
                                         // Upgrades between (latestTableVersion, latestMigrationVersion]
                                         // are backwards compatible and are not set in table _meta

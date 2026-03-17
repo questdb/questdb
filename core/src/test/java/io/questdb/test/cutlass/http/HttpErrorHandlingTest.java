@@ -33,6 +33,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
@@ -77,7 +78,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
+                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

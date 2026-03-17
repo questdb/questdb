@@ -32,10 +32,10 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 final class Mig614 {
+    private static final String META_FILE_NAME = "_meta";
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final long META_OFFSET_STRUCTURE_VERSION = 32;
     private static final long TX_OFFSET_STRUCT_VERSION = 40;

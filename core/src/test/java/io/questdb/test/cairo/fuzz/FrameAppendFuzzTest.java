@@ -151,9 +151,13 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         holder.partitionBy = PartitionBy.YEAR;
         holder.tableId = merged.getTableId();
 
-        // Write back using BlockFile format
+        // Write back using BlockFile format.
+        // Rollback first so that commit() restores the same version number.
+        // Without this, the BlockFile version would advance past _txn's metadata version,
+        // causing TableWriter to roll back our changes on open.
         try (BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())) {
             writer.of(path.$());
+            writer.rollback();
             TableMetadataFileBlock.write(
                     writer,
                     ColumnType.VERSION,

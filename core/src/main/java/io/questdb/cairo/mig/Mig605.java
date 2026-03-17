@@ -30,9 +30,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-
 final class Mig605 {
+    private static final String META_FILE_NAME = "_meta";
     static void migrate(MigrationContext migrationContext) {
         MigrationActions.LOG.info().$("updating column type IDs [table=").$(migrationContext.getTablePath()).I$();
         final FilesFacade ff = migrationContext.getFf();

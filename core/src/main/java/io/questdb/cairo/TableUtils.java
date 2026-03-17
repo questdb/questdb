@@ -104,7 +104,7 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
-    public static final String META_FILE_NAME = "_meta";
+    public static final String META_FILE_NAME = "_meta_1";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
@@ -660,7 +660,7 @@ public final class TableUtils {
     ) {
         // Encode structure version: low int = metadata version, high int = column structure version
         // Column structure version starts at 0, encoded as NONE_COL_STRUCTURE_VERSION (Integer.MIN_VALUE)
-        long encodedStructureVersion = Numbers.encodeLowHighInts(metadataVersion, Integer.MIN_VALUE);
+        long encodedStructureVersion = metadataVersion == 0 ? 0 : Numbers.encodeLowHighInts(metadataVersion, Integer.MIN_VALUE);
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);

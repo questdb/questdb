@@ -34,10 +34,10 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 final class Mig608 {
+    private static final String META_FILE_NAME = "_meta";
     static void migrate(MigrationContext migrationContext) {
         //  META_COLUMN_DATA_SIZE = 16 -> 32;
         //  TX_OFFSET_MAP_WRITER_COUNT = 72 -> 128

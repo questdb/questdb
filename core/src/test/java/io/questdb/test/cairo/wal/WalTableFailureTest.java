@@ -1762,7 +1762,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.containsAscii(name, "_meta") && attempt++ >= 2) {
+                if (Utf8s.containsAscii(name, TableUtils.META_FILE_NAME) && attempt++ >= 2) {
                     if (!engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))) {
                         return -1;
                     }

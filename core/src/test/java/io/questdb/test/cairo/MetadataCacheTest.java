@@ -856,7 +856,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
-                    \tCairoTable [name=y2, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]
+                    \tCairoTable [name=y2, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]
                     \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]
                     """);
 

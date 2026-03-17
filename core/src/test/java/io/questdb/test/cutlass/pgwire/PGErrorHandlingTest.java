@@ -30,6 +30,7 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.Socket;
@@ -77,7 +78,7 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
+                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

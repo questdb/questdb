@@ -319,12 +319,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         ObjList<TableColumnMetadata> newColumns = newHolder.columns;
         int n = newColumns.size();
 
-        // Save existing column info for transition tracking
-        ObjList<TableColumnMetadata> existingColumns = new ObjList<>(existingColumnCount);
-        for (int i = 0; i < existingColumnCount; i++) {
-            existingColumns.add(columnMetadata.getQuick(i));
-        }
-
         // Phase 1: Build temporary arrays mapping logical positions to columns
         // using replacingIndex for proper positioning (same as readFromHolder)
         ObjList<TableColumnMetadata> tempColumns = new ObjList<>(n);
@@ -359,45 +353,70 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             }
         }
 
-        // Phase 2: Build final column list and transition index
-        // Mark all existing columns as potentially deleted first
-        for (int i = 0; i < existingColumnCount; i++) {
-            transitionIndex.markDeleted(i);
-        }
-
-        columnMetadata.clear();
+        // Phase 2: Build final column list and transition index using a linear walk
+        // through both old and new columns. This mirrors the old algorithm's approach
+        // to avoid transition index position conflicts between deleted and moved columns.
         columnNameIndexMap.clear();
+        assert n >= existingColumnCount;
+        columnMetadata.setPos(n);
         this.timestampIndex = -1;
 
+        int shiftLeft = 0;
+        int existingIndex = 0;
         for (int i = 0; i < n; i++) {
             TableColumnMetadata newCol = tempColumns.getQuick(i);
-            if (newCol != null) {
-                int columnType = newCol.getColumnType();
-                int writerIndex = newCol.getWriterIndex();
-                String name = newCol.getColumnName();
-                boolean isIndexed = newCol.isSymbolIndexFlag();
-                boolean isDedupKey = newCol.isDedupKeyFlag();
-                int indexBlockCapacity = newCol.getIndexValueBlockCapacity();
-                boolean symbolIsCached = newCol.isSymbolCacheFlag();
-                int symbolCapacity = newCol.getSymbolCapacity();
-                int symbolIndex = symbolIndices.getQuick(i);
-                int stableIndex = stableIndices.getQuick(i);
 
-                int outIndex = columnMetadata.size();
-
-                // Check if this column existed before (by name) for transition tracking
-                int existingIndex = -1;
-                for (int j = 0; j < existingColumnCount; j++) {
-                    TableColumnMetadata candidate = existingColumns.getQuick(j);
-                    if (candidate != null && Chars.equals(candidate.getColumnName(), name)) {
-                        existingIndex = j;
-                        break;
+            if (newCol == null) {
+                // Deleted or empty slot
+                if (existingIndex < existingColumnCount) {
+                    TableReaderMetadataColumn existing = (TableReaderMetadataColumn) columnMetadata.getQuick(existingIndex);
+                    if (existing.getStableIndex() <= i) {
+                        // This deletion corresponds to an existing column
+                        transitionIndex.markDeleted(existingIndex);
+                        shiftLeft++;
+                        existingIndex++;
                     }
+                    // else: column added and deleted since reader last reloaded, skip
                 }
+                continue;
+            }
 
-                columnMetadata.add(
+            // Live column
+            int columnType = newCol.getColumnType();
+            int writerIndex = newCol.getWriterIndex();
+            String name = newCol.getColumnName();
+            boolean isIndexed = newCol.isSymbolIndexFlag();
+            boolean isDedupKey = newCol.isDedupKeyFlag();
+            int indexBlockCapacity = newCol.getIndexValueBlockCapacity();
+            boolean symbolIsCached = newCol.isSymbolCacheFlag();
+            int symbolCapacity = newCol.getSymbolCapacity();
+            int symbolIndex = symbolIndices.getQuick(i);
+            int stableIndex = stableIndices.getQuick(i);
+
+            TableReaderMetadataColumn existing = null;
+            String newName;
+            if (existingIndex < existingColumnCount) {
+                existing = (TableReaderMetadataColumn) columnMetadata.getQuick(existingIndex);
+            }
+
+            int outIndex = existingIndex - shiftLeft;
+            boolean rename = existing != null && !Chars.equals(existing.getColumnName(), name);
+            newName = rename || existing == null ? name : existing.getColumnName();
+
+            if (rename
+                    || existing == null
+                    || existing.getWriterIndex() != writerIndex
+                    || existing.isSymbolIndexFlag() != isIndexed
+                    || existing.getIndexValueBlockCapacity() != indexBlockCapacity
+                    || existing.isDedupKeyFlag() != isDedupKey
+                    || existing.getDenseSymbolIndex() != symbolIndex
+                    || existing.getStableIndex() != stableIndex
+            ) {
+                // New or changed column
+                columnMetadata.setQuick(
+                        outIndex,
                         new TableReaderMetadataColumn(
-                                name,
+                                newName,
                                 columnType,
                                 isIndexed,
                                 indexBlockCapacity,
@@ -411,21 +430,28 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                 symbolCapacity
                         )
                 );
-
-                // Update transition index
-                if (existingIndex >= 0) {
-                    // Column existed - mark as reused (un-delete it)
-                    transitionIndex.markReusedAction(outIndex, existingIndex);
+                if (existing != null) {
+                    transitionIndex.markDeleted(existingIndex);
                 }
                 transitionIndex.markCopyFrom(outIndex, writerIndex);
-
-                columnNameIndexMap.put(name, outIndex);
-                if (timestampWriterIndex == writerIndex) {
-                    this.timestampIndex = outIndex;
+            } else {
+                // Reuse - column properties unchanged, keep file handles
+                columnMetadata.setQuick(outIndex, existing);
+                transitionIndex.markReusedAction(outIndex, existingIndex);
+                if (existingIndex > outIndex) {
+                    // Old position is vacated, mark to do nothing there
+                    transitionIndex.markReplaced(existingIndex);
                 }
             }
+
+            columnNameIndexMap.put(newName, outIndex);
+            if (timestampWriterIndex == writerIndex) {
+                this.timestampIndex = outIndex;
+            }
+            existingIndex++;
         }
 
+        columnMetadata.setPos(existingIndex - shiftLeft);
         this.columnCount = columnMetadata.size();
         if (timestampWriterIndex < 0) {
             this.timestampIndex = timestampWriterIndex;

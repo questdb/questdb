@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
@@ -167,7 +168,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME) && attempt++ < configuration.getFileOperationRetryCount()) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -238,7 +239,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Utf8s.endsWithAscii(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
+                if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME) && attempt++ < configuration.getFileOperationRetryCount()) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);

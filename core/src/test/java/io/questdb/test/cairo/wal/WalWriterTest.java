@@ -1201,7 +1201,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                assertWalFileExist(path, tableToken, walName, 0, TableUtils.META_FILE_NAME);
                 assertWalFileExist(path, tableToken, walName, 0, "_event");
                 assertWalFileExist(path, tableToken, walName, 0, "a.d");
                 assertWalFileExist(path, tableToken, walName, 0, "b.d");
@@ -1473,11 +1473,11 @@ public class WalWriterTest extends AbstractCairoTest {
                     }
 
                     try (Path path = new Path().of(configuration.getDbRoot())) {
-                        assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                        assertWalFileExist(path, tableToken, walName, 0, TableUtils.META_FILE_NAME);
                         assertWalFileExist(path, tableToken, walName, 0, "_event");
                         assertWalFileExist(path, tableToken, walName, 0, "a.d");
                         assertWalFileExist(path, tableToken, walName, 0, "b.d");
-                        assertWalFileExist(path, tableToken, walName, 1, "_meta");
+                        assertWalFileExist(path, tableToken, walName, 1, TableUtils.META_FILE_NAME);
                         assertWalFileExist(path, tableToken, walName, 1, "_event");
                         assertWalFileExist(path, tableToken, walName, 1, "a.d");
                         assertWalFileExist(path, tableToken, walName, 1, "b.d");
@@ -1616,7 +1616,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     }
 
                     try (Path path = new Path().of(configuration.getDbRoot())) {
-                        assertWalFileExist(path, tableToken, walName, segmentId, "_meta");
+                        assertWalFileExist(path, tableToken, walName, segmentId, TableUtils.META_FILE_NAME);
                         assertWalFileExist(path, tableToken, walName, segmentId, "_event");
                         assertWalFileExist(path, tableToken, walName, segmentId, "a.d");
                         assertWalFileExist(path, tableToken, walName, segmentId, "b.d");
@@ -3204,12 +3204,12 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                assertWalFileExist(path, tableToken, walName, 0, TableUtils.META_FILE_NAME);
                 assertWalFileExist(path, tableToken, walName, 0, "_event");
                 assertWalFileExist(path, tableToken, walName, 0, "a.d");
                 assertWalFileExist(path, tableToken, walName, 0, "b.d");
                 assertWalFileExist(path, tableToken, walName, 0, "b.i");
-                assertWalFileExist(path, tableToken, walName, 1, "_meta");
+                assertWalFileExist(path, tableToken, walName, 1, TableUtils.META_FILE_NAME);
                 assertWalFileExist(path, tableToken, walName, 1, "_event");
                 assertWalFileExist(path, tableToken, walName, 1, "a.d");
                 assertWalFileExist(path, tableToken, walName, 1, "b.d");
@@ -3801,7 +3801,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                assertWalFileExist(path, tableToken, walName, 0, "_meta");
+                assertWalFileExist(path, tableToken, walName, 0, TableUtils.META_FILE_NAME);
                 assertWalFileExist(path, tableToken, walName, 0, "_event");
                 assertWalFileExist(path, tableToken, walName, 0, "a.d");
                 assertWalFileExist(path, tableToken, walName, 0, "b.d");

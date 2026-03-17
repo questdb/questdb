@@ -37,6 +37,7 @@ import static io.questdb.cairo.TableUtils.*;
 
 final class Mig609 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
+    private static final String META_FILE_NAME = "_meta";
     private static final long TX_OFFSET_FIXED_ROW_COUNT_505 = 16;
     private static final long TX_OFFSET_MAP_WRITER_COUNT_608 = 128;
 

@@ -402,7 +402,7 @@ public class FilesTest {
                 long baseSize = Files.getDirSize(auxPath.parent());
 
                 // create files at table level
-                createTempFile(dbPath.concat("table"), "_meta", content);
+                createTempFile(dbPath.concat("table"), TableUtils.META_FILE_NAME, content);
                 createTempFile(dbPath.parent(), "_txn", content);
                 createTempFile(dbPath.parent(), "_cv", content);
 
@@ -418,7 +418,7 @@ public class FilesTest {
                 );
 
                 // create files in backup
-                createTempFile(backupPath.concat("table"), "_meta", content);
+                createTempFile(backupPath.concat("table"), TableUtils.META_FILE_NAME, content);
                 createTempFile(backupPath.parent(), "_txn", content);
                 createTempFile(backupPath.parent(), "_cv", content);
                 createTempFile(backupPath.parent().concat("partition" + TableUtils.ATTACHABLE_DIR_MARKER), "timestamp.d", content);
