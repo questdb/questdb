@@ -171,8 +171,14 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  boolean gorillaEnabled) throws QwpParseException {
+    public int of(
+            long dataAddress,
+            int dataLength,
+            int rowCount,
+            byte typeCode,
+            boolean nullable,
+            boolean gorillaEnabled
+    ) throws QwpParseException {
         this.typeCode = typeCode;
         this.nullable = nullable;
 
@@ -181,6 +187,12 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "timestamp column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
@@ -193,56 +205,85 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         if (!gorillaEnabled) {
             // Uncompressed mode
             this.gorillaEnabled = false;
+            long valuesSize = (long) valueCount * 8;
+            if (offset + valuesSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "timestamp column data truncated: expected " + valueCount + " values"
+                );
+            }
             this.valuesAddress = dataAddress + offset;
-            offset += valueCount * 8;
+            offset += (int) valuesSize;
         } else {
             // Read encoding flag
+            if (offset + 1 > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "timestamp column data truncated: expected encoding flag"
+                );
+            }
             byte encoding = Unsafe.getUnsafe().getByte(dataAddress + offset);
             offset++;
 
             if (encoding == ENCODING_UNCOMPRESSED) {
                 // Uncompressed fallback within Gorilla-enabled stream
                 this.gorillaEnabled = false;
+                long valuesSize = (long) valueCount * 8;
+                if (offset + valuesSize > dataLength) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "timestamp column data truncated: expected " + valueCount + " values"
+                    );
+                }
                 this.valuesAddress = dataAddress + offset;
-                offset += valueCount * 8;
+                offset += (int) valuesSize;
             } else if (encoding == ENCODING_GORILLA) {
                 this.gorillaEnabled = true;
 
                 if (valueCount == 1) {
                     // First timestamp only
+                    if (offset + 8 > dataLength) {
+                        throw QwpParseException.create(
+                                QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                                "timestamp column data truncated: expected first timestamp"
+                        );
+                    }
                     this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
                     offset += 8;
-                } else if (valueCount == 2) {
+                } else if (valueCount >= 2) {
                     // First and second timestamps
+                    if (offset + 16 > dataLength) {
+                        throw QwpParseException.create(
+                                QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                                "timestamp column data truncated: expected first two timestamps"
+                        );
+                    }
                     this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
                     offset += 8;
                     this.secondTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
                     offset += 8;
-                } else {
-                    // Full Gorilla encoding
-                    this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
-                    offset += 8;
-                    this.secondTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
-                    offset += 8;
 
-                    long gorillaDataAddress = dataAddress + offset;
-                    int gorillaDataLength = dataLength - offset;
+                    if (valueCount > 2) {
+                        // Full Gorilla encoding
+                        long gorillaDataAddress = dataAddress + offset;
+                        int gorillaDataLength = dataLength - offset;
 
-                    gorillaDecoder.reset(firstTimestamp, secondTimestamp);
-                    gorillaDecoder.resetReader(gorillaDataAddress, gorillaDataLength);
+                        gorillaDecoder.reset(firstTimestamp, secondTimestamp);
+                        gorillaDecoder.resetReader(gorillaDataAddress, gorillaDataLength);
 
-                    // Decode all remaining values and cache them to avoid double decoding.
-                    // This also computes the byte count of the compressed data.
-                    int remainingValues = valueCount - 2;
-                    if (gorillaDecodedValues == null || gorillaDecodedValues.length < remainingValues) {
-                        gorillaDecodedValues = new long[remainingValues];
+                        // Decode all remaining values and cache them to avoid double decoding.
+                        // This also computes the byte count of the compressed data.
+                        int remainingValues = valueCount - 2;
+                        if (gorillaDecodedValues == null || gorillaDecodedValues.length < remainingValues) {
+                            gorillaDecodedValues = new long[remainingValues];
+                        }
+                        for (int i = 0; i < remainingValues; i++) {
+                            gorillaDecodedValues[i] = gorillaDecoder.decodeNext();
+                        }
+                        long bitsConsumed = gorillaDecoder.getBitPosition();
+                        int gorillaBytesConsumed = (int) ((bitsConsumed + 7) / 8);
+                        offset += gorillaBytesConsumed;
                     }
-                    for (int i = 0; i < remainingValues; i++) {
-                        gorillaDecodedValues[i] = gorillaDecoder.decodeNext();
-                    }
-                    long bitsConsumed = gorillaDecoder.getBitPosition();
-                    int gorillaBytesConsumed = (int) ((bitsConsumed + 7) / 8);
-                    offset += gorillaBytesConsumed;
                 }
             } else {
                 throw QwpParseException.create(
