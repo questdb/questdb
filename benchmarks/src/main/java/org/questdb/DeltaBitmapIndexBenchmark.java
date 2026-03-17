@@ -142,6 +142,15 @@ public class DeltaBitmapIndexBenchmark {
                     uhcKeyCount, UHC_MIN_VALUES, UHC_MAX_VALUES, uhcTotalRows);
             runUltraHighCardinality(config, tmpDir, uhcKeyCount);
         }
+
+        if (args.length == 0 || "all".equals(args[0]) || "zipf".equals(args[0])) {
+            int zipfKeyCount = Integer.getInteger("zipf.keys", 100_000);
+            int zipfTotalRows = Integer.getInteger("zipf.rows", 20_000_000);
+            System.out.println();
+            System.out.println("=== Scenario 5: Zipfian Distribution ===");
+            System.out.printf("    %,d keys, %,d total rows, Zipf s=1.0%n%n", zipfKeyCount, zipfTotalRows);
+            runZipfian(config, tmpDir, zipfKeyCount, zipfTotalRows);
+        }
     }
 
     // ========================= Scenario 1: High-Cardinality =========================
@@ -1051,6 +1060,156 @@ public class DeltaBitmapIndexBenchmark {
                 try (PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                     readBatch(bpReader, readKeys);
                     measureReadLatency("BP (sealed)", () -> readBatch(bpReader, readKeys));
+                }
+            }
+        } finally {
+            deleteDir(legacyDir);
+            deleteDir(bpDir);
+        }
+    }
+
+    // ========================= Scenario 5: Zipfian =========================
+
+    private static void runZipfian(CairoConfiguration config, String tmpDir, int keyCount, int totalRows) {
+        // Build Zipfian key assignment: key k gets frequency proportional to 1/k^s
+        // s=1.0 → classic Zipf's law
+        System.out.println("Building Zipfian assignment...");
+        long t0 = System.nanoTime();
+
+        double s = 1.0;
+        double[] cdf = new double[keyCount];
+        double sum = 0;
+        for (int k = 0; k < keyCount; k++) {
+            sum += 1.0 / Math.pow(k + 1, s);
+            cdf[k] = sum;
+        }
+        // Normalize
+        for (int k = 0; k < keyCount; k++) {
+            cdf[k] /= sum;
+        }
+
+        // Generate assignment via inverse CDF sampling
+        Random random = new Random(42);
+        int[] keyAssignment = new int[totalRows];
+        for (int i = 0; i < totalRows; i++) {
+            double u = random.nextDouble();
+            // Binary search in CDF
+            int lo = 0, hi = keyCount - 1;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (cdf[mid] < u) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            keyAssignment[i] = lo;
+        }
+
+        // Count per-key frequencies for stats
+        int[] keyCounts = new int[keyCount];
+        for (int k : keyAssignment) {
+            keyCounts[k]++;
+        }
+        // Sort descending for stats
+        int[] sorted = keyCounts.clone();
+        java.util.Arrays.sort(sorted);
+        // Reverse
+        for (int i = 0, j = sorted.length - 1; i < j; i++, j--) {
+            int tmp = sorted[i]; sorted[i] = sorted[j]; sorted[j] = tmp;
+        }
+
+        System.out.printf("  done in %.1f s%n", (System.nanoTime() - t0) / 1e9);
+        System.out.printf("  Top-10 key frequencies: ");
+        for (int i = 0; i < Math.min(10, keyCount); i++) {
+            System.out.printf("%,d ", sorted[i]);
+        }
+        System.out.println();
+        int keysWithValues = 0;
+        for (int c : keyCounts) if (c > 0) keysWithValues++;
+        System.out.printf("  Keys with >0 values: %,d / %,d (%.1f%%)%n",
+                keysWithValues, keyCount, 100.0 * keysWithValues / keyCount);
+        System.out.printf("  Median values/key: %,d%n%n", sorted[keyCount / 2]);
+
+        // Sort by key so row IDs are assigned in key order (realistic for symbol column)
+        java.util.Arrays.sort(keyAssignment);
+
+        int[] readKeys = new int[10_000];
+        Random rnd = new Random(99);
+        for (int i = 0; i < readKeys.length; i++) {
+            readKeys[i] = rnd.nextInt(keyCount);
+        }
+
+        String legacyDir = tmpDir + File.separator + "zipf_legacy_" + System.nanoTime();
+        String bpDir = tmpDir + File.separator + "zipf_bp_" + System.nanoTime();
+        new File(legacyDir).mkdirs();
+        new File(bpDir).mkdirs();
+
+        try {
+            // Legacy
+            System.out.println("Storage & write time:");
+            long legacySize = buildAndMeasure("Legacy (block=256)", config, legacyDir, () -> {
+                try (Path path = new Path().of(legacyDir)) {
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
+                        writer.of(path, "test", COLUMN_NAME_TXN, 256);
+                        for (int rowId = 0; rowId < totalRows; rowId++) {
+                            writer.add(keyAssignment[rowId], rowId);
+                        }
+                    }
+                }
+            });
+
+            // Postings — single commit (sorted keys, all fit in one batch per key for most keys)
+            long bpWriteStart = System.nanoTime();
+            createBPIndex(config, bpDir, PostingsIndexUtils.BLOCK_CAPACITY);
+            try (Path path = new Path().of(bpDir)) {
+                try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
+                    writer.of(path, "test", COLUMN_NAME_TXN, false);
+                    for (int rowId = 0; rowId < totalRows; rowId++) {
+                        writer.add(keyAssignment[rowId], rowId);
+                    }
+                }
+            }
+            long bpWriteElapsed = System.nanoTime() - bpWriteStart;
+            long bpSize = getDirectorySize(bpDir);
+            System.out.printf("  %-40s %8.1f MB in %5.2f s%n",
+                    "Postings (sealed)", bpSize / (1024.0 * 1024.0), bpWriteElapsed / 1e9);
+
+            System.out.println();
+            System.out.printf("  %-25s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
+            System.out.println("  " + "-".repeat(47));
+            printRow("Legacy", legacySize, legacySize);
+            printRow("Postings (sealed)", bpSize, legacySize);
+
+            // Read latency
+            System.out.println();
+            System.out.printf("Read latency (%,d random keys):%n", readKeys.length);
+
+            try (Path legacyPath = new Path().of(legacyDir);
+                 Path bpPath = new Path().of(bpDir)) {
+                try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
+                     PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    readBatchCounting(legacyReader, readKeys);
+                    readBatchCounting(bpReader, readKeys);
+
+                    measureReadLatency("Legacy", () -> readBatch(legacyReader, readKeys));
+                    measureReadLatency("Postings (sealed)", () -> readBatch(bpReader, readKeys));
+                }
+            }
+
+            // Full scan
+            System.out.println();
+            System.out.printf("Full scan (%,d keys, %,d values):%n", keyCount, totalRows);
+
+            try (Path legacyPath = new Path().of(legacyDir);
+                 Path bpPath = new Path().of(bpDir)) {
+                try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
+                     PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    scanAll(legacyReader, keyCount);
+                    scanAll(bpReader, keyCount);
+
+                    measureReadLatency("Legacy scan", () -> scanAll(legacyReader, keyCount));
+                    measureReadLatency("Postings scan", () -> scanAll(bpReader, keyCount));
                 }
             }
         } finally {

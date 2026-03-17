@@ -854,12 +854,11 @@ public class PostingsIndexWriter implements IndexWriter {
                     int maxLocalHeaderSize = Math.max(maxBPHeaderSize, maxPackedHeaderSize);
                     long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
 
-                    // Buffer for trial BP encoding of an entire stride's data
-                    // Worst case: DENSE_STRIDE keys × maxPerKey values each
-                    int maxBPStrideDataSize = PostingsIndexUtils.DENSE_STRIDE * perKeyBufSize;
-                    long bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
                     // Per-key BP sizes within a stride (to compute total BP data size)
                     int[] bpKeySizes = new int[PostingsIndexUtils.DENSE_STRIDE];
+                    // Trial buffer grows dynamically per stride
+                    long bpTrialBuf = 0;
+                    long bpTrialBufSize = 0;
 
                     try {
                         long readOffset = 0;
@@ -867,6 +866,21 @@ public class PostingsIndexWriter implements IndexWriter {
 
                         for (int s = 0; s < sc; s++) {
                             int ks = PostingsIndexUtils.keysInStride(keyCount, s);
+
+                            // Compute trial buffer size for this stride
+                            long strideTrialSize = 0;
+                            for (int j = 0; j < ks; j++) {
+                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                                strideTrialSize += PostingsIndexUtils.computeMaxEncodedSize(count);
+                            }
+                            if (strideTrialSize > bpTrialBufSize) {
+                                if (bpTrialBuf != 0) {
+                                    Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_DEFAULT);
+                                }
+                                bpTrialBufSize = strideTrialSize;
+                                bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_DEFAULT);
+                            }
 
                             // --- Trial BP encode all keys in stride ---
                             int bpDataTotal = 0;
@@ -1030,7 +1044,9 @@ public class PostingsIndexWriter implements IndexWriter {
 
                         valueMemSize = valueMem.getAppendOffset();
                     } finally {
-                        Unsafe.free(bpTrialBuf, maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
+                        if (bpTrialBuf != 0) {
+                            Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_DEFAULT);
+                        }
                         Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
                         Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_DEFAULT);
                     }
