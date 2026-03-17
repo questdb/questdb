@@ -783,8 +783,8 @@ public class DeltaBitmapIndexBenchmark {
                         try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
                              BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                             // Warmup (builds BPGenLookup on first read)
-                            readBatch(legacyReader, readKeys);
-                            readBatch(bpReader, readKeys);
+                            readBatchCounting(legacyReader, readKeys);
+                            readBatchCounting(bpReader, readKeys);
 
                             measureReadLatency("Legacy", () -> readBatch(legacyReader, readKeys));
                             measureReadLatency("BP (" + ST_COMMITS + " gens)", () -> readBatch(bpReader, readKeys));
@@ -905,7 +905,7 @@ public class DeltaBitmapIndexBenchmark {
 
             try (Path bpPath = new Path().of(bpDir)) {
                 try (BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
-                    readBatch(bpReader, readKeys);
+                    readBatchCounting(bpReader, readKeys);
                     measureReadLatency("BP (sealed, 1 gen)", () -> readBatch(bpReader, readKeys));
 
                     System.out.println();
@@ -1100,6 +1100,20 @@ public class DeltaBitmapIndexBenchmark {
                 sum += cursor.next();
             }
         }
+        return sum;
+    }
+
+    private static long readBatchCounting(io.questdb.cairo.idx.BitmapIndexReader reader, int[] keys) {
+        long sum = 0;
+        long totalCount = 0;
+        for (int key : keys) {
+            RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+            while (cursor.hasNext()) {
+                sum += cursor.next();
+                totalCount++;
+            }
+        }
+        System.out.printf("    [verify: %d keys, %,d total values, sum=%,d]%n", keys.length, totalCount, sum);
         return sum;
     }
 
