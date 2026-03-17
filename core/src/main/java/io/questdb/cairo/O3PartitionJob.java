@@ -1459,11 +1459,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 long dstAuxSize = ctd.getAuxVectorSize(rowCount);
                 long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, o3Lo, o3Hi);
 
-                final long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
-                long dstDataAddr = 0;
+                long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
+                long dstDataAddr;
                 try {
                     dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
+                } catch (Throwable th) {
+                    Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
+                    throw th;
+                }
 
+                try {
                     O3CopyJob.mergeCopy(
                             columnType,
                             mergeIndexAddr,
@@ -1478,9 +1483,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 } catch (Throwable th) {
                     Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
-                    if (dstDataAddr != 0) {
-                        Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
-                    }
+                    Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
                     throw th;
                 }
 
@@ -1496,10 +1499,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         0,
                         0
                 );
+                // Ownership transferred to partitionDescriptor, don't free on error.
             } else {
                 final long srcOooFixAddr = oooMem1.addressOf(0);
                 long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
-                final long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+                long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
 
                 try {
                     O3CopyJob.mergeCopy(
@@ -1520,19 +1524,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (ColumnType.isSymbol(columnType)) {
-                    final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
-                    final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
-                    final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
+                    final MemoryR offsetsMem;
+                    final MemoryR valuesMem;
+                    final int symbolCount;
+                    final long valuesMemSize;
+                    int encodeColumnType;
+                    try {
+                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                        offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                        valuesMem = symbolMapWriter.getSymbolValuesMemory();
 
-                    final int symbolCount = symbolMapWriter.getSymbolCount();
-                    final long offset = SymbolMapWriter.keyToOffset(symbolCount);
-                    assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
-                    final long valuesMemSize = offsetsMem.getLong(offset);
-                    assert valuesMemSize <= valuesMem.size();
+                        symbolCount = symbolMapWriter.getSymbolCount();
+                        final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                        assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
+                        valuesMemSize = offsetsMem.getLong(offset);
+                        assert valuesMemSize <= valuesMem.size();
 
-                    int encodeColumnType = columnType;
-                    if (!symbolMapWriter.getNullFlag()) {
-                        encodeColumnType |= Integer.MIN_VALUE;
+                        encodeColumnType = columnType;
+                        if (!symbolMapWriter.getNullFlag()) {
+                            encodeColumnType |= Integer.MIN_VALUE;
+                        }
+                    } catch (Throwable th) {
+                        Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
+                        throw th;
                     }
                     partitionDescriptor.addColumn(
                             columnName,

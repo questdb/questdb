@@ -1490,7 +1490,7 @@ fn build_cases() -> Vec<BenchCase> {
         let column_type = ColumnType::new(ColumnTypeTag::Boolean, 0);
         let primitive_type = primitive_type_for(column_type);
         let page = data_page_from(
-            boolean_to_page(&data, 0, options.clone(), primitive_type.clone()).expect("page"),
+            boolean_to_page(&data, 0, options, primitive_type.clone()).expect("page"),
         );
         cases.push(build_case(
             format!("boolean_plain_n{null_pct}"),
@@ -1560,7 +1560,7 @@ fn build_cases() -> Vec<BenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_int96_data(ROW_COUNT, null_pct);
             let page = data_page_from(
-                bytes_to_page(&data, false, 0, options.clone(), int96_pt.clone(), None)
+                bytes_to_page(&data, false, 0, options, int96_pt.clone(), None)
                     .expect("page"),
             );
             cases.push(build_case(
@@ -1639,7 +1639,7 @@ fn build_cases() -> Vec<BenchCase> {
                 int_slice_to_page_nullable::<i32, i32, false>(
                     &data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type.clone(),
                     Encoding::Plain,
                     None,
@@ -1688,7 +1688,7 @@ fn build_cases() -> Vec<BenchCase> {
                     int_slice_to_page_nullable::<i64, i64, false>(
                         &data,
                         0,
-                        options.clone(),
+                        options,
                         primitive_type.clone(),
                         encoding,
                         None,
@@ -1735,7 +1735,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type.clone(),
                     Encoding::Plain,
                     None,
@@ -1797,7 +1797,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     encoding,
                     None,
@@ -1827,7 +1827,7 @@ fn build_cases() -> Vec<BenchCase> {
                         &data.aux,
                         &data.data,
                         0,
-                        options.clone(),
+                        options,
                         primitive_type,
                         encoding,
                         None,
@@ -1857,7 +1857,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.aux,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     Encoding::DeltaLengthByteArray,
                     None,
@@ -1889,7 +1889,7 @@ fn build_cases() -> Vec<BenchCase> {
                 &data.aux,
                 &data.data,
                 0,
-                options.clone(),
+                options,
                 primitive_type,
                 None,
             )
@@ -1927,7 +1927,7 @@ fn build_cases() -> Vec<BenchCase> {
                 &data.aux,
                 &data.data,
                 0,
-                options.clone(),
+                options,
                 primitive_type,
                 None,
             )
@@ -1982,7 +1982,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     encoding,
                     None,
@@ -2030,7 +2030,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.aux,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     encoding,
                 )
@@ -2075,7 +2075,7 @@ fn build_cases() -> Vec<BenchCase> {
             &data.offsets,
             &data.chars,
             0,
-            options.clone(),
+            options,
             primitive_type,
             false,
             None,
