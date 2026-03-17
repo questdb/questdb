@@ -283,6 +283,10 @@ import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
+import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
+import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -3885,6 +3889,369 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generateMultiHorizonJoinFactory(
+            QueryModel parentModel,
+            HorizonJoinContext horizonContext,
+            RecordCursorFactory masterFactory,
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            ObjList<RecordCursorFactory> slaveFactories,
+            ObjList<QueryModel> slaveModels,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final LongList offsets = computeHorizonOffsets(horizonContext, masterMetadata);
+        final int slaveCount = slaveFactories.size();
+
+        JoinRecordMetadata innerMetadata = null;
+        ObjList<GroupByFunction> groupByFunctions = null;
+        HorizonJoinSlaveState[] slaveStates = null;
+
+        try {
+            // Validate master timestamp
+            final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
+            if (masterTimestampColumnIndex == -1) {
+                throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
+                        .put("HORIZON JOIN master table must have a designated timestamp");
+            }
+
+            // Verify master supports random access (ST-only for now)
+            if (!masterFactory.recordCursorSupportsRandomAccess()) {
+                throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
+                        .put("HORIZON JOIN master table must support random access or page frames");
+            }
+
+            // Validate all slave factories
+            for (int s = 0; s < slaveCount; s++) {
+                if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
+                    throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
+                            .put("HORIZON JOIN slave table must support time frame cursors");
+                }
+            }
+
+            // Build combined metadata: [master cols] [offset, timestamp] [slave0 cols] [slave1 cols] ...
+            final CharSequence horizonAlias = horizonContext.getAlias().token;
+            final CharSequence[] slaveAliases = new CharSequence[slaveCount];
+            final RecordMetadata[] slaveMetadatas = new RecordMetadata[slaveCount];
+            for (int s = 0; s < slaveCount; s++) {
+                QueryModel sm = slaveModels.getQuick(s);
+                slaveAliases[s] = sm.getAlias() != null ? sm.getAlias().token : sm.getName();
+                slaveMetadatas[s] = slaveFactories.getQuick(s).getMetadata();
+            }
+
+            int totalSlaveColumns = 0;
+            for (int s = 0; s < slaveCount; s++) {
+                totalSlaveColumns += slaveMetadatas[s].getColumnCount();
+            }
+            innerMetadata = new JoinRecordMetadata(configuration, masterMetadata.getColumnCount() + 2 + totalSlaveColumns);
+            for (int col = 0, n = masterMetadata.getColumnCount(); col < n; col++) {
+                innerMetadata.add(masterAlias, masterMetadata.getColumnMetadata(col));
+            }
+            innerMetadata.add(horizonAlias, new TableColumnMetadata("offset", ColumnType.LONG));
+            innerMetadata.add(horizonAlias, new TableColumnMetadata("timestamp", masterMetadata.getTimestampType()));
+            for (int s = 0; s < slaveCount; s++) {
+                for (int col = 0, n = slaveMetadatas[s].getColumnCount(); col < n; col++) {
+                    innerMetadata.add(slaveAliases[s], slaveMetadatas[s].getColumnMetadata(col));
+                }
+            }
+            int masterTsIdx = masterMetadata.getTimestampIndex();
+            if (masterTsIdx >= 0) {
+                innerMetadata.setTimestampIndex(masterTsIdx);
+            }
+
+            // GROUP BY setup
+            final int timestampIndex = getTimestampIndex(parentModel, innerMetadata);
+            keyTypes.clear();
+            valueTypes.clear();
+            listColumnFilterA.clear();
+
+            final int columnCount = parentModel.getColumns().size();
+            groupByFunctions = new ObjList<>(columnCount);
+            tempInnerProjectionFunctions.clear();
+            tempOuterProjectionFunctions.clear();
+            final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
+            final IntList projectionFunctionFlags = new IntList(columnCount);
+
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser, sqlNodeStack, parentModel, executionContext,
+                    innerMetadata, timestampIndex, true,
+                    groupByFunctions, groupByFunctionPositions,
+                    tempOuterProjectionFunctions, tempInnerProjectionFunctions,
+                    recordFunctionPositions, projectionFunctionFlags,
+                    outerProjectionMetadata, valueTypes, keyTypes, listColumnFilterA,
+                    null, validateSampleByFillType, parentModel.getColumns()
+            );
+
+            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+
+            // Build column mappings for multi-slave
+            final int baseColumnCount = innerMetadata.getColumnCount();
+            final int[] columnSources = new int[baseColumnCount];
+            final int[] columnIndices = new int[baseColumnCount];
+            buildMultiHorizonColumnMappings(
+                    innerMetadata, masterAlias, masterMetadata,
+                    horizonAlias, slaveAliases, slaveMetadatas,
+                    columnSources, columnIndices,
+                    slaveModels.getQuick(0).getJoinKeywordPosition()
+            );
+
+            final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
+
+            // Process ASOF join keys and create HorizonJoinSlaveState for each slave
+            final int masterTsType = masterMetadata.getTimestampType();
+            slaveStates = new HorizonJoinSlaveState[slaveCount];
+            for (int s = 0; s < slaveCount; s++) {
+                RecordMetadata slaveMeta = slaveMetadatas[s];
+                QueryModel slaveModel = slaveModels.getQuick(s);
+                RecordCursorFactory slaveFactory = slaveFactories.getQuick(s);
+
+                // Compute per-slave timestamp scales
+                final int slaveTsType = slaveMeta.getTimestampType();
+                long perSlaveMasterTsScale = 1;
+                long perSlaveSlaveTsScale = 1;
+                if (masterTsType != slaveTsType) {
+                    perSlaveMasterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
+                    perSlaveSlaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
+                }
+
+                // Process ASOF join keys for this slave
+                ArrayColumnTypes asOfJoinKeyTypes = null;
+                RecordSink masterAsOfJoinMapSink = null;
+                RecordSink slaveAsOfJoinMapSink = null;
+                int[] masterSymbolKeyColumnIndices = null;
+                int[] slaveSymbolKeyColumnIndices = null;
+
+                JoinContext asOfJoinContext = slaveModel.getJoinContext();
+                if (asOfJoinContext != null && !asOfJoinContext.isEmpty()) {
+                    lookupColumnIndexesUsingVanillaNames(listColumnFilterA, asOfJoinContext.aNames, slaveMeta);
+                    lookupColumnIndexes(listColumnFilterB, asOfJoinContext.bNodes, masterMetadata);
+
+                    asOfJoinKeyTypes = new ArrayColumnTypes();
+                    BitSet asOfWriteSymbolAsString = new BitSet();
+                    BitSet asOfWriteStringAsVarcharA = new BitSet();
+                    BitSet asOfWriteStringAsVarcharB = new BitSet();
+                    IntList masterSymbolKeyCols = null;
+                    IntList slaveSymbolKeyCols = null;
+                    writeTimestampAsNanosA.clear();
+                    writeTimestampAsNanosB.clear();
+
+                    for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                        final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
+                        final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
+                        final int columnTypeA = slaveMeta.getColumnType(columnIndexA);
+                        final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+
+                        if (columnTypeB != columnTypeA
+                                && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
+                                && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))) {
+                            throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
+                        }
+
+                        if (ColumnType.isVarchar(columnTypeA) || ColumnType.isVarchar(columnTypeB)) {
+                            asOfJoinKeyTypes.add(ColumnType.VARCHAR);
+                            if (ColumnType.isVarchar(columnTypeA)) {
+                                asOfWriteStringAsVarcharB.set(columnIndexB);
+                            } else {
+                                asOfWriteStringAsVarcharA.set(columnIndexA);
+                            }
+                            asOfWriteSymbolAsString.set(columnIndexA);
+                            asOfWriteSymbolAsString.set(columnIndexB);
+                        } else if (columnTypeA == ColumnType.SYMBOL && columnTypeB == ColumnType.SYMBOL) {
+                            asOfJoinKeyTypes.add(ColumnType.SYMBOL);
+                            if (masterSymbolKeyCols == null) {
+                                masterSymbolKeyCols = new IntList();
+                                slaveSymbolKeyCols = new IntList();
+                            }
+                            masterSymbolKeyCols.add(columnIndexB);
+                            slaveSymbolKeyCols.add(columnIndexA);
+                        } else if (columnTypeB == ColumnType.SYMBOL || columnTypeA == ColumnType.SYMBOL) {
+                            asOfJoinKeyTypes.add(ColumnType.STRING);
+                            asOfWriteSymbolAsString.set(columnIndexA);
+                            asOfWriteSymbolAsString.set(columnIndexB);
+                        } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
+                            asOfJoinKeyTypes.add(columnTypeB);
+                            asOfWriteSymbolAsString.set(columnIndexA);
+                            asOfWriteSymbolAsString.set(columnIndexB);
+                        } else if (columnTypeA != columnTypeB && isTimestamp(columnTypeA) && isTimestamp(columnTypeB)) {
+                            asOfJoinKeyTypes.add(TIMESTAMP_NANO);
+                            if (!isTimestampNano(columnTypeA)) {
+                                writeTimestampAsNanosA.set(columnIndexA);
+                            }
+                            if (!isTimestampNano(columnTypeB)) {
+                                writeTimestampAsNanosB.set(columnIndexB);
+                            }
+                        } else {
+                            asOfJoinKeyTypes.add(columnTypeA);
+                        }
+                    }
+
+                    if (masterSymbolKeyCols != null) {
+                        masterSymbolKeyColumnIndices = masterSymbolKeyCols.toArray();
+                        slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
+                    }
+
+                    masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                            RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata, listColumnFilterB, null, null, asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB),
+                            masterMetadata, listColumnFilterB, null, null, asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB
+                    );
+                    slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
+                            RecordSinkFactory.getInstanceClass(configuration, asm, slaveMeta, listColumnFilterA, null, null, asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA),
+                            slaveMeta, listColumnFilterA, null, null, asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA
+                    );
+                }
+
+                slaveStates[s] = new HorizonJoinSlaveState(
+                        configuration, slaveFactory,
+                        perSlaveMasterTsScale, perSlaveSlaveTsScale,
+                        asOfJoinKeyTypes,
+                        masterAsOfJoinMapSink, slaveAsOfJoinMapSink,
+                        masterMetadata.getColumnCount(),
+                        masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices
+                );
+            }
+
+            // Transfer ownership
+            final JoinRecordMetadata innerMetadata0 = innerMetadata;
+            innerMetadata = null;
+            final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+            groupByFunctions = null;
+            final HorizonJoinSlaveState[] slaveStates0 = slaveStates;
+            slaveStates = null;
+
+            ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
+
+            if (keyTypesCopy.getColumnCount() == 0) {
+                return new MultiHorizonJoinNotKeyedRecordCursorFactory(
+                        configuration, asm,
+                        outerProjectionMetadata, innerMetadata0,
+                        masterFactory, slaveStates0, offsets,
+                        masterTimestampColumnIndex,
+                        groupByFunctions0,
+                        valueTypesCopy.getColumnCount(),
+                        columnSources, columnIndices
+                );
+            }
+
+            return new MultiHorizonJoinRecordCursorFactory(
+                    configuration, asm,
+                    outerProjectionMetadata, innerMetadata0,
+                    masterFactory, slaveStates0, offsets,
+                    masterTimestampColumnIndex,
+                    groupByFunctions0,
+                    new ObjList<>(tempOuterProjectionFunctions),
+                    keyFunctions,
+                    keyTypesCopy, valueTypesCopy,
+                    groupByColumnFilter,
+                    columnSources, columnIndices
+            );
+        } catch (Throwable th) {
+            Misc.free(innerMetadata);
+            Misc.freeObjList(groupByFunctions);
+            if (slaveStates != null) {
+                for (HorizonJoinSlaveState ss : slaveStates) {
+                    Misc.free(ss);
+                }
+            }
+            // Free all slave factories on error
+            for (int s = 0, n = slaveFactories.size(); s < n; s++) {
+                Misc.free(slaveFactories.getQuick(s));
+            }
+            throw th;
+        }
+    }
+
+    private static void buildMultiHorizonColumnMappings(
+            RecordMetadata innerMetadata,
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence horizonAlias,
+            CharSequence[] slaveAliases,
+            RecordMetadata[] slaveMetadatas,
+            int[] columnSources,
+            int[] columnIndices,
+            int queryPosition
+    ) throws SqlException {
+        for (int i = 0, n = innerMetadata.getColumnCount(); i < n; i++) {
+            final CharSequence fullName = innerMetadata.getColumnName(i);
+
+            int dotIndex = Chars.indexOfLastUnquoted(fullName, '.');
+            if (dotIndex > 0) {
+                CharSequence tableAlias = fullName.subSequence(0, dotIndex);
+                CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
+
+                if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
+                    int colIdx = masterMetadata.getColumnIndexQuiet(columnName);
+                    if (colIdx < 0) {
+                        throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
+                    }
+                    columnSources[i] = MultiHorizonJoinRecord.SOURCE_MASTER;
+                    columnIndices[i] = colIdx;
+                    continue;
+                }
+                if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
+                    columnSources[i] = MultiHorizonJoinRecord.SOURCE_SEQUENCE;
+                    if (Chars.equalsIgnoreCase(columnName, "offset")) {
+                        columnIndices[i] = 0;
+                    } else if (Chars.equalsIgnoreCase(columnName, "timestamp")) {
+                        columnIndices[i] = 1;
+                    } else {
+                        throw SqlException.$(queryPosition, "unknown horizon column: ").put(columnName);
+                    }
+                    continue;
+                }
+                boolean found = false;
+                for (int s = 0; s < slaveAliases.length; s++) {
+                    if (slaveAliases[s] != null && Chars.equalsIgnoreCase(tableAlias, slaveAliases[s])) {
+                        int colIdx = slaveMetadatas[s].getColumnIndexQuiet(columnName);
+                        if (colIdx < 0) {
+                            throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
+                        }
+                        columnSources[i] = MultiHorizonJoinRecord.SOURCE_SLAVE_BASE + s;
+                        columnIndices[i] = colIdx;
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    continue;
+                }
+                throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
+            }
+
+            // No alias prefix - try matching by name
+            if (Chars.equalsIgnoreCase(fullName, "offset")) {
+                columnSources[i] = MultiHorizonJoinRecord.SOURCE_SEQUENCE;
+                columnIndices[i] = 0;
+                continue;
+            }
+            if (Chars.equalsIgnoreCase(fullName, "timestamp")) {
+                columnSources[i] = MultiHorizonJoinRecord.SOURCE_SEQUENCE;
+                columnIndices[i] = 1;
+                continue;
+            }
+            boolean found = false;
+            for (int s = 0; s < slaveMetadatas.length; s++) {
+                int idx = slaveMetadatas[s].getColumnIndexQuiet(fullName);
+                if (idx >= 0) {
+                    columnSources[i] = MultiHorizonJoinRecord.SOURCE_SLAVE_BASE + s;
+                    columnIndices[i] = idx;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                continue;
+            }
+            int idx = masterMetadata.getColumnIndexQuiet(fullName);
+            if (idx >= 0) {
+                columnSources[i] = MultiHorizonJoinRecord.SOURCE_MASTER;
+                columnIndices[i] = idx;
+                continue;
+            }
+            throw SqlException.$(queryPosition, "failed to resolve column: ").put(fullName);
+        }
+    }
+
     private RecordCursorFactory generateIntersectOrExceptAllFactory(
             QueryModel model,
             SqlExecutionContext executionContext,
@@ -4345,6 +4712,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata joinMetadata = null;
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
+        ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
+        ObjList<QueryModel> pendingHorizonSlaveModels = null;
 
         try {
             int n = ordered.size();
@@ -5027,9 +5396,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_HORIZON:
                                 // Find the synthetic offset model (previous join model with HorizonJoinContext)
                                 final HorizonJoinContext horizonContext = findHorizonOffsetContext(model, index);
+
                                 if (horizonContext == null) {
-                                    throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                                            .put("HORIZON JOIN requires offset configuration (RANGE or LIST)");
+                                    // Non-last HORIZON JOIN (no RANGE/LIST). Save the slave for later
+                                    // and continue. The last HORIZON JOIN will collect all slaves.
+                                    validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                    validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
+                                    processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                    if (pendingHorizonSlaves == null) {
+                                        pendingHorizonSlaves = new ObjList<>();
+                                        pendingHorizonSlaveModels = new ObjList<>();
+                                    }
+                                    pendingHorizonSlaves.add(slave);
+                                    pendingHorizonSlaveModels.add(slaveModel);
+                                    closeSlaveOnFailure = false;
+                                    break;
                                 }
 
                                 // Validate: WHERE clause can only reference master table columns
@@ -5049,17 +5430,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // Process join context for key-based matching (similar to ASOF JOIN)
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
-                                master = generateHorizonJoinFactory(
-                                        parentModel,
-                                        horizonContext,
-                                        master,
-                                        masterAlias,
-                                        masterMetadata,
-                                        slave,
-                                        slaveModel,
-                                        slaveMetadata,
-                                        executionContext
-                                );
+                                if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                                    // Multi-slave HORIZON JOIN: collect all slaves
+                                    pendingHorizonSlaves.add(slave);
+                                    pendingHorizonSlaveModels.add(slaveModel);
+                                    master = generateMultiHorizonJoinFactory(
+                                            parentModel,
+                                            horizonContext,
+                                            master,
+                                            masterAlias,
+                                            masterMetadata,
+                                            pendingHorizonSlaves,
+                                            pendingHorizonSlaveModels,
+                                            executionContext
+                                    );
+                                    pendingHorizonSlaves.clear();
+                                    pendingHorizonSlaveModels.clear();
+                                } else {
+                                    // Single-slave HORIZON JOIN (existing path)
+                                    master = generateHorizonJoinFactory(
+                                            parentModel,
+                                            horizonContext,
+                                            master,
+                                            masterAlias,
+                                            masterMetadata,
+                                            slave,
+                                            slaveModel,
+                                            slaveMetadata,
+                                            executionContext
+                                    );
+                                }
                                 // from now on, master owns slave, so we don't have to close it
                                 closeSlaveOnFailure = false;
                                 break;
