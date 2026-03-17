@@ -395,6 +395,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
     }
 
+    private static boolean isIPv4Cast(int from, int to) {
+        return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
+    }
+
     private static void parquetClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
         int encoding = model.getParquetEncoding();
         int compression = model.getParquetCompression();
@@ -411,17 +415,13 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(", ");
             sink.put(ParquetCompression.getCompressionName(compression));
             int level = model.getParquetCompressionLevel();
-            if (level > 0) {
+            if (level >= 0) {
                 sink.putAscii('(');
                 sink.put(level);
                 sink.putAscii(')');
             }
         }
         sink.putAscii(')');
-    }
-
-    private static boolean isIPv4Cast(int from, int to) {
-        return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
     }
 
     private static void symbolClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
