@@ -4791,6 +4791,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           values: [null]
                                             Async Group By workers: 1
                                               keys: [five_days]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                               values: [avg(x)]
                                               filter: null
                                                 PageFrame
@@ -4805,6 +4806,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           values: [null]
                                             Async Group By workers: 1
                                               keys: [ten_days]
+                                              keyFunctions: [timestamp_floor_utc('10d',ts,'2017-12-20T00:00:00.000Z')]
                                               values: [avg(x)]
                                               filter: null
                                                 PageFrame
@@ -5137,6 +5139,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   values: [null]
                                     Async Group By workers: 1
                                       keys: [five_days]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                       values: [avg(x)]
                                       filter: null
                                         PageFrame
