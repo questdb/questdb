@@ -1513,6 +1513,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 dropFlags
         );
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1621,6 +1622,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableSetParquetEncoding(
+            SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
             CharSequence columnName,
@@ -1657,7 +1659,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int codecPos = lexer.lastTokenPosition();
             compression = ParquetCompression.getCompressionCodec(tok);
             if (compression < 0) {
-                throw SqlException.$(codecPos, "invalid parquet compression codec: ").put(tok);
+                SqlException e = SqlException.$(codecPos, "invalid parquet compression codec '").put(tok).put("', supported values: ");
+                ParquetCompression.addCodecNamesToException(e);
+                throw e;
             }
             tok = SqlUtil.fetchNext(lexer);
             if (tok != null && Chars.equals(tok, '(')) {
@@ -1699,6 +1703,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 parquetEncodingConfig
         );
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -2406,6 +2411,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = expectToken(lexer, "'parquet'");
                         if (isParquetKeyword(tok)) {
                             alterTableSetParquetEncoding(
+                                    securityContext,
                                     tableNamePosition,
                                     tableToken,
                                     columnName,

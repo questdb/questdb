@@ -2086,7 +2086,10 @@ public class SqlParser {
             throw e;
         }
         if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, model.getColumnType())) {
-            throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(model.getColumnType()));
+            SqlException e = SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(model.getColumnType()))
+                    .put(", supported encodings for this type: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, model.getColumnType());
+            throw e;
         }
         model.setParquetEncoding(encoding);
 

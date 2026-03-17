@@ -32,6 +32,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.str.Path;
@@ -154,26 +155,6 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             }
             Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
         });
-    }
-
-    @Test
-    public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
-    }
-
-    @Test
-    public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' or 'materialized' or 'view' expected");
-    }
-
-    @Test
-    public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' or 'materialized' or 'view' expected");
-    }
-
-    @Test
-    public void testExpectTableName() throws Exception {
-        assertFailure("alter table", 11, "table name expected");
     }
 
     @Test
@@ -361,6 +342,9 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 // Setting default encoding with compression should clear encoding but keep compression
                 int encoding = TableUtils.getParquetConfigEncoding(config);
                 Assert.assertEquals(0, encoding);
+                int compression = TableUtils.getParquetConfigCompression(config);
+                Assert.assertEquals(ParquetCompression.COMPRESSION_ZSTD, compression - 1);
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config) - 1);
             }
         });
     }
@@ -410,231 +394,23 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetInvalidKeyword() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET nonsense",
-                33,
-                "'parquet' expected"
-        );
+    public void testExpectActionKeyword() throws Exception {
+        assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
-    public void testSetParquetCompressionLevelMissingCloseParen() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(3 extra",
-                57,
-                "')' expected"
-        );
+    public void testExpectTableKeyword() throws Exception {
+        assertFailure("alter x", 6, "'table' or 'materialized' or 'view' expected");
     }
 
     @Test
-    public void testSetParquetCompressionLevelNotANumber() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(abc))",
-                55,
-                "compression level must be a number"
-        );
+    public void testExpectTableKeyword2() throws Exception {
+        assertFailure("alter", 5, "'table' or 'materialized' or 'view' expected");
     }
 
     @Test
-    public void testSetParquetCompressionLevelTooHigh() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(30))",
-                55,
-                "ZSTD compression level must be between 1 and 22"
-        );
-    }
-
-    @Test
-    public void testSetParquetCompressionLevelTooLow() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(0))",
-                55,
-                "ZSTD compression level must be between 1 and 22"
-        );
-    }
-
-    @Test
-    public void testSetParquetCompression() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(3))");
-
-            try (TableWriter writer = getWriter("x")) {
-                int colIndex = writer.getMetadata().getColumnIndex("d");
-                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                // compression = ZSTD (4) + 1 = 5 in packed form
-                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
-            }
-        });
-    }
-
-    @Test
-    public void testSetParquetCompressionUncompressed() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET(default, UNCOMPRESSED)");
-
-            try (TableWriter writer = getWriter("x")) {
-                int colIndex = writer.getMetadata().getColumnIndex("d");
-                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                // compression = UNCOMPRESSED (0) + 1 = 1 in packed form
-                Assert.assertEquals(1, TableUtils.getParquetConfigCompression(config));
-            }
-        });
-    }
-
-    @Test
-    public void testSetParquetEncoding() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED)");
-
-            try (TableWriter writer = getWriter("x")) {
-                int colIndex = writer.getMetadata().getColumnIndex("i");
-                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
-            }
-        });
-    }
-
-    @Test
-    public void testSetParquetEncodingAndCompression() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
-
-            try (TableWriter writer = getWriter("x")) {
-                int colIndex = writer.getMetadata().getColumnIndex("i");
-                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
-                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
-            }
-        });
-    }
-
-    @Test
-    public void testSetParquetEncodingInvalidForType() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(DELTA_LENGTH_BYTE_ARRAY)",
-                41,
-                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testSetParquetEncodingInvalidName() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(INVALID_ENCODING)",
-                41,
-                "invalid parquet encoding 'INVALID_ENCODING', supported values: plain, rle_dictionary"
-        );
-    }
-
-    @Test
-    public void testSetParquetEncodingThenConvert() throws Exception {
-        assertMemoryLeak(() -> {
-            inputRoot = root;
-            execute("CREATE TABLE x2 (" +
-                    "val LONG," +
-                    " ts TIMESTAMP" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY");
-
-            execute("INSERT INTO x2 SELECT" +
-                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
-                    " timestamp_sequence('2015-01-01', 1_000_000)" +
-                    " FROM long_sequence(1000)");
-
-            // seal the partition by inserting into the next day
-            execute("INSERT INTO x2 VALUES (42, '2015-01-02T00:00:00.000000Z')");
-
-            execute("ALTER TABLE x2 ALTER COLUMN val SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
-
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                    TableReader reader = engine.getReader("x2")
-            ) {
-                path.of(root).concat("x2.parquet").$();
-                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                PartitionEncoder.encode(partitionDescriptor, path);
-                assertSqlCursors(
-                        "SELECT * FROM x2 WHERE ts IN '2015-01-01'",
-                        "SELECT * FROM read_parquet('x2.parquet')"
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testSetParquetInvalidCompressionName() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, INVALID_CODEC)",
-                50,
-                "invalid parquet compression codec:"
-        );
-    }
-
-    @Test
-    public void testSetParquetMissingEncodingOrCompression() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d SET PARQUET",
-                40,
-                "'(' expected"
-        );
-    }
-
-    @Test
-    public void testSetParquetByteStreamSplitRejectedForFloat() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN e SET PARQUET(BYTE_STREAM_SPLIT)",
-                41,
-                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testSetParquetByteStreamSplitRejectedForInt() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN i SET PARQUET(BYTE_STREAM_SPLIT)",
-                41,
-                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testSetParquetDeltaBinaryPackedForShort() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-
-            execute("ALTER TABLE x ALTER COLUMN f SET PARQUET(DELTA_BINARY_PACKED)");
-
-            try (TableWriter writer = getWriter("x")) {
-                int colIndex = writer.getMetadata().getColumnIndex("f");
-                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
-                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
-            }
-        });
-    }
-
-    @Test
-    public void testSetParquetPlainRejectedForSymbol() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN sym SET PARQUET(PLAIN)",
-                43,
-                "encoding 'PLAIN' is not valid for column type"
-        );
+    public void testExpectTableName() throws Exception {
+        assertFailure("alter table", 11, "table name expected");
     }
 
     @Test
@@ -757,6 +533,234 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                         Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
                     }
                 }
+        );
+    }
+
+    @Test
+    public void testSetInvalidKeyword() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET nonsense",
+                33,
+                "'parquet' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetByteStreamSplitRejectedForFloat() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN e SET PARQUET(BYTE_STREAM_SPLIT)",
+                41,
+                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetByteStreamSplitRejectedForInt() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(BYTE_STREAM_SPLIT)",
+                41,
+                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(3))");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("d");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                // compression = ZSTD (4) + 1 = 5 in packed form
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelMissingCloseParen() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(3 extra",
+                57,
+                "')' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelNotANumber() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(abc))",
+                55,
+                "compression level must be a number"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelTooHigh() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(30))",
+                55,
+                "ZSTD compression level must be between 1 and 22"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelTooLow() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, ZSTD(0))",
+                55,
+                "ZSTD compression level must be between 1 and 22"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionUncompressed() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET(default, UNCOMPRESSED)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("d");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                // compression = UNCOMPRESSED (0) + 1 = 1 in packed form
+                Assert.assertEquals(1, TableUtils.getParquetConfigCompression(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetDeltaBinaryPackedForShort() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN f SET PARQUET(DELTA_BINARY_PACKED)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("f");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEncodingInvalidForType() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(DELTA_LENGTH_BYTE_ARRAY)",
+                41,
+                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetEncodingInvalidName() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(INVALID_ENCODING)",
+                41,
+                "invalid parquet encoding 'INVALID_ENCODING', supported values: plain, rle_dictionary"
+        );
+    }
+
+    @Test
+    public void testSetParquetEncodingThenConvert() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x2 (" +
+                    "val LONG," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO x2 SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1_000_000)" +
+                    " FROM long_sequence(1000)");
+
+            // seal the partition by inserting into the next day
+            execute("INSERT INTO x2 VALUES (42, '2015-01-02T00:00:00.000000Z')");
+
+            execute("ALTER TABLE x2 ALTER COLUMN val SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x2")
+            ) {
+                path.of(root).concat("x2.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x2 WHERE ts IN '2015-01-01'",
+                        "SELECT * FROM read_parquet('x2.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetInvalidCompressionName() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, INVALID_CODEC)",
+                50,
+                "invalid parquet compression codec:"
+        );
+    }
+
+    @Test
+    public void testSetParquetMissingEncodingOrCompression() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET",
+                40,
+                "'(' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetPlainRejectedForSymbol() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN sym SET PARQUET(PLAIN)",
+                43,
+                "encoding 'PLAIN' is not valid for column type"
         );
     }
 

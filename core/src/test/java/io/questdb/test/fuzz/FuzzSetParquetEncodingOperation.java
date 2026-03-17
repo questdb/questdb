@@ -70,7 +70,7 @@ public class FuzzSetParquetEncodingOperation implements FuzzTransactionOperation
             }
             if (compression >= 0) {
                 sb.append(", ").append(ParquetCompression.getCompressionName(compression));
-                if (compressionLevel > 0) {
+                if (compressionLevel >= 0) {
                     sb.append('(').append(compressionLevel).append(')');
                 }
             }
