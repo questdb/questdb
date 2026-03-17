@@ -48,34 +48,33 @@ fn write_offset_sequence(
     Ok(())
 }
 
-pub struct VarcharColumnSink<'a, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    pub buffers: &'a mut ColumnChunkBuffers,
+pub struct VarcharColumnSink<T: DataPageSlicer> {
+    slicer: T,
 }
 
-impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
-        self.buffers.data_vec.reserve(self.slicer.data_size())?;
+impl<T: DataPageSlicer> Pushable<ColumnChunkBuffers> for VarcharColumnSink<T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
+        sink.data_vec.reserve(self.slicer.data_size())?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         append_varchar(
-            &mut self.buffers.aux_vec,
-            &mut self.buffers.data_vec,
+            &mut sink.aux_vec,
+            &mut sink.data_vec,
             self.slicer.next()?,
         )
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         // TODO: optimize
         for _ in 0..count {
             append_varchar(
-                &mut self.buffers.aux_vec,
-                &mut self.buffers.data_vec,
+                &mut sink.aux_vec,
+                &mut sink.data_vec,
                 self.slicer.next()?,
             )?;
         }
@@ -83,13 +82,13 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        append_varchar_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        append_varchar_null(&mut sink.aux_vec, &sink.data_vec)
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        append_varchar_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        append_varchar_nulls(&mut sink.aux_vec, &sink.data_vec, count)
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
@@ -97,126 +96,114 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> VarcharColumnSink<'a, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
-        Self { slicer, buffers }
+impl<T: DataPageSlicer> VarcharColumnSink<T> {
+    pub fn new(slicer: T) -> Self {
+        Self { slicer }
     }
 }
 
-pub struct StringColumnSink<'a, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    buffers: &'a mut ColumnChunkBuffers,
+pub struct StringColumnSink<T: DataPageSlicer> {
+    slicer: T,
     error: ParquetResult<()>,
 }
 
-impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+impl<T: DataPageSlicer> Pushable<ColumnChunkBuffers> for StringColumnSink<T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if count > 0 {
-            self.buffers
-                .aux_vec
-                .reserve((count + 1) * STRING_AUX_SIZE)?;
-            if self.buffers.aux_vec.is_empty() {
-                self.buffers
-                    .aux_vec
+            sink.aux_vec.reserve((count + 1) * STRING_AUX_SIZE)?;
+            if sink.aux_vec.is_empty() {
+                sink.aux_vec
                     .extend_from_slice(0u64.to_le_bytes().as_ref())?;
             }
         }
-        self.buffers
-            .data_vec
+        sink.data_vec
             .reserve(2 * self.slicer.data_size() + size_of::<u32>() * count)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let utf8 = self.slicer.next()?;
         let utf8_str = std::str::from_utf8(utf8);
 
         match utf8_str {
             Ok(utf8_str) => {
-                let pos = self.buffers.data_vec.len();
-                self.buffers
-                    .data_vec
-                    .resize(self.buffers.data_vec.len() + 4, 0u8)?;
+                let pos = sink.data_vec.len();
+                sink.data_vec.resize(sink.data_vec.len() + 4, 0u8)?;
                 for c in utf8_str.encode_utf16() {
-                    self.buffers.data_vec.extend_from_slice(&c.to_le_bytes())?;
+                    sink.data_vec.extend_from_slice(&c.to_le_bytes())?;
                 }
 
                 // Set length in utf16 characters
-                let len = (self.buffers.data_vec.len() - pos - 4) as u32 / 2;
-                self.buffers.data_vec[pos..pos + 4].copy_from_slice(len.to_le_bytes().as_ref());
+                let len = (sink.data_vec.len() - pos - 4) as u32 / 2;
+                sink.data_vec[pos..pos + 4].copy_from_slice(len.to_le_bytes().as_ref());
 
                 // set aux pointer
-                self.buffers
-                    .aux_vec
-                    .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
+                sink.aux_vec
+                    .extend_from_slice(sink.data_vec.len().to_le_bytes().as_ref())?;
             }
             Err(utf8_str_err) => {
                 self.error = Err(ParquetErrorReason::Utf8Decode(utf8_str_err).into_err());
-                self.push_null()?;
+                self.push_null(sink)?;
             }
         }
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         // TODO: optimize
         for _ in 0..count {
-            self.push()?;
+            self.push(sink)?;
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        self.buffers
-            .data_vec
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        sink.data_vec
             .extend_from_slice((-1i32).to_le_bytes().as_ref())?;
         // set aux pointer
-        self.buffers
-            .aux_vec
-            .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
+        sink.aux_vec
+            .extend_from_slice(sink.data_vec.len().to_le_bytes().as_ref())?;
         Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         match count {
             0 => Ok(()),
-            1 => self.push_null(),
+            1 => self.push_null(sink),
             2 => {
-                self.push_null()?;
-                self.push_null()
+                self.push_null(sink)?;
+                self.push_null(sink)
             }
             3 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
+                self.push_null(sink)?;
+                self.push_null(sink)?;
+                self.push_null(sink)
             }
             4 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
+                self.push_null(sink)?;
+                self.push_null(sink)?;
+                self.push_null(sink)?;
+                self.push_null(sink)
             }
             _ => {
-                let base = self.buffers.data_vec.len();
-                self.buffers.data_vec.reserve(count * size_of::<i32>())?;
+                let base = sink.data_vec.len();
+                sink.data_vec.reserve(count * size_of::<i32>())?;
 
                 // Fill data_vec with 0xff bytes (-1i32 per null)
                 unsafe {
                     ptr::write_bytes(
-                        self.buffers.data_vec.as_mut_ptr().add(base),
+                        sink.data_vec.as_mut_ptr().add(base),
                         0xff,
                         count * size_of::<i32>(),
                     );
-                    self.buffers
-                        .data_vec
-                        .set_len(base + count * size_of::<i32>());
+                    sink.data_vec.set_len(base + count * size_of::<i32>());
                 }
                 write_offset_sequence(
-                    &mut self.buffers.aux_vec,
+                    &mut sink.aux_vec,
                     base + size_of::<i32>(),
                     size_of::<i32>(),
                     count,
@@ -230,107 +217,96 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> StringColumnSink<'a, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
-        Self { slicer, buffers, error: Ok(()) }
+impl<T: DataPageSlicer> StringColumnSink<T> {
+    pub fn new(slicer: T) -> Self {
+        Self { slicer, error: Ok(()) }
     }
 }
 
-pub struct BinaryColumnSink<'a, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    buffers: &'a mut ColumnChunkBuffers,
+pub struct BinaryColumnSink<T: DataPageSlicer> {
+    slicer: T,
 }
 
-impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+impl<T: DataPageSlicer> Pushable<ColumnChunkBuffers> for BinaryColumnSink<T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if count > 0 {
-            self.buffers
-                .aux_vec
-                .reserve((count + 1) * STRING_AUX_SIZE)?;
-            if self.buffers.aux_vec.is_empty() {
-                self.buffers
-                    .aux_vec
+            sink.aux_vec.reserve((count + 1) * STRING_AUX_SIZE)?;
+            if sink.aux_vec.is_empty() {
+                sink.aux_vec
                     .extend_from_slice(0u64.to_le_bytes().as_ref())?;
             }
         }
-        self.buffers
-            .data_vec
+        sink.data_vec
             .reserve(self.slicer.data_size() + size_of::<u64>() * count)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let slice = self.slicer.next()?;
-        self.buffers
-            .data_vec
+        sink.data_vec
             .extend_from_slice(slice.len().to_le_bytes().as_ref())?;
-        self.buffers.data_vec.extend_from_slice(slice)?;
+        sink.data_vec.extend_from_slice(slice)?;
 
         // set aux pointer
-        self.buffers
-            .aux_vec
-            .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
+        sink.aux_vec
+            .extend_from_slice(sink.data_vec.len().to_le_bytes().as_ref())?;
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.push()?;
+            self.push(sink)?;
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        self.buffers
-            .data_vec
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        sink.data_vec
             .extend_from_slice((-1i64).to_le_bytes().as_ref())?;
         // set aux pointer
-        self.buffers
-            .aux_vec
-            .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
+        sink.aux_vec
+            .extend_from_slice(sink.data_vec.len().to_le_bytes().as_ref())?;
         Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         match count {
             0 => Ok(()),
-            1 => self.push_null(),
+            1 => self.push_null(sink),
             2 => {
-                self.push_null()?;
-                self.push_null()
+                self.push_null(sink)?;
+                self.push_null(sink)
             }
             3 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
+                self.push_null(sink)?;
+                self.push_null(sink)?;
+                self.push_null(sink)
             }
             4 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
+                self.push_null(sink)?;
+                self.push_null(sink)?;
+                self.push_null(sink)?;
+                self.push_null(sink)
             }
             _ => {
-                let base = self.buffers.data_vec.len();
-                self.buffers.data_vec.reserve(count * size_of::<i64>())?;
+                let base = sink.data_vec.len();
+                sink.data_vec.reserve(count * size_of::<i64>())?;
 
                 // Fill data_vec with 0xff bytes (-1i64 per null)
                 unsafe {
                     ptr::write_bytes(
-                        self.buffers.data_vec.as_mut_ptr().add(base),
+                        sink.data_vec.as_mut_ptr().add(base),
                         0xff,
                         count * size_of::<i64>(),
                     );
-                    self.buffers
-                        .data_vec
-                        .set_len(base + count * size_of::<i64>());
+                    sink.data_vec.set_len(base + count * size_of::<i64>());
                 }
                 write_offset_sequence(
-                    &mut self.buffers.aux_vec,
+                    &mut sink.aux_vec,
                     base + size_of::<i64>(),
                     size_of::<i64>(),
                     count,
@@ -344,39 +320,38 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> BinaryColumnSink<'a, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
-        Self { slicer, buffers }
+impl<T: DataPageSlicer> BinaryColumnSink<T> {
+    pub fn new(slicer: T) -> Self {
+        Self { slicer }
     }
 }
 
-pub struct RawArrayColumnSink<'a, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    pub buffers: &'a mut ColumnChunkBuffers,
+pub struct RawArrayColumnSink<T: DataPageSlicer> {
+    slicer: T,
 }
 
-impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
-        self.buffers.data_vec.reserve(self.slicer.data_size())?;
+impl<T: DataPageSlicer> Pushable<ColumnChunkBuffers> for RawArrayColumnSink<T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.aux_vec.reserve(count * ARRAY_AUX_SIZE)?;
+        sink.data_vec.reserve(self.slicer.data_size())?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         append_raw_array(
-            &mut self.buffers.aux_vec,
-            &mut self.buffers.data_vec,
+            &mut sink.aux_vec,
+            &mut sink.data_vec,
             self.slicer.next()?,
         )
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
             append_raw_array(
-                &mut self.buffers.aux_vec,
-                &mut self.buffers.data_vec,
+                &mut sink.aux_vec,
+                &mut sink.data_vec,
                 self.slicer.next()?,
             )?;
         }
@@ -384,13 +359,13 @@ impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        append_array_null(&mut self.buffers.aux_vec, &self.buffers.data_vec)
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        append_array_null(&mut sink.aux_vec, &sink.data_vec)
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        append_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        append_array_nulls(&mut sink.aux_vec, &sink.data_vec, count)
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
@@ -398,47 +373,46 @@ impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> RawArrayColumnSink<'a, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
-        Self { slicer, buffers }
+impl<T: DataPageSlicer> RawArrayColumnSink<T> {
+    pub fn new(slicer: T) -> Self {
+        Self { slicer }
     }
 }
 
-pub struct VarcharSliceColumnSink<'a, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    pub buffers: &'a mut ColumnChunkBuffers,
+pub struct VarcharSliceColumnSink<T: DataPageSlicer> {
+    slicer: T,
     ascii: bool,
 }
 
-impl<T: DataPageSlicer> Pushable for VarcharSliceColumnSink<'_, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
+impl<T: DataPageSlicer> Pushable<ColumnChunkBuffers> for VarcharSliceColumnSink<T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let value = self.slicer.next()?;
-        append_varchar_slice(&mut self.buffers.aux_vec, value, self.ascii)
+        append_varchar_slice(&mut sink.aux_vec, value, self.ascii)
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
             let value = self.slicer.next()?;
-            append_varchar_slice(&mut self.buffers.aux_vec, value, self.ascii)?;
+            append_varchar_slice(&mut sink.aux_vec, value, self.ascii)?;
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        append_varchar_slice_null(&mut self.buffers.aux_vec)
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        append_varchar_slice_null(&mut sink.aux_vec)
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        append_varchar_slice_nulls(&mut self.buffers.aux_vec, count)
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        append_varchar_slice_nulls(&mut sink.aux_vec, count)
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
@@ -446,9 +420,9 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceColumnSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> VarcharSliceColumnSink<'a, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers, ascii: bool) -> Self {
-        Self { slicer, buffers, ascii }
+impl<T: DataPageSlicer> VarcharSliceColumnSink<T> {
+    pub fn new(slicer: T, ascii: bool) -> Self {
+        Self { slicer, ascii }
     }
 }
 
@@ -456,21 +430,20 @@ impl<'a, T: DataPageSlicer> VarcharSliceColumnSink<'a, T> {
 /// Strings are reconstructed incrementally - each slicer.next() overwrites the previous value.
 /// We copy each reconstructed string to data_vec, storing offsets temporarily in aux,
 /// then do a fixup pass to convert offsets to pointers.
-pub struct VarcharSliceSpillSink<'a, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    pub buffers: &'a mut ColumnChunkBuffers,
+pub struct VarcharSliceSpillSink<T: DataPageSlicer> {
+    slicer: T,
     ascii: bool,
 }
 
-impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
-        self.buffers.data_vec.reserve(self.slicer.data_size())?;
+impl<T: DataPageSlicer> Pushable<ColumnChunkBuffers> for VarcharSliceSpillSink<T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.aux_vec.reserve(count * VARCHAR_AUX_SIZE)?;
+        sink.data_vec.reserve(self.slicer.data_size())?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let value = self.slicer.next()?;
         let len = value.len();
         if len == 0 {
@@ -478,12 +451,8 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
             // Write clean aux entry without SPILL_MARKER; pointer is irrelevant
             // since Java never dereferences it when length is 0.
             let header: u64 = 3; // (0 << 4) | non-null | ascii
-            self.buffers
-                .aux_vec
-                .extend_from_slice(&header.to_le_bytes())?;
-            self.buffers
-                .aux_vec
-                .extend_from_slice(&0u64.to_le_bytes())?;
+            sink.aux_vec.extend_from_slice(&header.to_le_bytes())?;
+            sink.aux_vec.extend_from_slice(&0u64.to_le_bytes())?;
             return Ok(());
         }
         if len >= (1 << 28) {
@@ -497,36 +466,33 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
         // The header uses the VARCHAR-compatible format: (len << 4) | flags.
         // The spill marker (bit 31 of bytes 4-7) distinguishes spill entries
         // (offsets needing fixup) from non-spill entries (absolute pointers).
-        let offset = self.buffers.data_vec.len();
-        self.buffers.data_vec.extend_from_slice(value)?;
+        let offset = sink.data_vec.len();
+        sink.data_vec.extend_from_slice(value)?;
         let len = len as u32;
         let header: u32 = (len << 4) | if self.ascii { 3 } else { 1 };
         let combined = (SPILL_MARKER as u64) << 32 | (header as u64);
-        self.buffers
-            .aux_vec
-            .extend_from_slice(&combined.to_le_bytes())?;
-        self.buffers
-            .aux_vec
+        sink.aux_vec.extend_from_slice(&combined.to_le_bytes())?;
+        sink.aux_vec
             .extend_from_slice(&(offset as u64).to_le_bytes())?;
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.push()?;
+            self.push(sink)?;
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        append_varchar_slice_null(&mut self.buffers.aux_vec)
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        append_varchar_slice_null(&mut sink.aux_vec)
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        append_varchar_slice_nulls(&mut self.buffers.aux_vec, count)
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        append_varchar_slice_nulls(&mut sink.aux_vec, count)
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
@@ -534,9 +500,9 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
     }
 }
 
-impl<'a, T: DataPageSlicer> VarcharSliceSpillSink<'a, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers, ascii: bool) -> Self {
-        Self { slicer, buffers, ascii }
+impl<T: DataPageSlicer> VarcharSliceSpillSink<T> {
+    pub fn new(slicer: T, ascii: bool) -> Self {
+        Self { slicer, ascii }
     }
 }
 

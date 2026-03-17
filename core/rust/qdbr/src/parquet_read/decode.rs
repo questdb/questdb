@@ -7,8 +7,8 @@ use crate::parquet_read::column_sink::var::{
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decode::decimal::{
-    decode_byte_array_decimal_dict_mode, decode_byte_array_decimal_mode,
-    decode_fixed_decimal_dict_mode, decode_fixed_decimal_mode,
+    make_byte_array_decimal_dict_decoder, make_byte_array_decimal_decoder,
+    make_fixed_decimal_dict_decoder, make_fixed_decimal_decoder,
 };
 use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
@@ -40,6 +40,8 @@ use std::ptr;
 
 mod array;
 mod decimal;
+pub mod def_level_iter;
+pub mod vectorized;
 
 use self::array::{decode_array_page, decode_array_page_filtered};
 
@@ -167,6 +169,182 @@ impl<'a> DecodeModeContext<'a> {
     }
 }
 
+pub trait PageDecoder<Sink> {
+    fn output_count(&self) -> usize;
+    fn is_exhausted(&self) -> bool;
+    fn reserve(&mut self, sink: &mut Sink) -> ParquetResult<()>;
+    fn decode_batch(&mut self, sink: &mut Sink, batch_size: usize) -> ParquetResult<usize>;
+    fn decode_all(&mut self, sink: &mut Sink) -> ParquetResult<()>;
+}
+
+pub struct BoundPageDecoder<'a, Sink, P: Pushable<Sink>> {
+    iter: def_level_iter::DefLevelBatchIter<'a>,
+    pushable: P,
+    _phantom: std::marker::PhantomData<fn(&mut Sink)>,
+}
+
+impl<'a, Sink, P: Pushable<Sink>> BoundPageDecoder<'a, Sink, P> {
+    pub fn new(iter: def_level_iter::DefLevelBatchIter<'a>, pushable: P) -> Self {
+        Self {
+            iter,
+            pushable,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Sink, P: Pushable<Sink>> PageDecoder<Sink> for BoundPageDecoder<'_, Sink, P> {
+    fn output_count(&self) -> usize {
+        self.iter.output_count()
+    }
+
+    fn is_exhausted(&self) -> bool {
+        self.iter.is_exhausted()
+    }
+
+    fn reserve(&mut self, sink: &mut Sink) -> ParquetResult<()> {
+        self.pushable.reserve(sink, self.iter.output_count())
+    }
+
+    fn decode_batch(&mut self, sink: &mut Sink, batch_size: usize) -> ParquetResult<usize> {
+        self.iter
+            .decode_batch(&mut self.pushable, sink, batch_size)
+    }
+
+    fn decode_all(&mut self, sink: &mut Sink) -> ParquetResult<()> {
+        def_level_iter::decode_all(&mut self.iter, &mut self.pushable, sink)
+    }
+}
+
+struct ArrayPageDecoder<'a, T: DataPageSlicer> {
+    page: DataPage<'a>,
+    mode: DecodeModeContext<'a>,
+    slicer: T,
+}
+
+impl<T: DataPageSlicer> PageDecoder<ColumnChunkBuffers> for ArrayPageDecoder<'_, T> {
+    fn output_count(&self) -> usize {
+        self.mode.output_row_count()
+    }
+
+    fn is_exhausted(&self) -> bool {
+        false // decode_all is a one-shot call
+    }
+
+    fn reserve(&mut self, _sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        Ok(()) // array decoders handle their own reservation
+    }
+
+    fn decode_batch(
+        &mut self,
+        _sink: &mut ColumnChunkBuffers,
+        _batch_size: usize,
+    ) -> ParquetResult<usize> {
+        unreachable!("ArrayPageDecoder only supports decode_all")
+    }
+
+    fn decode_all(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        // Delegate to the existing array decode functions.
+        // We use FILTERED=false, FILL_NULLS=false because the ArrayPageDecoder
+        // is only constructed in the non-FILL_NULLS path. The filtered vs unfiltered
+        // distinction is handled by the DecodeModeContext.
+        if self.mode.filter.is_some() {
+            let filter = self.mode.filtered_context();
+            decode_array_page_filtered::<_, false>(
+                &self.page,
+                filter.page_row_start,
+                filter.page_row_count,
+                filter.row_group_lo,
+                self.mode.row_lo,
+                self.mode.row_hi,
+                filter.rows_filter,
+                &mut self.slicer,
+                sink,
+            )
+        } else {
+            decode_array_page(
+                &self.page,
+                self.mode.row_lo,
+                self.mode.row_hi,
+                &mut self.slicer,
+                sink,
+            )
+        }
+    }
+}
+
+enum DispatchResult<'a, Sink = ColumnChunkBuffers> {
+    Unsupported,
+    Decoder(Box<dyn PageDecoder<Sink> + 'a>),
+    Done,
+}
+
+fn make_def_level_iter<'a, const FILTERED: bool>(
+    page: &DataPage<'a>,
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<def_level_iter::DefLevelBatchIter<'a>> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        def_level_iter::DefLevelBatchIter::new_filtered(
+            page,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            filter.rows_filter,
+        )
+    } else {
+        def_level_iter::DefLevelBatchIter::new(page, mode.row_lo, mode.row_hi)
+    }
+}
+
+fn dispatch_scalar<'a, P, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    mode: DecodeModeContext<'a>,
+    pushable: P,
+    bufs: &mut ColumnChunkBuffers,
+) -> ParquetResult<DispatchResult<'a>>
+where
+    P: Pushable<ColumnChunkBuffers> + 'a,
+{
+    if FILL_NULLS {
+        decode_page0_mode::<ColumnChunkBuffers, _, FILTERED, FILL_NULLS>(
+            page, mode, &mut { pushable }, bufs,
+        )?;
+        Ok(DispatchResult::Done)
+    } else {
+        let iter = make_def_level_iter::<FILTERED>(page, mode)?;
+        Ok(DispatchResult::Decoder(Box::new(BoundPageDecoder::new(
+            iter, pushable,
+        ))))
+    }
+}
+
+fn dispatch_array<'a, T, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    mode: DecodeModeContext<'a>,
+    slicer: T,
+    bufs: &mut ColumnChunkBuffers,
+) -> ParquetResult<DispatchResult<'a>>
+where
+    T: DataPageSlicer + 'a,
+{
+    if FILL_NULLS {
+        let mut slicer = slicer;
+        decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
+        Ok(DispatchResult::Done)
+    } else {
+        Ok(DispatchResult::Decoder(Box::new(ArrayPageDecoder {
+            page: DataPage {
+                buffer: page.buffer,
+                header: page.header,
+                descriptor: page.descriptor,
+            },
+            mode,
+            slicer,
+        })))
+    }
+}
+
 #[inline(always)]
 fn clear_aux_buffers(bufs: &mut ColumnChunkBuffers) {
     bufs.aux_vec.clear();
@@ -174,14 +352,15 @@ fn clear_aux_buffers(bufs: &mut ColumnChunkBuffers) {
 }
 
 #[inline(always)]
-fn decode_page0_mode<T: Pushable, const FILTERED: bool, const FILL_NULLS: bool>(
+fn decode_page0_mode<Sink, T: Pushable<Sink>, const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     mode: DecodeModeContext<'_>,
-    sink: &mut T,
+    pushable: &mut T,
+    sink: &mut Sink,
 ) -> ParquetResult<()> {
     if FILTERED {
         let filter = mode.filtered_context();
-        decode_page0_filtered::<_, FILL_NULLS>(
+        decode_page0_filtered::<Sink, _, FILL_NULLS>(
             page,
             filter.page_row_start,
             filter.page_row_count,
@@ -189,16 +368,17 @@ fn decode_page0_mode<T: Pushable, const FILTERED: bool, const FILL_NULLS: bool>(
             mode.row_lo,
             mode.row_hi,
             filter.rows_filter,
+            pushable,
             sink,
         )
     } else {
-        decode_page0(page, mode.row_lo, mode.row_hi, sink)
+        decode_page0(page, mode.row_lo, mode.row_hi, pushable, sink)
     }
 }
 
 #[inline(always)]
 fn decode_array_page_mode<T: DataPageSlicer, const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
+    page: &DataPage<'_>,
     mode: DecodeModeContext<'_>,
     slicer: &mut T,
     bufs: &mut ColumnChunkBuffers,
@@ -277,8 +457,8 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     let column_type = col_info.column_type;
 
     let primitive_type = &page.descriptor.primitive_type;
-    let supported = match primitive_type.physical_type {
-        PhysicalType::Int32 => decode_int32_dispatch::<FILTERED, FILL_NULLS>(
+    let result = match primitive_type.physical_type {
+        PhysicalType::Int32 => make_int32_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -288,7 +468,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             primitive_type.converted_type,
             mode,
         ),
-        PhysicalType::Int64 => decode_int64_dispatch::<FILTERED, FILL_NULLS>(
+        PhysicalType::Int64 => make_int64_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -297,7 +477,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             primitive_type.logical_type,
             mode,
         ),
-        PhysicalType::FixedLenByteArray(len) => decode_fixed_len_dispatch::<FILTERED, FILL_NULLS>(
+        PhysicalType::FixedLenByteArray(len) => make_fixed_len_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -308,7 +488,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             len,
             mode,
         ),
-        PhysicalType::ByteArray => decode_byte_array_dispatch::<FILTERED, FILL_NULLS>(
+        PhysicalType::ByteArray => make_byte_array_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -319,7 +499,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             primitive_type.converted_type,
             mode,
         ),
-        PhysicalType::Int96 => decode_int96_dispatch::<FILTERED, FILL_NULLS>(
+        PhysicalType::Int96 => make_int96_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -328,7 +508,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             primitive_type.logical_type,
             mode,
         ),
-        PhysicalType::Double => decode_double_dispatch::<FILTERED, FILL_NULLS>(
+        PhysicalType::Double => make_double_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -336,7 +516,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             column_type,
             mode,
         ),
-        typ => decode_other_fixed_dispatch::<FILTERED, FILL_NULLS>(
+        typ => make_other_fixed_decoder::<FILTERED, FILL_NULLS>(
             page,
             dict,
             values_buffer,
@@ -347,103 +527,107 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ),
     }?;
 
-    if supported {
-        Ok(())
-    } else if FILTERED {
-        Err(fmt_err!(
-            Unsupported,
-            "encoding not supported for filtered decode, physical type: {:?}, \
-                encoding {:?}, \
-                logical type {:?}, \
-                converted type: {:?}, \
-                column type {:?}",
-            page.descriptor.primitive_type.physical_type,
-            page.encoding(),
-            page.descriptor.primitive_type.logical_type,
-            page.descriptor.primitive_type.converted_type,
-            column_type,
-        ))
-    } else {
-        Err(fmt_err!(
-            Unsupported,
-            "encoding not supported, physical type: {:?}, \
-                encoding {:?}, \
-                logical type {:?}, \
-                converted type: {:?}, \
-                column type {:?}",
-            page.descriptor.primitive_type.physical_type,
-            page.encoding(),
-            page.descriptor.primitive_type.logical_type,
-            page.descriptor.primitive_type.converted_type,
-            column_type,
-        ))
+    match result {
+        DispatchResult::Decoder(mut dec) => dec.decode_all(bufs),
+        DispatchResult::Done => Ok(()),
+        DispatchResult::Unsupported => {
+            if FILTERED {
+                Err(fmt_err!(
+                    Unsupported,
+                    "encoding not supported for filtered decode, physical type: {:?}, \
+                        encoding {:?}, \
+                        logical type {:?}, \
+                        converted type: {:?}, \
+                        column type {:?}",
+                    page.descriptor.primitive_type.physical_type,
+                    page.encoding(),
+                    page.descriptor.primitive_type.logical_type,
+                    page.descriptor.primitive_type.converted_type,
+                    column_type,
+                ))
+            } else {
+                Err(fmt_err!(
+                    Unsupported,
+                    "encoding not supported, physical type: {:?}, \
+                        encoding {:?}, \
+                        logical type {:?}, \
+                        converted type: {:?}, \
+                        column type {:?}",
+                    page.descriptor.primitive_type.physical_type,
+                    page.encoding(),
+                    page.descriptor.primitive_type.logical_type,
+                    page.descriptor.primitive_type.converted_type,
+                    column_type,
+                ))
+            }
+        }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_int32_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
     logical_type: Option<PrimitiveLogicalType>,
     converted_type: Option<PrimitiveConvertedType>,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     let row_hi = mode.source_row_count();
     match (page.encoding(), dict, logical_type, column_type.tag()) {
         (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::BYTE),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::BYTE),
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i8>::new(
+                PlainPrimitiveDecoder::<i32, i8>::new(
                     values_buffer,
                     bufs,
                     nulls::GEOHASH_BYTE,
                 ),
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::DECIMAL8),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::DECIMAL8),
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i8, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::BYTE,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i8, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::GEOHASH_BYTE,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -452,18 +636,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Byte,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::BYTE,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -472,18 +656,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::GeoByte,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::GEOHASH_BYTE,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -492,70 +676,70 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Decimal8,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::DECIMAL8,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::SHORT),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::SHORT),
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i16>::new(
+                PlainPrimitiveDecoder::<i32, i16>::new(
                     values_buffer,
                     bufs,
                     nulls::GEOHASH_SHORT,
                 ),
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::DECIMAL16),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::DECIMAL16),
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i16, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::SHORT,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i16, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::GEOHASH_SHORT,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -564,18 +748,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Short | ColumnTypeTag::Char,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::SHORT,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -584,18 +768,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::GeoShort,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::GEOHASH_SHORT,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -604,86 +788,86 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Decimal16,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::DECIMAL16,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::GEOHASH_INT),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::GEOHASH_INT),
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::DECIMAL32),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::DECIMAL32),
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::INT,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::IPV4,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(
                     values_buffer,
                     bufs,
                     nulls::GEOHASH_INT,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -692,18 +876,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Int,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::INT,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -712,18 +896,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::IPv4,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::IPV4,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -732,18 +916,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::GeoInt,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::GEOHASH_INT,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -752,31 +936,31 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Decimal32,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::DECIMAL32,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
+                PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
                     values_buffer,
                     bufs,
                     nulls::TIMESTAMP,
                     DayToMillisConverter::new(),
                 ),
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -786,18 +970,18 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ) => {
             let dict_decoder =
                 ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::TIMESTAMP,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (encoding, dict, logical_type, ColumnTypeTag::Double) => {
             let scale = match logical_type {
@@ -814,57 +998,57 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         dict_page,
                         Int32ToDoubleConverter::new(scale),
                     )?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut RleDictionaryDecoder::try_new(
+                        RleDictionaryDecoder::try_new(
                             values_buffer,
                             dict_decoder,
                             row_hi,
                             nulls::DOUBLE,
                             bufs,
                         )?,
-                    )?;
-                    Ok(true)
+                        bufs,
+                    )
                 }
                 (Encoding::Plain, _) => {
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut PlainPrimitiveDecoder::new_with(
+                        PlainPrimitiveDecoder::new_with(
                             values_buffer,
                             bufs,
                             nulls::DOUBLE,
                             Int32ToDoubleConverter::new(scale),
                         ),
-                    )?;
-                    Ok(true)
+                        bufs,
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(DispatchResult::Unsupported),
             }
         }
-        _ => Ok(false),
+        _ => Ok(DispatchResult::Unsupported),
     }
 }
 
-fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_int64_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
     logical_type: Option<PrimitiveLogicalType>,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     let row_hi = mode.source_row_count();
     match (page.encoding(), dict, logical_type, column_type.tag()) {
         (Encoding::Plain, _, _, ColumnTypeTag::Decimal64) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::DECIMAL64),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::DECIMAL64),
+                bufs,
+            )
         }
         (
             Encoding::Plain,
@@ -872,32 +1056,32 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             _,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
+                bufs,
+            )
         }
         (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::GEOHASH_LONG),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::GEOHASH_LONG),
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Decimal64) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(
                     values_buffer,
                     bufs,
                     nulls::DECIMAL64,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::DeltaBinaryPacked,
@@ -905,28 +1089,28 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             _,
             ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
         ) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(
                     values_buffer,
                     bufs,
                     nulls::LONG,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(
                     values_buffer,
                     bufs,
                     nulls::GEOHASH_LONG,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -935,18 +1119,18 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Decimal64,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::DECIMAL64,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -955,18 +1139,18 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::LONG,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -975,65 +1159,68 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::GeoLong,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::GEOHASH_LONG,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
-        _ => Ok(false),
+        _ => Ok(DispatchResult::Unsupported),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_fixed_len_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
     logical_type: Option<PrimitiveLogicalType>,
     converted_type: Option<PrimitiveConvertedType>,
     len: usize,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     match (len, logical_type, converted_type) {
         (16, Some(PrimitiveLogicalType::Uuid), _) => match (page.encoding(), column_type.tag()) {
             (Encoding::Plain, ColumnTypeTag::Uuid) => {
-                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
+                    PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
                         values_buffer,
                         bufs,
                         nulls::UUID,
                         Int128ToUuidConverter::new(),
                     ),
-                )?;
-                Ok(true)
+                    bufs,
+                )
             }
-            _ => Ok(false),
+            _ => Ok(DispatchResult::Unsupported),
         },
         (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
         | (src_len, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
             match (page.encoding(), dict) {
-                (Encoding::Plain, _) => decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
-                    page,
-                    bufs,
-                    values_buffer,
-                    mode,
-                    src_len,
-                    column_type.tag(),
-                )?,
+                (Encoding::Plain, _) => {
+                    make_fixed_decimal_decoder::<FILTERED, FILL_NULLS>(
+                        page,
+                        bufs,
+                        values_buffer,
+                        mode,
+                        src_len,
+                        column_type.tag(),
+                    )?;
+                    Ok(DispatchResult::Done)
+                }
                 (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    decode_fixed_decimal_dict_mode::<FILTERED, FILL_NULLS>(
+                    make_fixed_decimal_dict_decoder::<FILTERED, FILL_NULLS>(
                         page,
                         dict_page,
                         bufs,
@@ -1041,7 +1228,8 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         mode,
                         src_len,
                         column_type.tag(),
-                    )?
+                    )?;
+                    Ok(DispatchResult::Done)
                 }
                 _ => {
                     return Err(fmt_err!(
@@ -1051,32 +1239,31 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     ))
                 }
             }
-            Ok(true)
         }
         (len, _, _) => match (page.encoding(), len, column_type.tag()) {
             (Encoding::Plain, 16, ColumnTypeTag::Long128) => {
-                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
+                    PlainPrimitiveDecoder::<Long128, Long128>::new(
                         values_buffer,
                         bufs,
                         Long128::NULL,
                     ),
-                )?;
-                Ok(true)
+                    bufs,
+                )
             }
             (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
-                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
+                    PlainPrimitiveDecoder::<Long256, Long256>::new(
                         values_buffer,
                         bufs,
                         Long256::NULL,
                     ),
-                )?;
-                Ok(true)
+                    bufs,
+                )
             }
             (
                 Encoding::Plain,
@@ -1088,7 +1275,7 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 | ColumnTypeTag::Decimal128
                 | ColumnTypeTag::Decimal256,
             ) => {
-                decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
+                make_fixed_decimal_decoder::<FILTERED, FILL_NULLS>(
                     page,
                     bufs,
                     values_buffer,
@@ -1096,25 +1283,25 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     len,
                     column_type.tag(),
                 )?;
-                Ok(true)
+                Ok(DispatchResult::Done)
             }
-            _ => Ok(false),
+            _ => Ok(DispatchResult::Unsupported),
         },
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_byte_array_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     col_info: QdbMetaCol,
     column_type: ColumnType,
     logical_type: Option<PrimitiveLogicalType>,
     converted_type: Option<PrimitiveConvertedType>,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     let row_hi = mode.source_row_count();
     let row_count = mode.sliced_row_count();
 
@@ -1122,22 +1309,26 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (Some(PrimitiveLogicalType::Decimal(_, _)), _)
         | (_, Some(PrimitiveConvertedType::Decimal(_, _))) => {
             match (page.encoding(), dict) {
-                (Encoding::Plain, _) => decode_byte_array_decimal_mode::<FILTERED, FILL_NULLS>(
-                    page,
-                    bufs,
-                    values_buffer,
-                    mode,
-                    column_type.tag(),
-                )?,
+                (Encoding::Plain, _) => {
+                    make_byte_array_decimal_decoder::<FILTERED, FILL_NULLS>(
+                        page,
+                        bufs,
+                        values_buffer,
+                        mode,
+                        column_type.tag(),
+                    )?;
+                    Ok(DispatchResult::Done)
+                }
                 (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    decode_byte_array_decimal_dict_mode::<FILTERED, FILL_NULLS>(
+                    make_byte_array_decimal_dict_decoder::<FILTERED, FILL_NULLS>(
                         page,
                         dict_page,
                         bufs,
                         values_buffer,
                         mode,
                         column_type.tag(),
-                    )?
+                    )?;
+                    Ok(DispatchResult::Done)
                 }
                 _ => {
                     return Err(fmt_err!(
@@ -1147,30 +1338,29 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ))
                 }
             }
-            Ok(true)
         }
         (Some(PrimitiveLogicalType::String), _) | (_, Some(PrimitiveConvertedType::Utf8)) => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
-                    let mut slicer =
+                    let slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut StringColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        StringColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer =
+                    let slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        VarcharColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -1178,100 +1368,96 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     ColumnTypeTag::Varchar,
                 ) => {
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
+                    let slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
                     )?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        VarcharColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::Plain, _, ColumnTypeTag::String) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    let slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut StringColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        StringColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    let slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        VarcharColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer =
+                    let slicer =
                         DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        VarcharColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::VarcharSlice) => {
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut DeltaLAVarcharSliceDecoder::try_new(
+                        DeltaLAVarcharSliceDecoder::try_new(
                             values_buffer,
-                            bufs,
                             col_info.ascii.unwrap_or(false),
                         )?,
-                    )?;
-                    Ok(true)
+                        bufs,
+                    )
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     ColumnTypeTag::VarcharSlice,
                 ) => {
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut RleDictVarcharSliceDecoder::try_new(
+                        RleDictVarcharSliceDecoder::try_new(
                             values_buffer,
                             dict_page,
                             bufs,
                             col_info.ascii.unwrap_or(false),
                         )?,
-                    )?;
-                    Ok(true)
+                        bufs,
+                    )
                 }
                 (Encoding::Plain, _, ColumnTypeTag::VarcharSlice) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    let slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut VarcharSliceColumnSink::new(
-                            &mut slicer,
-                            bufs,
+                        VarcharSliceColumnSink::new(
+                            slicer,
                             col_info.ascii.unwrap_or(false),
                         ),
-                    )?;
-                    Ok(true)
+                        bufs,
+                    )
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::VarcharSlice) => {
-                    let mut slicer =
+                    let slicer =
                         DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    let mut spill_sink = VarcharSliceSpillSink::new(
-                        &mut slicer,
-                        bufs,
+                    let spill_sink = VarcharSliceSpillSink::new(
+                        slicer,
                         col_info.ascii.unwrap_or(false),
                     );
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut spill_sink)?;
                     // fixup_pointers deferred to end-of-chunk (see decode_column_chunk)
-                    Ok(true)
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(page, mode, spill_sink, bufs)
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
@@ -1281,20 +1467,20 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         ));
                     }
                     let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut RleDictionaryDecoder::try_new(
+                        RleDictionaryDecoder::try_new(
                             values_buffer,
                             dict_decoder,
                             row_hi,
                             nulls::SYMBOL,
                             bufs,
                         )?,
-                    )?;
-                    Ok(true)
+                        bufs,
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(DispatchResult::Unsupported),
             }
         }
         _ => {
@@ -1310,14 +1496,14 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     | ColumnTypeTag::Decimal128
                     | ColumnTypeTag::Decimal256,
                 ) => {
-                    decode_byte_array_decimal_mode::<FILTERED, FILL_NULLS>(
+                    make_byte_array_decimal_decoder::<FILTERED, FILL_NULLS>(
                         page,
                         bufs,
                         values_buffer,
                         mode,
                         column_type.tag(),
                     )?;
-                    Ok(true)
+                    Ok(DispatchResult::Done)
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -1329,7 +1515,7 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     | ColumnTypeTag::Decimal128
                     | ColumnTypeTag::Decimal256,
                 ) => {
-                    decode_byte_array_decimal_dict_mode::<FILTERED, FILL_NULLS>(
+                    make_byte_array_decimal_dict_decoder::<FILTERED, FILL_NULLS>(
                         page,
                         dict_page,
                         bufs,
@@ -1337,26 +1523,26 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         mode,
                         column_type.tag(),
                     )?;
-                    Ok(true)
+                    Ok(DispatchResult::Done)
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Binary) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    let slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut BinaryColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        BinaryColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
-                    let mut slicer =
+                    let slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut BinaryColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        BinaryColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -1364,68 +1550,68 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     ColumnTypeTag::Binary,
                 ) => {
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
+                    let slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
                     )?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut BinaryColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        BinaryColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Array) => {
                     // raw array encoding
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    let slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut RawArrayColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        RawArrayColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
-                    let mut slicer =
+                    let slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
-                        &mut RawArrayColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
+                        RawArrayColumnSink::new(slicer),
+                        bufs,
+                    )
                 }
-                _ => Ok(false),
+                _ => Ok(DispatchResult::Unsupported),
             }
         }
     }
 }
 
-fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_int96_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
     logical_type: Option<PrimitiveLogicalType>,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     let row_hi = mode.source_row_count();
     match (page.encoding(), dict, logical_type, column_type.tag()) {
         (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::new_with(
+                PlainPrimitiveDecoder::new_with(
                     values_buffer,
                     bufs,
                     nulls::TIMESTAMP,
                     Int96ToTimestampConverter::new(),
                 ),
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (
             Encoding::PlainDictionary | Encoding::RleDictionary,
@@ -1438,31 +1624,31 @@ fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 i64,
                 Int96ToTimestampConverter,
             >::try_new(dict_page, Int96ToTimestampConverter::new())?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     nulls::TIMESTAMP,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
-        _ => Ok(false),
+        _ => Ok(DispatchResult::Unsupported),
     }
 }
 
-fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_double_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     let row_hi = mode.source_row_count();
     let row_count = mode.sliced_row_count();
 
@@ -1470,12 +1656,12 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (Encoding::Plain, _, ColumnTypeTag::Double) => {
             clear_aux_buffers(bufs);
 
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
+                bufs,
+            )
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -1485,23 +1671,22 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             clear_aux_buffers(bufs);
 
             let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     f64::NAN,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, ColumnTypeTag::Array) => {
-            let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
-            decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
-            Ok(true)
+            let slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
+            dispatch_array::<_, FILTERED, FILL_NULLS>(page, mode, slicer, bufs)
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -1509,24 +1694,23 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Array,
         ) => {
             let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-            let mut slicer =
+            let slicer =
                 RleDictionarySlicer::try_new(values_buffer, dict_decoder, row_hi, row_count)?;
-            decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
-            Ok(true)
+            dispatch_array::<_, FILTERED, FILL_NULLS>(page, mode, slicer, bufs)
         }
-        _ => Ok(false),
+        _ => Ok(DispatchResult::Unsupported),
     }
 }
 
-fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict: Option<&DictPage>,
-    values_buffer: &[u8],
+fn make_other_fixed_decoder<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'a>,
+    dict: Option<&'a DictPage<'a>>,
+    values_buffer: &'a [u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
     typ: PhysicalType,
-    mode: DecodeModeContext<'_>,
-) -> ParquetResult<bool> {
+    mode: DecodeModeContext<'a>,
+) -> ParquetResult<DispatchResult<'a>> {
     let row_hi = mode.source_row_count();
     clear_aux_buffers(bufs);
     match (page.encoding(), dict, typ, column_type.tag()) {
@@ -1537,55 +1721,56 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Float,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
+                RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
                     f32::NAN,
                     bufs,
                 )?,
-            )?;
-            Ok(true)
+                bufs,
+            )
         }
         (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
-            )?;
-            Ok(true)
+                PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
+                bufs,
+            )
         }
         (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainBooleanDecoder::new(values_buffer, bufs, 0),
-            )?;
-            Ok(true)
+                PlainBooleanDecoder::new(values_buffer, bufs, 0),
+                bufs,
+            )
         }
         (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            dispatch_scalar::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
-            )?;
-            Ok(true)
+                RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
+                bufs,
+            )
         }
-        _ => Ok(false),
+        _ => Ok(DispatchResult::Unsupported),
     }
 }
 
 #[allow(clippy::while_let_on_iterator)]
-pub(super) fn decode_page0<T: Pushable>(
+pub(super) fn decode_page0<Sink, T: Pushable<Sink>>(
     page: &DataPage,
     row_lo: usize,
     row_hi: usize,
-    sink: &mut T,
+    pushable: &mut T,
+    sink: &mut Sink,
 ) -> ParquetResult<()> {
-    sink.reserve(row_hi - row_lo)?;
+    pushable.reserve(sink, row_hi - row_lo)?;
     let iter = decode_null_bitmap(page, row_hi)?;
     if let Some(iter) = iter {
         let mut skip_count = row_lo;
@@ -1600,14 +1785,14 @@ pub(super) fn decode_page0<T: Pushable>(
 
                     if local_skip_count > 0 {
                         let to_skip = count_ones_in_bitmap(values, 0, local_skip_count);
-                        sink.skip(to_skip)?;
+                        pushable.skip(to_skip)?;
                         bit_offset = local_skip_count;
                     }
 
                     // Process remaining bits using word-at-a-time approach
                     let remaining = length - bit_offset;
                     if remaining > 0 {
-                        decode_bitmap_runs(values, bit_offset, remaining, sink)?;
+                        decode_bitmap_runs(values, bit_offset, remaining, pushable, sink)?;
                     }
                 }
                 HybridEncoded::Repeated(is_set, length) => {
@@ -1616,31 +1801,32 @@ pub(super) fn decode_page0<T: Pushable>(
                     skip_count -= local_skip_count;
                     if is_set {
                         if local_skip_count > 0 {
-                            sink.skip(local_skip_count)?;
+                            pushable.skip(local_skip_count)?;
                         }
                         if local_push_count > 0 {
-                            sink.push_slice(local_push_count)?;
+                            pushable.push_slice(sink, local_push_count)?;
                         }
                     } else if local_push_count > 0 {
-                        sink.push_nulls(local_push_count)?;
+                        pushable.push_nulls(sink, local_push_count)?;
                     }
                 }
             };
         }
     } else {
-        sink.skip(row_lo)?;
-        sink.push_slice(row_hi - row_lo)?;
+        pushable.skip(row_lo)?;
+        pushable.push_slice(sink, row_hi - row_lo)?;
     }
     Ok(())
 }
 
 /// Process bitmap runs using word-at-a-time approach with trailing_ones/trailing_zeros.
 #[inline]
-fn decode_bitmap_runs<T: Pushable>(
+fn decode_bitmap_runs<Sink, T: Pushable<Sink>>(
     values: &[u8],
     bit_offset: usize,
     count: usize,
-    sink: &mut T,
+    pushable: &mut T,
+    sink: &mut Sink,
 ) -> ParquetResult<()> {
     let mut remaining = count;
     let mut pos = bit_offset;
@@ -1655,13 +1841,13 @@ fn decode_bitmap_runs<T: Pushable>(
         for i in 0..bits_in_byte {
             if (byte >> i) & 1 == 1 {
                 if consecutive_false > 0 {
-                    sink.push_nulls(consecutive_false)?;
+                    pushable.push_nulls(sink, consecutive_false)?;
                     consecutive_false = 0;
                 }
                 consecutive_true += 1;
             } else {
                 if consecutive_true > 0 {
-                    sink.push_slice(consecutive_true)?;
+                    pushable.push_slice(sink, consecutive_true)?;
                     consecutive_true = 0;
                 }
                 consecutive_false += 1;
@@ -1678,14 +1864,14 @@ fn decode_bitmap_runs<T: Pushable>(
         if word == u64::MAX {
             // All 64 bits set
             if consecutive_false > 0 {
-                sink.push_nulls(consecutive_false)?;
+                pushable.push_nulls(sink, consecutive_false)?;
                 consecutive_false = 0;
             }
             consecutive_true += 64;
         } else if word == 0 {
             // All 64 bits clear
             if consecutive_true > 0 {
-                sink.push_slice(consecutive_true)?;
+                pushable.push_slice(sink, consecutive_true)?;
                 consecutive_true = 0;
             }
             consecutive_false += 64;
@@ -1697,7 +1883,7 @@ fn decode_bitmap_runs<T: Pushable>(
                 if w & 1 == 1 {
                     let ones = (w.trailing_ones() as usize).min(bits_left);
                     if consecutive_false > 0 {
-                        sink.push_nulls(consecutive_false)?;
+                        pushable.push_nulls(sink, consecutive_false)?;
                         consecutive_false = 0;
                     }
                     consecutive_true += ones;
@@ -1710,7 +1896,7 @@ fn decode_bitmap_runs<T: Pushable>(
                         (w.trailing_zeros() as usize).min(bits_left)
                     };
                     if consecutive_true > 0 {
-                        sink.push_slice(consecutive_true)?;
+                        pushable.push_slice(sink, consecutive_true)?;
                         consecutive_true = 0;
                     }
                     consecutive_false += zeros;
@@ -1728,13 +1914,13 @@ fn decode_bitmap_runs<T: Pushable>(
         let byte = values[pos >> 3];
         if byte == 0xFF {
             if consecutive_false > 0 {
-                sink.push_nulls(consecutive_false)?;
+                pushable.push_nulls(sink, consecutive_false)?;
                 consecutive_false = 0;
             }
             consecutive_true += 8;
         } else if byte == 0 {
             if consecutive_true > 0 {
-                sink.push_slice(consecutive_true)?;
+                pushable.push_slice(sink, consecutive_true)?;
                 consecutive_true = 0;
             }
             consecutive_false += 8;
@@ -1742,13 +1928,13 @@ fn decode_bitmap_runs<T: Pushable>(
             for i in 0..8 {
                 if (byte >> i) & 1 == 1 {
                     if consecutive_false > 0 {
-                        sink.push_nulls(consecutive_false)?;
+                        pushable.push_nulls(sink, consecutive_false)?;
                         consecutive_false = 0;
                     }
                     consecutive_true += 1;
                 } else {
                     if consecutive_true > 0 {
-                        sink.push_slice(consecutive_true)?;
+                        pushable.push_slice(sink, consecutive_true)?;
                         consecutive_true = 0;
                     }
                     consecutive_false += 1;
@@ -1765,13 +1951,13 @@ fn decode_bitmap_runs<T: Pushable>(
         for i in 0..remaining {
             if (byte >> i) & 1 == 1 {
                 if consecutive_false > 0 {
-                    sink.push_nulls(consecutive_false)?;
+                    pushable.push_nulls(sink, consecutive_false)?;
                     consecutive_false = 0;
                 }
                 consecutive_true += 1;
             } else {
                 if consecutive_true > 0 {
-                    sink.push_slice(consecutive_true)?;
+                    pushable.push_slice(sink, consecutive_true)?;
                     consecutive_true = 0;
                 }
                 consecutive_false += 1;
@@ -1781,10 +1967,10 @@ fn decode_bitmap_runs<T: Pushable>(
 
     // Flush remaining runs
     if consecutive_true > 0 {
-        sink.push_slice(consecutive_true)?;
+        pushable.push_slice(sink, consecutive_true)?;
     }
     if consecutive_false > 0 {
-        sink.push_nulls(consecutive_false)?;
+        pushable.push_nulls(sink, consecutive_false)?;
     }
 
     Ok(())
@@ -1792,7 +1978,7 @@ fn decode_bitmap_runs<T: Pushable>(
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::while_let_on_iterator)]
-pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
+pub(super) fn decode_page0_filtered<Sink, T: Pushable<Sink>, const FILL_NULLS: bool>(
     page: &DataPage,
     page_row_start: usize,
     page_row_count: usize,
@@ -1800,21 +1986,22 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
     row_lo: usize,
     row_hi: usize,
     rows_filter: &[i64],
-    sink: &mut T,
+    pushable: &mut T,
+    sink: &mut Sink,
 ) -> ParquetResult<()> {
     if FILL_NULLS {
         let output_count = row_hi - row_lo;
-        sink.reserve(output_count)?;
+        pushable.reserve(sink, output_count)?;
 
         if rows_filter.is_empty() {
-            sink.push_nulls(output_count)?;
+            pushable.push_nulls(sink, output_count)?;
             return Ok(());
         }
     } else {
         if rows_filter.is_empty() {
             return Ok(());
         }
-        sink.reserve(rows_filter.len())?;
+        pushable.reserve(sink, rows_filter.len())?;
     }
 
     let mut filter_idx = 0usize;
@@ -1834,7 +2021,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
                     if FILL_NULLS {
                         if run_end_in_page <= row_lo {
-                            sink.skip(count_ones_in_bitmap(values, 0, length))?;
+                            pushable.skip(count_ones_in_bitmap(values, 0, length))?;
                             current_row += length;
                             continue;
                         }
@@ -1847,7 +2034,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
-                            sink.skip(count_ones_in_bitmap(values, 0, length))?;
+                            pushable.skip(count_ones_in_bitmap(values, 0, length))?;
                             current_row += length;
                             continue;
                         }
@@ -1855,7 +2042,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
                     let mut bit_offset = if FILL_NULLS && current_row < row_lo {
                         let skip_bits = row_lo - current_row;
-                        sink.skip(count_ones_in_bitmap(values, 0, skip_bits))?;
+                        pushable.skip(count_ones_in_bitmap(values, 0, skip_bits))?;
                         skip_bits
                     } else {
                         0usize
@@ -1869,16 +2056,16 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
                             if in_filter {
                                 if get_bit_at(values, bit_offset) {
-                                    sink.push()?;
+                                    pushable.push(sink)?;
                                 } else {
-                                    sink.push_null()?;
+                                    pushable.push_null(sink)?;
                                 }
                                 filter_idx += 1;
                             } else {
                                 if get_bit_at(values, bit_offset) {
-                                    sink.skip(1)?;
+                                    pushable.skip(1)?;
                                 }
-                                sink.push_null()?;
+                                pushable.push_null(sink)?;
                             }
                             bit_offset += 1;
                             output_row += 1;
@@ -1892,7 +2079,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                             }
 
                             if bit_offset < target_offset {
-                                sink.skip(count_ones_in_bitmap(
+                                pushable.skip(count_ones_in_bitmap(
                                     values,
                                     bit_offset,
                                     target_offset - bit_offset,
@@ -1901,9 +2088,9 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                             }
 
                             if get_bit_at(values, bit_offset) {
-                                sink.push()?;
+                                pushable.push(sink)?;
                             } else {
-                                sink.push_null()?;
+                                pushable.push_null(sink)?;
                             }
                             filter_idx += 1;
                             bit_offset += 1;
@@ -1915,7 +2102,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     }
 
                     if bit_offset < length {
-                        sink.skip(count_ones_in_bitmap(
+                        pushable.skip(count_ones_in_bitmap(
                             values,
                             bit_offset,
                             length - bit_offset,
@@ -1931,7 +2118,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     if FILL_NULLS {
                         if run_end_in_page <= row_lo {
                             if is_set {
-                                sink.skip(length)?;
+                                pushable.skip(length)?;
                             }
                             current_row += length;
                             continue;
@@ -1946,7 +2133,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
                             if is_set {
-                                sink.skip(length)?;
+                                pushable.skip(length)?;
                             }
                             current_row += length;
                             continue;
@@ -1956,7 +2143,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     let mut row_offset = if FILL_NULLS && current_row < row_lo {
                         let skip_rows = row_lo - current_row;
                         if is_set {
-                            sink.skip(skip_rows)?;
+                            pushable.skip(skip_rows)?;
                         }
                         skip_rows
                     } else {
@@ -1971,16 +2158,16 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
                             if in_filter {
                                 if is_set {
-                                    sink.push()?;
+                                    pushable.push(sink)?;
                                 } else {
-                                    sink.push_null()?;
+                                    pushable.push_null(sink)?;
                                 }
                                 filter_idx += 1;
                             } else {
                                 if is_set {
-                                    sink.skip(1)?;
+                                    pushable.skip(1)?;
                                 }
-                                sink.push_null()?;
+                                pushable.push_null(sink)?;
                             }
                             row_offset += 1;
                             output_row += 1;
@@ -1995,14 +2182,14 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                             }
 
                             if is_set && row_offset < target_offset {
-                                sink.skip(target_offset - row_offset)?;
+                                pushable.skip(target_offset - row_offset)?;
                             }
                             row_offset = target_offset;
 
                             if is_set {
-                                sink.push()?;
+                                pushable.push(sink)?;
                             } else {
-                                sink.push_null()?;
+                                pushable.push_null(sink)?;
                             }
                             filter_idx += 1;
                             row_offset += 1;
@@ -2014,7 +2201,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     }
 
                     if is_set && row_offset < length {
-                        sink.skip(length - row_offset)?;
+                        pushable.skip(length - row_offset)?;
                     }
 
                     current_row += length;
@@ -2025,7 +2212,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
         // No null bitmap - all values are non-null
         if FILL_NULLS {
             let mut page_row = row_lo;
-            sink.skip(row_lo)?;
+            pushable.skip(row_lo)?;
 
             while output_row < row_hi {
                 let abs_row = page_row_start + page_row;
@@ -2033,18 +2220,18 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     && (rows_filter[filter_idx] as usize + row_group_lo) == abs_row;
 
                 if in_filter {
-                    sink.push()?;
+                    pushable.push(sink)?;
                     filter_idx += 1;
                 } else {
-                    sink.skip(1)?;
-                    sink.push_null()?;
+                    pushable.skip(1)?;
+                    pushable.push_null(sink)?;
                 }
                 page_row += 1;
                 output_row += 1;
             }
 
             if page_row < page_row_count {
-                sink.skip(page_row_count - page_row)?;
+                pushable.skip(page_row_count - page_row)?;
             }
         } else {
             let mut i = 0usize;
@@ -2070,14 +2257,14 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                     consecutive += 1;
                 }
 
-                sink.skip(first_row - prev_row_end)?;
-                sink.push_slice(consecutive)?;
+                pushable.skip(first_row - prev_row_end)?;
+                pushable.push_slice(sink, consecutive)?;
                 prev_row_end = first_row + consecutive;
                 i += consecutive;
             }
 
             if prev_row_end < page_row_count {
-                sink.skip(page_row_count - prev_row_end)?;
+                pushable.skip(page_row_count - prev_row_end)?;
             }
         }
     }
@@ -4573,30 +4760,33 @@ mod tests {
         }
     }
 
-    impl Pushable for MockPushable {
+    impl Pushable<()> for MockPushable {
         fn reserve(
             &mut self,
+            _sink: &mut (),
             _count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
             Ok(())
         }
-        fn push(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
+        fn push(&mut self, _sink: &mut ()) -> super::super::super::parquet::error::ParquetResult<()> {
             self.bits.push(true);
             Ok(())
         }
         fn push_slice(
             &mut self,
+            _sink: &mut (),
             count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
             self.bits.extend(std::iter::repeat_n(true, count));
             Ok(())
         }
-        fn push_null(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
+        fn push_null(&mut self, _sink: &mut ()) -> super::super::super::parquet::error::ParquetResult<()> {
             self.bits.push(false);
             Ok(())
         }
         fn push_nulls(
             &mut self,
+            _sink: &mut (),
             count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
             self.bits.extend(std::iter::repeat_n(false, count));
@@ -4622,7 +4812,8 @@ mod tests {
 
     fn run_bitmap_test(values: &[u8], bit_offset: usize, count: usize) {
         let mut sink = MockPushable::new();
-        decode_bitmap_runs(values, bit_offset, count, &mut sink).unwrap();
+        let mut unit_sink = ();
+        decode_bitmap_runs(values, bit_offset, count, &mut sink, &mut unit_sink).unwrap();
         let expected = expected_bits(values, bit_offset, count);
         assert_eq!(
             sink.bits, expected,

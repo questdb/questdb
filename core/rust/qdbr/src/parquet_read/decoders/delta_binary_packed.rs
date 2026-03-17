@@ -273,9 +273,7 @@ where
     T: Copy + Debug + 'static,
     U: AsPrimitive<T>,
 {
-    buffers: &'a mut ColumnChunkBuffers,
-    buffers_ptr: *mut T,
-    buffers_offset: usize,
+    write_offset: usize,
     iterator: MiniblockIterator<'a, U>,
     null_value: T,
     current_value: U,
@@ -295,7 +293,7 @@ where
 {
     pub fn try_new(
         data: &'a [u8],
-        buffers: &'a mut ColumnChunkBuffers,
+        bufs: &ColumnChunkBuffers,
         null_value: T,
     ) -> ParquetResult<Self> {
         let (mut miniblock_iterator, first_value) = MiniblockIterator::try_new(data)?;
@@ -310,9 +308,7 @@ where
         };
 
         Ok(Self {
-            buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
-            buffers_offset: buffers.data_vec.len() / std::mem::size_of::<T>(),
-            buffers,
+            write_offset: bufs.data_vec.len() / std::mem::size_of::<T>(),
             null_value,
             current_value: first_value,
             values: [U::default(); 32],
@@ -378,21 +374,22 @@ where
     }
 }
 
-impl<'a, T, U> Pushable for DeltaBinaryPackedDecoder<'a, T, U>
+impl<'a, T, U> Pushable<ColumnChunkBuffers> for DeltaBinaryPackedDecoder<'a, T, U>
 where
     T: Copy + Debug + WrappingAdd<Output = T> + 'static,
     U: AsPrimitive<T> + Default + WrappingAdd + Copy + 'static,
     i64: AsPrimitive<U>,
 {
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        let out_ptr: *mut T = sink.data_vec.as_mut_ptr().cast();
         if !self.consumed_initial_value {
             // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
-                let out = self.buffers_ptr.add(self.buffers_offset);
+                let out = out_ptr.add(self.write_offset);
                 *out = self.current_value.as_();
             }
-            self.buffers_offset += 1;
+            self.write_offset += 1;
             self.consumed_initial_value = true;
             return Ok(());
         }
@@ -410,57 +407,59 @@ where
         );
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
-            self.buffers_ptr
-                .add(self.buffers_offset)
+            out_ptr
+                .add(self.write_offset)
                 .write(self.current_value.as_());
         }
-        self.buffers_offset += 1;
+        self.write_offset += 1;
         self.value_index += 1;
 
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        let out_ptr: *mut T = sink.data_vec.as_mut_ptr().cast();
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
+            *out_ptr.add(self.write_offset) = self.null_value;
         }
-        self.buffers_offset += 1;
+        self.write_offset += 1;
         Ok(())
     }
 
     #[inline(always)]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let out_ptr: *mut T = sink.data_vec.as_mut_ptr().cast();
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        let out = unsafe { out_ptr.add(self.write_offset) };
         for i in 0..count {
             // SAFETY: `out` points to reserved output space and `i < count`.
             unsafe {
                 *out.add(i) = self.null_value;
             }
         }
-        self.buffers_offset += count;
+        self.write_offset += count;
         Ok(())
     }
 
     #[inline(always)]
-    fn push_slice(&mut self, mut count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, mut count: usize) -> ParquetResult<()> {
         if count == 0 {
             return Ok(());
         }
 
         let mut current_value = self.current_value;
         let mut value_index = self.value_index;
-        let mut buffers_offset = self.buffers_offset;
-        let buffers_ptr = self.buffers_ptr;
+        let mut write_offset = self.write_offset;
+        let out_ptr: *mut T = sink.data_vec.as_mut_ptr().cast();
 
         if !self.consumed_initial_value {
             // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
-                *buffers_ptr.add(buffers_offset) = current_value.as_();
+                *out_ptr.add(write_offset) = current_value.as_();
             }
-            buffers_offset += 1;
+            write_offset += 1;
             self.consumed_initial_value = true;
             count -= 1;
         }
@@ -474,9 +473,9 @@ where
             );
             // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
-                *buffers_ptr.add(buffers_offset) = current_value.as_();
+                *out_ptr.add(write_offset) = current_value.as_();
             }
-            buffers_offset += 1;
+            write_offset += 1;
             value_index += 1;
             count -= 1;
         }
@@ -489,10 +488,10 @@ where
                     current_value.wrapping_add(&min_delta.wrapping_add(&self.values[i]));
                 // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
                 unsafe {
-                    *buffers_ptr.add(buffers_offset + i) = current_value.as_();
+                    *out_ptr.add(write_offset + i) = current_value.as_();
                 }
             }
-            buffers_offset += 32;
+            write_offset += 32;
             count -= 32;
         }
 
@@ -512,33 +511,32 @@ where
                             .min_delta
                             .wrapping_add(&self.values[value_index + i]),
                     );
-                    *buffers_ptr.add(buffers_offset + i) = current_value.as_();
+                    *out_ptr.add(write_offset + i) = current_value.as_();
                 }
             }
-            buffers_offset += to_write;
+            write_offset += to_write;
             value_index += to_write;
             count -= to_write;
         }
 
         self.current_value = current_value;
         self.value_index = value_index;
-        self.buffers_offset = buffers_offset;
+        self.write_offset = write_offset;
 
         Ok(())
     }
 
     #[inline]
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        let needed = (self.buffers_offset + count) * std::mem::size_of::<T>();
-        if self.buffers.data_vec.len() < needed {
-            let additional = needed - self.buffers.data_vec.len();
-            self.buffers.data_vec.reserve(additional)?;
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let needed = (self.write_offset + count) * std::mem::size_of::<T>();
+        if sink.data_vec.len() < needed {
+            let additional = needed - sink.data_vec.len();
+            sink.data_vec.reserve(additional)?;
             // SAFETY: `needed <= capacity` after reserve; values are initialized before read.
             unsafe {
-                self.buffers.data_vec.set_len(needed);
+                sink.data_vec.set_len(needed);
             }
         }
-        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr().cast();
         Ok(())
     }
 
@@ -713,10 +711,10 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i32, i32>::try_new(data, &mut buffers, i32::MIN)
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(data, &buffers, i32::MIN)
                     .unwrap();
-            decoder.reserve(count).unwrap();
-            decoder.push_slice(count).unwrap();
+            decoder.reserve(&mut buffers, count).unwrap();
+            decoder.push_slice(&mut buffers, count).unwrap();
         }
         let out: &[i32] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -730,10 +728,10 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(data, &mut buffers, i64::MIN)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(data, &buffers, i64::MIN)
                     .unwrap();
-            decoder.reserve(count).unwrap();
-            decoder.push_slice(count).unwrap();
+            decoder.reserve(&mut buffers, count).unwrap();
+            decoder.push_slice(&mut buffers, count).unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -747,11 +745,11 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i32, i32>::try_new(data, &mut buffers, i32::MIN)
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(data, &buffers, i32::MIN)
                     .unwrap();
-            decoder.reserve(count).unwrap();
+            decoder.reserve(&mut buffers, count).unwrap();
             for _ in 0..count {
-                decoder.push().unwrap();
+                decoder.push(&mut buffers).unwrap();
             }
         }
         let out: &[i32] =
@@ -857,14 +855,14 @@ mod tests {
         let total = 8; // 5 real + 3 nulls
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, null_val)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, null_val)
                     .unwrap();
-            decoder.reserve(total).unwrap();
+            decoder.reserve(&mut buffers, total).unwrap();
             // push 2 values, 1 null, 3 values, 2 nulls
-            decoder.push_slice(2).unwrap();
-            decoder.push_null().unwrap();
-            decoder.push_slice(3).unwrap();
-            decoder.push_nulls(2).unwrap();
+            decoder.push_slice(&mut buffers, 2).unwrap();
+            decoder.push_null(&mut buffers).unwrap();
+            decoder.push_slice(&mut buffers, 3).unwrap();
+            decoder.push_nulls(&mut buffers, 2).unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), total) };
@@ -882,11 +880,11 @@ mod tests {
         let count = 5;
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, i64::MIN)
                     .unwrap();
-            decoder.reserve(count).unwrap();
+            decoder.reserve(&mut buffers, count).unwrap();
             decoder.skip(3).unwrap();
-            decoder.push_slice(count).unwrap();
+            decoder.push_slice(&mut buffers, count).unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -905,13 +903,13 @@ mod tests {
         let total = 5;
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, null_val)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, null_val)
                     .unwrap();
-            decoder.reserve(total).unwrap();
-            decoder.push().unwrap(); // 10
+            decoder.reserve(&mut buffers, total).unwrap();
+            decoder.push(&mut buffers).unwrap(); // 10
             decoder.skip(2).unwrap(); // skip 11, 12
-            decoder.push_null().unwrap(); // null
-            decoder.push_slice(3).unwrap(); // 13, 14, 15
+            decoder.push_null(&mut buffers).unwrap(); // null
+            decoder.push_slice(&mut buffers, 3).unwrap(); // 13, 14, 15
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), total) };
@@ -926,11 +924,11 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, i64::MIN)
                     .unwrap();
-            decoder.reserve(1).unwrap();
-            decoder.push_slice(0).unwrap();
-            decoder.push_slice(1).unwrap();
+            decoder.reserve(&mut buffers, 1).unwrap();
+            decoder.push_slice(&mut buffers, 0).unwrap();
+            decoder.push_slice(&mut buffers, 1).unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), 1) };
@@ -945,11 +943,11 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, i64::MIN)
                     .unwrap();
-            decoder.reserve(1).unwrap();
+            decoder.reserve(&mut buffers, 1).unwrap();
             decoder.skip(0).unwrap();
-            decoder.push_slice(1).unwrap();
+            decoder.push_slice(&mut buffers, 1).unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), 1) };
@@ -1151,12 +1149,12 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         let result = {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, i64::MIN)
                     .unwrap();
             // We can decode up to block_size + 1 values (padded), but eventually run out of miniblocks.
             // Requesting far more values than available triggers "not enough values to iterate".
-            decoder.reserve(200).unwrap();
-            decoder.push_slice(200)
+            decoder.reserve(&mut buffers, 200).unwrap();
+            decoder.push_slice(&mut buffers, 200)
         };
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
@@ -1215,10 +1213,10 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
         let result = {
             let mut decoder =
-                DeltaBinaryPackedDecoder::<i32, i32>::try_new(&data, &mut buffers, i32::MIN)
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(&data, &buffers, i32::MIN)
                     .unwrap();
-            decoder.reserve(33).unwrap();
-            decoder.push_slice(33)
+            decoder.reserve(&mut buffers, 33).unwrap();
+            decoder.push_slice(&mut buffers, 33)
         };
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
@@ -1240,8 +1238,8 @@ mod tests {
 
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_buffers(&allocator);
-        let result = DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN);
+        let buffers = create_buffers(&allocator);
+        let result = DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &buffers, i64::MIN);
         assert!(result.is_err());
     }
 }

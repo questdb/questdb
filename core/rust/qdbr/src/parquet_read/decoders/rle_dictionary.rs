@@ -80,23 +80,23 @@ where
 {
     dict: T,
     inner: Slicer<'a>,
-    buffers: &'a mut ColumnChunkBuffers,
-    buffers_ptr: *mut U,
-    buffers_offset: usize,
+    write_offset: usize,
     null_value: U,
     _phantom: std::marker::PhantomData<U>,
 }
 
-impl<U, T: PrimitiveDictDecoder<U>> Pushable for RleDictionaryDecoder<'_, U, T>
+impl<U, T: PrimitiveDictDecoder<U>> Pushable<ColumnChunkBuffers>
+    for RleDictionaryDecoder<'_, U, T>
 where
     U: Copy + 'static,
 {
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         if let Some(idx) = self.inner.data.next() {
             if idx < self.dict.len() {
+                let out_base: *mut U = sink.data_vec.as_mut_ptr().cast();
                 unsafe {
-                    *self.buffers_ptr.add(self.buffers_offset) = self.dict.get_dict_value(idx);
-                    self.buffers_offset += 1;
+                    *out_base.add(self.write_offset) = self.dict.get_dict_value(idx);
+                    self.write_offset += 1;
                 }
                 Ok(())
             } else {
@@ -111,30 +111,32 @@ where
             // This recursive is safe, it cannot go deeper than 1 level down.
             // After a successful call to `self.inner.decode()` there will be a value in `self.inner.data.next()`
             self.decode()?;
-            self.push()
+            self.push(sink)
         }
     }
 
-    fn push_null(&mut self) -> ParquetResult<()> {
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        let out_base: *mut U = sink.data_vec.as_mut_ptr().cast();
         unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
-            self.buffers_offset += 1;
+            *out_base.add(self.write_offset) = self.null_value;
+            self.write_offset += 1;
         }
         Ok(())
     }
 
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let out_base: *mut U = sink.data_vec.as_mut_ptr().cast();
+        let out = unsafe { out_base.add(self.write_offset) };
         for i in 0..count {
             unsafe {
                 *out.add(i) = self.null_value;
             }
         }
-        self.buffers_offset += count;
+        self.write_offset += count;
         Ok(())
     }
 
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         let mut remaining = count;
         loop {
             if remaining == 0 {
@@ -156,21 +158,22 @@ where
                             ));
                         }
                         let value = self.dict.get_dict_value(repeat.value);
-                        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+                        let out_base: *mut U = sink.data_vec.as_mut_ptr().cast();
+                        let out = unsafe { out_base.add(self.write_offset) };
                         for i in 0..n {
                             unsafe {
                                 *out.add(i) = value;
                             }
                         }
-                        self.buffers_offset += n;
+                        self.write_offset += n;
                         repeat.remaining -= n;
                         n
                     }
                 }
                 RleIterator::Bitpacked(bp) => {
                     let dict_len = self.dict.len();
-                    let out_base = self.buffers_ptr;
-                    let mut offset = self.buffers_offset;
+                    let out_base: *mut U = sink.data_vec.as_mut_ptr().cast();
+                    let mut offset = self.write_offset;
                     let mut consumed = 0usize;
                     let unpack_ptr = bp.unpacked.as_ref().as_ptr();
 
@@ -184,7 +187,7 @@ where
                             if idx >= dict_len {
                                 #[allow(clippy::redundant_locals)]
                                 let idx = idx; // capture for error message, avoids a `mov` to the stack before the comparison in the loop
-                                self.buffers_offset = offset;
+                                self.write_offset = offset;
                                 return Err(fmt_err!(
                                     Layout,
                                     "index {} is out of dict bounds {}",
@@ -207,13 +210,13 @@ where
                         }
                     }
 
-                    self.buffers_offset = offset;
+                    self.write_offset = offset;
                     consumed
                 }
                 RleIterator::ByteIndices { data, pos } => {
                     let dict_len = self.dict.len();
-                    let out_base = self.buffers_ptr;
-                    let mut offset = self.buffers_offset;
+                    let out_base: *mut U = sink.data_vec.as_mut_ptr().cast();
+                    let mut offset = self.write_offset;
                     let avail = data.len() - *pos;
                     let n = remaining.min(avail);
                     let bytes = &data[*pos..];
@@ -221,7 +224,7 @@ where
                     for i in 0..n {
                         let idx = unsafe { *bytes.get_unchecked(i) } as u32;
                         if idx >= dict_len {
-                            self.buffers_offset = offset;
+                            self.write_offset = offset;
                             return Err(fmt_err!(
                                 Layout,
                                 "index {} is out of dict bounds {}",
@@ -236,7 +239,7 @@ where
                     }
 
                     *pos += n;
-                    self.buffers_offset = offset;
+                    self.write_offset = offset;
                     n
                 }
             };
@@ -248,16 +251,15 @@ where
         }
     }
 
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        let needed = (self.buffers_offset + count) * std::mem::size_of::<U>();
-        if self.buffers.data_vec.len() < needed {
-            let additional = needed - self.buffers.data_vec.len();
-            self.buffers.data_vec.reserve(additional)?;
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let needed = (self.write_offset + count) * std::mem::size_of::<U>();
+        if sink.data_vec.len() < needed {
+            let additional = needed - sink.data_vec.len();
+            sink.data_vec.reserve(additional)?;
             unsafe {
-                self.buffers.data_vec.set_len(needed);
+                sink.data_vec.set_len(needed);
             }
         }
-        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr().cast();
         Ok(())
     }
 
@@ -275,7 +277,7 @@ where
         dict: T,
         row_count: usize,
         null_value: U,
-        buffers: &'a mut ColumnChunkBuffers,
+        bufs: &ColumnChunkBuffers,
     ) -> ParquetResult<Self> {
         let num_bits = buffer.first().copied().ok_or_else(|| {
             fmt_err!(
@@ -290,9 +292,7 @@ where
                 dict,
                 inner: Slicer::new(Some(decoder), RleIterator::Rle(RepeatN::new(0, 0))),
                 _phantom: std::marker::PhantomData,
-                buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
-                buffers_offset: buffers.data_vec.len() / std::mem::size_of::<U>(),
-                buffers,
+                write_offset: bufs.data_vec.len() / std::mem::size_of::<U>(),
                 null_value,
             };
             res.decode()?;
@@ -302,9 +302,7 @@ where
                 dict,
                 inner: Slicer::new(None, RleIterator::Rle(RepeatN::new(0, row_count))),
                 _phantom: std::marker::PhantomData,
-                buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
-                buffers_offset: buffers.data_vec.len() / std::mem::size_of::<U>(),
-                buffers,
+                write_offset: bufs.data_vec.len() / std::mem::size_of::<U>(),
                 null_value,
             })
         }
@@ -399,11 +397,11 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 2, 1, 0], 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
         for _ in 0..5 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
         assert_eq!(read_i32_results(&buffers), vec![100, 200, 300, 200, 100]);
     }
@@ -418,11 +416,11 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 10, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 10, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         for _ in 0..10 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
         assert_eq!(read_i32_results(&buffers), vec![42; 10]);
     }
@@ -439,9 +437,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 10, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(10).unwrap();
-        decoder.push_slice(10).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 10, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
+        decoder.push_slice(&mut buffers, 10).unwrap();
 
         assert_eq!(
             read_i32_results(&buffers),
@@ -460,9 +458,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 1);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 50, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(50).unwrap();
-        decoder.push_slice(50).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 50, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 50).unwrap();
+        decoder.push_slice(&mut buffers, 50).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![111; 50]);
     }
@@ -479,9 +477,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 8);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(200).unwrap();
-        decoder.push_slice(200).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 200).unwrap();
+        decoder.push_slice(&mut buffers, 200).unwrap();
 
         assert_eq!(read_i32_results(&buffers), dict_values);
     }
@@ -495,9 +493,9 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 2], 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(0).unwrap();
-        decoder.push_slice(0).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 0).unwrap();
+        decoder.push_slice(&mut buffers, 0).unwrap();
 
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
     }
@@ -512,12 +510,12 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 10, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 10, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
-        decoder.push_slice(3).unwrap();
-        decoder.push_slice(4).unwrap();
-        decoder.push_slice(3).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
+        decoder.push_slice(&mut buffers, 4).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
 
         assert_eq!(
             read_i32_results(&buffers),
@@ -536,12 +534,12 @@ mod tests {
         let encoded: Vec<u8> = vec![0]; // zero bit width
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push_null().unwrap();
-        decoder.push_null().unwrap();
-        decoder.push_null().unwrap();
+        decoder.push_null(&mut buffers).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![I32_NULL; 3]);
     }
@@ -555,9 +553,9 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(7).unwrap();
-        decoder.push_nulls(7).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 7).unwrap();
+        decoder.push_nulls(&mut buffers, 7).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![I32_NULL; 7]);
     }
@@ -571,9 +569,9 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(0).unwrap();
-        decoder.push_nulls(0).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 0).unwrap();
+        decoder.push_nulls(&mut buffers, 0).unwrap();
 
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
     }
@@ -590,11 +588,11 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
         decoder.skip(2).unwrap();
-        decoder.push_slice(3).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![30, 40, 50]);
     }
@@ -609,10 +607,10 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(1).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
         decoder.skip(0).unwrap();
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![10]);
     }
@@ -621,13 +619,13 @@ mod tests {
     fn test_rle_dict_decoder_skip_all() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
         let dict = TestPrimitiveDictDecoder::new(vec![10, 20, 30]);
         let values: Vec<u32> = vec![0, 1, 2, 0, 1];
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
         decoder.skip(5).unwrap();
 
         assert_eq!(read_i32_results(&buffers), Vec::<i32>::new());
@@ -649,10 +647,10 @@ mod tests {
             let to_read = remaining.min(5);
 
             let mut decoder =
-                RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &mut buffers).unwrap();
-            decoder.reserve(to_read).unwrap();
+                RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &buffers).unwrap();
+            decoder.reserve(&mut buffers, to_read).unwrap();
             decoder.skip(skip).unwrap();
-            decoder.push_slice(to_read).unwrap();
+            decoder.push_slice(&mut buffers, to_read).unwrap();
 
             let expected: Vec<i32> = (skip..skip + to_read).map(|i| (i % 16) as i32).collect();
             assert_eq!(read_i32_results(&buffers), expected, "skip={skip}");
@@ -672,25 +670,25 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 16, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 16, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         // push_slice(2): positions 0,1 → dict[0]=10, dict[1]=20
-        decoder.push_slice(2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
         // push_nulls(2): writes [NULL, NULL]
-        decoder.push_nulls(2).unwrap();
+        decoder.push_nulls(&mut buffers, 2).unwrap();
         // skip(3): positions 2,3,4 → skipped
         decoder.skip(3).unwrap();
         // push(): position 5 → dict[5]=60
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
         // push_null(): writes [NULL]
-        decoder.push_null().unwrap();
+        decoder.push_null(&mut buffers).unwrap();
         // push_slice(3): positions 6,7,8 → dict[6]=70, dict[7]=80, dict[0]=10
-        decoder.push_slice(3).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
         // skip(2): positions 9,10 → skipped
         decoder.skip(2).unwrap();
         // push(): position 11 → dict[3]=40
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         assert_eq!(
             read_i32_results_n(&buffers, 10),
@@ -708,14 +706,14 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 8, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(8).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 8, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 8).unwrap();
 
-        decoder.push().unwrap(); // 100
-        decoder.push_slice(2).unwrap(); // 200, 300
-        decoder.push().unwrap(); // 400
-        decoder.push().unwrap(); // 100
-        decoder.push_slice(3).unwrap(); // 200, 300, 400
+        decoder.push(&mut buffers).unwrap(); // 100
+        decoder.push_slice(&mut buffers, 2).unwrap(); // 200, 300
+        decoder.push(&mut buffers).unwrap(); // 400
+        decoder.push(&mut buffers).unwrap(); // 100
+        decoder.push_slice(&mut buffers, 3).unwrap(); // 200, 300, 400
 
         assert_eq!(
             read_i32_results(&buffers),
@@ -734,9 +732,9 @@ mod tests {
         let encoded: Vec<u8> = vec![0]; // zero bit width
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(100).unwrap();
-        decoder.push_slice(100).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 100).unwrap();
+        decoder.push_slice(&mut buffers, 100).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![999; 100]);
     }
@@ -750,10 +748,10 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 20, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 20, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
         decoder.skip(15).unwrap();
-        decoder.push_slice(5).unwrap();
+        decoder.push_slice(&mut buffers, 5).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![42; 5]);
     }
@@ -767,16 +765,16 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 20, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(8).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 20, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 8).unwrap();
 
-        decoder.push().unwrap(); // 7
+        decoder.push(&mut buffers).unwrap(); // 7
         decoder.skip(3).unwrap();
-        decoder.push_null().unwrap(); // NULL
-        decoder.push_slice(3).unwrap(); // 7, 7, 7
+        decoder.push_null(&mut buffers).unwrap(); // NULL
+        decoder.push_slice(&mut buffers, 3).unwrap(); // 7, 7, 7
         decoder.skip(5).unwrap();
-        decoder.push_nulls(2).unwrap(); // NULL, NULL
-        decoder.push().unwrap(); // 7
+        decoder.push_nulls(&mut buffers, 2).unwrap(); // NULL, NULL
+        decoder.push(&mut buffers).unwrap(); // 7
 
         assert_eq!(
             read_i32_results(&buffers),
@@ -797,12 +795,12 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push().unwrap(); // ok: 10
-        decoder.push().unwrap(); // ok: 20
-        assert!(decoder.push().is_err()); // oob index 5
+        decoder.push(&mut buffers).unwrap(); // ok: 10
+        decoder.push(&mut buffers).unwrap(); // ok: 20
+        assert!(decoder.push(&mut buffers).is_err()); // oob index 5
     }
 
     #[test]
@@ -815,9 +813,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(5).unwrap();
-        assert!(decoder.push_slice(5).is_err()); // oob index 3
+            RleDictionaryDecoder::try_new(&encoded, dict, 5, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
+        assert!(decoder.push_slice(&mut buffers, 5).is_err()); // oob index 3
     }
 
     // --- Large data spanning multiple runs ---
@@ -834,9 +832,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 4);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 1000, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(1000).unwrap();
-        decoder.push_slice(1000).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 1000, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 1000).unwrap();
+        decoder.push_slice(&mut buffers, 1000).unwrap();
 
         let expected: Vec<i32> = (0..1000).map(|i| (i % 16) * 100).collect();
         assert_eq!(read_i32_results(&buffers), expected);
@@ -853,12 +851,12 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 500, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(500).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 500, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 500).unwrap();
 
         // Read in small chunks to stress the cross-run boundary logic
         for _ in 0..50 {
-            decoder.push_slice(10).unwrap();
+            decoder.push_slice(&mut buffers, 10).unwrap();
         }
 
         let expected: Vec<i32> = (0..500).map(|i| (i % 8) * 10).collect();
@@ -876,11 +874,11 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(200).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 200, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 200).unwrap();
 
         for _ in 0..200 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         let expected: Vec<i32> = (0..200).map(|i| (i % 4) + 1).collect();
@@ -901,15 +899,15 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 80, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(80).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 80, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 80).unwrap();
 
         // Read in chunk sizes that don't align with bitpacked groups of 8
-        decoder.push_slice(3).unwrap();
-        decoder.push_slice(7).unwrap();
-        decoder.push_slice(13).unwrap();
-        decoder.push_slice(25).unwrap();
-        decoder.push_slice(32).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
+        decoder.push_slice(&mut buffers, 7).unwrap();
+        decoder.push_slice(&mut buffers, 13).unwrap();
+        decoder.push_slice(&mut buffers, 25).unwrap();
+        decoder.push_slice(&mut buffers, 32).unwrap();
 
         let expected: Vec<i32> = (0..80).map(|i| [10, 20, 30, 40][i % 4]).collect();
         assert_eq!(read_i32_results(&buffers), expected);
@@ -928,14 +926,14 @@ mod tests {
         let custom_null: i32 = -1;
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 4, custom_null, &mut buffers).unwrap();
-        decoder.reserve(6).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 4, custom_null, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 6).unwrap();
 
-        decoder.push().unwrap(); // 1
-        decoder.push_null().unwrap(); // -1
-        decoder.push().unwrap(); // 2
-        decoder.push_nulls(2).unwrap(); // -1, -1
-        decoder.push().unwrap(); // 1
+        decoder.push(&mut buffers).unwrap(); // 1
+        decoder.push_null(&mut buffers).unwrap(); // -1
+        decoder.push(&mut buffers).unwrap(); // 2
+        decoder.push_nulls(&mut buffers, 2).unwrap(); // -1, -1
+        decoder.push(&mut buffers).unwrap(); // 1
 
         assert_eq!(read_i32_results(&buffers), vec![1, -1, 2, -1, -1, 1]);
     }
@@ -952,17 +950,17 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &buffers).unwrap();
 
         // Reserve in stages to test buffer growth and pointer refresh
-        decoder.reserve(10).unwrap();
-        decoder.push_slice(10).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
+        decoder.push_slice(&mut buffers, 10).unwrap();
 
-        decoder.reserve(40).unwrap();
-        decoder.push_slice(40).unwrap();
+        decoder.reserve(&mut buffers, 40).unwrap();
+        decoder.push_slice(&mut buffers, 40).unwrap();
 
-        decoder.reserve(50).unwrap();
-        decoder.push_slice(50).unwrap();
+        decoder.reserve(&mut buffers, 50).unwrap();
+        decoder.push_slice(&mut buffers, 50).unwrap();
 
         let expected: Vec<i32> = (0..100).map(|i| [10, 20, 30][i % 3]).collect();
         assert_eq!(read_i32_results_n(&buffers, 100), expected);
@@ -980,9 +978,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 1);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 64, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(64).unwrap();
-        decoder.push_slice(64).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 64, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 64).unwrap();
+        decoder.push_slice(&mut buffers, 64).unwrap();
 
         let expected: Vec<i32> = (0..64).map(|i| i % 2).collect();
         assert_eq!(read_i32_results(&buffers), expected);
@@ -998,9 +996,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 64, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(64).unwrap();
-        decoder.push_slice(64).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 64, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 64).unwrap();
+        decoder.push_slice(&mut buffers, 64).unwrap();
 
         let expected: Vec<i32> = (0..64).map(|i| [100, 200, 300, 400][i % 4]).collect();
         assert_eq!(read_i32_results(&buffers), expected);
@@ -1017,9 +1015,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 4);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 128, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(128).unwrap();
-        decoder.push_slice(128).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 128, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 128).unwrap();
+        decoder.push_slice(&mut buffers, 128).unwrap();
 
         let expected: Vec<i32> = (0..128).map(|i| i % 16).collect();
         assert_eq!(read_i32_results(&buffers), expected);
@@ -1040,11 +1038,10 @@ mod tests {
         {
             let dict = TestPrimitiveDictDecoder::new(dict_values.clone());
             let mut decoder =
-                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers1)
-                    .unwrap();
-            decoder.reserve(100).unwrap();
+                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &buffers1).unwrap();
+            decoder.reserve(&mut buffers1, 100).unwrap();
             for _ in 0..100 {
-                decoder.push().unwrap();
+                decoder.push(&mut buffers1).unwrap();
             }
         }
 
@@ -1053,10 +1050,9 @@ mod tests {
         {
             let dict = TestPrimitiveDictDecoder::new(dict_values.clone());
             let mut decoder =
-                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers2)
-                    .unwrap();
-            decoder.reserve(100).unwrap();
-            decoder.push_slice(100).unwrap();
+                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &buffers2).unwrap();
+            decoder.reserve(&mut buffers2, 100).unwrap();
+            decoder.push_slice(&mut buffers2, 100).unwrap();
         }
 
         // Method 3: push_slice in small chunks
@@ -1064,11 +1060,10 @@ mod tests {
         {
             let dict = TestPrimitiveDictDecoder::new(dict_values.clone());
             let mut decoder =
-                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers3)
-                    .unwrap();
-            decoder.reserve(100).unwrap();
+                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &buffers3).unwrap();
+            decoder.reserve(&mut buffers3, 100).unwrap();
             for _ in 0..20 {
-                decoder.push_slice(5).unwrap();
+                decoder.push_slice(&mut buffers3, 5).unwrap();
             }
         }
 
@@ -1094,10 +1089,10 @@ mod tests {
         {
             let dict = TestPrimitiveDictDecoder::new(dict_values.clone());
             let mut decoder =
-                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut ref_buffers)
+                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &ref_buffers)
                     .unwrap();
-            decoder.reserve(100).unwrap();
-            decoder.push_slice(100).unwrap();
+            decoder.reserve(&mut ref_buffers, 100).unwrap();
+            decoder.push_slice(&mut ref_buffers, 100).unwrap();
         }
         let reference = read_i32_results(&ref_buffers);
 
@@ -1107,10 +1102,10 @@ mod tests {
             let remaining = 100 - skip;
             let dict = TestPrimitiveDictDecoder::new(dict_values.clone());
             let mut decoder =
-                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &mut buffers).unwrap();
-            decoder.reserve(remaining).unwrap();
+                RleDictionaryDecoder::try_new(&encoded, dict, 100, I32_NULL, &buffers).unwrap();
+            decoder.reserve(&mut buffers, remaining).unwrap();
             decoder.skip(skip).unwrap();
-            decoder.push_slice(remaining).unwrap();
+            decoder.push_slice(&mut buffers, remaining).unwrap();
             assert_eq!(
                 read_i32_results(&buffers),
                 reference[skip..].to_vec(),
@@ -1147,14 +1142,14 @@ mod tests {
         let null_val: i64 = i64::MIN;
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 6, null_val, &mut buffers).unwrap();
-        decoder.reserve(8).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 6, null_val, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 8).unwrap();
 
-        decoder.push_slice(2).unwrap();
-        decoder.push_null().unwrap();
-        decoder.push_slice(2).unwrap();
-        decoder.push_nulls(2).unwrap();
-        decoder.push().unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
+        decoder.push_nulls(&mut buffers, 2).unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let results: Vec<i64> = buffers
             .data_vec
@@ -1191,11 +1186,11 @@ mod tests {
         let encoded = encode_rle_data(&values, 3);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 3, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push().unwrap(); // ok
-        assert!(decoder.push().is_err()); // sets error internall
+        decoder.push(&mut buffers).unwrap(); // ok
+        assert!(decoder.push(&mut buffers).is_err()); // sets error internall
     }
 
     // --- Alternating RLE runs: values that repeat to trigger RLE encoding ---
@@ -1214,14 +1209,14 @@ mod tests {
         let encoded = encode_rle_data(&values, 2);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 90, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(90).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 90, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 90).unwrap();
 
         // Read across RLE run boundaries
-        decoder.push_slice(25).unwrap(); // 25 × 100
-        decoder.push_slice(20).unwrap(); // 5 × 100, 15 × 200
-        decoder.push_slice(20).unwrap(); // 15 × 200, 5 × 300
-        decoder.push_slice(25).unwrap(); // 25 × 300
+        decoder.push_slice(&mut buffers, 25).unwrap(); // 25 × 100
+        decoder.push_slice(&mut buffers, 20).unwrap(); // 5 × 100, 15 × 200
+        decoder.push_slice(&mut buffers, 20).unwrap(); // 15 × 200, 5 × 300
+        decoder.push_slice(&mut buffers, 25).unwrap(); // 25 × 300
 
         let mut expected = Vec::new();
         expected.extend(std::iter::repeat_n(100, 30));
@@ -1242,9 +1237,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 1);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 1, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(1).unwrap();
-        decoder.push().unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 1, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![99]);
     }
@@ -1259,9 +1254,9 @@ mod tests {
         let encoded = encode_rle_data(&values, 1);
 
         let mut decoder =
-            RleDictionaryDecoder::try_new(&encoded, dict, 1, I32_NULL, &mut buffers).unwrap();
-        decoder.reserve(1).unwrap();
-        decoder.push_slice(1).unwrap();
+            RleDictionaryDecoder::try_new(&encoded, dict, 1, I32_NULL, &buffers).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        decoder.push_slice(&mut buffers, 1).unwrap();
 
         assert_eq!(read_i32_results(&buffers), vec![99]);
     }

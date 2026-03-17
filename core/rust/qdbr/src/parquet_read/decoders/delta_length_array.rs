@@ -21,7 +21,6 @@ const MAX_VARCHAR_LENGTH: i32 = (1 << 28) - 1; // 28 bits for length in header
 /// decodes delta-packed lengths and writes VarcharSlice aux entries (len, flags, ptr),
 /// following the same pattern as `DeltaBinaryPackedDecoder`.
 pub struct DeltaLAVarcharSliceDecoder<'a> {
-    buffers: &'a mut ColumnChunkBuffers,
     data: *const u8,
     data_len: usize,
     pos: usize,
@@ -41,7 +40,6 @@ pub struct DeltaLAVarcharSliceDecoder<'a> {
 impl<'a> DeltaLAVarcharSliceDecoder<'a> {
     pub fn try_new(
         data: &'a [u8],
-        buffers: &'a mut ColumnChunkBuffers,
         ascii: bool,
     ) -> ParquetResult<Self> {
         let (mut iterator, first_value): (MiniblockIterator<i32>, _) =
@@ -61,7 +59,6 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             data: unsafe { data.as_ptr().add(data_offset) },
             data_len: data.len() - data_offset,
             pos: 0,
-            buffers,
             ascii,
             iterator,
             current_value: first_value,
@@ -163,69 +160,63 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
     }
 }
 
-impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.aux_vec.reserve(count * AUX_ENTRY_SIZE)?;
+impl Pushable<ColumnChunkBuffers> for DeltaLAVarcharSliceDecoder<'_> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.aux_vec.reserve(count * AUX_ENTRY_SIZE)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let len = self.decode_next_length()?;
         let value_ptr = self.advance_data(len)?;
         let aux_ptr = unsafe {
-            self.buffers
-                .aux_vec
+            sink.aux_vec
                 .as_mut_ptr()
-                .add(self.buffers.aux_vec.len())
+                .add(sink.aux_vec.len())
         };
         self.write_aux_entry(aux_ptr, value_ptr, len);
         unsafe {
-            self.buffers
-                .aux_vec
-                .set_len(self.buffers.aux_vec.len() + AUX_ENTRY_SIZE);
+            sink.aux_vec
+                .set_len(sink.aux_vec.len() + AUX_ENTRY_SIZE);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let aux_ptr = unsafe {
-            self.buffers
-                .aux_vec
+            sink.aux_vec
                 .as_mut_ptr()
-                .add(self.buffers.aux_vec.len())
+                .add(sink.aux_vec.len())
         };
         Self::write_null_entry(aux_ptr);
         unsafe {
-            self.buffers
-                .aux_vec
-                .set_len(self.buffers.aux_vec.len() + AUX_ENTRY_SIZE);
+            sink.aux_vec
+                .set_len(sink.aux_vec.len() + AUX_ENTRY_SIZE);
         }
         Ok(())
     }
 
     #[inline(always)]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         let aux_ptr = unsafe {
-            self.buffers
-                .aux_vec
+            sink.aux_vec
                 .as_mut_ptr()
-                .add(self.buffers.aux_vec.len())
+                .add(sink.aux_vec.len())
         };
         for i in 0..count {
             Self::write_null_entry(unsafe { aux_ptr.add(i * AUX_ENTRY_SIZE) });
         }
         unsafe {
-            self.buffers
-                .aux_vec
-                .set_len(self.buffers.aux_vec.len() + count * AUX_ENTRY_SIZE);
+            sink.aux_vec
+                .set_len(sink.aux_vec.len() + count * AUX_ENTRY_SIZE);
         }
         Ok(())
     }
 
     #[inline(always)]
-    fn push_slice(&mut self, mut count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, mut count: usize) -> ParquetResult<()> {
         if count == 0 {
             return Ok(());
         }
@@ -252,10 +243,9 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
         }
 
         let mut aux_ptr = unsafe {
-            self.buffers
-                .aux_vec
+            sink.aux_vec
                 .as_mut_ptr()
-                .add(self.buffers.aux_vec.len())
+                .add(sink.aux_vec.len())
         };
 
         if !self.consumed_initial {
@@ -330,9 +320,8 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
         self.pos = pos;
 
         unsafe {
-            self.buffers
-                .aux_vec
-                .set_len(self.buffers.aux_vec.len() + total_count * AUX_ENTRY_SIZE);
+            sink.aux_vec
+                .set_len(sink.aux_vec.len() + total_count * AUX_ENTRY_SIZE);
         }
 
         Ok(())
@@ -605,12 +594,12 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["foo", "bar", "baz"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push().unwrap();
-        decoder.push().unwrap();
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
+        decoder.push(&mut buffers).unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 3);
@@ -635,9 +624,9 @@ mod tests {
         let strings = &["hello", "world", "test", "data"];
         let data = encode_delta_length_byte_array(strings);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(4).unwrap();
-        decoder.push_slice(4).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 4).unwrap();
+        decoder.push_slice(&mut buffers, 4).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 4);
@@ -656,8 +645,8 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["abc"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.push_slice(0).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.push_slice(&mut buffers, 0).unwrap();
         assert_eq!(buffers.aux_vec.len(), 0);
     }
 
@@ -670,9 +659,9 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["abc"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
-        decoder.push_null().unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 1);
@@ -688,9 +677,9 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["abc"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
-        decoder.push_nulls(5).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
+        decoder.push_nulls(&mut buffers, 5).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 5);
@@ -706,8 +695,8 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["abc"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.push_nulls(0).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.push_nulls(&mut buffers, 0).unwrap();
         assert_eq!(buffers.aux_vec.len(), 0);
     }
 
@@ -720,10 +709,10 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["aaa", "bbb", "ccc", "ddd"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(2).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 2).unwrap();
         decoder.skip(2).unwrap();
-        decoder.push_slice(2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 2);
@@ -740,10 +729,10 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["xyz"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
         decoder.skip(0).unwrap();
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 1);
@@ -756,10 +745,10 @@ mod tests {
     fn test_skip_all() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["aa", "bb", "cc"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
         decoder.skip(3).unwrap();
         assert_eq!(buffers.aux_vec.len(), 0);
     }
@@ -773,13 +762,13 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["aaa", "bbb", "ccc", "ddd", "eee", "fff"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
-        decoder.push().unwrap(); // "aaa"
-        decoder.push_null().unwrap(); // null
+        decoder.push(&mut buffers).unwrap(); // "aaa"
+        decoder.push_null(&mut buffers).unwrap(); // null
         decoder.skip(2).unwrap(); // skip "bbb", "ccc"
-        decoder.push_slice(2).unwrap(); // "ddd", "eee"
+        decoder.push_slice(&mut buffers, 2).unwrap(); // "ddd", "eee"
                                         // skip "fff" not consumed
 
         let entries = read_aux_entries(&buffers);
@@ -805,10 +794,10 @@ mod tests {
         let mut buffers1 = create_test_buffers(&allocator);
         {
             let mut decoder =
-                DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers1, true).unwrap();
-            decoder.reserve(5).unwrap();
+                DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+            decoder.reserve(&mut buffers1, 5).unwrap();
             for _ in 0..5 {
-                decoder.push().unwrap();
+                decoder.push(&mut buffers1).unwrap();
             }
         }
 
@@ -816,9 +805,9 @@ mod tests {
         let mut buffers2 = create_test_buffers(&allocator);
         {
             let mut decoder =
-                DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers2, true).unwrap();
-            decoder.reserve(5).unwrap();
-            decoder.push_slice(5).unwrap();
+                DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+            decoder.reserve(&mut buffers2, 5).unwrap();
+            decoder.push_slice(&mut buffers2, 5).unwrap();
         }
 
         let entries1 = read_aux_entries(&buffers1);
@@ -845,9 +834,9 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["", "", ""]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
-        decoder.push_slice(3).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 3);
@@ -867,9 +856,9 @@ mod tests {
         let data = encode_delta_length_byte_array(&["hello", "world"]);
 
         // ascii=false
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, false).unwrap();
-        decoder.reserve(2).unwrap();
-        decoder.push_slice(2).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, false).unwrap();
+        decoder.reserve(&mut buffers, 2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
 
         let entries = read_aux_entries(&buffers);
         // Non-empty with ascii=false: flags=1 → header = (5 << 4) | 1 = 81
@@ -885,9 +874,9 @@ mod tests {
         let data = encode_delta_length_byte_array(&["", "hi"]);
 
         // ascii=false, but empty strings still get flags=3
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, false).unwrap();
-        decoder.reserve(2).unwrap();
-        decoder.push_slice(2).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, false).unwrap();
+        decoder.reserve(&mut buffers, 2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries[0].0, 3); // empty → flags=3
@@ -903,9 +892,9 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["only"]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
-        decoder.push().unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 1);
@@ -926,9 +915,9 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(100).unwrap();
-        decoder.push_slice(100).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 100).unwrap();
+        decoder.push_slice(&mut buffers, 100).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 100);
@@ -950,15 +939,15 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(70).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 70).unwrap();
 
         // Non-aligned chunks: 5, 13, 25, 7, 20 = 70
-        decoder.push_slice(5).unwrap();
-        decoder.push_slice(13).unwrap();
-        decoder.push_slice(25).unwrap();
-        decoder.push_slice(7).unwrap();
-        decoder.push_slice(20).unwrap();
+        decoder.push_slice(&mut buffers, 5).unwrap();
+        decoder.push_slice(&mut buffers, 13).unwrap();
+        decoder.push_slice(&mut buffers, 25).unwrap();
+        decoder.push_slice(&mut buffers, 7).unwrap();
+        decoder.push_slice(&mut buffers, 20).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 70);
@@ -980,10 +969,10 @@ mod tests {
         // lengths: [3, -1] → first=3, delta=-4
         let data = encode_delta_length_byte_array_raw(&[3, -1], b"abc");
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(2).unwrap();
-        decoder.push().unwrap(); // first value (3) is OK
-        let err = decoder.push().err();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 2).unwrap();
+        decoder.push(&mut buffers).unwrap(); // first value (3) is OK
+        let err = decoder.push(&mut buffers).err();
         assert!(err.is_some(), "expected error for negative length");
     }
 
@@ -995,9 +984,9 @@ mod tests {
         let too_long = 1 << 28; // MAX_VARCHAR_LENGTH + 1
         let data = encode_delta_length_byte_array_raw(&[too_long], &[]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
-        let err = decoder.push().err();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        let err = decoder.push(&mut buffers).err();
         assert!(err.is_some(), "expected error for length exceeding max");
     }
 
@@ -1009,9 +998,9 @@ mod tests {
         // Claim length=10 but only provide 3 bytes of string data
         let data = encode_delta_length_byte_array_raw(&[10], b"abc");
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
-        let err = decoder.push().err();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        let err = decoder.push(&mut buffers).err();
         assert!(
             err.is_some(),
             "expected error for data beyond page boundary"
@@ -1022,11 +1011,11 @@ mod tests {
     fn test_skip_beyond_page_boundary() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let _buffers = create_test_buffers(&allocator);
         // Claim length=10 but only provide 3 bytes
         let data = encode_delta_length_byte_array_raw(&[10], b"abc");
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
         let err = decoder.skip(1).err();
         assert!(err.is_some(), "expected error for skip beyond boundary");
     }
@@ -1045,9 +1034,9 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(150).unwrap();
-        decoder.push_slice(150).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 150).unwrap();
+        decoder.push_slice(&mut buffers, 150).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 150);
@@ -1073,10 +1062,10 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(140).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 140).unwrap();
         // Push in a way that leaves remainder after full packs cross the block boundary
-        decoder.push_slice(140).unwrap();
+        decoder.push_slice(&mut buffers, 140).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 140);
@@ -1097,10 +1086,10 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(150).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 150).unwrap();
         for _ in 0..150 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         let entries = read_aux_entries(&buffers);
@@ -1122,10 +1111,10 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(15).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 15).unwrap();
         decoder.skip(135).unwrap();
-        decoder.push_slice(15).unwrap();
+        decoder.push_slice(&mut buffers, 15).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 15);
@@ -1151,14 +1140,14 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(n).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, n).unwrap();
 
         // Push in chunks of 7 to repeatedly cross pack boundaries in the tail
         let mut pushed = 0;
         while pushed < n {
             let chunk = 7.min(n - pushed);
-            decoder.push_slice(chunk).unwrap();
+            decoder.push_slice(&mut buffers, chunk).unwrap();
             pushed += chunk;
         }
 
@@ -1184,8 +1173,8 @@ mod tests {
         let str_refs: Vec<&str> = strings.iter().map(|s| s.as_str()).collect();
         let data = encode_delta_length_byte_array(&str_refs);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
         // Skip in chunks of 11 to cross pack and block boundaries
         let mut skipped = 0;
@@ -1195,7 +1184,7 @@ mod tests {
             decoder.skip(chunk).unwrap();
             skipped += chunk;
         }
-        decoder.push_slice(5).unwrap();
+        decoder.push_slice(&mut buffers, 5).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 5);
@@ -1218,15 +1207,15 @@ mod tests {
         let mut buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array(&["", "", ""]);
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
-        decoder.reserve(200).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
+        decoder.reserve(&mut buffers, 200).unwrap();
 
         // Consume 129 values: 1 first_value + 128 from 4 packs of 32
         for _ in 0..129 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
         // 130th push: unpack_next finds no more miniblocks
-        let err = decoder.push().err();
+        let err = decoder.push(&mut buffers).err();
         assert!(err.is_some(), "expected error when miniblocks exhausted");
     }
 
@@ -1237,10 +1226,10 @@ mod tests {
         // lengths: [3, 3, 100] with only 6 bytes of string data
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let _buffers = create_test_buffers(&allocator);
         let data = encode_delta_length_byte_array_raw(&[3, 3, 100], b"abcdef");
 
-        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
+        let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, true).unwrap();
         // Skip all 3: first=3 OK, second=3 OK, third=100 exceeds 6-byte boundary
         let err = decoder.skip(3).err();
         assert!(
@@ -1253,10 +1242,10 @@ mod tests {
     fn test_invalid_header() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let _buffers = create_test_buffers(&allocator);
         // Empty data → can't decode ULEB128 header
         let data: &[u8] = &[];
-        let result = DeltaLAVarcharSliceDecoder::try_new(data, &mut buffers, true);
+        let result = DeltaLAVarcharSliceDecoder::try_new(data, true);
         assert!(result.is_err(), "expected error for empty header");
     }
 }

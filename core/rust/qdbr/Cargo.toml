@@ -50,3 +50,7 @@ harness = false
 [[bench]]
 name = "decode_rle"
 harness = false
+
+[[bench]]
+name = "vectorized_decode"
+harness = false

@@ -51,7 +51,7 @@ impl<'a> Slicer<'a> {
 }
 
 #[inline(always)]
-pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+pub(super) fn make_fixed_decimal_decoder<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
     values_buffer: &[u8],
@@ -59,11 +59,11 @@ pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: 
     src_len: usize,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
-    let mut slicer = Slicer::new(values_buffer, src_len);
-    decode_fixed_decimal_with_slicer_mode::<FILTERED, FILL_NULLS>(
+    let slicer = Slicer::new(values_buffer, src_len);
+    make_fixed_decimal_with_slicer::<FILTERED, FILL_NULLS>(
         page,
         bufs,
-        &mut slicer,
+        slicer,
         mode,
         src_len,
         target_tag,
@@ -71,7 +71,7 @@ pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: 
 }
 
 #[inline(always)]
-pub(super) fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+pub(super) fn make_fixed_decimal_dict_decoder<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage<'_>,
     dict_page: &DictPage<'_>,
     bufs: &mut ColumnChunkBuffers,
@@ -109,86 +109,98 @@ pub(super) fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NU
     match target_tag {
         ColumnTypeTag::Decimal8 => {
             let dict = PreconvertedFlbaDecimalDict::try_new_decimal8(dict_page, src_len)?;
-            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let mut decoder = RleDictionaryDecoder::try_new(
+                values_buffer,
+                dict,
+                row_hi,
+                DECIMAL8_NULL_VAL,
+                bufs,
+            )?;
+            super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
-                    values_buffer,
-                    dict,
-                    row_hi,
-                    DECIMAL8_NULL_VAL,
-                    bufs,
-                )?,
+                &mut decoder,
+                bufs,
             )
         }
         ColumnTypeTag::Decimal16 => {
             let dict = PreconvertedFlbaDecimalDict::try_new_decimal16(dict_page, src_len)?;
-            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let mut decoder = RleDictionaryDecoder::try_new(
+                values_buffer,
+                dict,
+                row_hi,
+                DECIMAL16_NULL_VAL,
+                bufs,
+            )?;
+            super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
-                    values_buffer,
-                    dict,
-                    row_hi,
-                    DECIMAL16_NULL_VAL,
-                    bufs,
-                )?,
+                &mut decoder,
+                bufs,
             )
         }
         ColumnTypeTag::Decimal32 => {
             let dict = PreconvertedFlbaDecimalDict::try_new_decimal32(dict_page, src_len)?;
-            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let mut decoder = RleDictionaryDecoder::try_new(
+                values_buffer,
+                dict,
+                row_hi,
+                DECIMAL32_NULL_VAL,
+                bufs,
+            )?;
+            super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
-                    values_buffer,
-                    dict,
-                    row_hi,
-                    DECIMAL32_NULL_VAL,
-                    bufs,
-                )?,
+                &mut decoder,
+                bufs,
             )
         }
         ColumnTypeTag::Decimal64 => {
             let dict = PreconvertedFlbaDecimalDict::try_new_decimal64(dict_page, src_len)?;
-            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let mut decoder = RleDictionaryDecoder::try_new(
+                values_buffer,
+                dict,
+                row_hi,
+                DECIMAL64_NULL_VAL,
+                bufs,
+            )?;
+            super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
-                    values_buffer,
-                    dict,
-                    row_hi,
-                    DECIMAL64_NULL_VAL,
-                    bufs,
-                )?,
+                &mut decoder,
+                bufs,
             )
         }
         ColumnTypeTag::Decimal128 => {
             let dict = PreconvertedFlbaDecimalDict::try_new_decimal128(dict_page, src_len)?;
-            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let mut decoder = RleDictionaryDecoder::try_new(
+                values_buffer,
+                dict,
+                row_hi,
+                DECIMAL128_NULL_VAL,
+                bufs,
+            )?;
+            super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
-                    values_buffer,
-                    dict,
-                    row_hi,
-                    DECIMAL128_NULL_VAL,
-                    bufs,
-                )?,
+                &mut decoder,
+                bufs,
             )
         }
         ColumnTypeTag::Decimal256 => {
             let dict = PreconvertedFlbaDecimalDict::try_new_decimal256(dict_page, src_len)?;
-            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+            let mut decoder = RleDictionaryDecoder::try_new(
+                values_buffer,
+                dict,
+                row_hi,
+                DECIMAL256_NULL_VAL,
+                bufs,
+            )?;
+            super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut RleDictionaryDecoder::try_new(
-                    values_buffer,
-                    dict,
-                    row_hi,
-                    DECIMAL256_NULL_VAL,
-                    bufs,
-                )?,
+                &mut decoder,
+                bufs,
             )
         }
         _ => Err(fmt_err!(
@@ -200,25 +212,25 @@ pub(super) fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NU
 }
 
 #[inline(always)]
-pub(super) fn decode_byte_array_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+pub(super) fn make_byte_array_decimal_decoder<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
     values_buffer: &[u8],
     mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
-    let mut slicer = PlainVarSlicer::new(values_buffer, mode.sliced_row_count());
-    decode_byte_array_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
+    let slicer = PlainVarSlicer::new(values_buffer, mode.sliced_row_count());
+    make_byte_array_decimal_with_slicer::<FILTERED, FILL_NULLS, _>(
         page,
         bufs,
-        &mut slicer,
+        slicer,
         mode,
         target_tag,
     )
 }
 
 #[inline(always)]
-pub(super) fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+pub(super) fn make_byte_array_decimal_dict_decoder<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict_page: &DictPage,
     bufs: &mut ColumnChunkBuffers,
@@ -227,16 +239,16 @@ pub(super) fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FI
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
     let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
-    let mut slicer = RleDictionarySlicer::try_new(
+    let slicer = RleDictionarySlicer::try_new(
         values_buffer,
         dict_decoder,
         mode.source_row_count(),
         mode.sliced_row_count(),
     )?;
-    decode_byte_array_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
+    make_byte_array_decimal_with_slicer::<FILTERED, FILL_NULLS, _>(
         page,
         bufs,
-        &mut slicer,
+        slicer,
         mode,
         target_tag,
     )
@@ -438,40 +450,39 @@ unsafe fn convert_byte_array_decimal_to_target<const N: usize>(
 }
 
 struct ReverseDecimalColumnSink<'a, const N: usize> {
-    slicer: &'a mut Slicer<'a>,
-    buffers: &'a mut ColumnChunkBuffers,
+    slicer: Slicer<'a>,
     null_value: [u8; N],
 }
 
-impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(count * N)?;
+impl<const N: usize> Pushable<ColumnChunkBuffers> for ReverseDecimalColumnSink<'_, N> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.data_vec.reserve(count * N)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let slice = self.slicer.next();
-        let base = self.buffers.data_vec.len();
-        debug_assert!(base + N <= self.buffers.data_vec.capacity());
+        let base = sink.data_vec.len();
+        debug_assert!(base + N <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             reverse_exact::<N>(slice, ptr);
-            self.buffers.data_vec.set_len(base + N);
+            sink.data_vec.set_len(base + N);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
             let src_ptr = self.slicer.next_raw_slice(count).as_ptr();
-            let dst_ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let dst_ptr = sink.data_vec.as_mut_ptr().add(base);
             if N == 2 {
                 for c in 0..count {
                     let v = (src_ptr.add(c * 2) as *const u16)
@@ -500,29 +511,29 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
                     }
                 }
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        sink.data_vec.extend_from_slice(&self.null_value)?;
         Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             for i in 0..count {
                 ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -536,11 +547,10 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
 
 impl<'a, const N: usize> ReverseDecimalColumnSink<'a, N> {
     fn new(
-        slicer: &'a mut Slicer<'a>,
-        buffers: &'a mut ColumnChunkBuffers,
+        slicer: Slicer<'a>,
         null_value: [u8; N],
     ) -> Self {
-        Self { slicer, buffers, null_value }
+        Self { slicer, null_value }
     }
 }
 
@@ -550,40 +560,39 @@ impl<'a, const N: usize> ReverseDecimalColumnSink<'a, N> {
 /// N is the total size (16 for Decimal128, 32 for Decimal256).
 /// WORDS is the number of 8-byte words (2 for Decimal128, 4 for Decimal256).
 struct WordSwapDecimalColumnSink<'a, const N: usize, const WORDS: usize> {
-    slicer: &'a mut Slicer<'a>,
-    buffers: &'a mut ColumnChunkBuffers,
+    slicer: Slicer<'a>,
     null_value: [u8; N],
 }
 
-impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<'_, N, WORDS> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(count * N)?;
+impl<const N: usize, const WORDS: usize> Pushable<ColumnChunkBuffers> for WordSwapDecimalColumnSink<'_, N, WORDS> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.data_vec.reserve(count * N)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let slice = self.slicer.next();
-        let base = self.buffers.data_vec.len();
-        debug_assert!(base + N <= self.buffers.data_vec.capacity());
+        let base = sink.data_vec.len();
+        debug_assert!(base + N <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             word_swap_exact::<WORDS>(slice, ptr);
-            self.buffers.data_vec.set_len(base + N);
+            sink.data_vec.set_len(base + N);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
         // SAFETY: We reserved enough capacity for `count` values of `N` bytes each, and we only write to the range from `base` to `base + total_bytes`.
         unsafe {
             let src = self.slicer.next_raw_slice(count);
-            let dst = self.buffers.data_vec.as_mut_ptr().add(base);
+            let dst = sink.data_vec.as_mut_ptr().add(base);
             for c in 0..count {
                 let src_ptr = src.as_ptr().add(c * N);
                 let dst_ptr = dst.add(c * N);
@@ -594,29 +603,29 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
                     (dst_ptr.add(w * 8) as *mut u64).write_unaligned(src_word);
                 }
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        sink.data_vec.extend_from_slice(&self.null_value)?;
         Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             for i in 0..count {
                 ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -630,11 +639,10 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
 
 impl<'a, const N: usize, const WORDS: usize> WordSwapDecimalColumnSink<'a, N, WORDS> {
     fn new(
-        slicer: &'a mut Slicer<'a>,
-        buffers: &'a mut ColumnChunkBuffers,
+        slicer: Slicer<'a>,
         null_value: [u8; N],
     ) -> Self {
-        Self { slicer, buffers, null_value }
+        Self { slicer, null_value }
     }
 }
 
@@ -648,40 +656,39 @@ impl<'a, const N: usize, const WORDS: usize> WordSwapDecimalColumnSink<'a, N, WO
 /// For simple decimals (N <= 8): sign-extend and reverse all bytes.
 /// For multi-word decimals (N = 16 or 32): sign-extend and swap bytes within each 8-byte word.
 struct SignExtendDecimalColumnSink<'a, const N: usize> {
-    slicer: &'a mut Slicer<'a>,
-    buffers: &'a mut ColumnChunkBuffers,
+    slicer: Slicer<'a>,
     null_value: [u8; N],
     src_len: usize,
 }
 
-impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(count * N)?;
+impl<const N: usize> Pushable<ColumnChunkBuffers> for SignExtendDecimalColumnSink<'_, N> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.data_vec.reserve(count * N)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let slice = self.slicer.next();
-        let base = self.buffers.data_vec.len();
-        debug_assert!(base + N <= self.buffers.data_vec.capacity());
+        let base = sink.data_vec.len();
+        debug_assert!(base + N <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             Self::sign_extend_and_convert(slice, ptr, self.src_len)?;
-            self.buffers.data_vec.set_len(base + N);
+            sink.data_vec.set_len(base + N);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             if N == 8 {
                 const CHUNK_VALUES: usize = 256;
                 let mut out_idx = 0usize;
@@ -702,29 +709,29 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
                     Self::sign_extend_and_convert(slice, dest, self.src_len)?;
                 }
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        sink.data_vec.extend_from_slice(&self.null_value)?;
         Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             for i in 0..count {
                 ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -738,12 +745,11 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
 
 impl<'a, const N: usize> SignExtendDecimalColumnSink<'a, N> {
     fn new(
-        slicer: &'a mut Slicer<'a>,
-        buffers: &'a mut ColumnChunkBuffers,
+        slicer: Slicer<'a>,
         null_value: [u8; N],
         src_len: usize,
     ) -> Self {
-        Self { slicer, buffers, null_value, src_len }
+        Self { slicer, null_value, src_len }
     }
 
     #[inline]
@@ -757,47 +763,53 @@ impl<'a, const N: usize> SignExtendDecimalColumnSink<'a, N> {
     }
 }
 
-fn decode_byte_array_decimal_with_slicer_mode<
+fn make_byte_array_decimal_with_slicer<
     const FILTERED: bool,
     const FILL_NULLS: bool,
     T: DataPageSlicer,
 >(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
-    slicer: &mut T,
+    slicer: T,
     mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
     match target_tag {
-        ColumnTypeTag::Decimal8 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+        ColumnTypeTag::Decimal8 => super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
             page,
             mode,
-            &mut ByteArrayDecimalColumnSink::<1, _>::new(slicer, bufs, DECIMAL8_NULL),
+            &mut ByteArrayDecimalColumnSink::<1, _>::new(slicer, DECIMAL8_NULL),
+            bufs,
         ),
-        ColumnTypeTag::Decimal16 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+        ColumnTypeTag::Decimal16 => super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
             page,
             mode,
-            &mut ByteArrayDecimalColumnSink::<2, _>::new(slicer, bufs, DECIMAL16_NULL),
+            &mut ByteArrayDecimalColumnSink::<2, _>::new(slicer, DECIMAL16_NULL),
+            bufs,
         ),
-        ColumnTypeTag::Decimal32 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+        ColumnTypeTag::Decimal32 => super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
             page,
             mode,
-            &mut ByteArrayDecimalColumnSink::<4, _>::new(slicer, bufs, DECIMAL32_NULL),
+            &mut ByteArrayDecimalColumnSink::<4, _>::new(slicer, DECIMAL32_NULL),
+            bufs,
         ),
-        ColumnTypeTag::Decimal64 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+        ColumnTypeTag::Decimal64 => super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
             page,
             mode,
-            &mut ByteArrayDecimalColumnSink::<8, _>::new(slicer, bufs, DECIMAL64_NULL),
+            &mut ByteArrayDecimalColumnSink::<8, _>::new(slicer, DECIMAL64_NULL),
+            bufs,
         ),
-        ColumnTypeTag::Decimal128 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+        ColumnTypeTag::Decimal128 => super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
             page,
             mode,
-            &mut ByteArrayDecimalColumnSink::<16, _>::new(slicer, bufs, DECIMAL128_NULL),
+            &mut ByteArrayDecimalColumnSink::<16, _>::new(slicer, DECIMAL128_NULL),
+            bufs,
         ),
-        ColumnTypeTag::Decimal256 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+        ColumnTypeTag::Decimal256 => super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
             page,
             mode,
-            &mut ByteArrayDecimalColumnSink::<32, _>::new(slicer, bufs, DECIMAL256_NULL),
+            &mut ByteArrayDecimalColumnSink::<32, _>::new(slicer, DECIMAL256_NULL),
+            bufs,
         ),
         _ => Err(fmt_err!(
             Unsupported,
@@ -807,67 +819,66 @@ fn decode_byte_array_decimal_with_slicer_mode<
     }
 }
 
-struct ByteArrayDecimalColumnSink<'a, const N: usize, T: DataPageSlicer> {
-    slicer: &'a mut T,
-    buffers: &'a mut ColumnChunkBuffers,
+struct ByteArrayDecimalColumnSink<const N: usize, T: DataPageSlicer> {
+    slicer: T,
     null_value: [u8; N],
 }
 
-impl<const N: usize, T: DataPageSlicer> Pushable for ByteArrayDecimalColumnSink<'_, N, T> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.data_vec.reserve(count * N)?;
+impl<const N: usize, T: DataPageSlicer> Pushable<ColumnChunkBuffers> for ByteArrayDecimalColumnSink<N, T> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        sink.data_vec.reserve(count * N)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         let src = self.slicer.next()?;
-        let base = self.buffers.data_vec.len();
-        debug_assert!(base + N <= self.buffers.data_vec.capacity());
+        let base = sink.data_vec.len();
+        debug_assert!(base + N <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             Self::convert_decimal(src, ptr)?;
-            self.buffers.data_vec.set_len(base + N);
+            sink.data_vec.set_len(base + N);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             for c in 0..count {
                 let src = self.slicer.next()?;
                 Self::convert_decimal(src, ptr.add(c * N))?;
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        sink.data_vec.extend_from_slice(&self.null_value)?;
         Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        let base = self.buffers.data_vec.len();
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let base = sink.data_vec.len();
         let total_bytes = count * N;
-        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        debug_assert!(base + total_bytes <= sink.data_vec.capacity());
 
         unsafe {
-            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            let ptr = sink.data_vec.as_mut_ptr().add(base);
             for i in 0..count {
                 ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
-            self.buffers.data_vec.set_len(base + total_bytes);
+            sink.data_vec.set_len(base + total_bytes);
         }
         Ok(())
     }
@@ -878,9 +889,9 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ByteArrayDecimalColumnSink<
     }
 }
 
-impl<'a, const N: usize, T: DataPageSlicer> ByteArrayDecimalColumnSink<'a, N, T> {
-    fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers, null_value: [u8; N]) -> Self {
-        Self { slicer, buffers, null_value }
+impl<const N: usize, T: DataPageSlicer> ByteArrayDecimalColumnSink<N, T> {
+    fn new(slicer: T, null_value: [u8; N]) -> Self {
+        Self { slicer, null_value }
     }
 
     #[inline]
@@ -1008,10 +1019,10 @@ fn validate_flba_dict(dict_page: &DictPage, src_len: usize) -> ParquetResult<()>
     Ok(())
 }
 
-fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NULLS: bool>(
+fn make_fixed_decimal_with_slicer<'a, const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     bufs: &'a mut ColumnChunkBuffers,
-    slicer: &'a mut Slicer<'a>,
+    slicer: Slicer<'a>,
     mode: super::DecodeModeContext<'a>,
     src_len: usize,
     target_tag: ColumnTypeTag,
@@ -1044,121 +1055,127 @@ fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NU
     match target_tag {
         ColumnTypeTag::Decimal8 => {
             if src_len == 1 {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<1>::new(slicer, bufs, DECIMAL8_NULL),
+                    &mut ReverseDecimalColumnSink::<1>::new(slicer, DECIMAL8_NULL),
+                    bufs,
                 )
             } else {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut SignExtendDecimalColumnSink::<1>::new(
                         slicer,
-                        bufs,
                         DECIMAL8_NULL,
                         src_len,
                     ),
+                    bufs,
                 )
             }
         }
         ColumnTypeTag::Decimal16 => {
             if src_len == 2 {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<2>::new(slicer, bufs, DECIMAL16_NULL),
+                    &mut ReverseDecimalColumnSink::<2>::new(slicer, DECIMAL16_NULL),
+                    bufs,
                 )
             } else {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut SignExtendDecimalColumnSink::<2>::new(
                         slicer,
-                        bufs,
                         DECIMAL16_NULL,
                         src_len,
                     ),
+                    bufs,
                 )
             }
         }
         ColumnTypeTag::Decimal32 => {
             if src_len == 4 {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<4>::new(slicer, bufs, DECIMAL32_NULL),
+                    &mut ReverseDecimalColumnSink::<4>::new(slicer, DECIMAL32_NULL),
+                    bufs,
                 )
             } else {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut SignExtendDecimalColumnSink::<4>::new(
                         slicer,
-                        bufs,
                         DECIMAL32_NULL,
                         src_len,
                     ),
+                    bufs,
                 )
             }
         }
         ColumnTypeTag::Decimal64 => {
             if src_len == 8 {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<8>::new(slicer, bufs, DECIMAL64_NULL),
+                    &mut ReverseDecimalColumnSink::<8>::new(slicer, DECIMAL64_NULL),
+                    bufs,
                 )
             } else {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut SignExtendDecimalColumnSink::<8>::new(
                         slicer,
-                        bufs,
                         DECIMAL64_NULL,
                         src_len,
                     ),
+                    bufs,
                 )
             }
         }
         ColumnTypeTag::Decimal128 => {
             if src_len == 16 {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut WordSwapDecimalColumnSink::<16, 2>::new(slicer, bufs, DECIMAL128_NULL),
+                    &mut WordSwapDecimalColumnSink::<16, 2>::new(slicer, DECIMAL128_NULL),
+                    bufs,
                 )
             } else {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut SignExtendDecimalColumnSink::<16>::new(
                         slicer,
-                        bufs,
                         DECIMAL128_NULL,
                         src_len,
                     ),
+                    bufs,
                 )
             }
         }
         ColumnTypeTag::Decimal256 => {
             if src_len == 32 {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut WordSwapDecimalColumnSink::<32, 4>::new(slicer, bufs, DECIMAL256_NULL),
+                    &mut WordSwapDecimalColumnSink::<32, 4>::new(slicer, DECIMAL256_NULL),
+                    bufs,
                 )
             } else {
-                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                super::decode_page0_mode::<_, _, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut SignExtendDecimalColumnSink::<32>::new(
                         slicer,
-                        bufs,
                         DECIMAL256_NULL,
                         src_len,
                     ),
+                    bufs,
                 )
             }
         }

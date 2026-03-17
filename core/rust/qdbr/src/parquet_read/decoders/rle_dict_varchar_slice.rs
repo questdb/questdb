@@ -19,7 +19,6 @@ use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 const AUX_ENTRY_SIZE: usize = 16;
 
 pub struct RleDictVarcharSliceDecoder<'a> {
-    buffers: &'a mut ColumnChunkBuffers,
     /// Pre-computed aux entries for each dict value: [len_and_flags, ptr].
     dict_aux: Vec<[u64; 2]>,
     null_entry: [u64; 2],
@@ -32,7 +31,7 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
     pub fn try_new(
         mut buffer: &'a [u8],
         dict_page: &'a DictPage<'a>,
-        buffers: &'a mut ColumnChunkBuffers,
+        _bufs: &ColumnChunkBuffers,
         ascii: bool,
     ) -> ParquetResult<Self> {
         let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
@@ -62,7 +61,6 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
             buffer = &buffer[1..];
             let hybrid_decoder = Decoder::new(buffer, num_bits as usize);
             let mut res = Self {
-                buffers,
                 dict_aux,
                 null_entry,
                 dict_len,
@@ -77,7 +75,6 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
             // practically infinite repeat count — the caller controls how
             // many values are consumed via push/push_slice.
             Ok(Self {
-                buffers,
                 dict_aux,
                 null_entry,
                 dict_len,
@@ -132,32 +129,26 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
     }
 }
 
-impl Pushable for RleDictVarcharSliceDecoder<'_> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
+impl Pushable<ColumnChunkBuffers> for RleDictVarcharSliceDecoder<'_> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         let reserve_bytes = count
             .checked_mul(AUX_ENTRY_SIZE)
             .ok_or_else(|| fmt_err!(Layout, "requested reserve size exceeds usize limits"))?;
-        self.buffers.aux_vec.reserve(reserve_bytes)?;
+        sink.aux_vec.reserve(reserve_bytes)?;
         Ok(())
     }
 
     #[inline]
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         loop {
             if let Some(idx) = self.data.next() {
                 return if idx < self.dict_len {
                     let entry = self.dict_aux[idx as usize];
-                    let aux_ptr = unsafe {
-                        self.buffers
-                            .aux_vec
-                            .as_mut_ptr()
-                            .add(self.buffers.aux_vec.len())
-                    };
+                    let aux_ptr =
+                        unsafe { sink.aux_vec.as_mut_ptr().add(sink.aux_vec.len()) };
                     self.write_aux_entry(aux_ptr, &entry);
                     unsafe {
-                        self.buffers
-                            .aux_vec
-                            .set_len(self.buffers.aux_vec.len() + AUX_ENTRY_SIZE);
+                        sink.aux_vec.set_len(sink.aux_vec.len() + AUX_ENTRY_SIZE);
                     }
                     Ok(())
                 } else {
@@ -174,30 +165,18 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
     }
 
     #[inline]
-    fn push_null(&mut self) -> ParquetResult<()> {
-        let aux_ptr = unsafe {
-            self.buffers
-                .aux_vec
-                .as_mut_ptr()
-                .add(self.buffers.aux_vec.len())
-        };
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        let aux_ptr = unsafe { sink.aux_vec.as_mut_ptr().add(sink.aux_vec.len()) };
         self.write_aux_entry(aux_ptr, &self.null_entry);
         unsafe {
-            self.buffers
-                .aux_vec
-                .set_len(self.buffers.aux_vec.len() + AUX_ENTRY_SIZE);
+            sink.aux_vec.set_len(sink.aux_vec.len() + AUX_ENTRY_SIZE);
         }
         Ok(())
     }
 
     #[inline(always)]
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        let aux_ptr = unsafe {
-            self.buffers
-                .aux_vec
-                .as_mut_ptr()
-                .add(self.buffers.aux_vec.len())
-        };
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let aux_ptr = unsafe { sink.aux_vec.as_mut_ptr().add(sink.aux_vec.len()) };
         let null = self.null_entry;
         for i in 0..count {
             unsafe {
@@ -207,15 +186,13 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
             }
         }
         unsafe {
-            self.buffers
-                .aux_vec
-                .set_len(self.buffers.aux_vec.len() + count * AUX_ENTRY_SIZE);
+            sink.aux_vec.set_len(sink.aux_vec.len() + count * AUX_ENTRY_SIZE);
         }
         Ok(())
     }
 
     #[inline(always)]
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         let mut remaining = count;
         loop {
             if remaining == 0 {
@@ -238,10 +215,7 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                         }
                         let entry = self.dict_aux[repeat.value as usize];
                         let aux_ptr = unsafe {
-                            self.buffers
-                                .aux_vec
-                                .as_mut_ptr()
-                                .add(self.buffers.aux_vec.len())
+                            sink.aux_vec.as_mut_ptr().add(sink.aux_vec.len())
                         };
                         for i in 0..n {
                             unsafe {
@@ -251,9 +225,8 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                             }
                         }
                         unsafe {
-                            self.buffers
-                                .aux_vec
-                                .set_len(self.buffers.aux_vec.len() + n * AUX_ENTRY_SIZE);
+                            sink.aux_vec
+                                .set_len(sink.aux_vec.len() + n * AUX_ENTRY_SIZE);
                         }
                         repeat.remaining -= n;
                         n
@@ -271,18 +244,15 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                         let start = bp.current_pack_index;
 
                         let aux_ptr = unsafe {
-                            self.buffers
-                                .aux_vec
-                                .as_mut_ptr()
-                                .add(self.buffers.aux_vec.len())
+                            sink.aux_vec.as_mut_ptr().add(sink.aux_vec.len())
                         };
 
                         for i in 0..n {
                             let idx = unsafe { *unpack_ptr.add(start + i) };
                             if idx >= dict_len {
                                 unsafe {
-                                    self.buffers.aux_vec.set_len(
-                                        self.buffers.aux_vec.len() + consumed * AUX_ENTRY_SIZE,
+                                    sink.aux_vec.set_len(
+                                        sink.aux_vec.len() + consumed * AUX_ENTRY_SIZE,
                                     );
                                 }
                                 return Err(fmt_err!(
@@ -311,9 +281,8 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                     }
 
                     unsafe {
-                        self.buffers
-                            .aux_vec
-                            .set_len(self.buffers.aux_vec.len() + consumed * AUX_ENTRY_SIZE);
+                        sink.aux_vec
+                            .set_len(sink.aux_vec.len() + consumed * AUX_ENTRY_SIZE);
                     }
                     consumed
                 }
@@ -325,19 +294,15 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
                     let bytes = &data[*pos..];
 
                     let aux_ptr = unsafe {
-                        self.buffers
-                            .aux_vec
-                            .as_mut_ptr()
-                            .add(self.buffers.aux_vec.len())
+                        sink.aux_vec.as_mut_ptr().add(sink.aux_vec.len())
                     };
 
                     for i in 0..n {
                         let idx = unsafe { *bytes.get_unchecked(i) } as u32;
                         if idx >= dict_len {
                             unsafe {
-                                self.buffers
-                                    .aux_vec
-                                    .set_len(self.buffers.aux_vec.len() + i * AUX_ENTRY_SIZE);
+                                sink.aux_vec
+                                    .set_len(sink.aux_vec.len() + i * AUX_ENTRY_SIZE);
                             }
                             *pos += i;
                             return Err(fmt_err!(
@@ -357,9 +322,8 @@ impl Pushable for RleDictVarcharSliceDecoder<'_> {
 
                     *pos += n;
                     unsafe {
-                        self.buffers
-                            .aux_vec
-                            .set_len(self.buffers.aux_vec.len() + n * AUX_ENTRY_SIZE);
+                        sink.aux_vec
+                            .set_len(sink.aux_vec.len() + n * AUX_ENTRY_SIZE);
                     }
                     n
                 }
@@ -508,11 +472,11 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 2, 1, 0], 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
         for _ in 0..5 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         let entries = read_aux_entries(&buffers);
@@ -539,11 +503,11 @@ mod tests {
         let encoded: Vec<u8> = vec![0]; // zero bit width
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         for _ in 0..10 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         let entries = read_aux_entries(&buffers);
@@ -570,9 +534,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
-        decoder.push_slice(10).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
+        decoder.push_slice(&mut buffers, 10).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = [
@@ -607,9 +571,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(50).unwrap();
-        decoder.push_slice(50).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 50).unwrap();
+        decoder.push_slice(&mut buffers, 50).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let exp = expected_header(b"val1", true);
@@ -632,9 +596,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 8);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(200).unwrap();
-        decoder.push_slice(200).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 200).unwrap();
+        decoder.push_slice(&mut buffers, 200).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = dict_refs.iter().map(|v| expected_header(v, true)).collect();
@@ -654,9 +618,9 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 2], 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(0).unwrap();
-        decoder.push_slice(0).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 0).unwrap();
+        decoder.push_slice(&mut buffers, 0).unwrap();
         assert_eq!(read_aux_entries(&buffers).len(), 0);
     }
 
@@ -674,11 +638,11 @@ mod tests {
         let encoded = encode_rle_data(&indices, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
-        decoder.push_slice(3).unwrap();
-        decoder.push_slice(4).unwrap();
-        decoder.push_slice(3).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
+        decoder.push_slice(&mut buffers, 4).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = [
@@ -714,11 +678,11 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
-        decoder.push_null().unwrap();
-        decoder.push_null().unwrap();
-        decoder.push_null().unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 3);
@@ -741,9 +705,9 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(7).unwrap();
-        decoder.push_nulls(7).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 7).unwrap();
+        decoder.push_nulls(&mut buffers, 7).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 7);
@@ -766,9 +730,9 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(0).unwrap();
-        decoder.push_nulls(0).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 0).unwrap();
+        decoder.push_nulls(&mut buffers, 0).unwrap();
         assert_eq!(read_aux_entries(&buffers).len(), 0);
     }
 
@@ -788,10 +752,10 @@ mod tests {
         let encoded = encode_rle_data(&indices, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
         decoder.skip(2).unwrap();
-        decoder.push_slice(3).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = [b"ccc" as &[u8], b"dddd", b"eeeee"]
@@ -814,10 +778,10 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 2], 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
         decoder.skip(0).unwrap();
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries[0][0], expected_header(b"a", true));
@@ -827,7 +791,7 @@ mod tests {
     fn test_skip_all() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
 
         let dict_strings: &[&[u8]] = &[b"a", b"bb", b"ccc"];
         let dict_buf = build_dict_page_buffer(dict_strings);
@@ -836,7 +800,7 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 2, 0, 1], 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
         decoder.skip(5).unwrap();
         assert_eq!(read_aux_entries(&buffers).len(), 0);
     }
@@ -860,11 +824,11 @@ mod tests {
             let to_read = remaining.min(5);
 
             let mut decoder =
-                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true)
+                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true)
                     .unwrap();
-            decoder.reserve(to_read).unwrap();
+            decoder.reserve(&mut buffers, to_read).unwrap();
             decoder.skip(skip).unwrap();
-            decoder.push_slice(to_read).unwrap();
+            decoder.push_slice(&mut buffers, to_read).unwrap();
 
             let entries = read_aux_entries(&buffers);
             let expected: Vec<u64> = (skip..skip + to_read)
@@ -890,25 +854,25 @@ mod tests {
         let encoded = encode_rle_data(&indices, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         // push_slice(2): indices 0,1 -> "a", "bb"
-        decoder.push_slice(2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
         // push_nulls(2): [NULL, NULL]
-        decoder.push_nulls(2).unwrap();
+        decoder.push_nulls(&mut buffers, 2).unwrap();
         // skip(3): indices 2,3,4 -> skipped
         decoder.skip(3).unwrap();
         // push(): index 5 -> "f"
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
         // push_null(): [NULL]
-        decoder.push_null().unwrap();
+        decoder.push_null(&mut buffers).unwrap();
         // push_slice(3): indices 6,7,8(=0) -> "gg", "hhh", "a"
-        decoder.push_slice(3).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
         // skip(2): indices 9,10(=1,2) -> skipped
         decoder.skip(2).unwrap();
         // push(): index 11(=3) -> "dddd"
-        decoder.push().unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected_headers = vec![
@@ -945,14 +909,14 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(8).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 8).unwrap();
 
-        decoder.push().unwrap(); // aa
-        decoder.push_slice(2).unwrap(); // bb, cc
-        decoder.push().unwrap(); // dd
-        decoder.push().unwrap(); // aa
-        decoder.push_slice(3).unwrap(); // bb, cc, dd
+        decoder.push(&mut buffers).unwrap(); // aa
+        decoder.push_slice(&mut buffers, 2).unwrap(); // bb, cc
+        decoder.push(&mut buffers).unwrap(); // dd
+        decoder.push(&mut buffers).unwrap(); // aa
+        decoder.push_slice(&mut buffers, 3).unwrap(); // bb, cc, dd
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = [
@@ -986,9 +950,9 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(100).unwrap();
-        decoder.push_slice(100).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 100).unwrap();
+        decoder.push_slice(&mut buffers, 100).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let exp = expected_header(b"constant", true);
@@ -1008,10 +972,10 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
         decoder.skip(15).unwrap();
-        decoder.push_slice(5).unwrap();
+        decoder.push_slice(&mut buffers, 5).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let exp = expected_header(b"val", true);
@@ -1031,16 +995,16 @@ mod tests {
         let encoded: Vec<u8> = vec![0];
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(8).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 8).unwrap();
 
-        decoder.push().unwrap(); // v
+        decoder.push(&mut buffers).unwrap(); // v
         decoder.skip(3).unwrap();
-        decoder.push_null().unwrap(); // NULL
-        decoder.push_slice(3).unwrap(); // v, v, v
+        decoder.push_null(&mut buffers).unwrap(); // NULL
+        decoder.push_slice(&mut buffers, 3).unwrap(); // v, v, v
         decoder.skip(5).unwrap();
-        decoder.push_nulls(2).unwrap(); // NULL, NULL
-        decoder.push().unwrap(); // v
+        decoder.push_nulls(&mut buffers, 2).unwrap(); // NULL, NULL
+        decoder.push(&mut buffers).unwrap(); // v
 
         let entries = read_aux_entries(&buffers);
         let v = expected_header(b"v", true);
@@ -1067,9 +1031,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 4);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(1000).unwrap();
-        decoder.push_slice(1000).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 1000).unwrap();
+        decoder.push_slice(&mut buffers, 1000).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = (0..1000)
@@ -1093,11 +1057,11 @@ mod tests {
         let encoded = encode_rle_data(&indices, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(500).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 500).unwrap();
 
         for _ in 0..50 {
-            decoder.push_slice(10).unwrap();
+            decoder.push_slice(&mut buffers, 10).unwrap();
         }
 
         let entries = read_aux_entries(&buffers);
@@ -1121,11 +1085,11 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(200).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 200).unwrap();
 
         for _ in 0..200 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         let entries = read_aux_entries(&buffers);
@@ -1151,14 +1115,14 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(80).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 80).unwrap();
 
-        decoder.push_slice(3).unwrap();
-        decoder.push_slice(7).unwrap();
-        decoder.push_slice(13).unwrap();
-        decoder.push_slice(25).unwrap();
-        decoder.push_slice(32).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
+        decoder.push_slice(&mut buffers, 7).unwrap();
+        decoder.push_slice(&mut buffers, 13).unwrap();
+        decoder.push_slice(&mut buffers, 25).unwrap();
+        decoder.push_slice(&mut buffers, 32).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = (0..80)
@@ -1184,14 +1148,14 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(90).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 90).unwrap();
 
         // Read across RLE run boundaries
-        decoder.push_slice(25).unwrap();
-        decoder.push_slice(20).unwrap();
-        decoder.push_slice(20).unwrap();
-        decoder.push_slice(25).unwrap();
+        decoder.push_slice(&mut buffers, 25).unwrap();
+        decoder.push_slice(&mut buffers, 20).unwrap();
+        decoder.push_slice(&mut buffers, 20).unwrap();
+        decoder.push_slice(&mut buffers, 25).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let mut expected = Vec::new();
@@ -1216,9 +1180,9 @@ mod tests {
         let encoded = encode_rle_data(&[1], 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
-        decoder.push().unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries[0][0], expected_header(b"yy", true));
@@ -1237,9 +1201,9 @@ mod tests {
         let encoded = encode_rle_data(&[1], 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(1).unwrap();
-        decoder.push_slice(1).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 1).unwrap();
+        decoder.push_slice(&mut buffers, 1).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries[0][0], expected_header(b"yy", true));
@@ -1258,10 +1222,10 @@ mod tests {
         let mut buffers_ascii = create_test_buffers(&allocator);
         let encoded: Vec<u8> = vec![0];
         let mut dec_ascii =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers_ascii, true)
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers_ascii, true)
                 .unwrap();
-        dec_ascii.reserve(1).unwrap();
-        dec_ascii.push().unwrap();
+        dec_ascii.reserve(&mut buffers_ascii, 1).unwrap();
+        dec_ascii.push(&mut buffers_ascii).unwrap();
 
         // Non-ASCII mode
         let dict_page = make_dict_page(&dict_buf, dict_strings.len());
@@ -1270,12 +1234,12 @@ mod tests {
         let mut dec_non_ascii = RleDictVarcharSliceDecoder::try_new(
             &encoded,
             &dict_page,
-            &mut buffers_non_ascii,
+            &buffers_non_ascii,
             false,
         )
         .unwrap();
-        dec_non_ascii.reserve(1).unwrap();
-        dec_non_ascii.push().unwrap();
+        dec_non_ascii.reserve(&mut buffers_non_ascii, 1).unwrap();
+        dec_non_ascii.push(&mut buffers_non_ascii).unwrap();
 
         let ascii_entries = read_aux_entries(&buffers_ascii);
         let non_ascii_entries = read_aux_entries(&buffers_non_ascii);
@@ -1304,9 +1268,9 @@ mod tests {
 
         // ascii=false, but empty string should still get flags=3
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, false).unwrap();
-        decoder.reserve(2).unwrap();
-        decoder.push_slice(2).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, false).unwrap();
+        decoder.reserve(&mut buffers, 2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
 
         let entries = read_aux_entries(&buffers);
         // Empty string: (0 << 4) | 3 = 3
@@ -1329,16 +1293,16 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
 
-        decoder.reserve(10).unwrap();
-        decoder.push_slice(10).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
+        decoder.push_slice(&mut buffers, 10).unwrap();
 
-        decoder.reserve(40).unwrap();
-        decoder.push_slice(40).unwrap();
+        decoder.reserve(&mut buffers, 40).unwrap();
+        decoder.push_slice(&mut buffers, 40).unwrap();
 
-        decoder.reserve(50).unwrap();
-        decoder.push_slice(50).unwrap();
+        decoder.reserve(&mut buffers, 50).unwrap();
+        decoder.push_slice(&mut buffers, 50).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = (0..100)
@@ -1366,11 +1330,11 @@ mod tests {
         {
             let dict_page = make_dict_page(&dict_buf, dict_refs.len());
             let mut decoder =
-                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers1, true)
+                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers1, true)
                     .unwrap();
-            decoder.reserve(100).unwrap();
+            decoder.reserve(&mut buffers1, 100).unwrap();
             for _ in 0..100 {
-                decoder.push().unwrap();
+                decoder.push(&mut buffers1).unwrap();
             }
         }
 
@@ -1379,10 +1343,10 @@ mod tests {
         {
             let dict_page = make_dict_page(&dict_buf, dict_refs.len());
             let mut decoder =
-                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers2, true)
+                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers2, true)
                     .unwrap();
-            decoder.reserve(100).unwrap();
-            decoder.push_slice(100).unwrap();
+            decoder.reserve(&mut buffers2, 100).unwrap();
+            decoder.push_slice(&mut buffers2, 100).unwrap();
         }
 
         // Method 3: push_slice in small chunks
@@ -1390,11 +1354,11 @@ mod tests {
         {
             let dict_page = make_dict_page(&dict_buf, dict_refs.len());
             let mut decoder =
-                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers3, true)
+                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers3, true)
                     .unwrap();
-            decoder.reserve(100).unwrap();
+            decoder.reserve(&mut buffers3, 100).unwrap();
             for _ in 0..20 {
-                decoder.push_slice(5).unwrap();
+                decoder.push_slice(&mut buffers3, 5).unwrap();
             }
         }
 
@@ -1422,10 +1386,10 @@ mod tests {
         {
             let dict_page = make_dict_page(&dict_buf, dict_refs.len());
             let mut decoder =
-                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut ref_buffers, true)
+                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &ref_buffers, true)
                     .unwrap();
-            decoder.reserve(100).unwrap();
-            decoder.push_slice(100).unwrap();
+            decoder.reserve(&mut ref_buffers, 100).unwrap();
+            decoder.push_slice(&mut ref_buffers, 100).unwrap();
         }
         let reference = extract_headers(&read_aux_entries(&ref_buffers));
 
@@ -1434,11 +1398,11 @@ mod tests {
             let remaining = 100 - skip;
             let dict_page = make_dict_page(&dict_buf, dict_refs.len());
             let mut decoder =
-                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true)
+                RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true)
                     .unwrap();
-            decoder.reserve(remaining).unwrap();
+            decoder.reserve(&mut buffers, remaining).unwrap();
             decoder.skip(skip).unwrap();
-            decoder.push_slice(remaining).unwrap();
+            decoder.push_slice(&mut buffers, remaining).unwrap();
             assert_eq!(
                 extract_headers(&read_aux_entries(&buffers)),
                 reference[skip..].to_vec()
@@ -1462,9 +1426,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(64).unwrap();
-        decoder.push_slice(64).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 64).unwrap();
+        decoder.push_slice(&mut buffers, 64).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = (0..64)
@@ -1487,9 +1451,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(64).unwrap();
-        decoder.push_slice(64).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 64).unwrap();
+        decoder.push_slice(&mut buffers, 64).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = (0..64)
@@ -1513,9 +1477,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 4);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(128).unwrap();
-        decoder.push_slice(128).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 128).unwrap();
+        decoder.push_slice(&mut buffers, 128).unwrap();
 
         let entries = read_aux_entries(&buffers);
         let expected: Vec<u64> = (0..128)
@@ -1530,13 +1494,13 @@ mod tests {
     fn test_empty_rle_buffer() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
 
         let dict_strings: &[&[u8]] = &[b"x"];
         let dict_buf = build_dict_page_buffer(dict_strings);
         let dict_page = make_dict_page(&dict_buf, dict_strings.len());
 
-        let result = RleDictVarcharSliceDecoder::try_new(&[], &dict_page, &mut buffers, true);
+        let result = RleDictVarcharSliceDecoder::try_new(&[], &dict_page, &buffers, true);
         assert!(result.is_err());
     }
 
@@ -1554,12 +1518,12 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 5], 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push().unwrap(); // ok: a
-        decoder.push().unwrap(); // ok: b
-        assert!(decoder.push().is_err()); // oob: immediate error
+        decoder.push(&mut buffers).unwrap(); // ok: a
+        decoder.push(&mut buffers).unwrap(); // ok: b
+        assert!(decoder.push(&mut buffers).is_err()); // oob: immediate error
     }
 
     #[test]
@@ -1576,9 +1540,9 @@ mod tests {
         let encoded = encode_rle_data(&[0, 1, 0, 3, 0], 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
-        assert!(decoder.push_slice(5).is_err());
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
+        assert!(decoder.push_slice(&mut buffers, 5).is_err());
     }
 
     #[test]
@@ -1595,11 +1559,11 @@ mod tests {
         let encoded = encode_rle_data(&[0, 5, 0], 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push().unwrap(); // ok
-        assert!(decoder.push().is_err()); // immediate error on oob
+        decoder.push(&mut buffers).unwrap(); // ok
+        assert!(decoder.push(&mut buffers).is_err()); // immediate error on oob
     }
 
     #[test]
@@ -1615,11 +1579,11 @@ mod tests {
         let encoded = encode_rle_data(&[0, 5, 0], 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(3).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 3).unwrap();
 
-        decoder.push().unwrap();
-        assert!(decoder.push().is_err()); // immediate error on oob
+        decoder.push(&mut buffers).unwrap();
+        assert!(decoder.push(&mut buffers).is_err()); // immediate error on oob
     }
 
     #[test]
@@ -1635,11 +1599,11 @@ mod tests {
         let encoded = encode_rle_data(&[0, 5, 0], 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
-        decoder.push().unwrap();
-        assert!(decoder.push().is_err()); // immediate error on oob
+        decoder.push(&mut buffers).unwrap();
+        assert!(decoder.push(&mut buffers).is_err()); // immediate error on oob
     }
 
     // Dict value length >= 2^28 exceeds header capacity
@@ -1647,7 +1611,7 @@ mod tests {
     fn test_dict_value_exceeds_28bit_header() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
 
         // Craft a dict buffer with a length field of 1 << 28.
         let mut dict_buf = Vec::new();
@@ -1659,7 +1623,7 @@ mod tests {
         let dict_page = make_dict_page(&dict_buf, 1);
         let encoded: Vec<u8> = vec![0];
 
-        let result = RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true);
+        let result = RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true);
         // BaseVarDictDecoder catches the short buffer before we reach the 28-bit check
         assert!(result.is_err());
     }
@@ -1681,11 +1645,11 @@ mod tests {
         let encoded = encode_rle_run(5, 10, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
         // push_slice hits the OOB repeated value
-        assert!(decoder.push_slice(5).is_err());
+        assert!(decoder.push_slice(&mut buffers, 5).is_err());
     }
 
     // push_slice OOB in ByteIndices (8-bit) path
@@ -1704,9 +1668,9 @@ mod tests {
         let encoded = encode_rle_data(&indices, 8);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
-        assert!(decoder.push_slice(5).is_err());
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
+        assert!(decoder.push_slice(&mut buffers, 5).is_err());
     }
 
     // push() exhausts encoded data, decode_next_run fails
@@ -1729,16 +1693,16 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(100).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 100).unwrap();
 
         // Push all 64 valid values
         for _ in 0..64 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         // 65th push exhausts the decoder
-        assert!(decoder.push().is_err());
+        assert!(decoder.push(&mut buffers).is_err());
     }
 
     // push_slice() exhausts encoded data
@@ -1757,12 +1721,12 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(100).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 100).unwrap();
 
         // Push all 64, then try to push more
-        decoder.push_slice(64).unwrap();
-        assert!(decoder.push_slice(1).is_err());
+        decoder.push_slice(&mut buffers, 64).unwrap();
+        assert!(decoder.push_slice(&mut buffers, 1).is_err());
     }
 
     // skip() exhausts encoded data
@@ -1770,7 +1734,7 @@ mod tests {
     fn test_exhaustion_in_skip() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
 
         let dict_strings: &[&[u8]] = &[b"a", b"b", b"c"];
         let dict_buf = build_dict_page_buffer(dict_strings);
@@ -1781,7 +1745,7 @@ mod tests {
         let encoded = encode_rle_data(&indices, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
 
         // Skip all 64, then try to skip more
         decoder.skip(64).unwrap();
@@ -1805,14 +1769,14 @@ mod tests {
         let encoded = encode_two_rle_runs(0, 20, 2, 10, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(30).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 30).unwrap();
 
         // Push exactly the first RLE run to exhaust it
-        decoder.push_slice(20).unwrap();
+        decoder.push_slice(&mut buffers, 20).unwrap();
 
         // Push more — forces decode_next_run, loads second RLE run
-        decoder.push_slice(10).unwrap();
+        decoder.push_slice(&mut buffers, 10).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 30);
@@ -1847,16 +1811,16 @@ mod tests {
         let encoded = encode_two_rle_runs(0, 5, 5, 5, 3);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         // Push 5 valid values from first RLE run
         for _ in 0..5 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         // Next push loads second RLE run, then hits OOB
-        assert!(decoder.push().is_err());
+        assert!(decoder.push(&mut buffers).is_err());
     }
 
     // Happy path — decode a genuine RLE run with valid values.
@@ -1874,9 +1838,9 @@ mod tests {
         let encoded = encode_rle_run(1, 20, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(20).unwrap();
-        decoder.push_slice(20).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 20).unwrap();
+        decoder.push_slice(&mut buffers, 20).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 20);
@@ -1901,11 +1865,11 @@ mod tests {
         let encoded = encode_rle_run(0, 10, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         for _ in 0..10 {
-            decoder.push().unwrap();
+            decoder.push(&mut buffers).unwrap();
         }
 
         let entries = read_aux_entries(&buffers);
@@ -1931,14 +1895,14 @@ mod tests {
         let encoded = encode_rle_run(0, 5, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(10).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 10).unwrap();
 
         // Consume all 5
-        decoder.push_slice(5).unwrap();
+        decoder.push_slice(&mut buffers, 5).unwrap();
 
         // 6th value: RLE run exhausted, decode_next_run finds no more runs
-        assert!(decoder.push().is_err());
+        assert!(decoder.push(&mut buffers).is_err());
     }
 
     // push_slice crossing from one RLE run to another
@@ -1956,11 +1920,11 @@ mod tests {
         let encoded = encode_two_rle_runs(0, 10, 2, 15, 2);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(25).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 25).unwrap();
 
         // push_slice that crosses the boundary between the two runs
-        decoder.push_slice(25).unwrap();
+        decoder.push_slice(&mut buffers, 25).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 25);
@@ -1990,14 +1954,14 @@ mod tests {
         let encoded = encode_two_rle_runs(0, 10, 1, 10, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(5).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 5).unwrap();
 
         // Skip past the first run into the second
         decoder.skip(12).unwrap();
 
         // Push remaining from second run
-        decoder.push_slice(5).unwrap();
+        decoder.push_slice(&mut buffers, 5).unwrap();
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 5);
@@ -2012,7 +1976,7 @@ mod tests {
     fn test_rle_run_skip_exhaustion() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_test_buffers(&allocator);
+        let buffers = create_test_buffers(&allocator);
 
         let dict_strings: &[&[u8]] = &[b"a"];
         let dict_buf = build_dict_page_buffer(dict_strings);
@@ -2022,7 +1986,7 @@ mod tests {
         let encoded = encode_rle_run(0, 5, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
 
         // Skip more than the run contains
         assert!(decoder.skip(10).is_err());
@@ -2043,13 +2007,13 @@ mod tests {
         let encoded = encode_rle_run(0, 10, 1);
 
         let mut decoder =
-            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &mut buffers, true).unwrap();
-        decoder.reserve(8).unwrap();
+            RleDictVarcharSliceDecoder::try_new(&encoded, &dict_page, &buffers, true).unwrap();
+        decoder.reserve(&mut buffers, 8).unwrap();
 
-        decoder.push_slice(3).unwrap(); // val, val, val
-        decoder.push_null().unwrap(); // NULL
-        decoder.push_slice(2).unwrap(); // val, val
-        decoder.push_nulls(2).unwrap(); // NULL, NULL
+        decoder.push_slice(&mut buffers, 3).unwrap(); // val, val, val
+        decoder.push_null(&mut buffers).unwrap(); // NULL
+        decoder.push_slice(&mut buffers, 2).unwrap(); // val, val
+        decoder.push_nulls(&mut buffers, 2).unwrap(); // NULL, NULL
 
         let entries = read_aux_entries(&buffers);
         let val_header = expected_header(b"val", true);

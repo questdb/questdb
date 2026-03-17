@@ -123,9 +123,7 @@ pub struct RleBooleanDecoder<'a> {
     decoder: HybridRunDecoder<'a>,
     run: RleBooleanRun<'a>,
     remaining_values: usize,
-    buffers: &'a mut ColumnChunkBuffers,
-    buffers_ptr: *mut u8,
-    buffers_offset: usize,
+    write_offset: usize,
     null_value: u8,
 }
 
@@ -133,7 +131,7 @@ impl<'a> RleBooleanDecoder<'a> {
     pub fn try_new(
         values: &'a [u8],
         row_count: usize,
-        buffers: &'a mut ColumnChunkBuffers,
+        bufs: &ColumnChunkBuffers,
         null_value: u8,
     ) -> ParquetResult<Self> {
         // Parquet boolean RLE payload is prefixed with a 4-byte LE length.
@@ -149,14 +147,12 @@ impl<'a> RleBooleanDecoder<'a> {
         // Decode by runs (bitpacked / repeated), then expand in bulk.
         let decoder = HybridRunDecoder::new(&values[4..], 1);
 
-        let buffers_offset = buffers.data_vec.len();
+        let write_offset = bufs.data_vec.len();
         Ok(Self {
             decoder,
             run: RleBooleanRun::None,
             remaining_values: row_count,
-            buffers_ptr: buffers.data_vec.as_mut_ptr(),
-            buffers,
-            buffers_offset,
+            write_offset,
             null_value,
         })
     }
@@ -349,47 +345,46 @@ impl<'a> RleBooleanDecoder<'a> {
     }
 }
 
-impl Pushable for RleBooleanDecoder<'_> {
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        let needed = self.buffers_offset + count;
-        if self.buffers.data_vec.len() < needed {
-            let additional = needed - self.buffers.data_vec.len();
-            self.buffers.data_vec.reserve(additional)?;
+impl Pushable<ColumnChunkBuffers> for RleBooleanDecoder<'_> {
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let needed = self.write_offset + count;
+        if sink.data_vec.len() < needed {
+            let additional = needed - sink.data_vec.len();
+            sink.data_vec.reserve(additional)?;
             unsafe {
-                self.buffers.data_vec.set_len(needed);
+                sink.data_vec.set_len(needed);
             }
         }
-        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr();
         Ok(())
     }
 
-    fn push(&mut self) -> ParquetResult<()> {
-        self.push_slice(1)?;
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        self.push_slice(sink, 1)?;
         Ok(())
     }
 
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if count > 0 {
-            let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+            let out = unsafe { sink.data_vec.as_mut_ptr().add(self.write_offset) };
             self.decode_values_into(out, count)?;
-            self.buffers_offset += count;
+            self.write_offset += count;
         }
         Ok(())
     }
 
-    fn push_null(&mut self) -> ParquetResult<()> {
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
+            *sink.data_vec.as_mut_ptr().add(self.write_offset) = self.null_value;
         }
-        self.buffers_offset += 1;
+        self.write_offset += 1;
         Ok(())
     }
 
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if count == 0 {
             return Ok(());
         }
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        let out = unsafe { sink.data_vec.as_mut_ptr().add(self.write_offset) };
         if self.null_value == 0 {
             unsafe {
                 std::ptr::write_bytes(out, 0, count);
@@ -401,7 +396,7 @@ impl Pushable for RleBooleanDecoder<'_> {
                 }
             }
         }
-        self.buffers_offset += count;
+        self.write_offset += count;
         Ok(())
     }
 
@@ -459,9 +454,9 @@ mod tests {
         ];
         let encoded = encode_rle_bools(&values);
         let mut decoder =
-            RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 0).unwrap();
-        decoder.reserve(values.len()).unwrap();
-        decoder.push_slice(values.len()).unwrap();
+            RleBooleanDecoder::try_new(&encoded, values.len(), &buffers, 0).unwrap();
+        decoder.reserve(&mut buffers, values.len()).unwrap();
+        decoder.push_slice(&mut buffers, values.len()).unwrap();
 
         let expected: Vec<u8> = values.iter().map(|&v| v as u8).collect();
         assert_eq!(&buffers.data_vec[..], expected.as_slice());
@@ -476,13 +471,13 @@ mod tests {
         let values = [true, false, true, true, false, true];
         let encoded = encode_rle_bools(&values);
         let mut decoder =
-            RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 9).unwrap();
-        decoder.reserve(6).unwrap();
+            RleBooleanDecoder::try_new(&encoded, values.len(), &buffers, 9).unwrap();
+        decoder.reserve(&mut buffers, 6).unwrap();
         decoder.skip(1).unwrap();
-        decoder.push_slice(3).unwrap();
-        decoder.push_null().unwrap();
-        decoder.push().unwrap();
-        decoder.push_nulls(1).unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
+        decoder.push_null(&mut buffers).unwrap();
+        decoder.push(&mut buffers).unwrap();
+        decoder.push_nulls(&mut buffers, 1).unwrap();
 
         assert_eq!(&buffers.data_vec[..], &[0, 1, 1, 9, 0, 9]);
     }
@@ -495,10 +490,10 @@ mod tests {
 
         let values = [true, false, true];
         let encoded = encode_rle_bools(&values);
-        let mut decoder = RleBooleanDecoder::try_new(&encoded, 3, &mut buffers, 0).unwrap();
-        decoder.reserve(4).unwrap();
-        decoder.push_slice(2).unwrap();
-        decoder.push_slice(2).unwrap_err(); // only 1 value left
+        let mut decoder = RleBooleanDecoder::try_new(&encoded, 3, &buffers, 0).unwrap();
+        decoder.reserve(&mut buffers, 4).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap();
+        decoder.push_slice(&mut buffers, 2).unwrap_err(); // only 1 value left
 
         assert_eq!(&buffers.data_vec[..3], &[1, 0, 1]);
     }
@@ -507,9 +502,9 @@ mod tests {
     fn test_rle_boolean_decoder_rejects_short_buffer() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let mut buffers = create_buffers(&allocator);
+        let buffers = create_buffers(&allocator);
 
-        let err = RleBooleanDecoder::try_new(&[1, 2, 3], 3, &mut buffers, 0).err();
+        let err = RleBooleanDecoder::try_new(&[1, 2, 3], 3, &buffers, 0).err();
         assert!(err.is_some());
     }
 }

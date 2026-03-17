@@ -10,6 +10,7 @@ use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::{Converter, PrimitiveConverter};
 use crate::parquet_read::ColumnChunkBuffers;
 use std::any::TypeId;
+use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ptr;
 
@@ -44,11 +45,10 @@ where
     values: *const T,
     values_len: usize,
     values_offset: usize,
-    buffers: &'a mut ColumnChunkBuffers,
-    buffers_ptr: *mut U,
-    buffers_offset: usize,
+    write_offset: usize,
     null_value: U,
     converter: V,
+    _marker: PhantomData<&'a [u8]>,
 }
 
 /// Decoder for Parquet `PLAIN` booleans (bit-packed LSB-first).
@@ -56,22 +56,17 @@ pub struct PlainBooleanDecoder<'a> {
     values: &'a [u8],
     bit_offset: usize,
     total_bits: usize,
-    buffers: &'a mut ColumnChunkBuffers,
-    buffers_ptr: *mut u8,
-    buffers_offset: usize,
+    write_offset: usize,
     null_value: u8,
 }
 
 impl<'a> PlainBooleanDecoder<'a> {
-    pub fn new(values: &'a [u8], buffers: &'a mut ColumnChunkBuffers, null_value: u8) -> Self {
-        let buffers_offset = buffers.data_vec.len();
+    pub fn new(values: &'a [u8], bufs: &ColumnChunkBuffers, null_value: u8) -> Self {
         Self {
             values,
             bit_offset: 0,
             total_bits: values.len() * 8,
-            buffers_ptr: buffers.data_vec.as_mut_ptr(),
-            buffers,
-            buffers_offset,
+            write_offset: bufs.data_vec.len(),
             null_value,
         }
     }
@@ -100,17 +95,17 @@ where
 {
     pub fn new_with(
         values: &'a [u8],
-        buffers: &'a mut ColumnChunkBuffers,
+        bufs: &ColumnChunkBuffers,
         null_value: U,
         converter: V,
     ) -> Self {
-        let existing = buffers.data_vec.len();
+        let existing = bufs.data_vec.len();
         debug_assert_eq!(
             existing % std::mem::size_of::<U>(),
             0,
             "data_vec length is not aligned to element size"
         );
-        let buffers_offset = existing / std::mem::size_of::<U>();
+        let write_offset = existing / std::mem::size_of::<U>();
         debug_assert_eq!(
             values.len() % size_of::<T>(),
             0,
@@ -120,11 +115,10 @@ where
             values: values.as_ptr().cast(),
             values_len: values.len() / size_of::<T>(),
             values_offset: 0,
-            buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
-            buffers,
-            buffers_offset,
+            write_offset,
             null_value,
             converter,
+            _marker: PhantomData,
         }
     }
 }
@@ -134,23 +128,23 @@ where
     U: 'static + Copy,
     T: AsPrimitive<U>,
 {
-    pub fn new(values: &'a [u8], buffers: &'a mut ColumnChunkBuffers, null_value: U) -> Self {
+    pub fn new(values: &'a [u8], bufs: &ColumnChunkBuffers, null_value: U) -> Self {
         Self::new_with(
             values,
-            buffers,
+            bufs,
             null_value,
             PrimitiveConverter::<T, U>::new(),
         )
     }
 }
 
-impl<'a, T, U, V> Pushable for PlainPrimitiveDecoder<'a, T, U, V>
+impl<'a, T, U, V> Pushable<ColumnChunkBuffers> for PlainPrimitiveDecoder<'a, T, U, V>
 where
     T: Copy + 'static,
     U: Copy + 'static,
     V: Converter<T, U>,
 {
-    fn push(&mut self) -> ParquetResult<()> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
         if self.values_offset >= self.values_len {
             return Err(fmt_err!(
                 Layout,
@@ -159,40 +153,43 @@ where
                 self.values_len
             ));
         }
+        let out_ptr: *mut U = sink.data_vec.as_mut_ptr().cast();
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self
+            *out_ptr.add(self.write_offset) = self
                 .converter
                 .convert(self.values.add(self.values_offset).read_unaligned());
-            self.buffers_offset += 1;
+            self.write_offset += 1;
             self.values_offset += 1;
         }
         Ok(())
     }
 
-    fn push_null(&mut self) -> ParquetResult<()> {
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        let out_ptr: *mut U = sink.data_vec.as_mut_ptr().cast();
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
-            self.buffers_offset += 1;
+            *out_ptr.add(self.write_offset) = self.null_value;
+            self.write_offset += 1;
         }
         Ok(())
     }
 
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let out_ptr: *mut U = sink.data_vec.as_mut_ptr().cast();
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        let out = unsafe { out_ptr.add(self.write_offset) };
         for i in 0..count {
             // SAFETY: `out` points to reserved output space and `i < count`.
             unsafe {
                 *out.add(i) = self.null_value;
             }
         }
-        self.buffers_offset += count;
+        self.write_offset += count;
         Ok(())
     }
 
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if self.values_offset + count > self.values_len {
             return Err(fmt_err!(
                 Layout,
@@ -203,6 +200,7 @@ where
             ));
         }
 
+        let out_ptr: *mut U = sink.data_vec.as_mut_ptr().cast();
         if size_of::<T>() == size_of::<U>() && TypeId::of::<T>() == TypeId::of::<U>() && V::IDENTITY
         {
             // Same type, same layout: bulk copy (also handles unaligned source)
@@ -211,15 +209,15 @@ where
             unsafe {
                 ptr::copy_nonoverlapping(
                     self.values.add(self.values_offset) as *const u8,
-                    self.buffers_ptr.add(self.buffers_offset) as *mut u8,
+                    out_ptr.add(self.write_offset) as *mut u8,
                     count * size_of::<T>(),
                 );
             }
         } else {
             // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
-            let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+            let out = unsafe { out_ptr.add(self.write_offset) };
             for i in 0..count {
-                // SAFETY: destination element `buffers_offset + i` is within reserved output.
+                // SAFETY: destination element `write_offset + i` is within reserved output.
                 // We rely on trusted parquet metadata/level streams to keep source in-bounds.
                 unsafe {
                     *out.add(i) = self
@@ -228,23 +226,22 @@ where
                 }
             }
         }
-        self.buffers_offset += count;
+        self.write_offset += count;
         self.values_offset += count;
         Ok(())
     }
 
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        let needed = (self.buffers_offset + count) * std::mem::size_of::<U>();
-        if self.buffers.data_vec.len() < needed {
-            let additional = needed - self.buffers.data_vec.len();
-            self.buffers.data_vec.reserve(additional)?;
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let needed = (self.write_offset + count) * std::mem::size_of::<U>();
+        if sink.data_vec.len() < needed {
+            let additional = needed - sink.data_vec.len();
+            sink.data_vec.reserve(additional)?;
             // SAFETY: `needed <= capacity` after reserve; we only expose initialized bytes
             // after writes in push/push_slice paths.
             unsafe {
-                self.buffers.data_vec.set_len(needed);
+                sink.data_vec.set_len(needed);
             }
         }
-        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr().cast();
         Ok(())
     }
 
@@ -254,32 +251,142 @@ where
     }
 }
 
-impl Pushable for PlainBooleanDecoder<'_> {
-    fn push(&mut self) -> ParquetResult<()> {
-        self.can_read_bits(1)?;
+// ---------------------------------------------------------------------------
+// Generic PrimitiveSink impl — enables aggregation and filter pushdown
+// with the same decoder that handles materialization.
+// ---------------------------------------------------------------------------
 
-        unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self.read_bit(self.bit_offset);
+use crate::parquet_read::decode::vectorized::{PrimitiveSink, PrimitiveSinkWrapper};
+
+impl<'a, T, U> PlainPrimitiveDecoder<'a, T, U, PrimitiveConverter<T, U>>
+where
+    U: 'static + Copy,
+    T: AsPrimitive<U>,
+{
+    /// Construct a decoder targeting a generic `PrimitiveSink` instead of
+    /// `ColumnChunkBuffers`. The sink manages its own write position.
+    pub fn new_for_sink<S: PrimitiveSink<U>>(
+        values: &'a [u8],
+        _sink: &mut S,
+        null_value: U,
+    ) -> Self {
+        debug_assert_eq!(
+            values.len() % size_of::<T>(),
+            0,
+            "plain source buffer is not element-aligned"
+        );
+        Self {
+            values: values.as_ptr().cast(),
+            values_len: values.len() / size_of::<T>(),
+            values_offset: 0,
+            write_offset: 0, // unused for PrimitiveSink path
+            null_value,
+            converter: PrimitiveConverter::<T, U>::new(),
+            _marker: PhantomData,
         }
-        self.buffers_offset += 1;
+    }
+}
+
+/// `Pushable` impl for the `PrimitiveSinkWrapper` newtype.
+/// Uses `PrimitiveSink` methods instead of raw pointer writes into `ColumnChunkBuffers`.
+/// This avoids coherence conflicts with the existing `Pushable<ColumnChunkBuffers>` impl.
+impl<'a, T, U, V, S> Pushable<PrimitiveSinkWrapper<S>> for PlainPrimitiveDecoder<'a, T, U, V>
+where
+    T: Copy + 'static,
+    U: Copy + 'static,
+    V: Converter<T, U>,
+    S: PrimitiveSink<U>,
+{
+    fn reserve(&mut self, sink: &mut PrimitiveSinkWrapper<S>, count: usize) -> ParquetResult<()> {
+        sink.0.reserve(count)
+    }
+
+    #[inline]
+    fn push(&mut self, sink: &mut PrimitiveSinkWrapper<S>) -> ParquetResult<()> {
+        if self.values_offset >= self.values_len {
+            return Err(fmt_err!(
+                Layout,
+                "not enough plain values: offset {} >= length {}",
+                self.values_offset,
+                self.values_len
+            ));
+        }
+        let value = unsafe {
+            self.converter
+                .convert(self.values.add(self.values_offset).read_unaligned())
+        };
+        self.values_offset += 1;
+        sink.0.write_value(value);
+        Ok(())
+    }
+
+    #[inline]
+    fn push_null(&mut self, sink: &mut PrimitiveSinkWrapper<S>) -> ParquetResult<()> {
+        sink.0.write_null();
+        Ok(())
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, sink: &mut PrimitiveSinkWrapper<S>, count: usize) -> ParquetResult<()> {
+        sink.0.write_nulls(count);
+        Ok(())
+    }
+
+    #[inline]
+    fn push_slice(&mut self, sink: &mut PrimitiveSinkWrapper<S>, count: usize) -> ParquetResult<()> {
+        if self.values_offset + count > self.values_len {
+            return Err(fmt_err!(
+                Layout,
+                "not enough plain values for slice: offset {} + count {} > length {}",
+                self.values_offset,
+                count,
+                self.values_len
+            ));
+        }
+        for _ in 0..count {
+            let value = unsafe {
+                self.converter
+                    .convert(self.values.add(self.values_offset).read_unaligned())
+            };
+            self.values_offset += 1;
+            sink.0.write_value(value);
+        }
+        Ok(())
+    }
+
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
+        self.values_offset += count;
+        Ok(())
+    }
+}
+
+impl Pushable<ColumnChunkBuffers> for PlainBooleanDecoder<'_> {
+    fn push(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        self.can_read_bits(1)?;
+        let out_ptr = sink.data_vec.as_mut_ptr();
+        unsafe {
+            *out_ptr.add(self.write_offset) = self.read_bit(self.bit_offset);
+        }
+        self.write_offset += 1;
         self.bit_offset += 1;
         Ok(())
     }
 
-    fn push_null(&mut self) -> ParquetResult<()> {
+    fn push_null(&mut self, sink: &mut ColumnChunkBuffers) -> ParquetResult<()> {
+        let out_ptr = sink.data_vec.as_mut_ptr();
         unsafe {
-            *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
+            *out_ptr.add(self.write_offset) = self.null_value;
         }
-        self.buffers_offset += 1;
+        self.write_offset += 1;
         Ok(())
     }
 
-    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_nulls(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if count == 0 {
             return Ok(());
         }
 
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        let out = unsafe { sink.data_vec.as_mut_ptr().add(self.write_offset) };
         if self.null_value == 0 {
             unsafe {
                 ptr::write_bytes(out, 0, count);
@@ -291,17 +398,17 @@ impl Pushable for PlainBooleanDecoder<'_> {
                 }
             }
         }
-        self.buffers_offset += count;
+        self.write_offset += count;
         Ok(())
     }
 
-    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+    fn push_slice(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
         if count == 0 {
             return Ok(());
         }
         self.can_read_bits(count)?;
 
-        let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
+        let out = unsafe { sink.data_vec.as_mut_ptr().add(self.write_offset) };
         let mut written = 0usize;
         let mut remaining = count;
 
@@ -346,20 +453,19 @@ impl Pushable for PlainBooleanDecoder<'_> {
             written += remaining;
         }
 
-        self.buffers_offset += written;
+        self.write_offset += written;
         Ok(())
     }
 
-    fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        let needed = self.buffers_offset + count;
-        if self.buffers.data_vec.len() < needed {
-            let additional = needed - self.buffers.data_vec.len();
-            self.buffers.data_vec.reserve(additional)?;
+    fn reserve(&mut self, sink: &mut ColumnChunkBuffers, count: usize) -> ParquetResult<()> {
+        let needed = self.write_offset + count;
+        if sink.data_vec.len() < needed {
+            let additional = needed - sink.data_vec.len();
+            sink.data_vec.reserve(additional)?;
             unsafe {
-                self.buffers.data_vec.set_len(needed);
+                sink.data_vec.set_len(needed);
             }
         }
-        self.buffers_ptr = self.buffers.data_vec.as_mut_ptr();
         Ok(())
     }
 
@@ -398,9 +504,9 @@ mod tests {
 
         // Bits (LSB-first): [1,0,1,1,0,0,1,0,1,1]
         let values = [0x4D, 0x03];
-        let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
-        decoder.reserve(10).unwrap();
-        decoder.push_slice(10).unwrap();
+        let mut decoder = PlainBooleanDecoder::new(&values, &buffers, 0);
+        decoder.reserve(&mut buffers, 10).unwrap();
+        decoder.push_slice(&mut buffers, 10).unwrap();
 
         assert_eq!(&buffers.data_vec[..], &[1, 0, 1, 1, 0, 0, 1, 0, 1, 1]);
     }
@@ -413,12 +519,12 @@ mod tests {
 
         // Bits (LSB-first): [0,1,1,0,1,0]
         let values = [0x16];
-        let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
-        decoder.reserve(6).unwrap();
+        let mut decoder = PlainBooleanDecoder::new(&values, &buffers, 0);
+        decoder.reserve(&mut buffers, 6).unwrap();
         decoder.skip(1).unwrap();
-        decoder.push_slice(3).unwrap();
-        decoder.push_nulls(2).unwrap();
-        decoder.push().unwrap();
+        decoder.push_slice(&mut buffers, 3).unwrap();
+        decoder.push_nulls(&mut buffers, 2).unwrap();
+        decoder.push(&mut buffers).unwrap();
 
         assert_eq!(&buffers.data_vec[..], &[1, 1, 0, 0, 0, 1]);
     }
@@ -430,11 +536,11 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
 
         let values = [0x05];
-        let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
-        decoder.reserve(9).unwrap();
-        decoder.push_slice(4).unwrap();
-        decoder.push_slice(4).unwrap();
-        decoder.push_slice(1).unwrap_err(); // only 1 bit left
+        let mut decoder = PlainBooleanDecoder::new(&values, &buffers, 0);
+        decoder.reserve(&mut buffers, 9).unwrap();
+        decoder.push_slice(&mut buffers, 4).unwrap();
+        decoder.push_slice(&mut buffers, 4).unwrap();
+        decoder.push_slice(&mut buffers, 1).unwrap_err(); // only 1 bit left
 
         assert_eq!(&buffers.data_vec[..2], &[1, 0]);
     }
