@@ -32,18 +32,9 @@ import io.questdb.cairo.idx.PostingsIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
-import io.questdb.cairo.idx.DeltaBitmapIndexFwdReader;
-import io.questdb.cairo.idx.DeltaBitmapIndexUtils;
-import io.questdb.cairo.idx.DeltaBitmapIndexWriter;
-import io.questdb.cairo.idx.FORBitmapIndexFwdReader;
-import io.questdb.cairo.idx.FORBitmapIndexUtils;
-import io.questdb.cairo.idx.FORBitmapIndexWriter;
 import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
 import io.questdb.cairo.idx.FSSTBitmapIndexUtils;
 import io.questdb.cairo.idx.FSSTBitmapIndexWriter;
-import io.questdb.cairo.idx.LZ4BitmapIndexFwdReader;
-import io.questdb.cairo.idx.LZ4BitmapIndexUtils;
-import io.questdb.cairo.idx.LZ4BitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -61,15 +52,15 @@ import java.util.Random;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Comprehensive bitmap index benchmark sweeping over:
+ * Comprehensive index benchmark sweeping over:
  * <ul>
  *   <li>Distribution: RANDOM (Fisher-Yates), ROUND_ROBIN (modulo)</li>
  *   <li>Values/key: 4, 8, 16, 32, 64, 128</li>
  *   <li>Row offset: 0 (25-bit), 1B (30-bit), 1T (40-bit)</li>
  * </ul>
  *
- * 20M total rows, 6 formats (Legacy, Delta, FOR, LZ4 4KB, FSST, BP), single commit.
- * 36 scenarios x 6 formats = 216 measurements.
+ * 20M total rows, 3 formats (Legacy, FSST, Posting).
+ * 36 scenarios x 3 formats = 108 measurements.
  *
  * <pre>
  * mvn install -pl questdb/core -DskipTests -q
@@ -81,8 +72,7 @@ public class IndexSuiteBenchmark {
 
     private static final long COLUMN_NAME_TXN = COLUMN_NAME_TXN_NONE;
     private static final int TOTAL_ROWS = 20_000_000;
-    private static final int LZ4_PAGE_SIZE = 4096;
-    private static final int BP_COMMIT_INTERVAL = 500_000;
+    private static final int POSTING_COMMIT_INTERVAL = 500_000;
     private static final int READ_WARMUP = 1;
     private static final int READ_RUNS = 5;
     private static final int MAX_READ_KEYS = 10_000;
@@ -92,7 +82,7 @@ public class IndexSuiteBenchmark {
     private static final String[] OFFSET_LABELS = {"0", "1B", "1T"};
     private static final String[] OFFSET_BITS = {"25-bit", "30-bit", "40-bit"};
 
-    enum Format {LEGACY, DELTA, FOR, LZ4, FSST, BP}
+    enum Format {LEGACY, FSST, POSTING}
 
     enum Distribution {RANDOM, ROUND_ROBIN}
 
@@ -122,7 +112,7 @@ public class IndexSuiteBenchmark {
 
         System.out.printf("=== Index Suite Benchmark ===%n");
         System.out.printf("    Total rows: %,d%n", TOTAL_ROWS);
-        System.out.printf("    Formats: Legacy, Delta, FOR, LZ4 4KB, FSST, BP%n");
+        System.out.printf("    Formats: Legacy, FSST, Posting%n");
         System.out.printf("    Distributions: RANDOM, ROUND_ROBIN%n");
         System.out.printf("    Values/key: 4, 8, 16, 32, 64, 128%n");
         System.out.printf("    Row offsets: 0 (25-bit), 1B (30-bit), 1T (40-bit)%n%n");
@@ -191,7 +181,7 @@ public class IndexSuiteBenchmark {
         double readMs;
     }
 
-    private static void createBPIndex(CairoConfiguration config, String dir, int[] keyAssignment, long rowOffset) {
+    private static void createPostingIndex(CairoConfiguration config, String dir, int[] keyAssignment, long rowOffset) {
         try (Path path = new Path().of(dir)) {
             int plen = path.size();
             FilesFacade ff = config.getFilesFacade();
@@ -210,7 +200,7 @@ public class IndexSuiteBenchmark {
                 writer.of(path, "test", COLUMN_NAME_TXN, false);
                 for (int i = 0; i < keyAssignment.length; i++) {
                     writer.add(keyAssignment[i], (long) i + rowOffset);
-                    if ((i + 1) % BP_COMMIT_INTERVAL == 0) {
+                    if ((i + 1) % POSTING_COMMIT_INTERVAL == 0) {
                         writer.commit();
                     }
                 }
@@ -225,77 +215,6 @@ public class IndexSuiteBenchmark {
         try (Path path = new Path().of(dir)) {
             try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
                 writer.of(path, "test", COLUMN_NAME_TXN, blockCapacity);
-                for (int i = 0; i < keyAssignment.length; i++) {
-                    writer.add(keyAssignment[i], (long) i + rowOffset);
-                }
-            }
-        }
-    }
-
-    private static void createDeltaIndex(CairoConfiguration config, String dir, int[] keyAssignment, long rowOffset) {
-        try (Path path = new Path().of(dir)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(
-                    ff,
-                    DeltaBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
-                    MemoryTag.MMAP_DEFAULT,
-                    config.getWriterFileOpenOpts()
-            )) {
-                DeltaBitmapIndexWriter.initKeyMemory(mem);
-            }
-            ff.touch(DeltaBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
-        }
-        try (Path path = new Path().of(dir)) {
-            try (DeltaBitmapIndexWriter writer = new DeltaBitmapIndexWriter(config, path, "test", COLUMN_NAME_TXN)) {
-                for (int i = 0; i < keyAssignment.length; i++) {
-                    writer.add(keyAssignment[i], (long) i + rowOffset);
-                }
-            }
-        }
-    }
-
-    private static void createFORIndex(CairoConfiguration config, String dir, int[] keyAssignment, long rowOffset) {
-        try (Path path = new Path().of(dir)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(
-                    ff,
-                    FORBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
-                    MemoryTag.MMAP_DEFAULT,
-                    config.getWriterFileOpenOpts()
-            )) {
-                FORBitmapIndexWriter.initKeyMemory(mem);
-            }
-            ff.touch(FORBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
-        }
-        try (Path path = new Path().of(dir)) {
-            try (FORBitmapIndexWriter writer = new FORBitmapIndexWriter(config)) {
-                writer.of(path, "test", COLUMN_NAME_TXN);
-                for (int i = 0; i < keyAssignment.length; i++) {
-                    writer.add(keyAssignment[i], (long) i + rowOffset);
-                }
-            }
-        }
-    }
-
-    private static void createLZ4Index(CairoConfiguration config, String dir, int[] keyAssignment, int valsPerKey, long rowOffset) {
-        int keysPerPage = LZ4BitmapIndexUtils.computeKeysPerPage(valsPerKey, LZ4_PAGE_SIZE);
-        try (Path path = new Path().of(dir)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(
-                    ff,
-                    LZ4BitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
-                    MemoryTag.MMAP_DEFAULT,
-                    config.getWriterFileOpenOpts()
-            )) {
-                LZ4BitmapIndexWriter.initKeyMemory(mem, valsPerKey, keysPerPage);
-            }
-            ff.touch(LZ4BitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
-        }
-        try (Path path = new Path().of(dir)) {
-            try (LZ4BitmapIndexWriter writer = new LZ4BitmapIndexWriter(config, path, "test", COLUMN_NAME_TXN)) {
                 for (int i = 0; i < keyAssignment.length; i++) {
                     writer.add(keyAssignment[i], (long) i + rowOffset);
                 }
@@ -332,11 +251,8 @@ public class IndexSuiteBenchmark {
             try (Path path = new Path().of(dir)) {
                 BitmapIndexReader reader = switch (format) {
                     case LEGACY -> new BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case DELTA -> new DeltaBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case FOR -> new FORBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case LZ4 -> new LZ4BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                     case FSST -> new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case BP -> new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case POSTING -> new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                 };
                 try {
                     readBatch(reader, readKeys);
@@ -389,20 +305,11 @@ public class IndexSuiteBenchmark {
             case LEGACY:
                 createLegacyIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
                 break;
-            case DELTA:
-                createDeltaIndex(config, dir, keyAssignment, rowOffset);
-                break;
-            case FOR:
-                createFORIndex(config, dir, keyAssignment, rowOffset);
-                break;
-            case LZ4:
-                createLZ4Index(config, dir, keyAssignment, valsPerKey, rowOffset);
-                break;
             case FSST:
                 createFSSTIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
                 break;
-            case BP:
-                createBPIndex(config, dir, keyAssignment, rowOffset);
+            case POSTING:
+                createPostingIndex(config, dir, keyAssignment, rowOffset);
                 break;
         }
         fr.writeSec = (System.nanoTime() - writeT0) / 1e9;
@@ -460,11 +367,8 @@ public class IndexSuiteBenchmark {
     private static String formatLabel(Format format) {
         return switch (format) {
             case LEGACY -> "Legacy";
-            case DELTA -> "Delta";
-            case FOR -> "FOR";
-            case LZ4 -> "LZ4 4KB";
             case FSST -> "FSST";
-            case BP -> "BP";
+            case POSTING -> "Posting";
         };
     }
 

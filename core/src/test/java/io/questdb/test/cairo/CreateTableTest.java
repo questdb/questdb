@@ -654,15 +654,15 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableWithDeltaIndexType() throws Exception {
+    public void testCreateTableWithPostingIndexType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (s symbol index type delta, ts timestamp) timestamp(ts)");
+            execute("create table tab (s symbol index type posting, ts timestamp) timestamp(ts)");
             assertSql("s\tts\n", "select * from tab");
             try (TableReader r = engine.getReader("tab")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int colIndex = metadata.getColumnIndex("s");
                 assertTrue(metadata.isColumnIndexed(colIndex));
-                assertEquals(IndexType.DELTA, metadata.getColumnIndexType(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
             }
         });
     }

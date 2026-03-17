@@ -44,25 +44,9 @@ public final class IndexType {
      */
     public static final byte SYMBOL = 1;
     /**
-     * Delta-encoded bitmap index. Achieves 2-4x compression for sequential row IDs.
+     * Posting index. Delta + FoR64 bitpacking with stride-indexed layout.
      */
-    public static final byte DELTA = 2;
-    /**
-     * Frame of Reference (FOR) bitmap index. Fixed-size blocks with SIMD-friendly decoding.
-     */
-    public static final byte FOR = 3;
-    /**
-     * Roaring bitmap index. Uses hybrid container types (array/bitmap) for optimal compression.
-     */
-    public static final byte ROARING = 4;
-    /**
-     * LZ4-compressed bitmap index. Stores raw longs, block-compressed with LZ4.
-     */
-    public static final byte LZ4 = 5;
-    /**
-     * Delta + FoR64 BitPacking (BP) bitmap index. Combines delta encoding with Frame-of-Reference bitpacking.
-     */
-    public static final byte BP = 6;
+    public static final byte POSTING = 6;
     /**
      * FSST-compressed bitmap index. Uses Finite State Symbol Table compression for postings.
      */
@@ -92,11 +76,7 @@ public final class IndexType {
         return switch (indexType) {
             case NONE -> "NONE";
             case SYMBOL -> "SYMBOL";
-            case DELTA -> "DELTA";
-            case FOR -> "FOR";
-            case ROARING -> "ROARING";
-            case LZ4 -> "LZ4";
-            case BP -> "BP";
+            case POSTING -> "POSTING";
             case FSST -> "FSST";
             default -> "UNKNOWN(" + indexType + ")";
         };
@@ -116,20 +96,8 @@ public final class IndexType {
         if (equalsIgnoreCase(name, "SYMBOL") || equalsIgnoreCase(name, "LEGACY")) {
             return SYMBOL;
         }
-        if (equalsIgnoreCase(name, "DELTA")) {
-            return DELTA;
-        }
-        if (equalsIgnoreCase(name, "FOR")) {
-            return FOR;
-        }
-        if (equalsIgnoreCase(name, "ROARING")) {
-            return ROARING;
-        }
-        if (equalsIgnoreCase(name, "LZ4")) {
-            return LZ4;
-        }
-        if (equalsIgnoreCase(name, "BP")) {
-            return BP;
+        if (equalsIgnoreCase(name, "POSTING")) {
+            return POSTING;
         }
         if (equalsIgnoreCase(name, "FSST")) {
             return FSST;

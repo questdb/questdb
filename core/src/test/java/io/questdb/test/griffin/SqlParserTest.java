@@ -3159,14 +3159,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexTypeDelta() throws SqlException {
+    public void testCreateTableInPlaceIndexTypePosting() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
                         "t TIMESTAMP," +
-                        " x SYMBOL capacity 128 cache index type DELTA) timestamp(t)",
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
                 "create table x (" +
                         "t TIMESTAMP, " +
-                        "x SYMBOL index type delta) " +
+                        "x SYMBOL index type posting) " +
                         "timestamp(t)"
         );
     }
@@ -3199,13 +3199,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexTypeDeltaWithCapacityFails() throws Exception {
+    public void testCreateTableInPlaceIndexTypePostingWithCapacityFails() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "t TIMESTAMP, " +
-                        "x SYMBOL index type delta capacity 64) " +
+                        "x SYMBOL index type posting capacity 64) " +
                         "timestamp(t)",
-                55,
+                57,
                 "CAPACITY is only supported for SYMBOL (legacy) index type"
         );
     }

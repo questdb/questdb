@@ -1236,7 +1236,7 @@ public class PostingsIndexWriter implements IndexWriter {
 
     @Override
     public byte getIndexType() {
-        return IndexType.BP;
+        return IndexType.POSTING;
     }
 
     @Override
