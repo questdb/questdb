@@ -4,10 +4,13 @@ jobs:
     strategy:
       matrix:
         linux-jdk17:
-          pool: hetzner-incus
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.17"
-    pool: $(pool)
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
     timeoutInMinutes: 55
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
