@@ -83,8 +83,10 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * Packed mode (mode=0x01):
  *   [mode: 1B = 0x01]
  *   [bitWidth: 1B]
+ *   [padding: 2B]
+ *   [baseValue: 8B — per-stride minimum value, subtracted before packing]
  *   [prefixCounts: (ks + 1) × 4B — cumulative value count (prefix sum)]
- *   [packed data: totalValues × bitWidth bits, contiguous bit-packed absolute row IDs]
+ *   [packed data: totalValues × bitWidth bits, contiguous bit-packed (value - baseValue)]
  * </pre>
  * At seal time, each stride independently chooses the smaller encoding.
  * Sparse format (genKeyCount < 0 in directory, |genKeyCount| = active keys, used by commit):
@@ -95,7 +97,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * [Key data...]
  * </pre>
  */
-public final class PostingsIndexUtils {
+public final class PostingIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
     public static final int DENSE_STRIDE = 256;
@@ -104,6 +106,8 @@ public final class PostingsIndexUtils {
     public static final byte STRIDE_MODE_BP = 0;
     public static final byte STRIDE_MODE_PACKED = 1;
     public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
+    public static final int STRIDE_PACKED_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
+    public static final int STRIDE_PACKED_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
 
     // Key file header offsets (64 bytes)
     public static final int KEY_FILE_RESERVED = 64;
@@ -115,6 +119,8 @@ public final class PostingsIndexUtils {
     public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 32;
     public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;
     public static final int KEY_RESERVED_OFFSET_GEN_COUNT = 48;
+    public static final int KEY_RESERVED_OFFSET_FORMAT_VERSION = 52;
+    public static final int FORMAT_VERSION = 1;
 
     // Generation directory entry (24 bytes per generation)
     public static final int GEN_DIR_ENTRY_SIZE = 24;
@@ -126,7 +132,7 @@ public final class PostingsIndexUtils {
 
     public static final byte SIGNATURE = (byte) 0xfb;
 
-    private PostingsIndexUtils() {
+    private PostingIndexUtils() {
     }
 
     /**
@@ -325,7 +331,7 @@ public final class PostingsIndexUtils {
                         Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
                                 deltas[blockStart + 1 + i] - minDeltas[b]);
                     }
-                    PostingsIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+                    PostingIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
                 } else {
                     for (int i = 0; i < numDeltas; i++) {
                         residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
@@ -444,7 +450,7 @@ public final class PostingsIndexUtils {
                         Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
                                 deltas[blockStart + 1 + i] - minDeltas[b]);
                     }
-                    PostingsIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+                    PostingIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
                 } else {
                     for (int i = 0; i < numDeltas; i++) {
                         residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
@@ -509,7 +515,7 @@ public final class PostingsIndexUtils {
                 for (int i = 0; i < numDeltas; i++) {
                     Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES, deltas[i + 1] - minD);
                 }
-                PostingsIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+                PostingIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
             } else {
                 long[] residuals = ctx.residuals;
                 for (int i = 0; i < numDeltas; i++) {
@@ -551,7 +557,7 @@ public final class PostingsIndexUtils {
                 blockMinDeltas = new long[blockCapacity];
                 blockBitWidths = new int[blockCapacity];
             }
-            if (nativeResidualsAddr == 0 && PostingsIndexNative.isNativeAvailable()) {
+            if (nativeResidualsAddr == 0 && PostingIndexNative.isNativeAvailable()) {
                 nativeResidualsAddr = Unsafe.getUnsafe().allocateMemory((long) BLOCK_CAPACITY * Long.BYTES);
             }
         }
@@ -604,10 +610,10 @@ public final class PostingsIndexUtils {
     }
 
     /**
-     * Size of a Packed-mode stride block header: mode prefix + prefixCounts.
+     * Size of a Packed-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
      */
     public static int stridePackedHeaderSize(int keysInStride) {
-        return STRIDE_MODE_PREFIX_SIZE + (keysInStride + 1) * Integer.BYTES;
+        return STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
     }
 
     /**

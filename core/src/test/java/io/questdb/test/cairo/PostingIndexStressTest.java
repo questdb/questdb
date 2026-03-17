@@ -24,10 +24,10 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.idx.PostingsIndexBwdReader;
-import io.questdb.cairo.idx.PostingsIndexFwdReader;
-import io.questdb.cairo.idx.PostingsIndexUtils;
-import io.questdb.cairo.idx.PostingsIndexWriter;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -45,13 +45,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Aggressive fuzz and stress tests for PostingsIndex concurrent read safety,
+ * Aggressive fuzz and stress tests for PostingIndex concurrent read safety,
  * append-only seal, and compaction. Exercises edge cases, randomized workloads,
  * and multi-threaded reader/writer concurrency.
  */
-public class PostingsIndexStressTest extends AbstractCairoTest {
+public class PostingIndexStressTest extends AbstractCairoTest {
 
-    private static final int BP_BATCH = PostingsIndexUtils.BLOCK_CAPACITY; // 64
+    private static final int BP_BATCH = PostingIndexUtils.BLOCK_CAPACITY; // 64
 
     // ===================================================================
     // Fuzz: randomized workloads verified against in-memory oracle
@@ -82,7 +82,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                     nextRowId[k] = rnd.nextLong(1_000_000);
                 }
 
-                try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                     int sinceCommit = 0;
                     long maxVal = -1;
                     for (int i = 0; i < totalAdds; i++) {
@@ -108,7 +108,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 } // close triggers seal
 
                 // Verify forward reader
-                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
@@ -127,7 +127,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
 
                 // Verify backward reader
-                try (PostingsIndexBwdReader reader = new PostingsIndexBwdReader(
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
@@ -167,7 +167,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
                 long[] nextRowId = new long[keyCount];
 
-                try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                     int sinceCommit = 0;
                     int sinceSeal = 0;
                     long maxVal = -1;
@@ -199,7 +199,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
 
                 // Verify via reader
-                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
@@ -233,7 +233,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 oracle.add(new LongList());
             }
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "fuzz_range", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "fuzz_range", COLUMN_NAME_TXN_NONE)) {
                 long maxVal = -1;
                 for (int batch = 0; batch < valuesPerKey / BP_BATCH + 1; batch++) {
                     for (int key = 0; key < keyCount; key++) {
@@ -254,7 +254,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             }
 
             // Query with random ranges
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "fuzz_range", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int trial = 0; trial < 200; trial++) {
                     int key = rnd.nextInt(keyCount);
@@ -307,7 +307,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             long rowId = 0;
 
             for (int cycle = 0; cycle < cycles; cycle++) {
-                try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     if (cycle == 0) {
                         writer.of(path.trimTo(plen), "stress_cycle", COLUMN_NAME_TXN_NONE, true);
                     } else {
@@ -326,7 +326,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 } // close: no-op seal (already sealed), truncates
 
                 // Verify data after each cycle via reader
-                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "stress_cycle", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                     long expectedTotal = (long) (cycle + 1) * 3 * BP_BATCH;
@@ -363,7 +363,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 nextVal[k] = rnd.nextLong(10_000_000);
             }
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "stress_many", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "stress_many", COLUMN_NAME_TXN_NONE)) {
                 long maxVal = -1;
                 for (int b = 0; b < batches; b++) {
                     for (int k = 0; k < keyCount; k++) {
@@ -381,8 +381,8 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
             }
 
-            // Verify all keys (exercises PostingsGenLookup tier logic)
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            // Verify all keys (exercises PostingGenLookup tier logic)
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "stress_many", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int k = 0; k < keyCount; k++) {
                     LongList expected = oracle.getQuick(k);
@@ -409,7 +409,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "stress_hot", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "stress_hot", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < totalValues; i++) {
                     writer.add(0, i);
                     if ((i + 1) % BP_BATCH == 0) {
@@ -424,7 +424,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             }
 
             // Verify forward
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "stress_hot", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 int count = 0;
@@ -436,7 +436,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             }
 
             // Verify backward
-            try (PostingsIndexBwdReader reader = new PostingsIndexBwdReader(
+            try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                     configuration, path.trimTo(plen), "stress_hot", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 int count = 0;
@@ -459,7 +459,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_single", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_single", COLUMN_NAME_TXN_NONE)) {
                 for (int k = 0; k < keyCount; k++) {
                     writer.add(k, k * 1000L);
                 }
@@ -467,7 +467,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "edge_single", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int k = 0; k < keyCount; k++) {
                     RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
@@ -486,7 +486,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             final int plen = path.size();
             int count = 200;
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_gaps", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_gaps", COLUMN_NAME_TXN_NONE)) {
                 long val = 0;
                 for (int i = 0; i < count; i++) {
                     writer.add(0, val);
@@ -502,7 +502,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
             }
 
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "edge_gaps", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 long expected = 0;
@@ -524,7 +524,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             final int plen = path.size();
             int count = 320; // 5 blocks of 64
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_const", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_const", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < count; i++) {
                     writer.add(0, i * 7L); // constant delta of 7
                     if ((i + 1) % BP_BATCH == 0) {
@@ -538,7 +538,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
             }
 
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "edge_const", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 int idx = 0;
@@ -556,11 +556,11 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_empty", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_empty", COLUMN_NAME_TXN_NONE)) {
                 writer.commit(); // commit with no data
             }
 
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "edge_empty", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 Assert.assertFalse(cursor.hasNext());
@@ -571,7 +571,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
     @Test
     public void testEdgeSealEmptyIndex() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_seal_empty", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_seal_empty", COLUMN_NAME_TXN_NONE)) {
                 writer.seal(); // seal with no data — should be a no-op
                 Assert.assertEquals(0, writer.getGenCount());
             }
@@ -582,7 +582,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
     public void testEdgeSealSingleGen() {
         // Seal with only one generation — should be a no-op.
         try (Path path = new Path().of(configuration.getDbRoot())) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_seal_1gen", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_seal_1gen", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < BP_BATCH; i++) {
                     writer.add(0, i);
                 }
@@ -604,7 +604,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
 
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "edge_boundary", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_boundary", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < totalValues; i++) {
                     writer.add(0, i);
                     if ((i + 1) % BP_BATCH == 0) {
@@ -614,7 +614,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
             }
 
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path.trimTo(plen), "edge_boundary", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 int count = 0;
@@ -644,7 +644,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         final CountDownLatch writerDone = new CountDownLatch(1);
 
         try (Path path = new Path().of(dbRoot)) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                 // Seed initial data so readers have something to read
                 for (int v = 0; v < BP_BATCH; v++) {
                     writer.add(0, v);
@@ -659,7 +659,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                     final int readerId = r;
                     readers[r] = new Thread(() -> {
                         try (Path rPath = new Path().of(dbRoot);
-                             PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                             PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                             while (writerDone.getCount() > 0 || committedBatches.get() <= writerCommits) {
                                 reader.reloadConditionally();
@@ -730,7 +730,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         final CountDownLatch done = new CountDownLatch(numReaders);
 
         try (Path path = new Path().of(dbRoot)) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                 // Write initial data: 10 batches (10 sparse gens)
                 for (int batch = 0; batch < 10; batch++) {
                     long base = (long) batch * BP_BATCH;
@@ -747,7 +747,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                     final int readerId = r;
                     readers[r] = new Thread(() -> {
                         try (Path rPath = new Path().of(dbRoot);
-                             PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                             PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                             reader.reloadConditionally();
                             barrier.await();
@@ -805,7 +805,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 writer.seal();
             }
 
-            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 int count = 0;
@@ -829,7 +829,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         final CountDownLatch writerDone = new CountDownLatch(1);
 
         try (Path path = new Path().of(dbRoot)) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                 for (int v = 0; v < BP_BATCH; v++) {
                     writer.add(0, v);
                 }
@@ -838,7 +838,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
 
                 Thread readerThread = new Thread(() -> {
                     try (Path rPath = new Path().of(dbRoot);
-                         PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                         PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                  configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         int iterations = 0;
                         while (writerDone.getCount() > 0 || iterations < writerBatches) {
@@ -905,7 +905,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
         final CountDownLatch writerDone = new CountDownLatch(1);
 
         try (Path path = new Path().of(dbRoot)) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                 long maxVal = -1;
                 for (int k = 0; k < keyCount; k++) {
                     for (int v = 0; v < BP_BATCH; v++) {
@@ -922,7 +922,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                     final int key = k;
                     readers[k] = new Thread(() -> {
                         try (Path rPath = new Path().of(dbRoot);
-                             PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                             PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                             while (writerDone.getCount() > 0) {
                                 reader.reloadConditionally();
@@ -997,7 +997,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             int totalValues = 4 * BP_BATCH; // 256
 
             // Phase 1: write, commit
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "compact_snap", COLUMN_NAME_TXN_NONE)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "compact_snap", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < totalValues; i++) {
                     writer.add(0, i);
                     if ((i + 1) % BP_BATCH == 0) {
@@ -1007,7 +1007,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
 
                 // Phase 2: open reader, start cursor
-                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "compact_snap", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     reader.reloadConditionally();
                     RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
@@ -1037,7 +1037,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
             }
 
             // Phase 5: reopen (triggers compact), verify
-            try (PostingsIndexWriter writer2 = new PostingsIndexWriter(configuration)) {
+            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
                 writer2.of(path.trimTo(plen), "compact_snap", COLUMN_NAME_TXN_NONE, false);
 
                 RowCursor cursor = writer2.getCursor(0);
@@ -1062,7 +1062,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
 
             for (int cycle = 0; cycle < cycles; cycle++) {
                 // Write phase
-                try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, cycle == 0);
                     for (int batch = 0; batch < 2; batch++) {
                         for (int v = 0; v < BP_BATCH; v++) {
@@ -1074,7 +1074,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 } // close triggers seal + truncate
 
                 // Read phase: verify everything from value 0 to rowId-1
-                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                     int count = 0;
@@ -1088,7 +1088,7 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                 }
 
                 // Backward read verification
-                try (PostingsIndexBwdReader reader = new PostingsIndexBwdReader(
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                     long expected = rowId - 1;
@@ -1101,6 +1101,660 @@ public class PostingsIndexStressTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals("cycle=" + cycle + " bwd count",
                             rowId, count);
+                }
+            }
+        }
+    }
+
+    // ===================================================================
+    // Rollback tests
+    // ===================================================================
+
+    @Test
+    public void testRollbackMiddle() {
+        // Write 200 values, rollback to midpoint (99), verify only 0..99 survive.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            int total = 200;
+            int rollbackTo = 99;
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_mid", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < total; i++) {
+                    writer.add(0, i);
+                    if ((i + 1) % BP_BATCH == 0) {
+                        writer.setMaxValue(i);
+                        writer.commit();
+                    }
+                }
+                if (total % BP_BATCH != 0) {
+                    writer.setMaxValue(total - 1);
+                    writer.commit();
+                }
+
+                writer.rollbackValues(rollbackTo);
+
+                RowCursor cursor = writer.getCursor(0);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("value " + count, (long) count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("count", rollbackTo + 1, count);
+            }
+
+            // Also verify via reader after close
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "rb_mid", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(rollbackTo + 1, count);
+            }
+        }
+    }
+
+    @Test
+    public void testRollbackAcrossKeys() {
+        // Multi-key: keys 0-4 with different row IDs; rollback removes some keys entirely.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            int keyCount = 5;
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_keys", COLUMN_NAME_TXN_NONE)) {
+                long maxVal = -1;
+                // Key 0: values 0..49
+                // Key 1: values 100..149
+                // Key 2: values 200..249
+                // Key 3: values 300..349
+                // Key 4: values 400..449
+                for (int k = 0; k < keyCount; k++) {
+                    for (int v = 0; v < 50; v++) {
+                        long val = (long) k * 100 + v;
+                        writer.add(k, val);
+                        if (val > maxVal) maxVal = val;
+                    }
+                }
+                writer.setMaxValue(maxVal);
+                writer.commit();
+
+                // Rollback to 250 — keys 0,1,2 survive (key 2 partially), keys 3,4 are gone
+                writer.rollbackValues(250);
+
+                // Key 0: all 50 values survive (0..49)
+                RowCursor c0 = writer.getCursor(0);
+                int count0 = 0;
+                while (c0.hasNext()) {
+                    Assert.assertEquals(count0, c0.next());
+                    count0++;
+                }
+                Assert.assertEquals(50, count0);
+
+                // Key 1: all 50 values survive (100..149)
+                RowCursor c1 = writer.getCursor(1);
+                int count1 = 0;
+                while (c1.hasNext()) {
+                    Assert.assertEquals(100 + count1, c1.next());
+                    count1++;
+                }
+                Assert.assertEquals(50, count1);
+
+                // Key 2: all 50 values (200..249) survive since all <= 250
+                RowCursor c2 = writer.getCursor(2);
+                int count2 = 0;
+                while (c2.hasNext()) {
+                    Assert.assertEquals(200 + count2, c2.next());
+                    count2++;
+                }
+                Assert.assertEquals(50, count2); // 200..249
+
+                // Key 3: values 300..349 — all > 250, so fully removed
+                RowCursor c3 = writer.getCursor(3);
+                Assert.assertFalse(c3.hasNext());
+            }
+        }
+    }
+
+    @Test
+    public void testRollbackToZero() {
+        // Rollback to value before any data → equivalent to truncate.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_zero", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 10; i < 100; i++) {
+                    writer.add(0, i);
+                }
+                writer.setMaxValue(99);
+                writer.commit();
+
+                // Rollback to 5 — all values are >= 10, so none survive
+                writer.rollbackValues(5);
+
+                Assert.assertEquals(0, writer.getKeyCount());
+                RowCursor cursor = writer.getCursor(0);
+                Assert.assertFalse(cursor.hasNext());
+            }
+        }
+    }
+
+    @Test
+    public void testRollbackAfterSeal() {
+        // Seal compresses into single gen, then rollback. Verify decode+filter+reencode.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_seal", COLUMN_NAME_TXN_NONE)) {
+                // Create multiple gens
+                for (int batch = 0; batch < 5; batch++) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, (long) batch * BP_BATCH + v);
+                    }
+                    writer.setMaxValue((long) batch * BP_BATCH + BP_BATCH - 1);
+                    writer.commit();
+                }
+                // Seal into single gen
+                writer.seal();
+                Assert.assertEquals(1, writer.getGenCount());
+
+                // Rollback to midpoint
+                int rollbackTo = 2 * BP_BATCH + BP_BATCH / 2; // 160
+                writer.rollbackValues(rollbackTo);
+
+                RowCursor cursor = writer.getCursor(0);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(rollbackTo + 1, count);
+            }
+
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "rb_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                int rollbackTo = 2 * BP_BATCH + BP_BATCH / 2;
+                Assert.assertEquals(rollbackTo + 1, count);
+            }
+        }
+    }
+
+    @Test
+    public void testRollbackNoop() {
+        // Rollback to value > maxValue — no data lost.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_noop", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < 100; i++) {
+                    writer.add(0, i);
+                }
+                writer.setMaxValue(99);
+                writer.commit();
+
+                writer.rollbackValues(999); // well past maxValue
+
+                RowCursor cursor = writer.getCursor(0);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(100, count);
+            }
+
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "rb_noop", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(100, count);
+            }
+        }
+    }
+
+    @Test
+    public void testRollbackThenWrite() {
+        // Rollback then continue writing — verify integrity.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_write", COLUMN_NAME_TXN_NONE)) {
+                // Write 0..199
+                for (int i = 0; i < 200; i++) {
+                    writer.add(0, i);
+                    if ((i + 1) % BP_BATCH == 0) {
+                        writer.setMaxValue(i);
+                        writer.commit();
+                    }
+                }
+                if (200 % BP_BATCH != 0) {
+                    writer.setMaxValue(199);
+                    writer.commit();
+                }
+
+                // Rollback to 99
+                writer.rollbackValues(99);
+
+                // Continue writing from 100 onwards (new data)
+                for (int i = 100; i < 300; i++) {
+                    writer.add(0, i);
+                    if ((i - 99) % BP_BATCH == 0) {
+                        writer.setMaxValue(i);
+                        writer.commit();
+                    }
+                }
+                writer.setMaxValue(299);
+                writer.commit();
+            }
+
+            // Verify: should have 0..99 then 100..299 = 300 values
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "rb_write", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(300, count);
+            }
+        }
+    }
+
+    @Test
+    public void testFuzzRollback() {
+        // Randomized rollback points with oracle verification.
+        for (long seed = 0; seed < 15; seed++) {
+            Rnd rnd = new Rnd(seed * 11, seed * 23 + 7);
+            int keyCount = rnd.nextInt(20) + 1;
+            int totalAdds = rnd.nextInt(2000) + 200;
+            int commitEvery = rnd.nextInt(80) + 10;
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "fuzz_rb_" + seed;
+
+                ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keyCount; k++) {
+                    oracle.add(new LongList());
+                }
+                long[] nextRowId = new long[keyCount];
+                for (int k = 0; k < keyCount; k++) {
+                    nextRowId[k] = rnd.nextLong(100_000);
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    int sinceCommit = 0;
+                    long maxVal = -1;
+                    for (int i = 0; i < totalAdds; i++) {
+                        int key = rnd.nextInt(keyCount);
+                        long val = nextRowId[key];
+                        nextRowId[key] += rnd.nextInt(50) + 1;
+                        writer.add(key, val);
+                        oracle.getQuick(key).add(val);
+                        if (val > maxVal) maxVal = val;
+                        sinceCommit++;
+                        if (sinceCommit >= commitEvery) {
+                            writer.setMaxValue(maxVal);
+                            writer.commit();
+                            sinceCommit = 0;
+                        }
+                    }
+                    if (sinceCommit > 0) {
+                        writer.setMaxValue(maxVal);
+                        writer.commit();
+                    }
+
+                    // Pick a random rollback point
+                    long rollbackValue = rnd.nextLong(maxVal + 1);
+                    writer.rollbackValues(rollbackValue);
+
+                    // Update oracle
+                    for (int k = 0; k < keyCount; k++) {
+                        LongList vals = oracle.getQuick(k);
+                        while (vals.size() > 0 && vals.getQuick(vals.size() - 1) > rollbackValue) {
+                            vals.setPos(vals.size() - 1);
+                        }
+                    }
+                }
+
+                // Verify via forward reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < keyCount; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertTrue("seed=" + seed + " key=" + k + " extra", idx < expected.size());
+                            Assert.assertEquals("seed=" + seed + " key=" + k + " idx=" + idx,
+                                    expected.getQuick(idx), cursor.next());
+                            idx++;
+                        }
+                        Assert.assertEquals("seed=" + seed + " key=" + k + " count",
+                                expected.size(), idx);
+                    }
+                }
+            }
+        }
+    }
+
+    // ===================================================================
+    // Compaction overlap test
+    // ===================================================================
+
+    @Test
+    public void testCompactionWithOverlap() {
+        // Craft an index where sealed gen is larger than dead space,
+        // triggering the overlap path in compactValueFile.
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            // Phase 1: write one small commit (gen 0 sparse, small)
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "compact_overlap", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 0);
+                writer.setMaxValue(0);
+                writer.commit();
+
+                // Phase 2: write a much larger second commit so we have 2 gens
+                for (int i = 1; i < 500; i++) {
+                    writer.add(0, i);
+                }
+                writer.setMaxValue(499);
+                writer.commit();
+
+                // Phase 3: seal — sealed gen (dense) will be large, gen 0 sparse was small
+                // so gen0Offset (= small gen size) < gen0Size (= large sealed gen)
+                // This triggers the overlap path
+                writer.seal();
+            }
+
+            // Phase 4: reopen (triggers compact), verify
+            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
+                writer2.of(path.trimTo(plen), "compact_overlap", COLUMN_NAME_TXN_NONE, false);
+
+                RowCursor cursor = writer2.getCursor(0);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals(500, count);
+            }
+        }
+    }
+
+    // ===================================================================
+    // Concurrent backward reader stress tests
+    // ===================================================================
+
+    @Test
+    public void testConcurrentBwdReadersWhileWriterCommits() throws Exception {
+        // Writer commits while multiple backward reader threads continuously read.
+        final String dbRoot = configuration.getDbRoot().toString();
+        final String name = "conc_bwd_rw";
+        final int numReaders = 4;
+        final int writerCommits = 50;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final AtomicInteger committedBatches = new AtomicInteger(0);
+        final CountDownLatch writerDone = new CountDownLatch(1);
+
+        try (Path path = new Path().of(dbRoot)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                for (int v = 0; v < BP_BATCH; v++) {
+                    writer.add(0, v);
+                }
+                writer.setMaxValue(BP_BATCH - 1);
+                writer.commit();
+                committedBatches.set(1);
+
+                Thread[] readers = new Thread[numReaders];
+                for (int r = 0; r < numReaders; r++) {
+                    final int readerId = r;
+                    readers[r] = new Thread(() -> {
+                        try (Path rPath = new Path().of(dbRoot);
+                             PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            while (writerDone.getCount() > 0 || committedBatches.get() <= writerCommits) {
+                                reader.reloadConditionally();
+                                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                long prev = Long.MAX_VALUE;
+                                int count = 0;
+                                while (cursor.hasNext()) {
+                                    long val = cursor.next();
+                                    if (val >= prev) {
+                                        throw new AssertionError(
+                                                "bwd reader " + readerId + ": non-descending " + prev + " -> " + val);
+                                    }
+                                    prev = val;
+                                    count++;
+                                }
+                                if (count % BP_BATCH != 0) {
+                                    throw new AssertionError(
+                                            "bwd reader " + readerId + ": partial batch visible, count=" + count);
+                                }
+                                if (count == 0) {
+                                    throw new AssertionError(
+                                            "bwd reader " + readerId + ": zero values visible");
+                                }
+                                Thread.yield();
+                            }
+                        } catch (Throwable t) {
+                            error.compareAndSet(null, t);
+                        }
+                    });
+                    readers[r].setDaemon(true);
+                    readers[r].start();
+                }
+
+                for (int batch = 1; batch < writerCommits; batch++) {
+                    long base = (long) batch * BP_BATCH;
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, base + v);
+                    }
+                    writer.setMaxValue(base + BP_BATCH - 1);
+                    writer.commit();
+                    committedBatches.incrementAndGet();
+                }
+                writerDone.countDown();
+
+                for (Thread t : readers) {
+                    t.join(10_000);
+                    if (t.isAlive()) t.interrupt();
+                }
+
+                if (error.get() != null) {
+                    throw new AssertionError("Concurrent bwd reader failed", error.get());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testConcurrentBwdReadersWhileWriterSeals() throws Exception {
+        // Backward cursor mid-iteration survives seal.
+        final String dbRoot = configuration.getDbRoot().toString();
+        final String name = "conc_bwd_seal";
+        final int numReaders = 4;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final CyclicBarrier barrier = new CyclicBarrier(numReaders + 1);
+        final CountDownLatch done = new CountDownLatch(numReaders);
+
+        try (Path path = new Path().of(dbRoot)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                for (int batch = 0; batch < 10; batch++) {
+                    long base = (long) batch * BP_BATCH;
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, base + v);
+                    }
+                    writer.setMaxValue(base + BP_BATCH - 1);
+                    writer.commit();
+                }
+
+                Thread[] readers = new Thread[numReaders];
+                for (int r = 0; r < numReaders; r++) {
+                    final int readerId = r;
+                    readers[r] = new Thread(() -> {
+                        try (Path rPath = new Path().of(dbRoot);
+                             PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            reader.reloadConditionally();
+                            barrier.await();
+
+                            RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                            long prev = Long.MAX_VALUE;
+                            int count = 0;
+                            while (cursor.hasNext()) {
+                                long val = cursor.next();
+                                if (val >= prev) {
+                                    throw new AssertionError(
+                                            "bwd reader " + readerId + ": non-descending " + prev + " -> " + val
+                                                    + " at position " + count);
+                                }
+                                long expected = 10 * BP_BATCH - 1 - count;
+                                if (val != expected) {
+                                    throw new AssertionError(
+                                            "bwd reader " + readerId + ": expected " + expected + " got " + val);
+                                }
+                                prev = val;
+                                count++;
+                                if (count % 10 == 0) Thread.yield();
+                            }
+                            if (count != 10 * BP_BATCH) {
+                                throw new AssertionError(
+                                        "bwd reader " + readerId + ": expected " + (10 * BP_BATCH) + " got " + count);
+                            }
+                        } catch (Throwable t) {
+                            error.compareAndSet(null, t);
+                        } finally {
+                            done.countDown();
+                        }
+                    });
+                    readers[r].setDaemon(true);
+                    readers[r].start();
+                }
+
+                barrier.await();
+                writer.seal();
+
+                done.await();
+
+                if (error.get() != null) {
+                    throw new AssertionError("Concurrent bwd reader failed during seal", error.get());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testConcurrentMixedFwdBwdReaders() throws Exception {
+        // Both forward and backward readers simultaneously during writes.
+        final String dbRoot = configuration.getDbRoot().toString();
+        final String name = "conc_mixed";
+        final int writerBatches = 50;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final CountDownLatch writerDone = new CountDownLatch(1);
+
+        try (Path path = new Path().of(dbRoot)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                for (int v = 0; v < BP_BATCH; v++) {
+                    writer.add(0, v);
+                }
+                writer.setMaxValue(BP_BATCH - 1);
+                writer.commit();
+
+                // 2 forward + 2 backward readers
+                Thread[] threads = new Thread[4];
+                for (int r = 0; r < 4; r++) {
+                    final int readerId = r;
+                    final boolean isForward = r < 2;
+                    threads[r] = new Thread(() -> {
+                        try {
+                            if (isForward) {
+                                try (Path rPath = new Path().of(dbRoot);
+                                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                             configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                    while (writerDone.getCount() > 0) {
+                                        reader.reloadConditionally();
+                                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                        long prev = -1;
+                                        int count = 0;
+                                        while (cursor.hasNext()) {
+                                            long val = cursor.next();
+                                            if (val <= prev) {
+                                                throw new AssertionError(
+                                                        "fwd reader " + readerId + ": non-ascending " + prev + " -> " + val);
+                                            }
+                                            prev = val;
+                                            count++;
+                                        }
+                                        if (count % BP_BATCH != 0 || count == 0) {
+                                            throw new AssertionError(
+                                                    "fwd reader " + readerId + ": unexpected count=" + count);
+                                        }
+                                        Thread.yield();
+                                    }
+                                }
+                            } else {
+                                try (Path rPath = new Path().of(dbRoot);
+                                     PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                                             configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                    while (writerDone.getCount() > 0) {
+                                        reader.reloadConditionally();
+                                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                        long prev = Long.MAX_VALUE;
+                                        int count = 0;
+                                        while (cursor.hasNext()) {
+                                            long val = cursor.next();
+                                            if (val >= prev) {
+                                                throw new AssertionError(
+                                                        "bwd reader " + readerId + ": non-descending " + prev + " -> " + val);
+                                            }
+                                            prev = val;
+                                            count++;
+                                        }
+                                        if (count % BP_BATCH != 0 || count == 0) {
+                                            throw new AssertionError(
+                                                    "bwd reader " + readerId + ": unexpected count=" + count);
+                                        }
+                                        Thread.yield();
+                                    }
+                                }
+                            }
+                        } catch (Throwable t) {
+                            error.compareAndSet(null, t);
+                        }
+                    });
+                    threads[r].setDaemon(true);
+                    threads[r].start();
+                }
+
+                for (int batch = 1; batch < writerBatches; batch++) {
+                    long base = (long) batch * BP_BATCH;
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, base + v);
+                    }
+                    writer.setMaxValue(base + BP_BATCH - 1);
+                    writer.commit();
+                }
+                writerDone.countDown();
+
+                for (Thread t : threads) {
+                    t.join(10_000);
+                    if (t.isAlive()) t.interrupt();
+                }
+
+                if (error.get() != null) {
+                    throw new AssertionError("Mixed fwd/bwd concurrent reader failed", error.get());
                 }
             }
         }

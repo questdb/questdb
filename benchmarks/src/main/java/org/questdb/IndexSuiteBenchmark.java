@@ -26,9 +26,9 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.idx.PostingsIndexFwdReader;
-import io.questdb.cairo.idx.PostingsIndexUtils;
-import io.questdb.cairo.idx.PostingsIndexWriter;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
@@ -187,16 +187,16 @@ public class IndexSuiteBenchmark {
             FilesFacade ff = config.getFilesFacade();
             try (MemoryMA mem = Vm.getSmallCMARWInstance(
                     ff,
-                    PostingsIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
+                    PostingIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
                     MemoryTag.MMAP_DEFAULT,
                     config.getWriterFileOpenOpts()
             )) {
-                PostingsIndexWriter.initKeyMemory(mem, PostingsIndexUtils.BLOCK_CAPACITY);
+                PostingIndexWriter.initKeyMemory(mem, PostingIndexUtils.BLOCK_CAPACITY);
             }
-            ff.touch(PostingsIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
+            ff.touch(PostingIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
         try (Path path = new Path().of(dir)) {
-            try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(config)) {
                 writer.of(path, "test", COLUMN_NAME_TXN, false);
                 for (int i = 0; i < keyAssignment.length; i++) {
                     writer.add(keyAssignment[i], (long) i + rowOffset);
@@ -252,7 +252,7 @@ public class IndexSuiteBenchmark {
                 BitmapIndexReader reader = switch (format) {
                     case LEGACY -> new BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                     case FSST -> new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case POSTING -> new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case POSTING -> new PostingIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                 };
                 try {
                     readBatch(reader, readKeys);

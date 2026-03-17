@@ -46,7 +46,7 @@ import java.io.Closeable;
  * Gen metadata cache (all tiers): genFileOffsets, genDataSizes, genKeyCounts,
  * genMinKeys, genMaxKeys — avoids re-reading key file gen dir entries.
  */
-class PostingsGenLookup implements Closeable {
+class PostingGenLookup implements Closeable {
     static final int TIER_NONE = 0;
     static final int TIER_PER_KEY = 1;
     static final int TIER_SBBF = 2;
@@ -257,12 +257,12 @@ class PostingsGenLookup implements Closeable {
         }
 
         for (int g = fromGen; g < toGenCount; g++) {
-            long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
-            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            genDataSizes[g] = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_SIZE);
-            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            genMinKeys[g] = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
-            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(g);
+            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+            genDataSizes[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
         }
     }
 

@@ -34,7 +34,7 @@ import io.questdb.std.Unsafe;
  * across JNI. AVX2 specializations for 8/16/32-bit aligned widths
  * process 4 values per cycle.
  */
-public final class PostingsIndexNative {
+public final class PostingIndexNative {
     private static final boolean NATIVE_AVAILABLE;
 
     static {
@@ -52,7 +52,7 @@ public final class PostingsIndexNative {
         NATIVE_AVAILABLE = available;
     }
 
-    private PostingsIndexNative() {
+    private PostingIndexNative() {
     }
 
     public static boolean isNativeAvailable() {

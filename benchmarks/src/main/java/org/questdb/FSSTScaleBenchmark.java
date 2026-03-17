@@ -2,9 +2,9 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.idx.PostingsIndexFwdReader;
-import io.questdb.cairo.idx.PostingsIndexUtils;
-import io.questdb.cairo.idx.PostingsIndexWriter;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
@@ -117,7 +117,7 @@ public class FSSTScaleBenchmark {
             t0 = System.nanoTime();
             createPostingIndex(config, postingDir, HC_BLOCK_VALUES);
             try (Path path = new Path().of(postingDir)) {
-                try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(config)) {
                     writer.of(path, "test", COLUMN_NAME_TXN, false);
                     for (int rowId = 0; rowId < HC_TOTAL_ROWS; rowId++) writer.add(keyAssignment[rowId], rowId);
                 }
@@ -153,7 +153,7 @@ public class FSSTScaleBenchmark {
             });
             measureReadLatency("Posting", () -> {
                 try (Path path = new Path().of(postingDir)) {
-                    try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
                         return readBatch(reader, readKeys);
                     }
                 }
@@ -311,10 +311,10 @@ public class FSSTScaleBenchmark {
         try (Path path = new Path().of(root)) {
             int plen = path.size();
             FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, PostingsIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN), MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
-                PostingsIndexWriter.initKeyMemory(mem, blockCapacity);
+            try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, PostingIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN), MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
+                PostingIndexWriter.initKeyMemory(mem, blockCapacity);
             }
-            ff.touch(PostingsIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
+            ff.touch(PostingIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
     }
 

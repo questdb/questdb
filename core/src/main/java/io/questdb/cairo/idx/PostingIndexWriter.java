@@ -46,7 +46,7 @@ import io.questdb.std.str.Path;
 import java.util.Arrays;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cairo.idx.PostingsIndexUtils.*;
+import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
 /**
  * Delta + FoR64 BitPacking (BP) bitmap index writer.
@@ -54,16 +54,16 @@ import static io.questdb.cairo.idx.PostingsIndexUtils.*;
  * Each commit appends one generation (covering all keys) to the value file.
  * No symbol table needed — encoding is purely arithmetic.
  */
-public class PostingsIndexWriter implements IndexWriter {
+public class PostingIndexWriter implements IndexWriter {
     private static final int INITIAL_KEY_CAPACITY = 64;
     private static final int MAX_GEN_COUNT = 256;
-    private static final Log LOG = LogFactory.getLog(PostingsIndexWriter.class);
+    private static final Log LOG = LogFactory.getLog(PostingIndexWriter.class);
 
     private final CairoConfiguration configuration;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
 
-    private final PostingsIndexUtils.EncodeContext encodeCtx = new PostingsIndexUtils.EncodeContext();
+    private final PostingIndexUtils.EncodeContext encodeCtx = new PostingIndexUtils.EncodeContext();
     // Active key tracking to avoid scanning all keys per flush
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private int activeKeyCount;
@@ -93,13 +93,13 @@ public class PostingsIndexWriter implements IndexWriter {
     private boolean hasSpillData;
     private long valueMemSize;
 
-    public PostingsIndexWriter(CairoConfiguration configuration) {
+    public PostingIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
     }
 
     @TestOnly
-    public PostingsIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
+    public PostingIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         this(configuration);
         of(path, name, columnNameTxn, true);
     }
@@ -175,7 +175,7 @@ public class PostingsIndexWriter implements IndexWriter {
 
         if (keyMem.isOpen()) {
             long keyFileSize = genCount > 0
-                    ? PostingsIndexUtils.getGenDirOffset(genCount)
+                    ? PostingIndexUtils.getGenDirOffset(genCount)
                     : KEY_FILE_RESERVED;
             keyMem.setSize(keyFileSize);
             Misc.free(keyMem);
@@ -216,14 +216,14 @@ public class PostingsIndexWriter implements IndexWriter {
 
         // Check if incremental seal is possible:
         // gen 0 must be dense, and all subsequent gens must be sparse
-        long gen0DirOffset = PostingsIndexUtils.getGenDirOffset(0);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(0);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         boolean isIncrementalCandidate = gen0KeyCount >= 0;
 
         if (isIncrementalCandidate) {
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
-                int gkc = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                long dirOffset = PostingIndexUtils.getGenDirOffset(g);
+                int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 if (gkc >= 0) {
                     isIncrementalCandidate = false;
                     break;
@@ -243,21 +243,21 @@ public class PostingsIndexWriter implements IndexWriter {
      * Clean strides are copied verbatim from the existing dense gen 0.
      */
     private void sealIncremental() {
-        int sc = PostingsIndexUtils.strideCount(keyCount);
+        int sc = PostingIndexUtils.strideCount(keyCount);
 
         // Mark dirty strides by scanning sparse gens 1..N
         boolean[] dirtyStrides = new boolean[sc];
         int dirtyCount = 0;
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
             long genAddr = valueMem.addressOf(genFileOffset);
 
             for (int i = 0; i < activeKeyCount; i++) {
                 int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                int stride = key / PostingsIndexUtils.DENSE_STRIDE;
+                int stride = key / PostingIndexUtils.DENSE_STRIDE;
                 if (stride < sc && !dirtyStrides[stride]) {
                     dirtyStrides[stride] = true;
                     dirtyCount++;
@@ -272,32 +272,32 @@ public class PostingsIndexWriter implements IndexWriter {
         }
 
         // Read gen 0 metadata
-        long gen0DirOffset = PostingsIndexUtils.getGenDirOffset(0);
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int gen0DataSize = keyMem.getInt(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
         long gen0Addr = valueMem.addressOf(gen0FileOffset);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        int gen0SiSize = PostingsIndexUtils.strideIndexSize(gen0KeyCount);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
 
         // Allocate output buffers
-        int siSize = PostingsIndexUtils.strideIndexSize(keyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
         long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
 
         // Estimate max per-key values to size buffers
         int maxPerKey = estimateMaxPerKey(gen0Addr, gen0KeyCount, gen0SiSize);
-        int perKeyBufSize = PostingsIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, PostingsIndexUtils.BLOCK_CAPACITY * genCount));
-        int maxBPStrideDataSize = PostingsIndexUtils.DENSE_STRIDE * perKeyBufSize;
+        int perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, PostingIndexUtils.BLOCK_CAPACITY * genCount));
+        int maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
         long bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
         int maxHeaderSize = Math.max(
-                PostingsIndexUtils.strideBPHeaderSize(PostingsIndexUtils.DENSE_STRIDE),
-                PostingsIndexUtils.stridePackedHeaderSize(PostingsIndexUtils.DENSE_STRIDE)
+                PostingIndexUtils.strideBPHeaderSize(PostingIndexUtils.DENSE_STRIDE),
+                PostingIndexUtils.stridePackedHeaderSize(PostingIndexUtils.DENSE_STRIDE)
         );
         long localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_DEFAULT);
-        int[] bpKeySizes = new int[PostingsIndexUtils.DENSE_STRIDE];
+        int[] bpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
 
         // Buffer for merged key values — sized for an entire stride (all keys contiguous)
         // since encodeDirtyStride writes all keys' values contiguously with cumulative offsets.
-        long maxPerStride = (long) PostingsIndexUtils.DENSE_STRIDE * (maxPerKey + PostingsIndexUtils.BLOCK_CAPACITY * genCount);
+        long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * (maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount);
         long mergedValuesSize = Math.max(maxPerStride, 1024) * Long.BYTES;
         long mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_DEFAULT);
 
@@ -322,7 +322,7 @@ public class PostingsIndexWriter implements IndexWriter {
                     copyStrideFromGen0(gen0Addr, gen0KeyCount, gen0SiSize, s);
                 } else {
                     // Dirty stride: decode from gen 0 + sparse gens, merge, re-encode
-                    int ks = PostingsIndexUtils.keysInStride(keyCount, s);
+                    int ks = PostingIndexUtils.keysInStride(keyCount, s);
                     encodeDirtyStride(s, ks, gen0Addr, gen0KeyCount, gen0SiSize,
                             bpTrialBuf, localHeaderBuf, bpKeySizes, mergedValuesAddr);
                 }
@@ -339,12 +339,12 @@ public class PostingsIndexWriter implements IndexWriter {
             valueMemSize = valueMem.getAppendOffset();
 
             genCount = 1;
-            long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(0);
             keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
             keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
-            keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-            keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-            keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
+            keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
+            keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
+            keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
 
             updateHeaderAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE));
         } finally {
@@ -357,21 +357,21 @@ public class PostingsIndexWriter implements IndexWriter {
 
     private int estimateMaxPerKey(long gen0Addr, int gen0KeyCount, int gen0SiSize) {
         int max = 0;
-        int sc = PostingsIndexUtils.strideCount(gen0KeyCount);
+        int sc = PostingIndexUtils.strideCount(gen0KeyCount);
         for (int s = 0; s < sc; s++) {
             int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) s * Integer.BYTES);
             long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = PostingsIndexUtils.keysInStride(gen0KeyCount, s);
+            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, s);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
-                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+            if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
                 for (int j = 0; j < ks; j++) {
                     int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
                             - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                     if (count > max) max = count;
                 }
             } else {
-                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 for (int j = 0; j < ks; j++) {
                     int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                     if (count > max) max = count;
@@ -383,10 +383,10 @@ public class PostingsIndexWriter implements IndexWriter {
 
     private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride) {
         // If this stride existed in gen 0, copy it; otherwise write empty
-        if (stride >= PostingsIndexUtils.strideCount(gen0KeyCount)) {
+        if (stride >= PostingIndexUtils.strideCount(gen0KeyCount)) {
             // Stride didn't exist in gen 0 — write empty BP stride
-            int ks = PostingsIndexUtils.keysInStride(keyCount, stride);
-            int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+            int ks = PostingIndexUtils.keysInStride(keyCount, stride);
+            int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
             long headerFilePos = valueMem.getAppendOffset();
             for (int i = 0; i < bpHeaderSize; i += Integer.BYTES) {
                 valueMem.putInt(0);
@@ -399,11 +399,11 @@ public class PostingsIndexWriter implements IndexWriter {
 
         int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
         int nextStrideOff;
-        if (stride + 1 < PostingsIndexUtils.strideCount(gen0KeyCount)) {
+        if (stride + 1 < PostingIndexUtils.strideCount(gen0KeyCount)) {
             nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) (stride + 1) * Integer.BYTES);
         } else {
             // Last stride — get sentinel
-            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) PostingsIndexUtils.strideCount(gen0KeyCount) * Integer.BYTES);
+            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) PostingIndexUtils.strideCount(gen0KeyCount) * Integer.BYTES);
         }
         int strideSize = nextStrideOff - strideOff;
         if (strideSize <= 0) {
@@ -449,7 +449,7 @@ public class PostingsIndexWriter implements IndexWriter {
         // Merge all keys' values contiguously into mergedValuesAddr
         int cumOffset = 0;
         for (int j = 0; j < ks; j++) {
-            int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+            int key = s * PostingIndexUtils.DENSE_STRIDE + j;
             keyOffsets[j] = cumOffset;
             int mergedCount = mergeKeyValues(key, gen0Addr, gen0KeyCount, gen0SiSize,
                     mergedValuesAddr + (long) cumOffset * Long.BYTES);
@@ -468,7 +468,7 @@ public class PostingsIndexWriter implements IndexWriter {
                     keyValues[i] = Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES);
                 }
                 encodeCtx.ensureCapacity(count);
-                bpKeySizes[j] = PostingsIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                bpKeySizes[j] = PostingIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
             } else {
                 bpKeySizes[j] = 0;
             }
@@ -492,10 +492,10 @@ public class PostingsIndexWriter implements IndexWriter {
         int localBitWidth = strideRange <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(strideRange);
 
         // Compute sizes
-        int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+        int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
         int bpSize = bpHeaderSize + bpDataTotal;
 
-        int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+        int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
         int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, localBitWidth);
         int packedSize = packedHeaderSize + packedDataSize;
 
@@ -514,21 +514,21 @@ public class PostingsIndexWriter implements IndexWriter {
 
         // Decode from gen 0 (dense)
         if (key < gen0KeyCount) {
-            int stride = key / PostingsIndexUtils.DENSE_STRIDE;
-            int localKey = key % PostingsIndexUtils.DENSE_STRIDE;
+            int stride = key / PostingIndexUtils.DENSE_STRIDE;
+            int localKey = key % PostingIndexUtils.DENSE_STRIDE;
             int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
             long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = PostingsIndexUtils.keysInStride(gen0KeyCount, stride);
+            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
+            if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET);
-                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET);
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
                 int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
                 if (count > 0) {
-                    int phSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+                    int phSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                     long packedDataAddr = strideAddr + phSize;
                     long[] vals = new long[count];
                     FORBitmapIndexUtils.unpackValuesFrom(packedDataAddr, startIdx, count, bitWidth, baseValue, vals);
@@ -538,15 +538,15 @@ public class PostingsIndexWriter implements IndexWriter {
                     }
                 }
             } else {
-                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 int count = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
                 if (count > 0) {
                     long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
                     int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-                    int bpHdrSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+                    int bpHdrSize = PostingIndexUtils.strideBPHeaderSize(ks);
                     long encodedAddr = strideAddr + bpHdrSize + dataOffset;
                     long[] decoded = new long[count];
-                    PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+                    PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
                     for (int i = 0; i < count; i++) {
                         Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES, decoded[i]);
                         totalCount++;
@@ -557,16 +557,16 @@ public class PostingsIndexWriter implements IndexWriter {
 
         // Decode from sparse gens 1..N
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            int idx = PostingsIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
+            int idx = PostingIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
             if (idx < 0) continue;
 
-            int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
+            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int count = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
@@ -575,7 +575,7 @@ public class PostingsIndexWriter implements IndexWriter {
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
             long encodedAddr = genAddr + headerSize + dataOffset;
             long[] decoded = new long[count];
-            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+            PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
             for (int i = 0; i < count; i++) {
                 Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES, decoded[i]);
                 totalCount++;
@@ -594,13 +594,13 @@ public class PostingsIndexWriter implements IndexWriter {
         }
 
         Unsafe.getUnsafe().setMemory(localHeaderBuf, packedHeaderSize, (byte) 0);
-        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_PACKED);
+        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_PACKED);
         Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) localBitWidth);
-        Unsafe.getUnsafe().putLong(localHeaderBuf + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET, strideMinValue);
+        Unsafe.getUnsafe().putLong(localHeaderBuf + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET, strideMinValue);
         int cumCount = 0;
         for (int j = 0; j <= ks; j++) {
             Unsafe.getUnsafe().putInt(
-                    localHeaderBuf + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
+                    localHeaderBuf + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
                     cumCount);
             if (j < ks) {
                 cumCount += keyCounts[j];
@@ -649,8 +649,8 @@ public class PostingsIndexWriter implements IndexWriter {
         }
 
         Unsafe.getUnsafe().setMemory(localHeaderBuf, bpHeaderSize, (byte) 0);
-        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_BP);
-        long countsBase = localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_BP);
+        long countsBase = localHeaderBuf + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
         long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
         int dataOffset = 0;
@@ -690,9 +690,9 @@ public class PostingsIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
+                long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long genAddr = valueMem.addressOf(genFileOffset);
 
                 if (genKeyCount < 0) {
@@ -709,18 +709,18 @@ public class PostingsIndexWriter implements IndexWriter {
                     }
                 } else {
                     // Dense format — stride-indexed (supports BP and Packed modes)
-                    int sc = PostingsIndexUtils.strideCount(genKeyCount);
-                    int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
+                    int sc = PostingIndexUtils.strideCount(genKeyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                     for (int s = 0; s < sc; s++) {
                         int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
                         long strideAddr = genAddr + siSize + strideOff;
-                        int ks = PostingsIndexUtils.keysInStride(genKeyCount, s);
+                        int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
                         byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-                        if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
+                        if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
                             // Packed mode: prefixCounts at STRIDE_PACKED_PREFIX_COUNTS_OFFSET
-                            long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
                                         - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                                 int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
@@ -729,9 +729,9 @@ public class PostingsIndexWriter implements IndexWriter {
                             }
                         } else {
                             // BP mode: counts at offset STRIDE_MODE_PREFIX_SIZE
-                            long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                                 int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
@@ -760,15 +760,15 @@ public class PostingsIndexWriter implements IndexWriter {
 
                 // Decode from each generation
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                    int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genAddr = valueMem.addressOf(genFileOffset);
 
                     if (genKeyCount < 0) {
                         // Sparse format
                         int activeKeyCount = -genKeyCount;
-                        int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                        int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
                         long keyIdsBase = genAddr;
                         long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
                         long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
@@ -786,7 +786,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
 
                             long[] decoded = new long[count];
-                            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+                            PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
                             for (int j = 0; j < count; j++) {
                                 Unsafe.getUnsafe().putLong(destAddr + (long) j * Long.BYTES, decoded[j]);
                             }
@@ -796,24 +796,24 @@ public class PostingsIndexWriter implements IndexWriter {
                         }
                     } else {
                         // Dense format — stride-indexed (supports BP and Packed modes)
-                        int sc = PostingsIndexUtils.strideCount(genKeyCount);
-                        int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
+                        int sc = PostingIndexUtils.strideCount(genKeyCount);
+                        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                         for (int s = 0; s < sc; s++) {
                             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
                             long strideAddr = genAddr + siSize + strideOff;
-                            int ks = PostingsIndexUtils.keysInStride(genKeyCount, s);
+                            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
                             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-                            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
+                            if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
                                 // Packed mode
                                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET);
-                                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
-                                int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+                                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET);
+                                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                                int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                                 long packedDataAddr = strideAddr + packedHeaderSize;
 
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                                     int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
                                     if (count == 0) continue;
@@ -832,12 +832,12 @@ public class PostingsIndexWriter implements IndexWriter {
                                 }
                             } else {
                                 // BP mode
-                                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                                 long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-                                int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+                                int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
 
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                                     if (count == 0) continue;
 
@@ -849,7 +849,7 @@ public class PostingsIndexWriter implements IndexWriter {
                                     long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
 
                                     long[] decoded = new long[count];
-                                    PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+                                    PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
                                     for (int i = 0; i < count; i++) {
                                         Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, decoded[i]);
                                     }
@@ -869,12 +869,12 @@ public class PostingsIndexWriter implements IndexWriter {
                     int c = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     if (c > maxPerKey) maxPerKey = c;
                 }
-                int perKeyBufSize = PostingsIndexUtils.computeMaxEncodedSize(maxPerKey);
+                int perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(maxPerKey);
                 long tmpBuf = Unsafe.malloc(perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
 
                 try {
-                    int sc = PostingsIndexUtils.strideCount(keyCount);
-                    int siSize = PostingsIndexUtils.strideIndexSize(keyCount);
+                    int sc = PostingIndexUtils.strideCount(keyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(keyCount);
 
                     // Append-only seal: write sealed data AFTER existing data so that
                     // concurrent readers with active cursors are never rugpulled.
@@ -889,13 +889,13 @@ public class PostingsIndexWriter implements IndexWriter {
                     // Allocate stride index buffer
                     long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
                     // Max header is the BP header (larger than packed header)
-                    int maxBPHeaderSize = PostingsIndexUtils.strideBPHeaderSize(PostingsIndexUtils.DENSE_STRIDE);
-                    int maxPackedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(PostingsIndexUtils.DENSE_STRIDE);
+                    int maxBPHeaderSize = PostingIndexUtils.strideBPHeaderSize(PostingIndexUtils.DENSE_STRIDE);
+                    int maxPackedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(PostingIndexUtils.DENSE_STRIDE);
                     int maxLocalHeaderSize = Math.max(maxBPHeaderSize, maxPackedHeaderSize);
                     long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
 
                     // Per-key BP sizes within a stride (to compute total BP data size)
-                    int[] bpKeySizes = new int[PostingsIndexUtils.DENSE_STRIDE];
+                    int[] bpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
                     // Trial buffer grows dynamically per stride
                     long bpTrialBuf = 0;
                     long bpTrialBufSize = 0;
@@ -905,14 +905,14 @@ public class PostingsIndexWriter implements IndexWriter {
                         long[] keyValues = new long[maxPerKey];
 
                         for (int s = 0; s < sc; s++) {
-                            int ks = PostingsIndexUtils.keysInStride(keyCount, s);
+                            int ks = PostingIndexUtils.keysInStride(keyCount, s);
 
                             // Compute trial buffer size for this stride
                             long strideTrialSize = 0;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                                strideTrialSize += PostingsIndexUtils.computeMaxEncodedSize(count);
+                                strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(count);
                             }
                             if (strideTrialSize > bpTrialBufSize) {
                                 if (bpTrialBuf != 0) {
@@ -926,7 +926,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             int bpDataTotal = 0;
                             long trialReadOffset = readOffset;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 if (count > 0) {
                                     for (int i = 0; i < count; i++) {
@@ -934,7 +934,7 @@ public class PostingsIndexWriter implements IndexWriter {
                                                 allValuesAddr + (trialReadOffset + i) * Long.BYTES);
                                     }
                                     encodeCtx.ensureCapacity(count);
-                                    bpKeySizes[j] = PostingsIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                                    bpKeySizes[j] = PostingIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
                                     trialReadOffset += count;
                                 } else {
                                     bpKeySizes[j] = 0;
@@ -943,7 +943,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             }
 
                             // --- Compute sizes for both modes ---
-                            int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+                            int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
                             int bpSize = bpHeaderSize + bpDataTotal;
 
                             // Count total values in stride and find per-stride min/max for packed size
@@ -953,7 +953,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             {
                                 long scanOffset = readOffset;
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                     totalStrideValues += count;
                                     for (int i = 0; i < count; i++) {
@@ -971,7 +971,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             long strideRange = strideMaxValue - strideMinValue;
                             int localBitWidth = strideRange <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(strideRange);
 
-                            int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+                            int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                             int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, localBitWidth);
                             int packedSize = packedHeaderSize + packedDataSize;
 
@@ -991,16 +991,16 @@ public class PostingsIndexWriter implements IndexWriter {
 
                                 // Build header: mode + bitWidth + baseValue + prefixCounts
                                 Unsafe.getUnsafe().setMemory(localHeaderBuf, packedHeaderSize, (byte) 0);
-                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_PACKED);
+                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_PACKED);
                                 Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) localBitWidth);
-                                Unsafe.getUnsafe().putLong(localHeaderBuf + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET, strideMinValue);
+                                Unsafe.getUnsafe().putLong(localHeaderBuf + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET, strideMinValue);
                                 int cumCount = 0;
                                 for (int j = 0; j <= ks; j++) {
                                     Unsafe.getUnsafe().putInt(
-                                            localHeaderBuf + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
+                                            localHeaderBuf + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
                                             cumCount);
                                     if (j < ks) {
-                                        int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                         cumCount += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                     }
                                 }
@@ -1013,7 +1013,7 @@ public class PostingsIndexWriter implements IndexWriter {
                                     }
                                     int packIdx = 0;
                                     for (int j = 0; j < ks; j++) {
-                                        int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                         int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                         for (int i = 0; i < count; i++) {
                                             long val = Unsafe.getUnsafe().getLong(
@@ -1051,16 +1051,16 @@ public class PostingsIndexWriter implements IndexWriter {
 
                                 // Build header: mode + reserved + counts + offsets
                                 Unsafe.getUnsafe().setMemory(localHeaderBuf, bpHeaderSize, (byte) 0);
-                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_BP);
+                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_BP);
                                 Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) 0); // reserved
-                                long countsBase = localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                long countsBase = localHeaderBuf + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                                 long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
                                 // Copy trial-encoded BP data from bpTrialBuf to valueMem
                                 int dataOffset = 0;
                                 int bpBufOffset = 0;
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
 
                                     Unsafe.getUnsafe().putInt(countsBase + (long) j * Integer.BYTES, count);
@@ -1110,12 +1110,12 @@ public class PostingsIndexWriter implements IndexWriter {
                     }
 
                     genCount = 1;
-                    long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(0);
                     keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
                     keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
-                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
+                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
+                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
+                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
                 } finally {
                     Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -1141,12 +1141,12 @@ public class PostingsIndexWriter implements IndexWriter {
 
         LongList values = new LongList();
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
-            int minKey = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
-            int maxKey = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            int minKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            int maxKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
             if (key < minKey || key > maxKey) continue;
 
             long genAddr = valueMem.addressOf(genFileOffset);
@@ -1157,10 +1157,10 @@ public class PostingsIndexWriter implements IndexWriter {
             if (genKeyCount < 0) {
                 // Sparse format
                 int activeKeyCount = -genKeyCount;
-                int idx = PostingsIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
+                int idx = PostingIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
                 if (idx < 0) continue;
 
-                int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
                 long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
                 long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
                 count = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
@@ -1170,23 +1170,23 @@ public class PostingsIndexWriter implements IndexWriter {
                 // Dense format — stride-indexed (supports BP and Packed modes)
                 if (key >= genKeyCount) continue;
 
-                int stride = key / PostingsIndexUtils.DENSE_STRIDE;
-                int localKey = key % PostingsIndexUtils.DENSE_STRIDE;
-                int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
+                int stride = key / PostingIndexUtils.DENSE_STRIDE;
+                int localKey = key % PostingIndexUtils.DENSE_STRIDE;
+                int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                 int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
                 long strideAddr = genAddr + siSize + strideOff;
-                int ks = PostingsIndexUtils.keysInStride(genKeyCount, stride);
+                int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
                 byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-                if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
+                if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
                     // Packed mode
                     int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                    long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET);
-                    long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                    long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET);
+                    long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
                     int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                     count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
                     if (count == 0) continue;
-                    int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+                    int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                     long packedDataAddr = strideAddr + packedHeaderSize;
                     for (int i = 0; i < count; i++) {
                         values.add(FORBitmapIndexUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue));
@@ -1195,17 +1195,17 @@ public class PostingsIndexWriter implements IndexWriter {
                 }
 
                 // BP mode
-                long countsBase = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long countsBase = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 count = Unsafe.getUnsafe().getInt(countsBase + (long) localKey * Integer.BYTES);
                 long offsetsBase = countsBase + (long) ks * Integer.BYTES;
                 int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-                int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+                int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
                 encodedAddr = strideAddr + bpHeaderSize + dataOffset;
             }
 
             if (count == 0) continue;
             long[] decoded = new long[count];
-            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+            PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
             for (int i = 0; i < count; i++) {
                 values.add(decoded[i]);
             }
@@ -1374,9 +1374,9 @@ public class PostingsIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
+                long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long genAddr = valueMem.addressOf(genFileOffset);
 
                 if (genKeyCount < 0) {
@@ -1391,17 +1391,17 @@ public class PostingsIndexWriter implements IndexWriter {
                         totalValueCount += count;
                     }
                 } else {
-                    int sc = PostingsIndexUtils.strideCount(genKeyCount);
-                    int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
+                    int sc = PostingIndexUtils.strideCount(genKeyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                     for (int s = 0; s < sc; s++) {
                         int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
                         long strideAddr = genAddr + siSize + strideOff;
-                        int ks = PostingsIndexUtils.keysInStride(genKeyCount, s);
+                        int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
                         byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-                        if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
-                            long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                        if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
+                            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
                                         - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                                 int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
@@ -1409,9 +1409,9 @@ public class PostingsIndexWriter implements IndexWriter {
                                 totalValueCount += count;
                             }
                         } else {
-                            long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                                 int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
@@ -1440,14 +1440,14 @@ public class PostingsIndexWriter implements IndexWriter {
                 }
 
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                    int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genAddr = valueMem.addressOf(genFileOffset);
 
                     if (genKeyCount < 0) {
                         int activeKeyCount = -genKeyCount;
-                        int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                        int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
                         long keyIdsBase = genAddr;
                         long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
                         long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
@@ -1461,28 +1461,28 @@ public class PostingsIndexWriter implements IndexWriter {
                             long keyWriteOff = Unsafe.getUnsafe().getLong(keyWriteOffsetsAddr + (long) key * Long.BYTES);
                             long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
                             long[] decoded = new long[count];
-                            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+                            PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
                             for (int j = 0; j < count; j++) {
                                 Unsafe.getUnsafe().putLong(destAddr + (long) j * Long.BYTES, decoded[j]);
                             }
                             Unsafe.getUnsafe().putLong(keyWriteOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
                         }
                     } else {
-                        int sc = PostingsIndexUtils.strideCount(genKeyCount);
-                        int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
+                        int sc = PostingIndexUtils.strideCount(genKeyCount);
+                        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
                         for (int s = 0; s < sc; s++) {
                             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
                             long strideAddr = genAddr + siSize + strideOff;
-                            int ks = PostingsIndexUtils.keysInStride(genKeyCount, s);
+                            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
                             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-                            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
+                            if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
                                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET);
-                                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
-                                int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+                                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET);
+                                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                                int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                                 long packedDataAddr = strideAddr + packedHeaderSize;
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                                     int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
                                     if (count == 0) continue;
@@ -1495,11 +1495,11 @@ public class PostingsIndexWriter implements IndexWriter {
                                     Unsafe.getUnsafe().putLong(keyWriteOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
                                 }
                             } else {
-                                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                                 long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-                                int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+                                int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                                     if (count == 0) continue;
                                     int dataOff = Unsafe.getUnsafe().getInt(offsetsBase + (long) j * Integer.BYTES);
@@ -1507,7 +1507,7 @@ public class PostingsIndexWriter implements IndexWriter {
                                     long keyWriteOff = Unsafe.getUnsafe().getLong(keyWriteOffsetsAddr + (long) key * Long.BYTES);
                                     long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
                                     long[] decoded = new long[count];
-                                    PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
+                                    PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
                                     for (int i = 0; i < count; i++) {
                                         Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, decoded[i]);
                                     }
@@ -1572,8 +1572,8 @@ public class PostingsIndexWriter implements IndexWriter {
                     if (c > maxPerKey) maxPerKey = c;
                 }
                 {
-                    int sc = PostingsIndexUtils.strideCount(keyCount);
-                    int siSize = PostingsIndexUtils.strideIndexSize(keyCount);
+                    int sc = PostingIndexUtils.strideCount(keyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(keyCount);
 
                     long sealOffset = valueMemSize;
                     valueMem.jumpTo(sealOffset);
@@ -1582,12 +1582,12 @@ public class PostingsIndexWriter implements IndexWriter {
                     }
 
                     long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
-                    int maxBPHeaderSize = PostingsIndexUtils.strideBPHeaderSize(PostingsIndexUtils.DENSE_STRIDE);
-                    int maxPackedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(PostingsIndexUtils.DENSE_STRIDE);
+                    int maxBPHeaderSize = PostingIndexUtils.strideBPHeaderSize(PostingIndexUtils.DENSE_STRIDE);
+                    int maxPackedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(PostingIndexUtils.DENSE_STRIDE);
                     int maxLocalHeaderSize = Math.max(maxBPHeaderSize, maxPackedHeaderSize);
                     long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
 
-                    int[] bpKeySizes = new int[PostingsIndexUtils.DENSE_STRIDE];
+                    int[] bpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
                     long bpTrialBuf = 0;
                     long bpTrialBufSize = 0;
 
@@ -1595,13 +1595,13 @@ public class PostingsIndexWriter implements IndexWriter {
                         long[] keyValues = maxPerKey > 0 ? new long[maxPerKey] : new long[1];
 
                         for (int s = 0; s < sc; s++) {
-                            int ks = PostingsIndexUtils.keysInStride(keyCount, s);
+                            int ks = PostingIndexUtils.keysInStride(keyCount, s);
 
                             long strideTrialSize = 0;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                                strideTrialSize += PostingsIndexUtils.computeMaxEncodedSize(count);
+                                strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(count);
                             }
                             if (strideTrialSize > bpTrialBufSize) {
                                 if (bpTrialBuf != 0) {
@@ -1614,7 +1614,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             // Trial BP encode: read from keyStartOffsets (pre-computed from original layout)
                             int bpDataTotal = 0;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 if (count > 0) {
                                     long keyOff = keyStartOffsets[key];
@@ -1623,14 +1623,14 @@ public class PostingsIndexWriter implements IndexWriter {
                                                 allValuesAddr + (keyOff + i) * Long.BYTES);
                                     }
                                     encodeCtx.ensureCapacity(count);
-                                    bpKeySizes[j] = PostingsIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                                    bpKeySizes[j] = PostingIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
                                 } else {
                                     bpKeySizes[j] = 0;
                                 }
                                 bpDataTotal += bpKeySizes[j];
                             }
 
-                            int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
+                            int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
                             int bpSize = bpHeaderSize + bpDataTotal;
 
                             // Count total values in stride and find per-stride min/max
@@ -1638,7 +1638,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             long strideMinValue = Long.MAX_VALUE;
                             long strideMaxValue = Long.MIN_VALUE;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 totalStrideValues += count;
                                 long keyOff = keyStartOffsets[key];
@@ -1655,7 +1655,7 @@ public class PostingsIndexWriter implements IndexWriter {
                             long strideRange = strideMaxValue - strideMinValue;
                             int localBitWidth = strideRange <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(strideRange);
 
-                            int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
+                            int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                             int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, localBitWidth);
                             int packedSize = packedHeaderSize + packedDataSize;
 
@@ -1671,16 +1671,16 @@ public class PostingsIndexWriter implements IndexWriter {
                                 }
 
                                 Unsafe.getUnsafe().setMemory(localHeaderBuf, packedHeaderSize, (byte) 0);
-                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_PACKED);
+                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_PACKED);
                                 Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) localBitWidth);
-                                Unsafe.getUnsafe().putLong(localHeaderBuf + PostingsIndexUtils.STRIDE_PACKED_BASE_OFFSET, strideMinValue);
+                                Unsafe.getUnsafe().putLong(localHeaderBuf + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET, strideMinValue);
                                 int cumCount = 0;
                                 for (int j = 0; j <= ks; j++) {
                                     Unsafe.getUnsafe().putInt(
-                                            localHeaderBuf + PostingsIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
+                                            localHeaderBuf + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
                                             cumCount);
                                     if (j < ks) {
-                                        int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                         cumCount += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                     }
                                 }
@@ -1692,7 +1692,7 @@ public class PostingsIndexWriter implements IndexWriter {
                                     }
                                     int packIdx = 0;
                                     for (int j = 0; j < ks; j++) {
-                                        int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                         int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                         long keyOff = keyStartOffsets[key];
                                         for (int i = 0; i < count; i++) {
@@ -1724,15 +1724,15 @@ public class PostingsIndexWriter implements IndexWriter {
                                 }
 
                                 Unsafe.getUnsafe().setMemory(localHeaderBuf, bpHeaderSize, (byte) 0);
-                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_BP);
+                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_BP);
                                 Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) 0);
-                                long countsBase = localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                long countsBase = localHeaderBuf + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                                 long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
                                 int dataOffset = 0;
                                 int bpBufOffset = 0;
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
 
                                     Unsafe.getUnsafe().putInt(countsBase + (long) j * Integer.BYTES, count);
@@ -1777,12 +1777,12 @@ public class PostingsIndexWriter implements IndexWriter {
                     }
 
                     genCount = 1;
-                    long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(0);
                     keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
                     keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
-                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
+                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
+                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
+                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
                 }
 
                 updateHeaderAtomically(genCount, maxValue);
@@ -1825,7 +1825,7 @@ public class PostingsIndexWriter implements IndexWriter {
         boolean kFdUnassigned = true;
 
         try {
-            LPSZ keyFile = PostingsIndexUtils.keyFileName(path, name, columnNameTxn);
+            LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
 
             if (init) {
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
@@ -1862,7 +1862,7 @@ public class PostingsIndexWriter implements IndexWriter {
 
             valueMem.of(
                     ff,
-                    PostingsIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
+                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
                     configuration.getDataIndexValueAppendPageSize(),
                     init ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
@@ -1916,7 +1916,7 @@ public class PostingsIndexWriter implements IndexWriter {
         if (genCount != 1 || keyCount == 0) {
             return;
         }
-        long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
+        long dirOffset = PostingIndexUtils.getGenDirOffset(0);
         long gen0Offset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         if (gen0Offset == 0) {
             return; // already compact
@@ -1998,7 +1998,7 @@ public class PostingsIndexWriter implements IndexWriter {
         long maxValue = keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE);
 
         // Use sparse format: keyIds + counts + offsets (3 arrays of activeKeyCount)
-        int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
+        int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
 
         // Reuse header buffer, growing if needed
         if (headerSize > flushHeaderBufCapacity) {
@@ -2021,7 +2021,7 @@ public class PostingsIndexWriter implements IndexWriter {
             int key = activeKeyIds[i];
             int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES)
                     + getSpillCount(key);
-            maxDataSize += PostingsIndexUtils.computeMaxEncodedSize(count);
+            maxDataSize += PostingIndexUtils.computeMaxEncodedSize(count);
         }
         long maxGenSize = headerSize + maxDataSize;
         valueMem.jumpTo(genOffset);
@@ -2048,7 +2048,7 @@ public class PostingsIndexWriter implements IndexWriter {
                 // No spill — encode directly from pending buffer
                 long keyValuesAddr = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
                 encodeCtx.ensureCapacity(count);
-                bytesWritten = PostingsIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
+                bytesWritten = PostingIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
 
                 if (pendingCount > 0) {
                     long lastVal = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) (pendingCount - 1) * Long.BYTES);
@@ -2077,7 +2077,7 @@ public class PostingsIndexWriter implements IndexWriter {
                 }
                 // Encode from the spill buffer (which now holds all values in order)
                 encodeCtx.ensureCapacity(count);
-                bytesWritten = PostingsIndexUtils.encodeKeyNative(spillKeyAddrs[key], count, destAddr, encodeCtx);
+                bytesWritten = PostingIndexUtils.encodeKeyNative(spillKeyAddrs[key], count, destAddr, encodeCtx);
 
                 long lastVal = Unsafe.getUnsafe().getLong(
                         spillKeyAddrs[key] + (long) (count - 1) * Long.BYTES);
@@ -2100,13 +2100,13 @@ public class PostingsIndexWriter implements IndexWriter {
         int minKey = activeKeyIds[0];
         int maxKey = activeKeyIds[activeKeyCount - 1];
 
-        long dirOffset = PostingsIndexUtils.getGenDirOffset(genCount);
+        long dirOffset = PostingIndexUtils.getGenDirOffset(genCount);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genOffset);
         keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
         // Negative genKeyCount signals sparse format
-        keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, -activeKeyCount);
-        keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
-        keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, -activeKeyCount);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
         genCount++;
 
         updateHeaderAtomically(genCount, maxValue);
