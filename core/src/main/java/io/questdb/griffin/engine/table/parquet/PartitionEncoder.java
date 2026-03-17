@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -167,10 +168,11 @@ public class PartitionEncoder {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
+                final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(i);
                 descriptor.addColumn(
                         metadata.getColumnName(i),
                         columnType,
-                        metadata.getColumnMetadata(i).getWriterIndex(),
+                        columnMetadata.getWriterIndex(),
                         0,
                         0,
                         0,
@@ -178,7 +180,7 @@ public class PartitionEncoder {
                         0,
                         0,
                         0,
-                        0
+                        columnMetadata.getParquetEncodingConfig()
                 );
             }
         }
