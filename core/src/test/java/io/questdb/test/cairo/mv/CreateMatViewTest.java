@@ -225,6 +225,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewBaseTableNoReferenceAndDoesNotExist() throws Exception {
+        // Regression test: when WITH BASE specifies a table that doesn't exist
+        // and isn't referenced in the query, getTableTokenIfExists() returns null
+        // and the subsequent .isView() call throws NPE instead of SqlException.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String sql = "select ts, avg(v) from " + TABLE1 + " sample by 30s";
+            assertExceptionNoLeakCheck(
+                    "create materialized view test with base nonexistent_table as (" + sql + ") partition by day",
+                    40,
+                    "base table is not referenced in materialized view query"
+            );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewBaseTableSelfUnion() throws Exception {
         testCreateMatViewBaseTableSelfUnion("timestamp");
     }
