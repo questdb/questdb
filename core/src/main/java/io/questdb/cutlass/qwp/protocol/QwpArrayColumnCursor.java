@@ -182,6 +182,12 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + (long) bitmapSize > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "array column data truncated: expected null bitmap"
+                );
+            }
             this.nullBitmapAddress = dataAddress;
             offset += bitmapSize;
         } else {
