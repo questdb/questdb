@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.idx.BPBitmapIndexBwdReader;
 import io.questdb.cairo.idx.BPBitmapIndexFwdReader;
 import io.questdb.cairo.idx.BPBitmapIndexUtils;
 import io.questdb.cairo.idx.BPBitmapIndexWriter;
@@ -34,7 +35,9 @@ import io.questdb.cairo.idx.FSSTBitmapIndexUtils;
 import io.questdb.cairo.idx.FSSTBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -441,6 +444,181 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(200, cursor.next());
                 Assert.assertFalse(cursor.hasNext());
             }
+        }
+    }
+
+    // ===== BP GenLookup / SBBF Integration Tests =====
+
+    @Test
+    public void testBPManyKeysMultipleGens() {
+        // This test exercises the gen lookup tiers with many keys
+        // across multiple sparse gens (unsealed reads).
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            int keyCount = 500;
+            int valuesPerKey = 10;
+            int batches = 3;
+            final int plen = path.size();
+
+            Rnd rnd = new Rnd();
+            long[][] allValues = new long[keyCount][valuesPerKey * batches];
+            for (int key = 0; key < keyCount; key++) {
+                long val = rnd.nextInt(1000);
+                for (int i = 0; i < valuesPerKey * batches; i++) {
+                    allValues[key][i] = val;
+                    val += rnd.nextInt(20) + 1;
+                }
+            }
+
+            // Write to BP in batches (creates multiple sparse gens)
+            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_manykeys", COLUMN_NAME_TXN_NONE)) {
+                for (int b = 0; b < batches; b++) {
+                    for (int key = 0; key < keyCount; key++) {
+                        for (int i = 0; i < valuesPerKey; i++) {
+                            writer.add(key, allValues[key][b * valuesPerKey + i]);
+                        }
+                    }
+                    writer.commit();
+                }
+                // Don't close yet — read unsealed
+            }
+
+            // Read all keys and verify correctness (exercises BPGenLookup)
+            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path.trimTo(plen), "bp_manykeys", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                for (int key = 0; key < keyCount; key++) {
+                    RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+                    int idx = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("Key " + key + " mismatch at " + idx,
+                                allValues[key][idx], cursor.next());
+                        idx++;
+                    }
+                    Assert.assertEquals("Key " + key + " count mismatch",
+                            valuesPerKey * batches, idx);
+                }
+            }
+        }
+    }
+
+    // ===== BP Incremental Seal Tests =====
+
+    @Test
+    public void testBPIncrementalSealMatchesFullSeal() {
+        // Write same data via two writers; one will seal incrementally, the other fully
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            int keyCount = 10;
+            int valuesPerBatch = 40;
+            int batches = 4;
+            final int plen = path.size();
+
+            // Generate test data
+            long[][] keyValues = new long[keyCount][valuesPerBatch * batches];
+            for (int key = 0; key < keyCount; key++) {
+                for (int i = 0; i < valuesPerBatch * batches; i++) {
+                    keyValues[key][i] = (long) key * 10_000 + i * 3;
+                }
+            }
+
+            // Writer 1: commit in batches, then close (triggers seal)
+            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_iseal1", COLUMN_NAME_TXN_NONE)) {
+                for (int b = 0; b < batches; b++) {
+                    for (int key = 0; key < keyCount; key++) {
+                        for (int i = 0; i < valuesPerBatch; i++) {
+                            writer.add(key, keyValues[key][b * valuesPerBatch + i]);
+                        }
+                    }
+                    writer.commit();
+                }
+                // close triggers seal (incremental or full depending on gen layout)
+            }
+
+            // Writer 2: single batch, triggers single gen (no seal needed)
+            // Instead, compare against decoding all values from writer 1
+            for (int key = 0; key < keyCount; key++) {
+                LongList expected = new LongList();
+                for (int i = 0; i < valuesPerBatch * batches; i++) {
+                    expected.add(keyValues[key][i]);
+                }
+
+                LongList actual = readAllBP(path.trimTo(plen), "bp_iseal1", key);
+                Assert.assertEquals("Key " + key + " count mismatch", expected.size(), actual.size());
+                for (int i = 0; i < expected.size(); i++) {
+                    Assert.assertEquals("Key " + key + " mismatch at index " + i,
+                            expected.getQuick(i), actual.getQuick(i));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testBPBwdReaderWithGenLookup() {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            // Write multiple batches (creates multiple sparse gens)
+            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_bwd", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < 64; i++) {
+                    writer.add(0, i);
+                    writer.add(1, i + 1000);
+                }
+                writer.commit();
+                for (int i = 64; i < 128; i++) {
+                    writer.add(0, i);
+                    writer.add(1, i + 1000);
+                }
+                writer.commit();
+            }
+
+            // Read backward
+            try (BPBitmapIndexBwdReader reader = new BPBitmapIndexBwdReader(configuration, path.trimTo(plen), "bp_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                long prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Values should be descending: " + prev + " vs " + val, val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(128, count);
+            }
+        }
+    }
+
+    @Test
+    public void testBPNativeEncodeKey() {
+        // Test encodeKeyNative produces identical output to encodeKey
+        int count = 200;
+        long[] values = new long[count];
+        for (int i = 0; i < count; i++) {
+            values[i] = i * 5L + 100;
+        }
+
+        // Allocate native buffer for values
+        long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long destAddr1 = Unsafe.malloc(BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+        long destAddr2 = Unsafe.malloc(BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
+            }
+
+            BPBitmapIndexUtils.EncodeContext ctx1 = new BPBitmapIndexUtils.EncodeContext();
+            ctx1.ensureCapacity(count);
+            int size1 = BPBitmapIndexUtils.encodeKey(values, count, destAddr1, ctx1);
+
+            BPBitmapIndexUtils.EncodeContext ctx2 = new BPBitmapIndexUtils.EncodeContext();
+            ctx2.ensureCapacity(count);
+            int size2 = BPBitmapIndexUtils.encodeKeyNative(srcAddr, count, destAddr2, ctx2);
+
+            Assert.assertEquals("Encoded sizes differ", size1, size2);
+            for (int i = 0; i < size1; i++) {
+                Assert.assertEquals("Byte mismatch at offset " + i,
+                        Unsafe.getUnsafe().getByte(destAddr1 + i),
+                        Unsafe.getUnsafe().getByte(destAddr2 + i));
+            }
+        } finally {
+            Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr1, BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr2, BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

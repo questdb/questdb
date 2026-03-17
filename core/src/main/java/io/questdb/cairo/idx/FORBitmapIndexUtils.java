@@ -205,6 +205,50 @@ public final class FORBitmapIndexUtils {
     }
 
     /**
+     * Batch-unpacks values from bit-packed data starting at an arbitrary index.
+     * More efficient than calling unpackValue N times because it reads bytes
+     * sequentially with a sliding buffer instead of recomputing offsets per value.
+     */
+    public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount, int bitWidth, long minValue, long[] dest) {
+        if (valueCount == 0) {
+            return;
+        }
+        long mask = (1L << bitWidth) - 1;
+        if (bitWidth == 64) {
+            mask = -1L;
+        }
+
+        // Seek to the byte containing the first value's bits
+        long bitPos = (long) startIndex * bitWidth;
+        int srcOffset = (int) (bitPos / 8);
+        int skipBits = (int) (bitPos % 8);
+
+        // Pre-fill buffer past the skip bits
+        long buffer = 0;
+        int bufferBits = 0;
+        while (bufferBits < skipBits + bitWidth) {
+            long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
+            buffer |= (b << bufferBits);
+            bufferBits += 8;
+            srcOffset++;
+        }
+        buffer >>>= skipBits;
+        bufferBits -= skipBits;
+
+        for (int i = 0; i < valueCount; i++) {
+            while (bufferBits < bitWidth) {
+                long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
+                buffer |= (b << bufferBits);
+                bufferBits += 8;
+                srcOffset++;
+            }
+            dest[i] = minValue + (buffer & mask);
+            buffer >>>= bitWidth;
+            bufferBits -= bitWidth;
+        }
+    }
+
+    /**
      * Unpacks a single value from bit-packed data using Unsafe.
      *
      * @param srcAddr  source memory address of packed data

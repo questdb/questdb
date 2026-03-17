@@ -759,11 +759,28 @@ public class DeltaBitmapIndexBenchmark {
                     System.out.printf("  %-40s %8.1f MB in %5.2f s%n",
                             "BP (" + ST_COMMITS + " gens, before seal)", bpSize / (1024.0 * 1024.0), elapsed / 1e9);
 
-                    // Read latency with all gens
+                    // Read latency before seal — reuse readers (production pattern)
                     System.out.println();
                     System.out.printf("Read latency before seal (%d random keys):%n", readKeys.length);
 
-                    measureReadLatency("Legacy", () -> {
+                    try (Path legacyPath = new Path().of(legacyDir);
+                         Path bpPath = new Path().of(bpDir)) {
+                        try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
+                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            // Warmup (builds BPGenLookup on first read)
+                            readBatch(legacyReader, readKeys);
+                            readBatch(bpReader, readKeys);
+
+                            measureReadLatency("Legacy", () -> readBatch(legacyReader, readKeys));
+                            measureReadLatency("BP (" + ST_COMMITS + " gens)", () -> readBatch(bpReader, readKeys));
+                        }
+                    }
+
+                    // Cold open (new reader per call — includes BPGenLookup build)
+                    System.out.println();
+                    System.out.printf("Read latency cold open (%d random keys):%n", readKeys.length);
+
+                    measureReadLatency("Legacy (cold)", () -> {
                         try (Path p = new Path().of(legacyDir)) {
                             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return readBatch(reader, readKeys);
@@ -771,7 +788,7 @@ public class DeltaBitmapIndexBenchmark {
                         }
                     });
 
-                    measureReadLatency("BP (" + ST_COMMITS + " gens)", () -> {
+                    measureReadLatency("BP (cold, " + ST_COMMITS + " gens)", () -> {
                         try (Path p = new Path().of(bpDir)) {
                             try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return readBatch(reader, readKeys);
@@ -779,11 +796,28 @@ public class DeltaBitmapIndexBenchmark {
                         }
                     });
 
-                    // Full scan before seal
+                    // Full scan before seal — reuse readers, hot cache
                     System.out.println();
-                    System.out.printf("Full scan before seal (%,d keys):%n", ST_KEY_COUNT);
+                    System.out.printf("Full scan before seal — hot cache (%,d keys):%n", ST_KEY_COUNT);
 
-                    measureReadLatency("Legacy scan", () -> {
+                    try (Path legacyPath = new Path().of(legacyDir);
+                         Path bpPath = new Path().of(bpDir)) {
+                        try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
+                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            // Warm cache
+                            scanAll(legacyReader, ST_KEY_COUNT);
+                            scanAll(bpReader, ST_KEY_COUNT);
+
+                            measureReadLatency("Legacy scan (hot)", () -> scanAll(legacyReader, ST_KEY_COUNT));
+                            measureReadLatency("BP (" + ST_COMMITS + " gens) scan (hot)", () -> scanAll(bpReader, ST_KEY_COUNT));
+                        }
+                    }
+
+                    // Full scan — cold cache (new reader, no warmup)
+                    System.out.println();
+                    System.out.printf("Full scan before seal — cold cache (%,d keys):%n", ST_KEY_COUNT);
+
+                    measureReadLatency("Legacy scan (cold)", () -> {
                         try (Path p = new Path().of(legacyDir)) {
                             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return scanAll(reader, ST_KEY_COUNT);
@@ -791,9 +825,22 @@ public class DeltaBitmapIndexBenchmark {
                         }
                     });
 
-                    measureReadLatency("BP (" + ST_COMMITS + " gens) scan", () -> {
+                    measureReadLatency("BP scan (cold, " + ST_COMMITS + " gens)", () -> {
                         try (Path p = new Path().of(bpDir)) {
                             try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                return scanAll(reader, ST_KEY_COUNT);
+                            }
+                        }
+                    });
+
+                    // Full scan — prefetched (new reader + prefetch, then scan)
+                    System.out.println();
+                    System.out.printf("Full scan before seal — prefetched (%,d keys):%n", ST_KEY_COUNT);
+
+                    measureReadLatency("BP scan (prefetched, " + ST_COMMITS + " gens)", () -> {
+                        try (Path p = new Path().of(bpDir)) {
+                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                reader.prefetchGenData();
                                 return scanAll(reader, ST_KEY_COUNT);
                             }
                         }
@@ -837,29 +884,21 @@ public class DeltaBitmapIndexBenchmark {
             System.out.printf("    Avg active keys/commit:       %d / %d (%.0f%%)%n",
                     ST_ACTIVE_KEYS_PER_COMMIT, ST_KEY_COUNT, ST_KEY_ACTIVITY_RATIO * 100);
 
-            // Read latency after seal
+            // Read latency after seal — reuse readers
             System.out.println();
             System.out.printf("Read latency after seal (%d random keys):%n", readKeys.length);
 
-            measureReadLatency("BP (sealed, 1 gen)", () -> {
-                try (Path p = new Path().of(bpDir)) {
-                    try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
-                        return readBatch(reader, readKeys);
-                    }
-                }
-            });
+            try (Path bpPath = new Path().of(bpDir)) {
+                try (BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    readBatch(bpReader, readKeys);
+                    measureReadLatency("BP (sealed, 1 gen)", () -> readBatch(bpReader, readKeys));
 
-            // Full scan after seal
-            System.out.println();
-            System.out.printf("Full scan after seal (%,d keys):%n", ST_KEY_COUNT);
-
-            measureReadLatency("BP (sealed) scan", () -> {
-                try (Path p = new Path().of(bpDir)) {
-                    try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
-                        return scanAll(reader, ST_KEY_COUNT);
-                    }
+                    System.out.println();
+                    System.out.printf("Full scan after seal (%,d keys):%n", ST_KEY_COUNT);
+                    scanAll(bpReader, ST_KEY_COUNT);
+                    measureReadLatency("BP (sealed) scan", () -> scanAll(bpReader, ST_KEY_COUNT));
                 }
-            });
+            }
         } finally {
             deleteDir(legacyDir);
             deleteDir(bpDir);
