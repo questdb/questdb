@@ -428,14 +428,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .$(", seq=").$(seq)
                     .$(", error=").$(e).I$();
 
-            // Determine error type
-            if (e.getMessage() != null && e.getMessage().contains("permission denied")) {
-                responseStatus = STATUS_SECURITY_ERROR;
-            } else if (e.getMessage() != null && e.getMessage().contains("parse")) {
-                responseStatus = STATUS_PARSE_ERROR;
-            } else {
-                responseStatus = STATUS_INTERNAL_ERROR;
-            }
+            responseStatus = STATUS_INTERNAL_ERROR;
             errorMessage = e.getMessage();
         } finally {
             // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
