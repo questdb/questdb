@@ -83,7 +83,7 @@ public class SortKeyEncoder implements QuietCloseable {
             int encoded = sortColumnFilter.getQuick(i);
             isDesc[i] = encoded < 0;
             columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
-            columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
+            columnTypes[i] = metadata.getColumnType(columnIndices[i]);
             isSymbol[i] = ColumnType.isSymbol(columnTypes[i]);
             hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
             hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
@@ -239,10 +239,10 @@ public class SortKeyEncoder implements QuietCloseable {
     private static int columnByteWidth(int columnType, RecordMetadata metadata, int columnIndex) {
         return switch (columnType) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16 -> 2;
-            case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32 -> 4;
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.CHAR, ColumnType.DECIMAL16, ColumnType.UINT16 -> 2;
+            case ColumnType.INT, ColumnType.GEOINT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.DECIMAL32, ColumnType.UINT32 -> 4;
             case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE, ColumnType.GEOLONG,
-                 ColumnType.DECIMAL64 -> 8;
+                 ColumnType.DECIMAL64, ColumnType.UINT64 -> 8;
             case ColumnType.DECIMAL128 -> 16;
             case ColumnType.DECIMAL256 -> 32;
             case ColumnType.SYMBOL -> {
@@ -307,6 +307,10 @@ public class SortKeyEncoder implements QuietCloseable {
 
     private static void encodeUnsignedLong(long addr, long value, boolean desc) {
         Unsafe.getUnsafe().putLong(addr, Long.reverseBytes(desc ? ~value : value));
+    }
+
+    private static void encodeUnsignedShort(long addr, short value, boolean desc) {
+        Unsafe.getUnsafe().putShort(addr, Short.reverseBytes((short) (desc ? ~value : value)));
     }
 
     private static void encodeUnsignedRank(long addr, int rank, int byteWidth, boolean desc) {
@@ -400,6 +404,7 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.SHORT -> (record.getShort(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
             case ColumnType.GEOSHORT -> (record.getGeoShort(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
             case ColumnType.DECIMAL16 -> (record.getDecimal16(colIdx) ^ (desc ? 0x7FFF : 0x8000)) & 0xFFFFL;
+            case ColumnType.UINT16 -> (desc ? ~record.getShort(colIdx) : record.getShort(colIdx)) & 0xFFFFL;
             case ColumnType.CHAR -> (desc ? ~record.getChar(colIdx) : record.getChar(colIdx)) & 0xFFFFL;
             case ColumnType.INT -> Integer.toUnsignedLong(record.getInt(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.GEOINT ->
@@ -407,6 +412,7 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DECIMAL32 ->
                     Integer.toUnsignedLong(record.getDecimal32(colIdx) ^ (desc ? 0x7FFFFFFF : 0x80000000));
             case ColumnType.IPv4 -> Integer.toUnsignedLong(desc ? ~record.getIPv4(colIdx) : record.getIPv4(colIdx));
+            case ColumnType.UINT32 -> Integer.toUnsignedLong(desc ? ~record.getInt(colIdx) : record.getInt(colIdx));
             case ColumnType.FLOAT -> {
                 int bits = Float.floatToRawIntBits(record.getFloat(colIdx));
                 if (desc) {
@@ -417,6 +423,7 @@ public class SortKeyEncoder implements QuietCloseable {
                 yield Integer.toUnsignedLong(bits);
             }
             case ColumnType.LONG -> record.getLong(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
+            case ColumnType.UINT64 -> desc ? ~record.getLong(colIdx) : record.getLong(colIdx);
             case ColumnType.GEOLONG -> record.getGeoLong(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.TIMESTAMP -> record.getTimestamp(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.DATE -> record.getDate(colIdx) ^ (desc ? Long.MAX_VALUE : Long.MIN_VALUE);
@@ -454,12 +461,15 @@ public class SortKeyEncoder implements QuietCloseable {
                     case ColumnType.SHORT -> encodeShort(addr, record.getShort(colIdx), desc);
                     case ColumnType.GEOSHORT -> encodeShort(addr, record.getGeoShort(colIdx), desc);
                     case ColumnType.DECIMAL16 -> encodeShort(addr, record.getDecimal16(colIdx), desc);
+                    case ColumnType.UINT16 -> encodeUnsignedShort(addr, record.getShort(colIdx), desc);
                     case ColumnType.CHAR -> encodeChar(addr, record.getChar(colIdx), desc);
                     case ColumnType.INT -> encodeInt(addr, record.getInt(colIdx), desc);
                     case ColumnType.GEOINT -> encodeInt(addr, record.getGeoInt(colIdx), desc);
                     case ColumnType.DECIMAL32 -> encodeInt(addr, record.getDecimal32(colIdx), desc);
                     case ColumnType.IPv4 -> encodeUnsignedInt(addr, record.getIPv4(colIdx), desc);
+                    case ColumnType.UINT32 -> encodeUnsignedInt(addr, record.getInt(colIdx), desc);
                     case ColumnType.LONG -> encodeLong(addr, record.getLong(colIdx), desc);
+                    case ColumnType.UINT64 -> encodeUnsignedLong(addr, record.getLong(colIdx), desc);
                     case ColumnType.GEOLONG -> encodeLong(addr, record.getGeoLong(colIdx), desc);
                     case ColumnType.DECIMAL64 -> encodeLong(addr, record.getDecimal64(colIdx), desc);
                     case ColumnType.DATE -> encodeLong(addr, record.getDate(colIdx), desc);

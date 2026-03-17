@@ -32,9 +32,19 @@ void bitmap_copy_offset(
 ) {
     if (bitCount <= 0) return;
 
-    // Both offsets are byte-aligned: memcpy
+    // Both offsets are byte-aligned: memcpy full bytes, merge last partial byte
     if ((srcBitOff & 7) == 0 && (dstBitOff & 7) == 0) {
-        memcpy(dst + (dstBitOff >> 3), src + (srcBitOff >> 3), (bitCount + 7) >> 3);
+        int64_t fullBytes = bitCount >> 3;
+        if (fullBytes > 0) {
+            memcpy(dst + (dstBitOff >> 3), src + (srcBitOff >> 3), fullBytes);
+        }
+        int trailingBits = (int) (bitCount & 7);
+        if (trailingBits > 0) {
+            uint8_t mask = (uint8_t) ((1 << trailingBits) - 1);
+            uint8_t *dstByte = dst + (dstBitOff >> 3) + fullBytes;
+            uint8_t srcByte = src[(srcBitOff >> 3) + fullBytes];
+            *dstByte = (*dstByte & ~mask) | (srcByte & mask);
+        }
         return;
     }
 

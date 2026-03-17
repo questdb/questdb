@@ -131,9 +131,10 @@ public class RecordComparatorCompiler {
         int recordClassIndex = asm.poolClass(Record.class);
         // this is name re-use, it used on all static interfaces that compare values
         int compareNameIndex = asm.poolUtf8("compare");
+        int compareUnsignedNameIndex = asm.poolUtf8("compareUnsigned");
         // our compare method signature
         int compareDescIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;)I");
-        poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, metadata, keyColumnIndices);
+        poolFieldArtifacts(compareNameIndex, compareUnsignedNameIndex, thisClassIndex, recordClassIndex, metadata, keyColumnIndices);
         // elements for setLeft() method
         int setLeftNameIndex = asm.poolUtf8("setLeft");
         int setLeftDescIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;)V");
@@ -586,6 +587,7 @@ public class RecordComparatorCompiler {
 
     private void poolFieldArtifacts(
             int compareMethodIndex,
+            int compareUnsignedMethodIndex,
             int thisClassIndex,
             int recordClassIndex,
             RecordMetadata metadata,
@@ -829,10 +831,11 @@ public class RecordComparatorCompiler {
             final int columnSize = fieldCount * (Chars.equals(fieldType, 'J') ? 2 : 1);
             maxColumnSize = Math.max(maxColumnSize, columnSize);
 
+            int methodNameIndex = ColumnType.isUnsigned(columnType) ? compareUnsignedMethodIndex : compareMethodIndex;
             comparatorAccessorIndices.add(
                     asm.poolMethod(asm.poolClass(comparatorClass),
                             asm.poolNameAndType(
-                                    compareMethodIndex,
+                                    methodNameIndex,
                                     comparatorDesc == null
                                             ? asm.poolUtf8().putAscii('(').put(fieldType).put(fieldType).putAscii(")I").$()
                                             : asm.poolUtf8(comparatorDesc))

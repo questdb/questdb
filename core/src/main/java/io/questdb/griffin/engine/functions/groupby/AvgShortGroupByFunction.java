@@ -170,7 +170,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

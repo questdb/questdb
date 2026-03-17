@@ -151,7 +151,7 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

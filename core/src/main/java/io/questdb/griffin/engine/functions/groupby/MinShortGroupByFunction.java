@@ -143,7 +143,7 @@ public class MinShortGroupByFunction extends IntFunction implements GroupByFunct
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

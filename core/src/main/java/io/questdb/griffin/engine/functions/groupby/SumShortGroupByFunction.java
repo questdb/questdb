@@ -154,7 +154,7 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override
