@@ -67,9 +67,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_FULL_OUTER = 10;
     public static final int JOIN_HORIZON = 13;
     public static final int JOIN_INNER = 1;
+    public static final int JOIN_LATERAL_CROSS = 16;
+    public static final int JOIN_LATERAL_INNER = 14;
+    public static final int JOIN_LATERAL_LEFT = 15;
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_HORIZON;
+    public static final int JOIN_MAX = JOIN_LATERAL_CROSS;
     public static final int JOIN_NONE = 0;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
@@ -84,12 +87,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_CURSOR = 6;
     public static final int SELECT_MODEL_DISTINCT = 5;
     public static final int SELECT_MODEL_GROUP_BY = 4;
+    public static final int SELECT_MODEL_HORIZON_JOIN = 9;
     public static final int SELECT_MODEL_NONE = 0;
     public static final int SELECT_MODEL_SHOW = 7;
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SELECT_MODEL_WINDOW = 3;
     public static final int SELECT_MODEL_WINDOW_JOIN = 8;
-    public static final int SELECT_MODEL_HORIZON_JOIN = 9;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -129,8 +132,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<QueryModel> joinModels = new ObjList<>();
+    private final ObjList<CharSequence> lateralCountColumns = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
@@ -161,7 +166,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
-    private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
@@ -231,6 +235,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
+    private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
     private CharSequence timestampOffsetAlias;  // The alias name for the transformed timestamp (e.g., "ts")
     // Timestamp offset information for virtual models where timestamp is computed via dateadd.
     // Used to enable timestamp predicate pushdown with appropriate offset adjustment.
@@ -240,7 +245,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private char timestampOffsetUnit;           // 'h', 'd', 'm', 's', etc. (0 means no offset)
     private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
     private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
-    private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
     private QueryModel unionModel;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
@@ -274,16 +278,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // Window join must be the last join in the query; no other join types can follow it.
-    // This constraint is enforced at the SQL parser stage.
-    public static boolean isWindowJoin(QueryModel model) {
-        if (model == null) {
-            return false;
-        }
-        ObjList<QueryModel> ms = model.getJoinModels();
-        return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_WINDOW;
-    }
-
     // Horizon join must be the only join in the query level; no other join types can be combined with it.
     // This constraint is enforced at the SQL parser stage.
     public static boolean isHorizonJoin(QueryModel model) {
@@ -292,6 +286,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         ObjList<QueryModel> ms = model.getJoinModels();
         return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_HORIZON;
+    }
+
+    public static boolean isLateralJoin(int joinType) {
+        return joinType == QueryModel.JOIN_LATERAL_INNER
+                || joinType == QueryModel.JOIN_LATERAL_LEFT
+                || joinType == QueryModel.JOIN_LATERAL_CROSS;
+    }
+
+    // Window join must be the last join in the query; no other join types can follow it.
+    // This constraint is enforced at the SQL parser stage.
+    public static boolean isWindowJoin(QueryModel model) {
+        if (model == null) {
+            return false;
+        }
+        ObjList<QueryModel> ms = model.getJoinModels();
+        return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_WINDOW;
     }
 
     /**
@@ -531,6 +541,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         isUpdateModel = false;
         isCteModel = false;
         modelType = ExecutionModel.QUERY;
+        lateralCountColumns.clear();
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
         updateTableColumnNames.clear();
@@ -784,6 +795,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return hintsMap;
     }
 
+    public HorizonJoinContext getHorizonJoinContext() {
+        return horizonJoinContext;
+    }
+
     public ObjList<ExpressionNode> getJoinColumns() {
         return joinColumns;
     }
@@ -806,6 +821,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getJoinType() {
         return joinType;
+    }
+
+    public ObjList<CharSequence> getLateralCountColumns() {
+        return lateralCountColumns;
     }
 
     public ObjList<ExpressionNode> getLatestBy() {
@@ -1020,6 +1039,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestamp;
     }
 
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
+    }
+
     public CharSequence getTimestampOffsetAlias() {
         return timestampOffsetAlias;
     }
@@ -1034,14 +1057,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public CharSequence getTimestampSourceColumn() {
         return timestampSourceColumn;
-    }
-
-    public boolean hasTimestampOffset() {
-        return timestampOffsetUnit != 0;
-    }
-
-    public int getTimestampColumnIndex() {
-        return timestampColumnIndex;
     }
 
     public ObjList<QueryColumn> getTopDownColumns() {
@@ -1080,10 +1095,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return wildcardColumnNames;
     }
 
-    public HorizonJoinContext getHorizonJoinContext() {
-        return horizonJoinContext;
-    }
-
     public WindowJoinContext getWindowJoinContext() {
         return windowJoinContext;
     }
@@ -1094,6 +1105,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean hasExplicitTimestamp() {
         return timestamp != null && explicitTimestamp;
+    }
+
+    public boolean hasTimestampOffset() {
+        return timestampOffsetUnit != 0;
     }
 
     public void incrementColumnRefCount(CharSequence alias, int refCount) {
@@ -1576,6 +1591,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.timestamp = timestamp;
     }
 
+    public void setTimestampColumnIndex(int index) {
+        this.timestampColumnIndex = index;
+    }
+
     public void setTimestampOffsetAlias(CharSequence alias) {
         this.timestampOffsetAlias = alias;
     }
@@ -1590,10 +1609,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setTimestampSourceColumn(CharSequence col) {
         this.timestampSourceColumn = col;
-    }
-
-    public void setTimestampColumnIndex(int index) {
-        this.timestampColumnIndex = index;
     }
 
     public void setUnionModel(QueryModel unionModel) {

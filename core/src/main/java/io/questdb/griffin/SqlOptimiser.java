@@ -170,6 +170,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    private final LateralJoinRewriter lateralJoinRewriter;
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
@@ -229,6 +230,7 @@ public class SqlOptimiser implements Mutable {
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
@@ -245,6 +247,16 @@ public class SqlOptimiser implements Mutable {
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
+        this.lateralJoinRewriter = new LateralJoinRewriter(
+                characterStore,
+                expressionNodePool,
+                queryColumnPool,
+                queryModelPool,
+                contextPool,
+                windowExpressionPool,
+                sqlNodeStack,
+                functionParser
+        );
         initialiseOperatorExpressions();
     }
 
@@ -967,6 +979,53 @@ public class SqlOptimiser implements Mutable {
         windowModel.addBottomUpColumn(innerColumn);
         outerVirtualModel.addBottomUpColumn(innerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
+    }
+
+    private void applyLateralCountCoalesce(QueryModel model) {
+        ObjList<CharSequence> countCols = model.getLateralCountColumns();
+        if (countCols.size() > 0) {
+            ObjList<QueryColumn> cols = model.getBottomUpColumns();
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                QueryColumn pc = cols.getQuick(i);
+                ExpressionNode ast = pc.getAst();
+                if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                    continue;
+                }
+                CharSequence colRef = ast.token;
+                int dotPos = Chars.indexOf(colRef, '.');
+                CharSequence colName = dotPos > 0
+                        ? colRef.subSequence(dotPos + 1, colRef.length())
+                        : colRef;
+                for (int j = 0, m = countCols.size(); j < m; j++) {
+                    if (Chars.equalsIgnoreCase(colName, countCols.getQuick(j))) {
+                        ExpressionNode coalesce = expressionNodePool.next().of(
+                                ExpressionNode.FUNCTION, "coalesce", 0, ast.position
+                        );
+                        coalesce.paramCount = 2;
+                        coalesce.args.clear();
+                        coalesce.args.add(expressionNodePool.next().of(
+                                ExpressionNode.CONSTANT, "0", 0, ast.position
+                        ));
+                        coalesce.args.add(ast);
+                        pc.of(pc.getAlias(), coalesce);
+                        break;
+                    }
+                }
+            }
+            countCols.clear();
+        }
+        if (model.getNestedModel() != null) {
+            applyLateralCountCoalesce(model.getNestedModel());
+        }
+        if (model.getUnionModel() != null) {
+            applyLateralCountCoalesce(model.getUnionModel());
+        }
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            QueryModel jm = model.getJoinModels().getQuick(i);
+            if (jm.getNestedModel() != null) {
+                applyLateralCountCoalesce(jm.getNestedModel());
+            }
+        }
     }
 
     private void addJoinContext(QueryModel parent, JoinContext context) {
@@ -4414,6 +4473,39 @@ public class SqlOptimiser implements Mutable {
                 : Chars.equalsIgnoreCase(name, target);
     }
 
+    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
+        ExpressionNode constWhere = model.getConstWhereClause();
+        if (constWhere == null) {
+            return;
+        }
+        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
+        ExpressionNode compileTimeTerms = null;
+        ExpressionNode runtimeTerms = null;
+        // Flatten the AND-tree and classify each conjunct.
+        tempExprs.clear();
+        extractAndTerms(constWhere, tempExprs);
+        for (int i = 0, n = tempExprs.size(); i < n; i++) {
+            ExpressionNode term = tempExprs.getQuick(i);
+            if (isCompileTimeConstant(term)) {
+                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
+            } else {
+                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
+            }
+        }
+        model.setConstWhereClause(compileTimeTerms);
+        if (runtimeTerms != null) {
+            IntList ordered = model.getOrderedJoinModels();
+            int lastIndex = ordered.getQuick(ordered.size() - 1);
+            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
+            lastModel.setPostJoinWhereClause(concatFilters(
+                    legacy,
+                    expressionNodePool,
+                    lastModel.getPostJoinWhereClause(),
+                    runtimeTerms
+            ));
+        }
+    }
+
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
         assert a.slaveIndex == b.slaveIndex;
 
@@ -4545,39 +4637,6 @@ public class SqlOptimiser implements Mutable {
             child.setRowsHiExprTimeUnit(base.getRowsHiExprTimeUnit());
             child.setRowsHiKind(base.getRowsHiKind(), base.getRowsHiKindPos());
             child.setExclusionKind(base.getExclusionKind(), base.getExclusionKindPos());
-        }
-    }
-
-    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
-        ExpressionNode constWhere = model.getConstWhereClause();
-        if (constWhere == null) {
-            return;
-        }
-        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
-        ExpressionNode compileTimeTerms = null;
-        ExpressionNode runtimeTerms = null;
-        // Flatten the AND-tree and classify each conjunct.
-        tempExprs.clear();
-        extractAndTerms(constWhere, tempExprs);
-        for (int i = 0, n = tempExprs.size(); i < n; i++) {
-            ExpressionNode term = tempExprs.getQuick(i);
-            if (isCompileTimeConstant(term)) {
-                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
-            } else {
-                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
-            }
-        }
-        model.setConstWhereClause(compileTimeTerms);
-        if (runtimeTerms != null) {
-            IntList ordered = model.getOrderedJoinModels();
-            int lastIndex = ordered.getQuick(ordered.size() - 1);
-            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
-            lastModel.setPostJoinWhereClause(concatFilters(
-                    legacy,
-                    expressionNodePool,
-                    lastModel.getPostJoinWhereClause(),
-                    runtimeTerms
-            ));
         }
     }
 
@@ -10753,7 +10812,6 @@ public class SqlOptimiser implements Mutable {
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
-            rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
@@ -10762,7 +10820,10 @@ public class SqlOptimiser implements Mutable {
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
+            lateralJoinRewriter.rewrite(rewrittenModel);
+            rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            applyLateralCountCoalesce(rewrittenModel);
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
@@ -11114,6 +11175,9 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(JOIN_LT);
         joinBarriers.add(JOIN_WINDOW);
         joinBarriers.add(JOIN_HORIZON);
+        joinBarriers.add(JOIN_LATERAL_INNER);
+        joinBarriers.add(JOIN_LATERAL_LEFT);
+        joinBarriers.add(JOIN_LATERAL_CROSS);
 
         joinFilterBarriers = new IntHashSet();
         joinFilterBarriers.add(JOIN_WINDOW);
