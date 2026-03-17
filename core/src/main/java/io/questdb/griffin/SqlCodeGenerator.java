@@ -147,8 +147,8 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
@@ -6026,53 +6026,53 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 sampleToFuncPos = 0;
             }
 
-        // For sub-day strides with a timezone, the old SAMPLE BY cursor receives
-        // FROM/TO as local time but uses them as UTC for bucket anchoring. Convert
-        // FROM/TO to UTC so the cursor anchors correctly.
-        if (timezoneName != null) {
-            ExpressionNode unitNode = model.getSampleByUnit();
-            ExpressionNode strideNode = model.getSampleBy();
-            char unitChar = unitNode != null
-                    ? unitNode.token.charAt(0)
-                    : strideNode.token.charAt(strideNode.token.length() - 1);
-            if (CommonUtils.isSubDayUnit(unitChar)) {
-                CharSequence tz = timezoneNameFunc.getStrA(null);
-                if (tz != null) {
-                    try {
-                        TimeZoneRules tzRules = timestampDriver.getTimezoneRules(
-                                DateLocaleFactory.EN_LOCALE,
-                                tz
-                        );
-                        if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
-                            int fromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
-                            long fromTs = timestampDriver.from(sampleFromFunc.getTimestamp(null), fromFuncType);
-                            if (fromTs != Numbers.LONG_NULL) {
-                                sampleFromFunc = TimestampConstant.newInstance(
-                                        timestampDriver.toUTC(fromTs, tzRules),
-                                        timestampType
-                                );
+            // For sub-day strides with a timezone, the old SAMPLE BY cursor receives
+            // FROM/TO as local time but uses them as UTC for bucket anchoring. Convert
+            // FROM/TO to UTC so the cursor anchors correctly.
+            if (timezoneName != null) {
+                ExpressionNode unitNode = model.getSampleByUnit();
+                ExpressionNode strideNode = model.getSampleBy();
+                char unitChar = unitNode != null
+                        ? unitNode.token.charAt(0)
+                        : strideNode.token.charAt(strideNode.token.length() - 1);
+                if (CommonUtils.isSubDayUnit(unitChar)) {
+                    CharSequence tz = timezoneNameFunc.getStrA(null);
+                    if (tz != null) {
+                        try {
+                            TimeZoneRules tzRules = timestampDriver.getTimezoneRules(
+                                    DateLocaleFactory.EN_LOCALE,
+                                    tz
+                            );
+                            if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                                int fromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
+                                long fromTs = timestampDriver.from(sampleFromFunc.getTimestamp(null), fromFuncType);
+                                if (fromTs != Numbers.LONG_NULL) {
+                                    sampleFromFunc = TimestampConstant.newInstance(
+                                            timestampDriver.toUTC(fromTs, tzRules),
+                                            timestampType
+                                    );
+                                }
                             }
-                        }
-                        if (sampleToFunc != timestampDriver.getTimestampConstantNull()) {
-                            int toFuncType = ColumnType.getTimestampType(sampleToFunc.getType());
-                            long toTs = timestampDriver.from(sampleToFunc.getTimestamp(null), toFuncType);
-                            if (toTs != Numbers.LONG_NULL) {
-                                sampleToFunc = TimestampConstant.newInstance(
-                                        timestampDriver.toUTC(toTs, tzRules),
-                                        timestampType
-                                );
+                            if (sampleToFunc != timestampDriver.getTimestampConstantNull()) {
+                                int toFuncType = ColumnType.getTimestampType(sampleToFunc.getType());
+                                long toTs = timestampDriver.from(sampleToFunc.getTimestamp(null), toFuncType);
+                                if (toTs != Numbers.LONG_NULL) {
+                                    sampleToFunc = TimestampConstant.newInstance(
+                                            timestampDriver.toUTC(toTs, tzRules),
+                                            timestampType
+                                    );
+                                }
                             }
+                        } catch (NumericException e) {
+                            throw SqlException.$(timezoneName.position, "invalid timezone: ").put(tz);
                         }
-                    } catch (NumericException e) {
-                        throw SqlException.$(timezoneName.position, "invalid timezone: ").put(tz);
                     }
                 }
             }
-        }
 
-        final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
-        final TimestampSampler timestampSampler;
-        int fillCount = sampleByFill.size();
+            final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
+            final TimestampSampler timestampSampler;
+            int fillCount = sampleByFill.size();
 
             // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
             // but TopDownColumns may have different order and count with BottomUpColumns.

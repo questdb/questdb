@@ -32,22 +32,6 @@ import org.junit.Test;
 public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testBindVariableOffset() throws Exception {
-        // Test with offset as bind variable (runtime const)
-        assertMemoryLeak(() -> {
-            bindVariableService.clear();
-            bindVariableService.setStr("offset", "00:15");
-            assertQueryNoLeakCheck(
-                    """
-                            timestamp_floor_utc
-                            2024-06-15T10:15:00.000000Z
-                            """,
-                    "SELECT timestamp_floor_utc('30m', '2024-06-15T10:20:00.000000Z'::timestamp, null, :offset, 'Europe/Berlin')"
-            );
-        });
-    }
-
-    @Test
     public void testBindVariableBothOffsetAndTimezone() throws Exception {
         // Exercises AllRuntimeConstDstGapAwareFunc: both offset and timezone are bind variables.
         // Berlin fall-back, UTC 01:30 = local 02:30 CET (+1), floor 1h with 00:00 offset -> 02:00,
@@ -89,6 +73,22 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "count_distinct(timestamp_floor('30m', k, null, :offset, :tz)) has_more_buckets " +
                             "FROM ts",
                     null, false, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBindVariableOffset() throws Exception {
+        // Test with offset as bind variable (runtime const)
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setStr("offset", "00:15");
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp_floor_utc
+                            2024-06-15T10:15:00.000000Z
+                            """,
+                    "SELECT timestamp_floor_utc('30m', '2024-06-15T10:20:00.000000Z'::timestamp, null, :offset, 'Europe/Berlin')"
             );
         });
     }
@@ -148,6 +148,62 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                         2024-01-16T00:15:00.000000Z
                         """,
                 "1h", "2024-01-16T01:05:00.000000Z", null, "00:00", "Pacific/Chatham"
+        ));
+    }
+
+    @Test
+    public void testDayStrideLargePositiveOffset() throws Exception {
+        // Pacific/Kiritimati (Line Islands) is UTC+14, the most extreme positive offset.
+        // With a 1d stride, the day boundary in local time is 14 hours ahead of UTC.
+        // UTC 2024-01-15T15:00 = local Jan 16 05:00 (+14), floor 1d -> local Jan 16 00:00,
+        // UTC = Jan 16 00:00 - 14h = Jan 15 10:00
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2024-01-15T10:00:00.000000Z
+                        """,
+                "1d", "2024-01-15T15:00:00.000000Z", null, "00:00", "Pacific/Kiritimati"
+        ));
+
+        // UTC 2024-01-15T09:00 = local Jan 15 23:00 (+14), floor 1d -> local Jan 15 00:00,
+        // UTC = Jan 15 00:00 - 14h = Jan 14 10:00
+        // This is a different day bucket than above despite both being on Jan 15 UTC
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2024-01-14T10:00:00.000000Z
+                        """,
+                "1d", "2024-01-15T09:00:00.000000Z", null, "00:00", "Pacific/Kiritimati"
+        ));
+    }
+
+    @Test
+    public void testDayStrideWithDstTimezone() throws Exception {
+        // 1d stride with Auckland DST. Day boundaries shift by 1 hour across DST.
+        // Auckland spring-forward: Sep 26 2021, clocks go from 02:00 NZST to 03:00 NZDT.
+        // NZST = +12, NZDT = +13.
+        // Auckland spring-forward: Sep 26 2021, clocks go from 02:00 NZST to 03:00 NZDT
+        // at local 02:00 = UTC Sep 25 14:00. After that, offset is +13 (NZDT).
+        //
+        // UTC Sep 25 15:00 is AFTER spring-forward. Local = 15:00 + 13 = Sep 26 04:00 NZDT.
+        // Floor 1d -> Sep 26 00:00. At midnight Sep 26, still NZST (+12).
+        // UTC = Sep 26 00:00 - 12 = Sep 25 12:00.
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2021-09-25T12:00:00.000000Z
+                        """,
+                "1d", "2021-09-25T15:00:00.000000Z", null, "00:00", "Pacific/Auckland"
+        ));
+
+        // Well after transition: UTC Sep 26 15:00 = local Sep 27 04:00 NZDT (+13),
+        // floor 1d -> Sep 27 00:00, UTC = Sep 27 00:00 - 13 = Sep 26 11:00
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2021-09-26T11:00:00.000000Z
+                        """,
+                "1d", "2021-09-26T15:00:00.000000Z", null, "00:00", "Pacific/Auckland"
         ));
     }
 
@@ -346,6 +402,91 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testDstGapCorrectionBoundary15mStride() throws Exception {
+        // 15m stride divides evenly into the 15m minimum DST gap, so
+        // canSkipDstGapCorrection returns true -> AllConstTzFunc is used (no gap correction).
+        // This MUST be monotonic since the skip is only allowed when alignment guarantees it.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts AS (" +
+                            "SELECT timestamp_sequence('2021-03-27T23:00:00.000000Z', 1_000_000 * 60 * 3) k " +
+                            "FROM long_sequence(120)" +
+                            ") TIMESTAMP(k)"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            violations
+                            0
+                            """,
+                    "SELECT count(*) violations FROM (" +
+                            "SELECT timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin') curr, " +
+                            "lag(timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
+                            "FROM ts" +
+                            ") WHERE prev IS NOT NULL AND curr < prev",
+                    null, false, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testDstGapCorrectionBoundary7mStride() throws Exception {
+        // 7m stride does NOT divide evenly into the 15m minimum DST gap, so
+        // canSkipDstGapCorrection returns false -> AllConstDstGapAwareFunc is used.
+        // Berlin spring-forward: Mar 28 2021, 02:00 -> 03:00.
+        //
+        // NOTE: strides that don't align with the gap may have a monotonicity violation
+        // at the exact DST boundary (documented in floorWithDstGapCorrectionUtc).
+        // This test verifies the gap-aware path produces idempotent results:
+        // flooring the same input twice yields the same output (consistency).
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts AS (" +
+                            "SELECT timestamp_sequence('2021-03-27T23:00:00.000000Z', 1_000_000 * 60 * 3) k " +
+                            "FROM long_sequence(120)" +
+                            ") TIMESTAMP(k)"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            mismatches
+                            0
+                            """,
+                    "SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin')",
+                    null, false, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testDstGapCorrectionBoundarySecondsStride() throws Exception {
+        // 90s stride tests the seconds unit path in canSkipDstGapCorrection.
+        // 900s (15m) % 90 == 0, so this CAN skip gap correction -> AllConstTzFunc.
+        // 45s stride: 900 % 45 == 0, also skips.
+        // But we verify correctness regardless of which path is chosen.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts AS (" +
+                            "SELECT timestamp_sequence('2021-03-27T23:50:00.000000Z', 1_000_000 * 30) k " +
+                            "FROM long_sequence(200)" +
+                            ") TIMESTAMP(k)"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            violations
+                            0
+                            """,
+                    "SELECT count(*) violations FROM (" +
+                            "SELECT timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin') curr, " +
+                            "lag(timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
+                            "FROM ts" +
+                            ") WHERE prev IS NOT NULL AND curr < prev",
+                    null, false, true, false
+            );
+        });
+    }
+
+    @Test
     public void testDstSpringForwardBerlin1h() throws Exception {
         // 1h stride across Berlin spring-forward (Mar 28 2021, 02:00 -> 03:00)
         // UTC 00:30 = local 01:30 CET (+1), floor -> 01:00, UTC = 01:00 - 1 = 00:00
@@ -418,76 +559,15 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void testDayStrideLargePositiveOffset() throws Exception {
-        // Pacific/Kiritimati (Line Islands) is UTC+14, the most extreme positive offset.
-        // With a 1d stride, the day boundary in local time is 14 hours ahead of UTC.
-        // UTC 2024-01-15T15:00 = local Jan 16 05:00 (+14), floor 1d -> local Jan 16 00:00,
-        // UTC = Jan 16 00:00 - 14h = Jan 15 10:00
-        assertMemoryLeak(() -> assertTimestampFloorUtc(
-                """
-                        timestamp_floor_utc
-                        2024-01-15T10:00:00.000000Z
-                        """,
-                "1d", "2024-01-15T15:00:00.000000Z", null, "00:00", "Pacific/Kiritimati"
-        ));
-
-        // UTC 2024-01-15T09:00 = local Jan 15 23:00 (+14), floor 1d -> local Jan 15 00:00,
-        // UTC = Jan 15 00:00 - 14h = Jan 14 10:00
-        // This is a different day bucket than above despite both being on Jan 15 UTC
-        assertMemoryLeak(() -> assertTimestampFloorUtc(
-                """
-                        timestamp_floor_utc
-                        2024-01-14T10:00:00.000000Z
-                        """,
-                "1d", "2024-01-15T09:00:00.000000Z", null, "00:00", "Pacific/Kiritimati"
-        ));
-    }
-
-    @Test
-    public void testDayStrideWithDstTimezone() throws Exception {
-        // 1d stride with Auckland DST. Day boundaries shift by 1 hour across DST.
-        // Auckland spring-forward: Sep 26 2021, clocks go from 02:00 NZST to 03:00 NZDT.
-        // NZST = +12, NZDT = +13.
-        // Auckland spring-forward: Sep 26 2021, clocks go from 02:00 NZST to 03:00 NZDT
-        // at local 02:00 = UTC Sep 25 14:00. After that, offset is +13 (NZDT).
-        //
-        // UTC Sep 25 15:00 is AFTER spring-forward. Local = 15:00 + 13 = Sep 26 04:00 NZDT.
-        // Floor 1d -> Sep 26 00:00. At midnight Sep 26, still NZST (+12).
-        // UTC = Sep 26 00:00 - 12 = Sep 25 12:00.
-        assertMemoryLeak(() -> assertTimestampFloorUtc(
-                """
-                        timestamp_floor_utc
-                        2021-09-25T12:00:00.000000Z
-                        """,
-                "1d", "2021-09-25T15:00:00.000000Z", null, "00:00", "Pacific/Auckland"
-        ));
-
-        // Well after transition: UTC Sep 26 15:00 = local Sep 27 04:00 NZDT (+13),
-        // floor 1d -> Sep 27 00:00, UTC = Sep 27 00:00 - 13 = Sep 26 11:00
-        assertMemoryLeak(() -> assertTimestampFloorUtc(
-                """
-                        timestamp_floor_utc
-                        2021-09-26T11:00:00.000000Z
-                        """,
-                "1d", "2021-09-26T15:00:00.000000Z", null, "00:00", "Pacific/Auckland"
-        ));
-    }
-
-    @Test
-    public void testDstGapCorrectionBoundary7mStride() throws Exception {
-        // 7m stride does NOT divide evenly into the 15m minimum DST gap, so
-        // canSkipDstGapCorrection returns false -> AllConstDstGapAwareFunc is used.
-        // Berlin spring-forward: Mar 28 2021, 02:00 -> 03:00.
-        //
-        // NOTE: strides that don't align with the gap may have a monotonicity violation
-        // at the exact DST boundary (documented in floorWithDstGapCorrectionUtc).
-        // This test verifies the gap-aware path produces idempotent results:
-        // flooring the same input twice yields the same output (consistency).
+    public void testFixedOffsetTimezoneMatchesTimestampFloor() throws Exception {
+        // With a fixed offset timezone (no DST), timestamp_floor_utc returns UTC
+        // while timestamp_floor returns local. They differ by the fixed offset.
+        // But if we convert timestamp_floor result back with to_utc, they should match.
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE ts AS (" +
-                            "SELECT timestamp_sequence('2021-03-27T23:00:00.000000Z', 1_000_000 * 60 * 3) k " +
-                            "FROM long_sequence(120)" +
+                            "SELECT timestamp_sequence('2024-01-15T00:00:00.000000Z', 1_000_000 * 60 * 17) k " +
+                            "FROM long_sequence(100)" +
                             ") TIMESTAMP(k)"
             );
             assertQueryNoLeakCheck(
@@ -496,63 +576,8 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             0
                             """,
                     "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin') != " +
-                            "timestamp_floor_utc('7m', k, null, '00:00', 'Europe/Berlin')",
-                    null, false, true, false
-            );
-        });
-    }
-
-    @Test
-    public void testDstGapCorrectionBoundary15mStride() throws Exception {
-        // 15m stride divides evenly into the 15m minimum DST gap, so
-        // canSkipDstGapCorrection returns true -> AllConstTzFunc is used (no gap correction).
-        // This MUST be monotonic since the skip is only allowed when alignment guarantees it.
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE ts AS (" +
-                            "SELECT timestamp_sequence('2021-03-27T23:00:00.000000Z', 1_000_000 * 60 * 3) k " +
-                            "FROM long_sequence(120)" +
-                            ") TIMESTAMP(k)"
-            );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('15m', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
-        });
-    }
-
-    @Test
-    public void testDstGapCorrectionBoundarySecondsStride() throws Exception {
-        // 90s stride tests the seconds unit path in canSkipDstGapCorrection.
-        // 900s (15m) % 90 == 0, so this CAN skip gap correction -> AllConstTzFunc.
-        // 45s stride: 900 % 45 == 0, also skips.
-        // But we verify correctness regardless of which path is chosen.
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE ts AS (" +
-                            "SELECT timestamp_sequence('2021-03-27T23:50:00.000000Z', 1_000_000 * 30) k " +
-                            "FROM long_sequence(200)" +
-                            ") TIMESTAMP(k)"
-            );
-            assertQueryNoLeakCheck(
-                    """
-                            violations
-                            0
-                            """,
-                    "SELECT count(*) violations FROM (" +
-                            "SELECT timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin') curr, " +
-                            "lag(timestamp_floor_utc('90s', k, null, '00:00', 'Europe/Berlin')) OVER () prev " +
-                            "FROM ts" +
-                            ") WHERE prev IS NOT NULL AND curr < prev",
+                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'GMT+05:30') != " +
+                            "to_utc(timestamp_floor('1h', k, null, '00:00', 'GMT+05:30'), 'GMT+05:30')",
                     null, false, true, false
             );
         });
@@ -595,31 +620,6 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             "lag(timestamp_floor_utc('1h', k, '2021-10-30T00:15:00Z', '00:00', 'Europe/Berlin')) OVER () prev " +
                             "FROM ts" +
                             ") WHERE prev IS NOT NULL AND curr < prev",
-                    null, false, true, false
-            );
-        });
-    }
-
-    @Test
-    public void testFixedOffsetTimezoneMatchesTimestampFloor() throws Exception {
-        // With a fixed offset timezone (no DST), timestamp_floor_utc returns UTC
-        // while timestamp_floor returns local. They differ by the fixed offset.
-        // But if we convert timestamp_floor result back with to_utc, they should match.
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE ts AS (" +
-                            "SELECT timestamp_sequence('2024-01-15T00:00:00.000000Z', 1_000_000 * 60 * 17) k " +
-                            "FROM long_sequence(100)" +
-                            ") TIMESTAMP(k)"
-            );
-            assertQueryNoLeakCheck(
-                    """
-                            mismatches
-                            0
-                            """,
-                    "SELECT count(*) mismatches FROM ts " +
-                            "WHERE timestamp_floor_utc('1h', k, null, '00:00', 'GMT+05:30') != " +
-                            "to_utc(timestamp_floor('1h', k, null, '00:00', 'GMT+05:30'), 'GMT+05:30')",
                     null, false, true, false
             );
         });
@@ -687,33 +687,6 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void testFuzzUtcTimezoneEquivalence() throws Exception {
-        // Fuzz: for many random timestamps with UTC timezone,
-        // timestamp_floor_utc == timestamp_floor
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE ts AS (" +
-                            "SELECT rnd_timestamp('2020-01-01', '2025-12-31', 0) k " +
-                            "FROM long_sequence(1000)" +
-                            ")"
-            );
-
-            for (String stride : new String[]{"15m", "30m", "1h", "6h"}) {
-                assertQueryNoLeakCheck(
-                        """
-                                mismatches
-                                0
-                                """,
-                        "SELECT count(*) mismatches FROM ts " +
-                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', 'UTC') != " +
-                                "timestamp_floor('" + stride + "', k, null, '00:00', 'UTC')",
-                        null, false, true, false
-                );
-            }
-        });
-    }
-
-    @Test
     public void testFuzzRuntimeConstOffsetWithDst() throws Exception {
         // Exercises RuntimeConstOffsetDstGapAwareFunc: const timezone, runtime const offset,
         // across Berlin fall-back. Verifies monotonicity.
@@ -738,6 +711,33 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                             ") WHERE prev IS NOT NULL AND curr < prev",
                     null, false, true, false
             );
+        });
+    }
+
+    @Test
+    public void testFuzzUtcTimezoneEquivalence() throws Exception {
+        // Fuzz: for many random timestamps with UTC timezone,
+        // timestamp_floor_utc == timestamp_floor
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts AS (" +
+                            "SELECT rnd_timestamp('2020-01-01', '2025-12-31', 0) k " +
+                            "FROM long_sequence(1000)" +
+                            ")"
+            );
+
+            for (String stride : new String[]{"15m", "30m", "1h", "6h"}) {
+                assertQueryNoLeakCheck(
+                        """
+                                mismatches
+                                0
+                                """,
+                        "SELECT count(*) mismatches FROM ts " +
+                                "WHERE k IS NOT NULL AND timestamp_floor_utc('" + stride + "', k, null, '00:00', 'UTC') != " +
+                                "timestamp_floor('" + stride + "', k, null, '00:00', 'UTC')",
+                        null, false, true, false
+                );
+            }
         });
     }
 
@@ -813,7 +813,7 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 """
                         timestamp_floor_utc
-
+                        
                         """,
                 "SELECT timestamp_floor_utc('30m', null::timestamp, null, '00:00', 'Europe/Berlin')"
         ));
