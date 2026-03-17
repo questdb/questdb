@@ -91,25 +91,30 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         assert initBufferSize > 0;
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
-        this.streamingDecoder = new QwpStreamingDecoder(new QwpSchemaCache());
-        this.walAppender = new QwpWalAppender(
-                configuration.autoCreateNewColumns(),
-                engine.getConfiguration().getMaxFileNameLength()
-        );
-        this.walAppender.setSymbolCache(symbolCache);
+        try {
+            this.streamingDecoder = new QwpStreamingDecoder(new QwpSchemaCache());
+            this.walAppender = new QwpWalAppender(
+                    configuration.autoCreateNewColumns(),
+                    engine.getConfiguration().getMaxFileNameLength()
+            );
+            this.walAppender.setSymbolCache(symbolCache);
 
-        final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
-        this.tudCache = new QwpTudCache(
-                engine,
-                configuration.autoCreateNewColumns(),
-                configuration.autoCreateNewTables(),
-                defaultColumnTypes,
-                configuration.getDefaultPartitionBy()
-        );
+            final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
+            this.tudCache = new QwpTudCache(
+                    engine,
+                    configuration.autoCreateNewColumns(),
+                    configuration.autoCreateNewTables(),
+                    defaultColumnTypes,
+                    configuration.getDefaultPartitionBy()
+            );
 
-        this.bufferSize = initBufferSize;
-        this.bufferAddress = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
-        this.bufferPosition = 0;
+            this.bufferSize = initBufferSize;
+            this.bufferAddress = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.bufferPosition = 0;
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
     }
 
     public void addData(long lo, long hi) {
