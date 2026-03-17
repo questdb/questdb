@@ -742,7 +742,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET(default, INVALID_CODEC)",
                 50,
-                "invalid parquet compression codec:"
+                "invalid parquet compression codec 'INVALID_CODEC', supported values: uncompressed, snappy, gzip, brotli, zstd, lz4_raw"
         );
     }
 

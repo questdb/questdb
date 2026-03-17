@@ -58,7 +58,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
     }
- 
+
     @Test
     public void testBadUpdate() throws Exception {
         assertMemoryLeak(() -> {
