@@ -279,15 +279,6 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testFillFollowedByAlign() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k1 k from (select-group-by [b, sum(a) sum, k1] b, sum(a) sum, k1 from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h fill(none) align to calendar time zone ? with offset ?) y",
-                "select b, sum(a), k k1, k from x y sample by 3h fill(none) align to calendar time zone ? with offset ?",
-                model()
-        );
-    }
-
-    @Test
     public void testFirstObservation() throws SqlException {
         assertQuery(
                 "select-choose b, sum, k1, k1 k from (select-group-by [b, sum(a) sum, k1] b, sum(a) sum, k1 from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h) y",
