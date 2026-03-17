@@ -1570,6 +1570,7 @@ public final class TableUtils {
     ) {
         final TxReader txReader = reader.getTxFile();
         final TableMetadata metadata = reader.getMetadata();
+        final long metadataVersion = metadata.getMetadataVersion();
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
@@ -1606,8 +1607,13 @@ public final class TableUtils {
 
                     if (expectedPartitionNameTxn >= 0) {
                         reader.reload();
+                        if (metadata.getMetadataVersion() != metadataVersion) {
+                            // structural change during parquet conversion
+                            return -1L;
+                        }
                         final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
                         if (index < 0 || reader.getTxFile().getPartitionNameTxn(index) != expectedPartitionNameTxn) {
+                            // partition updated during parquet conversion
                             return -1L;
                         }
                     }
