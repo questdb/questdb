@@ -34,7 +34,7 @@ import io.questdb.std.Unsafe;
  * across JNI. AVX2 specializations for 8/16/32-bit aligned widths
  * process 4 values per cycle.
  */
-public final class BPBitmapIndexNative {
+public final class PostingsIndexNative {
     private static final boolean NATIVE_AVAILABLE;
 
     static {
@@ -52,7 +52,7 @@ public final class BPBitmapIndexNative {
         NATIVE_AVAILABLE = available;
     }
 
-    private BPBitmapIndexNative() {
+    private PostingsIndexNative() {
     }
 
     public static boolean isNativeAvailable() {

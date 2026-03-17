@@ -47,16 +47,16 @@ import io.questdb.std.str.Path;
  * <p>
  * Iterates generations in reverse, blocks within each generation in reverse,
  * and values within each block in reverse — producing values in descending order.
- * Uses BPGenLookup for tiered gen-to-key mapping with cached metadata.
+ * Uses PostingsGenLookup for tiered gen-to-key mapping with cached metadata.
  */
-public class BPBitmapIndexBwdReader implements BitmapIndexReader {
+public class PostingsIndexBwdReader implements BitmapIndexReader {
     private static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
-    private static final Log LOG = LogFactory.getLog(BPBitmapIndexBwdReader.class);
+    private static final Log LOG = LogFactory.getLog(PostingsIndexBwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     private final Cursor cursor = new Cursor();
-    private final BPGenLookup genLookup = new BPGenLookup();
+    private final PostingsGenLookup genLookup = new PostingsGenLookup();
     protected MillisecondClock clock;
     protected long columnTop;
     protected int keyCount;
@@ -68,7 +68,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
     private long partitionTxn;
     private long valueMemSize = -1;
 
-    public BPBitmapIndexBwdReader(
+    public PostingsIndexBwdReader(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
@@ -168,19 +168,19 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
 
         try {
             FilesFacade ff = configuration.getFilesFacade();
-            LPSZ name = BPBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            LPSZ name = PostingsIndexUtils.keyFileName(path, columnName, columnNameTxn);
             keyMem.of(
                     ff,
                     name,
                     ff.getMapPageSize(),
-                    BPBitmapIndexUtils.KEY_FILE_RESERVED,
+                    PostingsIndexUtils.KEY_FILE_RESERVED,
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
                     -1
             );
             this.clock = configuration.getMillisecondClock();
 
-            if (keyMem.getByte(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BPBitmapIndexUtils.SIGNATURE) {
+            if (keyMem.getByte(PostingsIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != PostingsIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
                 throw CairoException.critical(0).put("Unknown format: ").put(path);
             }
@@ -189,7 +189,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
-                    BPBitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    PostingsIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -204,10 +204,10 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
 
     @Override
     public void reloadConditionally() {
-        long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+        long seq = keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
         if (seq != keyFileSequence) {
             readIndexMetadataAtomically();
-            long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
+            long keyFileSize = PostingsIndexUtils.getGenDirOffset(genCount);
             this.keyMem.extend(keyFileSize);
             this.valueMem.extend(valueMemSize);
         }
@@ -218,13 +218,13 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
         int genCount;
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
-            long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+            long seq = keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                keyCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                genCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+            if (keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                keyCount = keyMem.getInt(PostingsIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                genCount = keyMem.getInt(PostingsIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
                 Unsafe.getUnsafe().loadFence();
-                if (seq == keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                if (seq == keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                     break;
                 }
             }
@@ -240,7 +240,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
             this.genCount = genCount;
-            long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
+            long keyFileSize = PostingsIndexUtils.getGenDirOffset(genCount);
             keyMem.extend(keyFileSize);
         }
     }
@@ -255,22 +255,22 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
     private void readIndexMetadataAtomically() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
-            long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+            long seq = keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                int keyCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                long valueMemSize = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-                int genCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+            if (keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                int keyCount = keyMem.getInt(PostingsIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                long valueMemSize = keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+                int genCount = keyMem.getInt(PostingsIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
-                if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
+                if (keyMem.getLong(PostingsIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
                     this.keyCount = keyCount;
                     this.genCount = genCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
 
-                    long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
+                    long keyFileSize = PostingsIndexUtils.getGenDirOffset(genCount);
                     keyMem.extend(keyFileSize);
                     break;
                 }
@@ -285,8 +285,8 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
     }
 
     private class Cursor implements RowCursor {
-        private final long[] blockBuffer = new long[BPBitmapIndexUtils.BLOCK_CAPACITY];
-        private final long[] blockDeltas = new long[BPBitmapIndexUtils.BLOCK_CAPACITY];
+        private final long[] blockBuffer = new long[PostingsIndexUtils.BLOCK_CAPACITY];
+        private final long[] blockDeltas = new long[PostingsIndexUtils.BLOCK_CAPACITY];
         protected long next;
         private int blockBufferPos;
         private int currentGen;
@@ -391,7 +391,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
                 }
 
                 // Use SBBF if available (Tier 2)
-                if (genLookup.getTier() == BPGenLookup.TIER_SBBF) {
+                if (genLookup.getTier() == PostingsGenLookup.TIER_SBBF) {
                     if (!genLookup.mightContainKey(currentGen, requestedKey)) {
                         currentGen--;
                         continue;
@@ -435,7 +435,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
         }
 
         private void decodeNextPackedBatchReverse() {
-            int batch = Math.min(packedRemaining, BPBitmapIndexUtils.BLOCK_CAPACITY);
+            int batch = Math.min(packedRemaining, PostingsIndexUtils.BLOCK_CAPACITY);
             // Unpack from the end of remaining values
             int batchStart = packedStartIdx - batch;
             for (int i = 0; i < batch; i++) {
@@ -474,17 +474,17 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
 
             this.packedMode = false;
 
-            int stride = requestedKey / BPBitmapIndexUtils.DENSE_STRIDE;
-            int localKey = requestedKey % BPBitmapIndexUtils.DENSE_STRIDE;
-            int siSize = BPBitmapIndexUtils.strideIndexSize(genKeyCount);
+            int stride = requestedKey / PostingsIndexUtils.DENSE_STRIDE;
+            int localKey = requestedKey % PostingsIndexUtils.DENSE_STRIDE;
+            int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
             long strideAddr = genAddr + siSize + strideOff;
-            int ks = BPBitmapIndexUtils.keysInStride(genKeyCount, stride);
+            int ks = PostingsIndexUtils.keysInStride(genKeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-            if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
+            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startCount;
 
@@ -495,7 +495,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
                     return;
                 }
 
-                int packedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+                int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
                 long dataAddr = strideAddr + packedHeaderSize;
 
                 this.packedMode = true;
@@ -504,7 +504,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
                 this.encodedBlockCount = 0;
                 this.currentBlock = -1;
 
-                int batch = Math.min(count, BPBitmapIndexUtils.BLOCK_CAPACITY);
+                int batch = Math.min(count, PostingsIndexUtils.BLOCK_CAPACITY);
                 int batchStart = startCount + count - batch;
                 for (int i = 0; i < batch; i++) {
                     blockBuffer[i] = FORBitmapIndexUtils.unpackValue(dataAddr, batchStart + i, bitWidth, 0);
@@ -516,11 +516,11 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
             }
 
             // BP mode
-            long countsAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             int totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-            int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+            int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
             long encodedAddr = strideAddr + bpHeaderSize + dataOffset;
 
             if (totalValueCount == 0) {
@@ -542,7 +542,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            int idx = BPBitmapIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, requestedKey);
+            int idx = PostingsIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, requestedKey);
             if (idx < 0) {
                 this.encodedBlockCount = 0;
                 this.currentBlock = -1;
@@ -552,7 +552,7 @@ public class BPBitmapIndexBwdReader implements BitmapIndexReader {
 
             this.packedMode = false;
 
-            int headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+            int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);

@@ -46,7 +46,7 @@ import io.questdb.std.str.Path;
 import java.util.Arrays;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cairo.idx.BPBitmapIndexUtils.*;
+import static io.questdb.cairo.idx.PostingsIndexUtils.*;
 
 /**
  * Delta + FoR64 BitPacking (BP) bitmap index writer.
@@ -54,16 +54,16 @@ import static io.questdb.cairo.idx.BPBitmapIndexUtils.*;
  * Each commit appends one generation (covering all keys) to the value file.
  * No symbol table needed — encoding is purely arithmetic.
  */
-public class BPBitmapIndexWriter implements IndexWriter {
+public class PostingsIndexWriter implements IndexWriter {
     private static final int INITIAL_KEY_CAPACITY = 64;
     private static final int MAX_GEN_COUNT = 256;
-    private static final Log LOG = LogFactory.getLog(BPBitmapIndexWriter.class);
+    private static final Log LOG = LogFactory.getLog(PostingsIndexWriter.class);
 
     private final CairoConfiguration configuration;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
 
-    private final BPBitmapIndexUtils.EncodeContext encodeCtx = new BPBitmapIndexUtils.EncodeContext();
+    private final PostingsIndexUtils.EncodeContext encodeCtx = new PostingsIndexUtils.EncodeContext();
     // Active key tracking to avoid scanning all keys per flush
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private int activeKeyCount;
@@ -82,13 +82,13 @@ public class BPBitmapIndexWriter implements IndexWriter {
     private long pendingValuesAddr;
     private long valueMemSize;
 
-    public BPBitmapIndexWriter(CairoConfiguration configuration) {
+    public PostingsIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
     }
 
     @TestOnly
-    public BPBitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
+    public PostingsIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         this(configuration);
         of(path, name, columnNameTxn, true);
     }
@@ -160,7 +160,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         if (keyMem.isOpen()) {
             long keyFileSize = genCount > 0
-                    ? BPBitmapIndexUtils.getGenDirOffset(genCount)
+                    ? PostingsIndexUtils.getGenDirOffset(genCount)
                     : KEY_FILE_RESERVED;
             keyMem.setSize(keyFileSize);
             Misc.free(keyMem);
@@ -201,14 +201,14 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         // Check if incremental seal is possible:
         // gen 0 must be dense, and all subsequent gens must be sparse
-        long gen0DirOffset = BPBitmapIndexUtils.getGenDirOffset(0);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        long gen0DirOffset = PostingsIndexUtils.getGenDirOffset(0);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         boolean isIncrementalCandidate = gen0KeyCount >= 0;
 
         if (isIncrementalCandidate) {
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = BPBitmapIndexUtils.getGenDirOffset(g);
-                int gkc = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
+                int gkc = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 if (gkc >= 0) {
                     isIncrementalCandidate = false;
                     break;
@@ -228,21 +228,21 @@ public class BPBitmapIndexWriter implements IndexWriter {
      * Clean strides are copied verbatim from the existing dense gen 0.
      */
     private void sealIncremental() {
-        int sc = BPBitmapIndexUtils.strideCount(keyCount);
+        int sc = PostingsIndexUtils.strideCount(keyCount);
 
         // Mark dirty strides by scanning sparse gens 1..N
         boolean[] dirtyStrides = new boolean[sc];
         int dirtyCount = 0;
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = BPBitmapIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
             long genAddr = valueMem.addressOf(genFileOffset);
 
             for (int i = 0; i < activeKeyCount; i++) {
                 int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                int stride = key / BPBitmapIndexUtils.DENSE_STRIDE;
+                int stride = key / PostingsIndexUtils.DENSE_STRIDE;
                 if (stride < sc && !dirtyStrides[stride]) {
                     dirtyStrides[stride] = true;
                     dirtyCount++;
@@ -257,34 +257,34 @@ public class BPBitmapIndexWriter implements IndexWriter {
         }
 
         // Read gen 0 metadata
-        long gen0DirOffset = BPBitmapIndexUtils.getGenDirOffset(0);
+        long gen0DirOffset = PostingsIndexUtils.getGenDirOffset(0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int gen0DataSize = keyMem.getInt(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
         long gen0Addr = valueMem.addressOf(gen0FileOffset);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        int gen0SiSize = BPBitmapIndexUtils.strideIndexSize(gen0KeyCount);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        int gen0SiSize = PostingsIndexUtils.strideIndexSize(gen0KeyCount);
 
         long maxValue = keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE);
         int globalBitWidth = maxValue <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(maxValue);
 
         // Allocate output buffers
-        int siSize = BPBitmapIndexUtils.strideIndexSize(keyCount);
+        int siSize = PostingsIndexUtils.strideIndexSize(keyCount);
         long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
 
         // Estimate max per-key values to size buffers
         int maxPerKey = estimateMaxPerKey(gen0Addr, gen0KeyCount, gen0SiSize);
-        int perKeyBufSize = BPBitmapIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, BPBitmapIndexUtils.BLOCK_CAPACITY * genCount));
-        int maxBPStrideDataSize = BPBitmapIndexUtils.DENSE_STRIDE * perKeyBufSize;
+        int perKeyBufSize = PostingsIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, PostingsIndexUtils.BLOCK_CAPACITY * genCount));
+        int maxBPStrideDataSize = PostingsIndexUtils.DENSE_STRIDE * perKeyBufSize;
         long bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
         int maxHeaderSize = Math.max(
-                BPBitmapIndexUtils.strideBPHeaderSize(BPBitmapIndexUtils.DENSE_STRIDE),
-                BPBitmapIndexUtils.stridePackedHeaderSize(BPBitmapIndexUtils.DENSE_STRIDE)
+                PostingsIndexUtils.strideBPHeaderSize(PostingsIndexUtils.DENSE_STRIDE),
+                PostingsIndexUtils.stridePackedHeaderSize(PostingsIndexUtils.DENSE_STRIDE)
         );
         long localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_DEFAULT);
-        int[] bpKeySizes = new int[BPBitmapIndexUtils.DENSE_STRIDE];
+        int[] bpKeySizes = new int[PostingsIndexUtils.DENSE_STRIDE];
 
         // Buffer for merged key values
-        long mergedValuesSize = (long) Math.max(maxPerKey + BPBitmapIndexUtils.BLOCK_CAPACITY * genCount, 1024) * Long.BYTES;
+        long mergedValuesSize = (long) Math.max(maxPerKey + PostingsIndexUtils.BLOCK_CAPACITY * genCount, 1024) * Long.BYTES;
         long mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
@@ -303,7 +303,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     copyStrideFromGen0(gen0Addr, gen0KeyCount, gen0SiSize, s);
                 } else {
                     // Dirty stride: decode from gen 0 + sparse gens, merge, re-encode
-                    int ks = BPBitmapIndexUtils.keysInStride(keyCount, s);
+                    int ks = PostingsIndexUtils.keysInStride(keyCount, s);
                     encodeDirtyStride(s, ks, gen0Addr, gen0KeyCount, gen0SiSize,
                             globalBitWidth, bpTrialBuf, localHeaderBuf, bpKeySizes, mergedValuesAddr);
                 }
@@ -320,12 +320,12 @@ public class BPBitmapIndexWriter implements IndexWriter {
             valueMemSize = valueMem.getAppendOffset();
 
             genCount = 1;
-            long dirOffset = BPBitmapIndexUtils.getGenDirOffset(0);
+            long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
             keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
             keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) valueMemSize);
-            keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-            keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-            keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
+            keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
+            keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
+            keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
 
             updateHeaderAtomically(genCount, maxValue);
         } finally {
@@ -338,21 +338,21 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
     private int estimateMaxPerKey(long gen0Addr, int gen0KeyCount, int gen0SiSize) {
         int max = 0;
-        int sc = BPBitmapIndexUtils.strideCount(gen0KeyCount);
+        int sc = PostingsIndexUtils.strideCount(gen0KeyCount);
         for (int s = 0; s < sc; s++) {
             int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) s * Integer.BYTES);
             long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = BPBitmapIndexUtils.keysInStride(gen0KeyCount, s);
+            int ks = PostingsIndexUtils.keysInStride(gen0KeyCount, s);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-            if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
-                long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
+                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 for (int j = 0; j < ks; j++) {
                     int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
                             - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                     if (count > max) max = count;
                 }
             } else {
-                long countsAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 for (int j = 0; j < ks; j++) {
                     int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                     if (count > max) max = count;
@@ -364,10 +364,10 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
     private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride) {
         // If this stride existed in gen 0, copy it; otherwise write empty
-        if (stride >= BPBitmapIndexUtils.strideCount(gen0KeyCount)) {
+        if (stride >= PostingsIndexUtils.strideCount(gen0KeyCount)) {
             // Stride didn't exist in gen 0 — write empty BP stride
-            int ks = BPBitmapIndexUtils.keysInStride(keyCount, stride);
-            int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+            int ks = PostingsIndexUtils.keysInStride(keyCount, stride);
+            int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
             long headerFilePos = valueMem.getAppendOffset();
             for (int i = 0; i < bpHeaderSize; i += Integer.BYTES) {
                 valueMem.putInt(0);
@@ -380,11 +380,11 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
         int nextStrideOff;
-        if (stride + 1 < BPBitmapIndexUtils.strideCount(gen0KeyCount)) {
+        if (stride + 1 < PostingsIndexUtils.strideCount(gen0KeyCount)) {
             nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) (stride + 1) * Integer.BYTES);
         } else {
             // Last stride — get sentinel
-            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) BPBitmapIndexUtils.strideCount(gen0KeyCount) * Integer.BYTES);
+            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) PostingsIndexUtils.strideCount(gen0KeyCount) * Integer.BYTES);
         }
         int strideSize = nextStrideOff - strideOff;
         if (strideSize <= 0) {
@@ -430,7 +430,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
         // Trial BP encode
         int bpDataTotal = 0;
         for (int j = 0; j < ks; j++) {
-            int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+            int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
             int mergedCount = mergeKeyValues(key, gen0Addr, gen0KeyCount, gen0SiSize, mergedValuesAddr);
             keyCounts[j] = mergedCount;
 
@@ -440,7 +440,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     keyValues[i] = Unsafe.getUnsafe().getLong(mergedValuesAddr + (long) i * Long.BYTES);
                 }
                 encodeCtx.ensureCapacity(mergedCount);
-                bpKeySizes[j] = BPBitmapIndexUtils.encodeKey(keyValues, mergedCount, bpTrialBuf + bpDataTotal, encodeCtx);
+                bpKeySizes[j] = PostingsIndexUtils.encodeKey(keyValues, mergedCount, bpTrialBuf + bpDataTotal, encodeCtx);
             } else {
                 bpKeySizes[j] = 0;
             }
@@ -448,14 +448,14 @@ public class BPBitmapIndexWriter implements IndexWriter {
         }
 
         // Compute sizes
-        int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+        int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
         int bpSize = bpHeaderSize + bpDataTotal;
 
         int totalStrideValues = 0;
         for (int j = 0; j < ks; j++) {
             totalStrideValues += keyCounts[j];
         }
-        int packedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+        int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
         int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, globalBitWidth);
         int packedSize = packedHeaderSize + packedDataSize;
 
@@ -474,20 +474,20 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         // Decode from gen 0 (dense)
         if (key < gen0KeyCount) {
-            int stride = key / BPBitmapIndexUtils.DENSE_STRIDE;
-            int localKey = key % BPBitmapIndexUtils.DENSE_STRIDE;
+            int stride = key / PostingsIndexUtils.DENSE_STRIDE;
+            int localKey = key % PostingsIndexUtils.DENSE_STRIDE;
             int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
             long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = BPBitmapIndexUtils.keysInStride(gen0KeyCount, stride);
+            int ks = PostingsIndexUtils.keysInStride(gen0KeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-            if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
+            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
                 if (count > 0) {
-                    int phSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+                    int phSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
                     long packedDataAddr = strideAddr + phSize;
                     long[] vals = new long[count];
                     FORBitmapIndexUtils.unpackValuesFrom(packedDataAddr, startIdx, count, bitWidth, 0, vals);
@@ -497,15 +497,15 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     }
                 }
             } else {
-                long countsAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 int count = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
                 if (count > 0) {
                     long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
                     int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-                    int bpHdrSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+                    int bpHdrSize = PostingsIndexUtils.strideBPHeaderSize(ks);
                     long encodedAddr = strideAddr + bpHdrSize + dataOffset;
                     long[] decoded = new long[count];
-                    BPBitmapIndexUtils.decodeKey(encodedAddr, count, decoded);
+                    PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
                     for (int i = 0; i < count; i++) {
                         Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES, decoded[i]);
                         totalCount++;
@@ -516,16 +516,16 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         // Decode from sparse gens 1..N
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = BPBitmapIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingsIndexUtils.getGenDirOffset(g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            int idx = BPBitmapIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
+            int idx = PostingsIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
             if (idx < 0) continue;
 
-            int headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+            int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int count = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
@@ -534,7 +534,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
             long encodedAddr = genAddr + headerSize + dataOffset;
             long[] decoded = new long[count];
-            BPBitmapIndexUtils.decodeKey(encodedAddr, count, decoded);
+            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
             for (int i = 0; i < count; i++) {
                 Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES, decoded[i]);
                 totalCount++;
@@ -554,12 +554,12 @@ public class BPBitmapIndexWriter implements IndexWriter {
         }
 
         Unsafe.getUnsafe().setMemory(localHeaderBuf, packedHeaderSize, (byte) 0);
-        Unsafe.getUnsafe().putByte(localHeaderBuf, BPBitmapIndexUtils.STRIDE_MODE_PACKED);
+        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_PACKED);
         Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) globalBitWidth);
         int cumCount = 0;
         for (int j = 0; j <= ks; j++) {
             Unsafe.getUnsafe().putInt(
-                    localHeaderBuf + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE + (long) j * Integer.BYTES,
+                    localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE + (long) j * Integer.BYTES,
                     cumCount);
             if (j < ks) {
                 cumCount += keyCounts[j];
@@ -573,7 +573,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
             }
             int packIdx = 0;
             for (int j = 0; j < ks; j++) {
-                int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                 int count = keyCounts[j];
                 // Re-merge values for this key (we need them again for packed mode)
                 int mergedCount = mergeKeyValues(key, gen0Addr, gen0KeyCount, gen0SiSize, mergedValuesAddr);
@@ -610,8 +610,8 @@ public class BPBitmapIndexWriter implements IndexWriter {
         }
 
         Unsafe.getUnsafe().setMemory(localHeaderBuf, bpHeaderSize, (byte) 0);
-        Unsafe.getUnsafe().putByte(localHeaderBuf, BPBitmapIndexUtils.STRIDE_MODE_BP);
-        long countsBase = localHeaderBuf + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_BP);
+        long countsBase = localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
         long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
         int dataOffset = 0;
@@ -651,9 +651,9 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
+                long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long genAddr = valueMem.addressOf(genFileOffset);
 
                 if (genKeyCount < 0) {
@@ -670,18 +670,18 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     }
                 } else {
                     // Dense format — stride-indexed (supports BP and Packed modes)
-                    int sc = BPBitmapIndexUtils.strideCount(genKeyCount);
-                    int siSize = BPBitmapIndexUtils.strideIndexSize(genKeyCount);
+                    int sc = PostingsIndexUtils.strideCount(genKeyCount);
+                    int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
                     for (int s = 0; s < sc; s++) {
                         int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
                         long strideAddr = genAddr + siSize + strideOff;
-                        int ks = BPBitmapIndexUtils.keysInStride(genKeyCount, s);
+                        int ks = PostingsIndexUtils.keysInStride(genKeyCount, s);
                         byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-                        if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
+                        if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
                             // Packed mode: prefixCounts at offset 2
-                            long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                            long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
                                         - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                                 int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
@@ -690,9 +690,9 @@ public class BPBitmapIndexWriter implements IndexWriter {
                             }
                         } else {
                             // BP mode: counts at offset 2
-                            long countsAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                            long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                                 int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
@@ -721,15 +721,15 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
                 // Decode from each generation
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
+                    long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                    int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genAddr = valueMem.addressOf(genFileOffset);
 
                     if (genKeyCount < 0) {
                         // Sparse format
                         int activeKeyCount = -genKeyCount;
-                        int headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                        int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
                         long keyIdsBase = genAddr;
                         long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
                         long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
@@ -747,7 +747,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                             long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
 
                             long[] decoded = new long[count];
-                            BPBitmapIndexUtils.decodeKey(encodedAddr, count, decoded);
+                            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
                             for (int j = 0; j < count; j++) {
                                 Unsafe.getUnsafe().putLong(destAddr + (long) j * Long.BYTES, decoded[j]);
                             }
@@ -757,23 +757,23 @@ public class BPBitmapIndexWriter implements IndexWriter {
                         }
                     } else {
                         // Dense format — stride-indexed (supports BP and Packed modes)
-                        int sc = BPBitmapIndexUtils.strideCount(genKeyCount);
-                        int siSize = BPBitmapIndexUtils.strideIndexSize(genKeyCount);
+                        int sc = PostingsIndexUtils.strideCount(genKeyCount);
+                        int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
                         for (int s = 0; s < sc; s++) {
                             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
                             long strideAddr = genAddr + siSize + strideOff;
-                            int ks = BPBitmapIndexUtils.keysInStride(genKeyCount, s);
+                            int ks = PostingsIndexUtils.keysInStride(genKeyCount, s);
                             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-                            if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
+                            if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
                                 // Packed mode
                                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                                long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                                int packedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+                                long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
                                 long packedDataAddr = strideAddr + packedHeaderSize;
 
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                     int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
                                     int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
                                     if (count == 0) continue;
@@ -792,12 +792,12 @@ public class BPBitmapIndexWriter implements IndexWriter {
                                 }
                             } else {
                                 // BP mode
-                                long countsAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                long countsAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                                 long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-                                int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+                                int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
 
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
                                     if (count == 0) continue;
 
@@ -809,7 +809,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                                     long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
 
                                     long[] decoded = new long[count];
-                                    BPBitmapIndexUtils.decodeKey(encodedAddr, count, decoded);
+                                    PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
                                     for (int i = 0; i < count; i++) {
                                         Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, decoded[i]);
                                     }
@@ -829,7 +829,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     int c = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     if (c > maxPerKey) maxPerKey = c;
                 }
-                int perKeyBufSize = BPBitmapIndexUtils.computeMaxEncodedSize(maxPerKey);
+                int perKeyBufSize = PostingsIndexUtils.computeMaxEncodedSize(maxPerKey);
                 long tmpBuf = Unsafe.malloc(perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
 
                 // Global bitWidth for packed mode (from maxValue in key file header)
@@ -837,8 +837,8 @@ public class BPBitmapIndexWriter implements IndexWriter {
                 int globalBitWidth = maxValue <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(maxValue);
 
                 try {
-                    int sc = BPBitmapIndexUtils.strideCount(keyCount);
-                    int siSize = BPBitmapIndexUtils.strideIndexSize(keyCount);
+                    int sc = PostingsIndexUtils.strideCount(keyCount);
+                    int siSize = PostingsIndexUtils.strideIndexSize(keyCount);
 
                     // Reserve stride index space at beginning of valueMem
                     valueMem.jumpTo(0);
@@ -849,30 +849,30 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     // Allocate stride index buffer
                     long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
                     // Max header is the BP header (larger than packed header)
-                    int maxBPHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(BPBitmapIndexUtils.DENSE_STRIDE);
-                    int maxPackedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(BPBitmapIndexUtils.DENSE_STRIDE);
+                    int maxBPHeaderSize = PostingsIndexUtils.strideBPHeaderSize(PostingsIndexUtils.DENSE_STRIDE);
+                    int maxPackedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(PostingsIndexUtils.DENSE_STRIDE);
                     int maxLocalHeaderSize = Math.max(maxBPHeaderSize, maxPackedHeaderSize);
                     long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
 
                     // Buffer for trial BP encoding of an entire stride's data
                     // Worst case: DENSE_STRIDE keys × maxPerKey values each
-                    int maxBPStrideDataSize = BPBitmapIndexUtils.DENSE_STRIDE * perKeyBufSize;
+                    int maxBPStrideDataSize = PostingsIndexUtils.DENSE_STRIDE * perKeyBufSize;
                     long bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
                     // Per-key BP sizes within a stride (to compute total BP data size)
-                    int[] bpKeySizes = new int[BPBitmapIndexUtils.DENSE_STRIDE];
+                    int[] bpKeySizes = new int[PostingsIndexUtils.DENSE_STRIDE];
 
                     try {
                         long readOffset = 0;
                         long[] keyValues = new long[maxPerKey];
 
                         for (int s = 0; s < sc; s++) {
-                            int ks = BPBitmapIndexUtils.keysInStride(keyCount, s);
+                            int ks = PostingsIndexUtils.keysInStride(keyCount, s);
 
                             // --- Trial BP encode all keys in stride ---
                             int bpDataTotal = 0;
                             long trialReadOffset = readOffset;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                 int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                 if (count > 0) {
                                     for (int i = 0; i < count; i++) {
@@ -880,7 +880,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                                                 allValuesAddr + (trialReadOffset + i) * Long.BYTES);
                                     }
                                     encodeCtx.ensureCapacity(count);
-                                    bpKeySizes[j] = BPBitmapIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                                    bpKeySizes[j] = PostingsIndexUtils.encodeKey(keyValues, count, bpTrialBuf + bpDataTotal, encodeCtx);
                                     trialReadOffset += count;
                                 } else {
                                     bpKeySizes[j] = 0;
@@ -889,16 +889,16 @@ public class BPBitmapIndexWriter implements IndexWriter {
                             }
 
                             // --- Compute sizes for both modes ---
-                            int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+                            int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
                             int bpSize = bpHeaderSize + bpDataTotal;
 
                             // Count total values in stride for packed size
                             int totalStrideValues = 0;
                             for (int j = 0; j < ks; j++) {
-                                int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                 totalStrideValues += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                             }
-                            int packedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+                            int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
                             int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, globalBitWidth);
                             int packedSize = packedHeaderSize + packedDataSize;
 
@@ -918,15 +918,15 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
                                 // Build header: mode + bitWidth + prefixCounts
                                 Unsafe.getUnsafe().setMemory(localHeaderBuf, packedHeaderSize, (byte) 0);
-                                Unsafe.getUnsafe().putByte(localHeaderBuf, BPBitmapIndexUtils.STRIDE_MODE_PACKED);
+                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_PACKED);
                                 Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) globalBitWidth);
                                 int cumCount = 0;
                                 for (int j = 0; j <= ks; j++) {
                                     Unsafe.getUnsafe().putInt(
-                                            localHeaderBuf + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE + (long) j * Integer.BYTES,
+                                            localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE + (long) j * Integer.BYTES,
                                             cumCount);
                                     if (j < ks) {
-                                        int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                        int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                         cumCount += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                     }
                                 }
@@ -941,7 +941,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
                                     // Pack all values contiguously
                                     int packIdx = 0;
                                     for (int j = 0; j < ks; j++) {
-                                        int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                        int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                         int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                                         for (int i = 0; i < count; i++) {
                                             long val = Unsafe.getUnsafe().getLong(
@@ -979,16 +979,16 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
                                 // Build header: mode + reserved + counts + offsets
                                 Unsafe.getUnsafe().setMemory(localHeaderBuf, bpHeaderSize, (byte) 0);
-                                Unsafe.getUnsafe().putByte(localHeaderBuf, BPBitmapIndexUtils.STRIDE_MODE_BP);
+                                Unsafe.getUnsafe().putByte(localHeaderBuf, PostingsIndexUtils.STRIDE_MODE_BP);
                                 Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) 0); // reserved
-                                long countsBase = localHeaderBuf + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                long countsBase = localHeaderBuf + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                                 long offsetsBase = countsBase + (long) ks * Integer.BYTES;
 
                                 // Copy trial-encoded BP data from bpTrialBuf to valueMem
                                 int dataOffset = 0;
                                 int bpBufOffset = 0;
                                 for (int j = 0; j < ks; j++) {
-                                    int key = s * BPBitmapIndexUtils.DENSE_STRIDE + j;
+                                    int key = s * PostingsIndexUtils.DENSE_STRIDE + j;
                                     int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
 
                                     Unsafe.getUnsafe().putInt(countsBase + (long) j * Integer.BYTES, count);
@@ -1036,12 +1036,12 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     }
 
                     genCount = 1;
-                    long dirOffset = BPBitmapIndexUtils.getGenDirOffset(0);
+                    long dirOffset = PostingsIndexUtils.getGenDirOffset(0);
                     keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
                     keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) valueMemSize);
-                    keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-                    keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-                    keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
+                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
+                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
+                    keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
                 } finally {
                     Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -1067,12 +1067,12 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         LongList values = new LongList();
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
+            long dirOffset = PostingsIndexUtils.getGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
-            int minKey = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
-            int maxKey = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            int minKey = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            int maxKey = keyMem.getInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
             if (key < minKey || key > maxKey) continue;
 
             long genAddr = valueMem.addressOf(genFileOffset);
@@ -1083,10 +1083,10 @@ public class BPBitmapIndexWriter implements IndexWriter {
             if (genKeyCount < 0) {
                 // Sparse format
                 int activeKeyCount = -genKeyCount;
-                int idx = BPBitmapIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
+                int idx = PostingsIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
                 if (idx < 0) continue;
 
-                int headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
                 long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
                 long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
                 count = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
@@ -1096,22 +1096,22 @@ public class BPBitmapIndexWriter implements IndexWriter {
                 // Dense format — stride-indexed (supports BP and Packed modes)
                 if (key >= genKeyCount) continue;
 
-                int stride = key / BPBitmapIndexUtils.DENSE_STRIDE;
-                int localKey = key % BPBitmapIndexUtils.DENSE_STRIDE;
-                int siSize = BPBitmapIndexUtils.strideIndexSize(genKeyCount);
+                int stride = key / PostingsIndexUtils.DENSE_STRIDE;
+                int localKey = key % PostingsIndexUtils.DENSE_STRIDE;
+                int siSize = PostingsIndexUtils.strideIndexSize(genKeyCount);
                 int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
                 long strideAddr = genAddr + siSize + strideOff;
-                int ks = BPBitmapIndexUtils.keysInStride(genKeyCount, stride);
+                int ks = PostingsIndexUtils.keysInStride(genKeyCount, stride);
                 byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-                if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
+                if (mode == PostingsIndexUtils.STRIDE_MODE_PACKED) {
                     // Packed mode
                     int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                    long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                    long prefixAddr = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                     int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                     count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
                     if (count == 0) continue;
-                    int packedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+                    int packedHeaderSize = PostingsIndexUtils.stridePackedHeaderSize(ks);
                     long packedDataAddr = strideAddr + packedHeaderSize;
                     for (int i = 0; i < count; i++) {
                         values.add(FORBitmapIndexUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, 0));
@@ -1120,17 +1120,17 @@ public class BPBitmapIndexWriter implements IndexWriter {
                 }
 
                 // BP mode
-                long countsBase = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long countsBase = strideAddr + PostingsIndexUtils.STRIDE_MODE_PREFIX_SIZE;
                 count = Unsafe.getUnsafe().getInt(countsBase + (long) localKey * Integer.BYTES);
                 long offsetsBase = countsBase + (long) ks * Integer.BYTES;
                 int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-                int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+                int bpHeaderSize = PostingsIndexUtils.strideBPHeaderSize(ks);
                 encodedAddr = strideAddr + bpHeaderSize + dataOffset;
             }
 
             if (count == 0) continue;
             long[] decoded = new long[count];
-            BPBitmapIndexUtils.decodeKey(encodedAddr, count, decoded);
+            PostingsIndexUtils.decodeKey(encodedAddr, count, decoded);
             for (int i = 0; i < count; i++) {
                 values.add(decoded[i]);
             }
@@ -1313,7 +1313,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
         boolean kFdUnassigned = true;
 
         try {
-            LPSZ keyFile = BPBitmapIndexUtils.keyFileName(path, name, columnNameTxn);
+            LPSZ keyFile = PostingsIndexUtils.keyFileName(path, name, columnNameTxn);
 
             if (init) {
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
@@ -1350,7 +1350,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
             valueMem.of(
                     ff,
-                    BPBitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
+                    PostingsIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
                     configuration.getDataIndexValueAppendPageSize(),
                     init ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
@@ -1431,7 +1431,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
         long maxValue = keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE);
 
         // Use sparse format: keyIds + counts + offsets (3 arrays of activeKeyCount)
-        int headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+        int headerSize = PostingsIndexUtils.genHeaderSizeSparse(activeKeyCount);
 
         // Reuse header buffer, growing if needed
         if (headerSize > flushHeaderBufCapacity) {
@@ -1443,7 +1443,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
         }
 
         // Reuse encode buffer, growing if needed
-        int perKeyBufSize = BPBitmapIndexUtils.computeMaxEncodedSize(blockCapacity);
+        int perKeyBufSize = PostingsIndexUtils.computeMaxEncodedSize(blockCapacity);
         if (perKeyBufSize > flushTmpBufCapacity) {
             if (flushTmpBuf != 0) {
                 Unsafe.free(flushTmpBuf, flushTmpBufCapacity, MemoryTag.NATIVE_DEFAULT);
@@ -1463,7 +1463,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
         for (int i = 0; i < activeKeyCount; i++) {
             int key = activeKeyIds[i];
             int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
-            maxDataSize += BPBitmapIndexUtils.computeMaxEncodedSize(count);
+            maxDataSize += PostingsIndexUtils.computeMaxEncodedSize(count);
         }
         long maxGenSize = headerSize + maxDataSize;
         valueMem.jumpTo(genOffset);
@@ -1486,7 +1486,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
             // Encode directly from native memory into valueMem's mapped region
             long destAddr = valueMem.addressOf(genOffset + headerSize + encodedOffset);
             encodeCtx.ensureCapacity(count);
-            int bytesWritten = BPBitmapIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
+            int bytesWritten = PostingsIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
             encodedOffset += bytesWritten;
 
             long lastVal = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) (count - 1) * Long.BYTES);
@@ -1507,13 +1507,13 @@ public class BPBitmapIndexWriter implements IndexWriter {
         int minKey = activeKeyIds[0];
         int maxKey = activeKeyIds[activeKeyCount - 1];
 
-        long dirOffset = BPBitmapIndexUtils.getGenDirOffset(genCount);
+        long dirOffset = PostingsIndexUtils.getGenDirOffset(genCount);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genOffset);
         keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
         // Negative genKeyCount signals sparse format
-        keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, -activeKeyCount);
-        keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
-        keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
+        keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, -activeKeyCount);
+        keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
+        keyMem.putInt(dirOffset + PostingsIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
         genCount++;
 
         updateHeaderAtomically(genCount, maxValue);

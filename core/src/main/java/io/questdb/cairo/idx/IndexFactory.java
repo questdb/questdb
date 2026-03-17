@@ -32,7 +32,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.idx.BPBitmapIndexUtils.BLOCK_CAPACITY;
+import static io.questdb.cairo.idx.PostingsIndexUtils.BLOCK_CAPACITY;
 
 /**
  * Factory for creating index readers and writers based on index type.
@@ -62,7 +62,7 @@ public final class IndexFactory {
             case IndexType.FOR -> FORBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.ROARING -> RoaringBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.LZ4 -> LZ4BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            case IndexType.BP -> BPBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.BP -> PostingsIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.FSST -> FSSTBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
                     .put("unsupported index type for key file: ").put(IndexType.nameOf(indexType));
@@ -85,7 +85,7 @@ public final class IndexFactory {
             case IndexType.FOR -> FORBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.ROARING -> RoaringBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.LZ4 -> LZ4BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
-            case IndexType.BP -> BPBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.BP -> PostingsIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.FSST -> FSSTBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
                     .put("unsupported index type for value file: ").put(IndexType.nameOf(indexType));
@@ -107,7 +107,7 @@ public final class IndexFactory {
             case IndexType.FOR -> FORBitmapIndexWriter.initKeyMemory(keyMem);
             case IndexType.ROARING -> RoaringBitmapIndexWriter.initKeyMemory(keyMem);
             case IndexType.LZ4 -> LZ4BitmapIndexWriter.initKeyMemory(keyMem);
-            case IndexType.BP -> BPBitmapIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
+            case IndexType.BP -> PostingsIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
             case IndexType.FSST -> FSSTBitmapIndexWriter.initKeyMemory(keyMem, FSSTBitmapIndexUtils.DEFAULT_BLOCK_VALUES);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot initialize key memory for index type NONE");
@@ -157,8 +157,8 @@ public final class IndexFactory {
                     ? new LZ4BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new LZ4BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.BP -> direction == BitmapIndexReader.DIR_FORWARD
-                    ? new BPBitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
-                    : new BPBitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
+                    ? new PostingsIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
+                    : new PostingsIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.FSST -> {
                 if (direction != BitmapIndexReader.DIR_FORWARD) {
                     throw CairoException.critical(0).put("FSST index backward reader not yet implemented");
@@ -188,7 +188,7 @@ public final class IndexFactory {
             case IndexType.FOR -> new FORBitmapIndexWriter(configuration);
             case IndexType.ROARING -> new RoaringBitmapIndexWriter(configuration);
             case IndexType.LZ4 -> new LZ4BitmapIndexWriter(configuration);
-            case IndexType.BP -> new BPBitmapIndexWriter(configuration);
+            case IndexType.BP -> new PostingsIndexWriter(configuration);
             case IndexType.FSST -> new FSSTBitmapIndexWriter(configuration);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create writer for index type NONE");

@@ -95,7 +95,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * [Key data...]
  * </pre>
  */
-public final class BPBitmapIndexUtils {
+public final class PostingsIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
     public static final int DENSE_STRIDE = 256;
@@ -126,7 +126,7 @@ public final class BPBitmapIndexUtils {
 
     public static final byte SIGNATURE = (byte) 0xfb;
 
-    private BPBitmapIndexUtils() {
+    private PostingsIndexUtils() {
     }
 
     /**
@@ -325,7 +325,7 @@ public final class BPBitmapIndexUtils {
                         Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
                                 deltas[blockStart + 1 + i] - minDeltas[b]);
                     }
-                    BPBitmapIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+                    PostingsIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
                 } else {
                     for (int i = 0; i < numDeltas; i++) {
                         residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
@@ -444,7 +444,7 @@ public final class BPBitmapIndexUtils {
                         Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
                                 deltas[blockStart + 1 + i] - minDeltas[b]);
                     }
-                    BPBitmapIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+                    PostingsIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
                 } else {
                     for (int i = 0; i < numDeltas; i++) {
                         residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
@@ -509,7 +509,7 @@ public final class BPBitmapIndexUtils {
                 for (int i = 0; i < numDeltas; i++) {
                     Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES, deltas[i + 1] - minD);
                 }
-                BPBitmapIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+                PostingsIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
             } else {
                 long[] residuals = ctx.residuals;
                 for (int i = 0; i < numDeltas; i++) {
@@ -551,7 +551,7 @@ public final class BPBitmapIndexUtils {
                 blockMinDeltas = new long[blockCapacity];
                 blockBitWidths = new int[blockCapacity];
             }
-            if (nativeResidualsAddr == 0 && BPBitmapIndexNative.isNativeAvailable()) {
+            if (nativeResidualsAddr == 0 && PostingsIndexNative.isNativeAvailable()) {
                 nativeResidualsAddr = Unsafe.getUnsafe().allocateMemory((long) BLOCK_CAPACITY * Long.BYTES);
             }
         }

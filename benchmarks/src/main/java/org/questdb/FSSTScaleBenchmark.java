@@ -2,9 +2,9 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.idx.BPBitmapIndexFwdReader;
-import io.questdb.cairo.idx.BPBitmapIndexUtils;
-import io.questdb.cairo.idx.BPBitmapIndexWriter;
+import io.questdb.cairo.idx.PostingsIndexFwdReader;
+import io.questdb.cairo.idx.PostingsIndexUtils;
+import io.questdb.cairo.idx.PostingsIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
@@ -154,7 +154,7 @@ public class FSSTScaleBenchmark {
             t0 = System.nanoTime();
             createBPIndex(config, bpDir, HC_BLOCK_VALUES);
             try (Path path = new Path().of(bpDir)) {
-                try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
+                try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
                     writer.of(path, "test", COLUMN_NAME_TXN, false);
                     for (int rowId = 0; rowId < HC_TOTAL_ROWS; rowId++) writer.add(keyAssignment[rowId], rowId);
                 }
@@ -206,7 +206,7 @@ public class FSSTScaleBenchmark {
             });
             measureReadLatency("BP", () -> {
                 try (Path path = new Path().of(bpDir)) {
-                    try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
                         return readBatch(reader, readKeys);
                     }
                 }
@@ -420,10 +420,10 @@ public class FSSTScaleBenchmark {
         try (Path path = new Path().of(root)) {
             int plen = path.size();
             FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, BPBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN), MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
-                BPBitmapIndexWriter.initKeyMemory(mem, blockCapacity);
+            try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, PostingsIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN), MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
+                PostingsIndexWriter.initKeyMemory(mem, blockCapacity);
             }
-            ff.touch(BPBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
+            ff.touch(PostingsIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
     }
 

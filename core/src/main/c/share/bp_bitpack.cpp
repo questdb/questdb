@@ -178,7 +178,7 @@ static void unpack_all_values(const uint8_t *src, int32_t value_count,
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_io_questdb_cairo_idx_BPBitmapIndexNative_packValues0(
+Java_io_questdb_cairo_idx_PostingsIndexNative_packValues0(
         JNIEnv * /*env*/,
         jclass /*cl*/,
         jlong valuesAddr,
@@ -197,7 +197,7 @@ Java_io_questdb_cairo_idx_BPBitmapIndexNative_packValues0(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_cairo_idx_BPBitmapIndexNative_unpackAllValues0(
+Java_io_questdb_cairo_idx_PostingsIndexNative_unpackAllValues0(
         JNIEnv * /*env*/,
         jclass /*cl*/,
         jlong srcAddr,

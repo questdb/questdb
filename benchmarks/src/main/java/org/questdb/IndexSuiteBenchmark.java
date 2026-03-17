@@ -26,9 +26,9 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.idx.BPBitmapIndexFwdReader;
-import io.questdb.cairo.idx.BPBitmapIndexUtils;
-import io.questdb.cairo.idx.BPBitmapIndexWriter;
+import io.questdb.cairo.idx.PostingsIndexFwdReader;
+import io.questdb.cairo.idx.PostingsIndexUtils;
+import io.questdb.cairo.idx.PostingsIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
@@ -197,16 +197,16 @@ public class IndexSuiteBenchmark {
             FilesFacade ff = config.getFilesFacade();
             try (MemoryMA mem = Vm.getSmallCMARWInstance(
                     ff,
-                    BPBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
+                    PostingsIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
                     MemoryTag.MMAP_DEFAULT,
                     config.getWriterFileOpenOpts()
             )) {
-                BPBitmapIndexWriter.initKeyMemory(mem, BPBitmapIndexUtils.BLOCK_CAPACITY);
+                PostingsIndexWriter.initKeyMemory(mem, PostingsIndexUtils.BLOCK_CAPACITY);
             }
-            ff.touch(BPBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
+            ff.touch(PostingsIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
         try (Path path = new Path().of(dir)) {
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
                 writer.of(path, "test", COLUMN_NAME_TXN, false);
                 for (int i = 0; i < keyAssignment.length; i++) {
                     writer.add(keyAssignment[i], (long) i + rowOffset);
@@ -336,7 +336,7 @@ public class IndexSuiteBenchmark {
                     case FOR -> new FORBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                     case LZ4 -> new LZ4BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                     case FSST -> new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case BP -> new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
+                    case BP -> new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                 };
                 try {
                     readBatch(reader, readKeys);

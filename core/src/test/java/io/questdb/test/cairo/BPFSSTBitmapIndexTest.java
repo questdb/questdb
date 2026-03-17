@@ -24,10 +24,10 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.idx.BPBitmapIndexBwdReader;
-import io.questdb.cairo.idx.BPBitmapIndexFwdReader;
-import io.questdb.cairo.idx.BPBitmapIndexUtils;
-import io.questdb.cairo.idx.BPBitmapIndexWriter;
+import io.questdb.cairo.idx.PostingsIndexBwdReader;
+import io.questdb.cairo.idx.PostingsIndexFwdReader;
+import io.questdb.cairo.idx.PostingsIndexUtils;
+import io.questdb.cairo.idx.PostingsIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
@@ -55,7 +55,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  */
 public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
 
-    private static final int BP_BATCH = BPBitmapIndexUtils.BLOCK_CAPACITY;     // 64
+    private static final int BP_BATCH = PostingsIndexUtils.BLOCK_CAPACITY;     // 64
     private static final int FSST_BATCH = FSSTBitmapIndexUtils.DEFAULT_BLOCK_VALUES; // 128
 
     // ===== BP Tests =====
@@ -80,7 +80,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             }
 
             // Write to BP index in batches
-            try (BPBitmapIndexWriter bpWriter = new BPBitmapIndexWriter(configuration, path.trimTo(plen), "bp_cmp", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter bpWriter = new PostingsIndexWriter(configuration, path.trimTo(plen), "bp_cmp", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < valueCount; i++) {
                     bpWriter.add(0, values[i]);
                     if ((i + 1) % BP_BATCH == 0) {
@@ -103,7 +103,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
 
             // Read BP
             LongList bpValues = new LongList();
-            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path.trimTo(plen), "bp_cmp", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(configuration, path.trimTo(plen), "bp_cmp", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                 while (cursor.hasNext()) {
                     bpValues.add(cursor.next());
@@ -146,7 +146,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             }
 
             // Write to BP (all fit in one batch per key)
-            try (BPBitmapIndexWriter bpWriter = new BPBitmapIndexWriter(configuration, path.trimTo(plen), "bp_mk", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter bpWriter = new PostingsIndexWriter(configuration, path.trimTo(plen), "bp_mk", COLUMN_NAME_TXN_NONE)) {
                 for (int key = 0; key < keyCount; key++) {
                     for (int v = 0; v < valuesPerKey; v++) {
                         bpWriter.add(key, keyValues[key][v]);
@@ -174,7 +174,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             long baseOffset = 1_000_000_000L;
             int count = 640; // 10 batches of 64
 
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_large", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "bp_large", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < count; i++) {
                     writer.add(0, baseOffset + i * 7L);
                     if ((i + 1) % BP_BATCH == 0) {
@@ -186,7 +186,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
                 }
             }
 
-            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path, "bp_large", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(configuration, path, "bp_large", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                 int idx = 0;
                 while (cursor.hasNext()) {
@@ -204,7 +204,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             // Write multiple batches, close (which triggers seal)
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_seal", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "bp_seal", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < 64; i++) {
                     writer.add(0, i);
                 }
@@ -222,7 +222,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
                 // seal() called by close()
             }
 
-            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path.trimTo(plen), "bp_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(configuration, path.trimTo(plen), "bp_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                 int count = 0;
                 while (cursor.hasNext()) {
@@ -237,13 +237,13 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testBPEmptyKey() {
         try (Path path = new Path().of(configuration.getDbRoot())) {
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_empty", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "bp_empty", COLUMN_NAME_TXN_NONE)) {
                 writer.add(5, 100);
                 writer.add(5, 200);
                 writer.commit();
             }
 
-            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path, "bp_empty", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(configuration, path, "bp_empty", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                 Assert.assertFalse("Key 0 should be empty", cursor.hasNext());
 
@@ -470,7 +470,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             }
 
             // Write to BP in batches (creates multiple sparse gens)
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_manykeys", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "bp_manykeys", COLUMN_NAME_TXN_NONE)) {
                 for (int b = 0; b < batches; b++) {
                     for (int key = 0; key < keyCount; key++) {
                         for (int i = 0; i < valuesPerKey; i++) {
@@ -482,8 +482,8 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
                 // Don't close yet — read unsealed
             }
 
-            // Read all keys and verify correctness (exercises BPGenLookup)
-            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path.trimTo(plen), "bp_manykeys", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            // Read all keys and verify correctness (exercises PostingsGenLookup)
+            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(configuration, path.trimTo(plen), "bp_manykeys", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 for (int key = 0; key < keyCount; key++) {
                     RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
                     int idx = 0;
@@ -519,7 +519,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             }
 
             // Writer 1: commit in batches, then close (triggers seal)
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_iseal1", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "bp_iseal1", COLUMN_NAME_TXN_NONE)) {
                 for (int b = 0; b < batches; b++) {
                     for (int key = 0; key < keyCount; key++) {
                         for (int i = 0; i < valuesPerBatch; i++) {
@@ -554,7 +554,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             // Write multiple batches (creates multiple sparse gens)
-            try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(configuration, path, "bp_bwd", COLUMN_NAME_TXN_NONE)) {
+            try (PostingsIndexWriter writer = new PostingsIndexWriter(configuration, path, "bp_bwd", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < 64; i++) {
                     writer.add(0, i);
                     writer.add(1, i + 1000);
@@ -568,7 +568,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             }
 
             // Read backward
-            try (BPBitmapIndexBwdReader reader = new BPBitmapIndexBwdReader(configuration, path.trimTo(plen), "bp_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            try (PostingsIndexBwdReader reader = new PostingsIndexBwdReader(configuration, path.trimTo(plen), "bp_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                 int count = 0;
                 long prev = Long.MAX_VALUE;
@@ -594,20 +594,20 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
 
         // Allocate native buffer for values
         long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        long destAddr1 = Unsafe.malloc(BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
-        long destAddr2 = Unsafe.malloc(BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+        long destAddr1 = Unsafe.malloc(PostingsIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+        long destAddr2 = Unsafe.malloc(PostingsIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < count; i++) {
                 Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
             }
 
-            BPBitmapIndexUtils.EncodeContext ctx1 = new BPBitmapIndexUtils.EncodeContext();
+            PostingsIndexUtils.EncodeContext ctx1 = new PostingsIndexUtils.EncodeContext();
             ctx1.ensureCapacity(count);
-            int size1 = BPBitmapIndexUtils.encodeKey(values, count, destAddr1, ctx1);
+            int size1 = PostingsIndexUtils.encodeKey(values, count, destAddr1, ctx1);
 
-            BPBitmapIndexUtils.EncodeContext ctx2 = new BPBitmapIndexUtils.EncodeContext();
+            PostingsIndexUtils.EncodeContext ctx2 = new PostingsIndexUtils.EncodeContext();
             ctx2.ensureCapacity(count);
-            int size2 = BPBitmapIndexUtils.encodeKeyNative(srcAddr, count, destAddr2, ctx2);
+            int size2 = PostingsIndexUtils.encodeKeyNative(srcAddr, count, destAddr2, ctx2);
 
             Assert.assertEquals("Encoded sizes differ", size1, size2);
             for (int i = 0; i < size1; i++) {
@@ -617,8 +617,8 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
             }
         } finally {
             Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(destAddr1, BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(destAddr2, BPBitmapIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr1, PostingsIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr2, PostingsIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -637,7 +637,7 @@ public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
 
     private LongList readAllBP(Path path, CharSequence name, int key) {
         LongList values = new LongList();
-        try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+        try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
             RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
                 values.add(cursor.next());

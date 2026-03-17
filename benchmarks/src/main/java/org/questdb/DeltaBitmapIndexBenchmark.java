@@ -26,9 +26,9 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.idx.BPBitmapIndexFwdReader;
-import io.questdb.cairo.idx.BPBitmapIndexUtils;
-import io.questdb.cairo.idx.BPBitmapIndexWriter;
+import io.questdb.cairo.idx.PostingsIndexFwdReader;
+import io.questdb.cairo.idx.PostingsIndexUtils;
+import io.questdb.cairo.idx.PostingsIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.DeltaBitmapIndexFwdReader;
@@ -376,7 +376,7 @@ public class DeltaBitmapIndexBenchmark {
                 try {
                     createBPIndex(config, dir, HC_BLOCK_VALUES);
                     try (Path path = new Path().of(dir)) {
-                        try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
+                        try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
                             writer.of(path, "test", COLUMN_NAME_TXN, false);
                             // Write in 2 halves with commit between, so seal() merges them
                             int half = keyAssignment.length / 2;
@@ -397,7 +397,7 @@ public class DeltaBitmapIndexBenchmark {
 
                     measureReadLatency("BP", () -> {
                         try (Path path = new Path().of(dir)) {
-                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return readBatch(reader, readKeys);
                             }
                         }
@@ -405,7 +405,7 @@ public class DeltaBitmapIndexBenchmark {
 
                     measureReadLatency("BP scan", () -> {
                         try (Path path = new Path().of(dir)) {
-                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return scanAll(reader, HC_KEY_COUNT);
                             }
                         }
@@ -603,7 +603,7 @@ public class DeltaBitmapIndexBenchmark {
                 try {
                     createBPIndex(config, bpDir, MD_BLOCK_VALUES);
                     try (Path path = new Path().of(bpDir)) {
-                        BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config);
+                        PostingsIndexWriter writer = new PostingsIndexWriter(config);
                         writer.of(path, "test", COLUMN_NAME_TXN, false);
                         for (int commit = 0; commit < MD_COMMITS; commit++) {
                             int startRow = commit * MD_ROWS_PER_COMMIT;
@@ -620,7 +620,7 @@ public class DeltaBitmapIndexBenchmark {
 
                         measureReadLatency("BP (" + MD_COMMITS + " gens, before seal)", () -> {
                             try (Path p = new Path().of(bpDir)) {
-                                try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                     return readBatch(reader, readKeys);
                                 }
                             }
@@ -637,7 +637,7 @@ public class DeltaBitmapIndexBenchmark {
 
                         measureReadLatency("BP (sealed, 1 gen)", () -> {
                             try (Path p = new Path().of(bpDir)) {
-                                try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                     return readBatch(reader, readKeys);
                                 }
                             }
@@ -679,7 +679,7 @@ public class DeltaBitmapIndexBenchmark {
 
             measureReadLatency("BP (sealed) scan", () -> {
                 try (Path path = new Path().of(bpDir)) {
-                    try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
+                    try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
                         return scanAll(reader, MD_KEY_COUNT);
                     }
                 }
@@ -752,9 +752,9 @@ public class DeltaBitmapIndexBenchmark {
             long bpSize;
             long bpSealedSize;
             {
-                createBPIndex(config, bpDir, BPBitmapIndexUtils.BLOCK_CAPACITY);
+                createBPIndex(config, bpDir, PostingsIndexUtils.BLOCK_CAPACITY);
                 try (Path path = new Path().of(bpDir)) {
-                    BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config);
+                    PostingsIndexWriter writer = new PostingsIndexWriter(config);
                     writer.of(path, "test", COLUMN_NAME_TXN, false);
 
                     long t0 = System.nanoTime();
@@ -781,8 +781,8 @@ public class DeltaBitmapIndexBenchmark {
                     try (Path legacyPath = new Path().of(legacyDir);
                          Path bpPath = new Path().of(bpDir)) {
                         try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
-                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
-                            // Warmup (builds BPGenLookup on first read)
+                             PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            // Warmup (builds PostingsGenLookup on first read)
                             readBatchCounting(legacyReader, readKeys);
                             readBatchCounting(bpReader, readKeys);
 
@@ -791,7 +791,7 @@ public class DeltaBitmapIndexBenchmark {
                         }
                     }
 
-                    // Cold open (new reader per call — includes BPGenLookup build)
+                    // Cold open (new reader per call — includes PostingsGenLookup build)
                     System.out.println();
                     System.out.printf("Read latency cold open (%d random keys):%n", readKeys.length);
 
@@ -805,7 +805,7 @@ public class DeltaBitmapIndexBenchmark {
 
                     measureReadLatency("BP (cold, " + ST_COMMITS + " gens)", () -> {
                         try (Path p = new Path().of(bpDir)) {
-                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return readBatch(reader, readKeys);
                             }
                         }
@@ -818,7 +818,7 @@ public class DeltaBitmapIndexBenchmark {
                     try (Path legacyPath = new Path().of(legacyDir);
                          Path bpPath = new Path().of(bpDir)) {
                         try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
-                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                             PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                             // Warm cache
                             scanAll(legacyReader, ST_KEY_COUNT);
                             scanAll(bpReader, ST_KEY_COUNT);
@@ -842,7 +842,7 @@ public class DeltaBitmapIndexBenchmark {
 
                     measureReadLatency("BP scan (cold, " + ST_COMMITS + " gens)", () -> {
                         try (Path p = new Path().of(bpDir)) {
-                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 return scanAll(reader, ST_KEY_COUNT);
                             }
                         }
@@ -854,7 +854,7 @@ public class DeltaBitmapIndexBenchmark {
 
                     measureReadLatency("BP scan (prefetched, " + ST_COMMITS + " gens)", () -> {
                         try (Path p = new Path().of(bpDir)) {
-                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                            try (PostingsIndexFwdReader reader = new PostingsIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                                 reader.prefetchGenData();
                                 return scanAll(reader, ST_KEY_COUNT);
                             }
@@ -884,7 +884,7 @@ public class DeltaBitmapIndexBenchmark {
             // Header overhead analysis
             long denseHeaderOverhead = (long) ST_KEY_COUNT * Integer.BYTES * 2 * ST_COMMITS;
             long sparseHeaderOverhead = (long) ST_ACTIVE_KEYS_PER_COMMIT * Integer.BYTES * 3 * ST_COMMITS;
-            long genDirOverhead = (long) ST_COMMITS * BPBitmapIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long genDirOverhead = (long) ST_COMMITS * PostingsIndexUtils.GEN_DIR_ENTRY_SIZE;
             System.out.println();
             System.out.printf("  BP overhead analysis:%n");
             System.out.printf("    Dense headers (old):          %,d bytes (%.1f MB)%n",
@@ -904,7 +904,7 @@ public class DeltaBitmapIndexBenchmark {
             System.out.printf("Read latency after seal (%d random keys):%n", readKeys.length);
 
             try (Path bpPath = new Path().of(bpDir)) {
-                try (BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                try (PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                     readBatchCounting(bpReader, readKeys);
                     measureReadLatency("BP (sealed, 1 gen)", () -> readBatch(bpReader, readKeys));
 
@@ -955,9 +955,9 @@ public class DeltaBitmapIndexBenchmark {
             // BP write — commit every 1M keys to bound memory
             long bpWriteStart = System.nanoTime();
             int bpCommitInterval = 1_000_000; // keys between commits
-            createBPIndex(config, bpDir, BPBitmapIndexUtils.BLOCK_CAPACITY);
+            createBPIndex(config, bpDir, PostingsIndexUtils.BLOCK_CAPACITY);
             try (Path path = new Path().of(bpDir)) {
-                try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
+                try (PostingsIndexWriter writer = new PostingsIndexWriter(config)) {
                     writer.of(path, "test", COLUMN_NAME_TXN, false);
                     Rnd writeRnd = new Rnd(99999, 88888);
                     long rowId = 0;
@@ -993,7 +993,7 @@ public class DeltaBitmapIndexBenchmark {
                     try (Path legacyPath = new Path().of(legacyDir);
                          Path bpPath = new Path().of(bpDir)) {
                         try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
-                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                             PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                             readBatch(legacyReader, readKeys);
                             readBatch(bpReader, readKeys);
 
@@ -1010,7 +1010,7 @@ public class DeltaBitmapIndexBenchmark {
                     try (Path legacyPath = new Path().of(legacyDir);
                          Path bpPath = new Path().of(bpDir)) {
                         try (BitmapIndexFwdReader legacyReader = new BitmapIndexFwdReader(config, legacyPath, "test", COLUMN_NAME_TXN, -1, 0);
-                             BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                             PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                             scanAll(legacyReader, scanKeys);
                             scanAll(bpReader, scanKeys);
 
@@ -1048,7 +1048,7 @@ public class DeltaBitmapIndexBenchmark {
             }
             System.out.printf("Read latency after seal (%,d random keys):%n", readKeyCount);
             try (Path bpPath = new Path().of(bpDir)) {
-                try (BPBitmapIndexFwdReader bpReader = new BPBitmapIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
+                try (PostingsIndexFwdReader bpReader = new PostingsIndexFwdReader(config, bpPath, "test", COLUMN_NAME_TXN, -1, 0)) {
                     readBatch(bpReader, readKeys);
                     measureReadLatency("BP (sealed)", () -> readBatch(bpReader, readKeys));
                 }
@@ -1174,7 +1174,7 @@ public class DeltaBitmapIndexBenchmark {
         }
     }
 
-    private static void writeInterleaved(BPBitmapIndexWriter writer, int[] keyAssignment) {
+    private static void writeInterleaved(PostingsIndexWriter writer, int[] keyAssignment) {
         for (int rowId = 0; rowId < keyAssignment.length; rowId++) {
             writer.add(keyAssignment[rowId], rowId);
         }
@@ -1251,13 +1251,13 @@ public class DeltaBitmapIndexBenchmark {
             FilesFacade ff = config.getFilesFacade();
             try (MemoryMA mem = Vm.getSmallCMARWInstance(
                     ff,
-                    BPBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
+                    PostingsIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
                     MemoryTag.MMAP_DEFAULT,
                     config.getWriterFileOpenOpts()
             )) {
-                BPBitmapIndexWriter.initKeyMemory(mem, blockCapacity);
+                PostingsIndexWriter.initKeyMemory(mem, blockCapacity);
             }
-            ff.touch(BPBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
+            ff.touch(PostingsIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
         }
     }
 
