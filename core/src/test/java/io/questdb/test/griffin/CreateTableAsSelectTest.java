@@ -96,6 +96,23 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectParquetConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, v long PARQUET(DELTA_BINARY_PACKED, zstd(3))) timestamp(ts) partition by day;");
+            execute("create table dest (like src)");
+
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'dest' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE dest");
+        });
+    }
+
+    @Test
     public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
