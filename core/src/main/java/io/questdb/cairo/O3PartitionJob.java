@@ -2066,6 +2066,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (neededAuxSize > mergeDstBufs.getQuick(bi4 + 3)) {
                         if (mergeDstBufs.getQuick(bi4 + 2) != 0) {
                             Unsafe.free(mergeDstBufs.getQuick(bi4 + 2), mergeDstBufs.getQuick(bi4 + 3), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4 + 2, 0);
+                            mergeDstBufs.setQuick(bi4 + 3, 0);
                         }
                         mergeDstBufs.setQuick(bi4 + 2, Unsafe.malloc(neededAuxSize, MemoryTag.NATIVE_O3));
                         mergeDstBufs.setQuick(bi4 + 3, neededAuxSize);
@@ -2077,6 +2079,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (neededDataSize > mergeDstBufs.getQuick(bi4 + 1)) {
                         if (mergeDstBufs.getQuick(bi4) != 0) {
                             Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4, 0);
+                            mergeDstBufs.setQuick(bi4 + 1, 0);
                         }
                         mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededDataSize, MemoryTag.NATIVE_O3));
                         mergeDstBufs.setQuick(bi4 + 1, neededDataSize);
@@ -2099,6 +2103,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (neededFixSize > mergeDstBufs.getQuick(bi4 + 1)) {
                         if (mergeDstBufs.getQuick(bi4) != 0) {
                             Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4, 0);
+                            mergeDstBufs.setQuick(bi4 + 1, 0);
                         }
                         mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededFixSize, MemoryTag.NATIVE_O3));
                         mergeDstBufs.setQuick(bi4 + 1, neededFixSize);
