@@ -43,19 +43,20 @@ import org.jetbrains.annotations.Nullable;
  * Used by multi-slave ST factories to group all slave-related fields.
  */
 public class HorizonJoinSlaveState implements QuietCloseable {
-    final @Nullable Map asOfJoinMap;
+    private final @Nullable Map asOfJoinMap;
     // not freed on close() call; must be closed separately
-    final RecordCursorFactory factory;
-    final boolean isKeyed;
-    final @Nullable RecordSink masterAsOfJoinMapSink;
-    final int masterColumnCount;
-    final int @Nullable [] masterSymbolKeyColumnIndices;
-    final long masterTsScale;
-    final @Nullable RecordSink slaveAsOfJoinMapSink;
-    final int @Nullable [] slaveSymbolKeyColumnIndices;
-    final HorizonJoinTimeFrameHelper timeFrameHelper;
-    @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
-    TimeFrameCursor timeFrameCursor;
+    private final RecordCursorFactory factory;
+    private final boolean isKeyed;
+    private final @Nullable RecordSink masterAsOfJoinMapSink;
+    private final int masterColumnCount;
+    private final int @Nullable [] masterSymbolKeyColumnIndices;
+    private final long masterTsScale;
+    private final @Nullable RecordSink slaveAsOfJoinMapSink;
+    private final int @Nullable [] slaveSymbolKeyColumnIndices;
+    private final long slaveTsScale;
+    private final HorizonJoinTimeFrameHelper timeFrameHelper;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
+    private TimeFrameCursor timeFrameCursor;
 
     public HorizonJoinSlaveState(
             CairoConfiguration configuration,
@@ -71,6 +72,7 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     ) {
         this.factory = factory;
         this.masterTsScale = masterTsScale;
+        this.slaveTsScale = slaveTsScale;
         this.masterAsOfJoinMapSink = masterAsOfJoinMapSink;
         this.slaveAsOfJoinMapSink = slaveAsOfJoinMapSink;
         this.masterColumnCount = masterColumnCount;
@@ -100,13 +102,65 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         Misc.clear(symbolTranslatingRecord);
     }
 
+    public @Nullable Map getAsOfJoinMap() {
+        return asOfJoinMap;
+    }
+
+    public RecordCursorFactory getFactory() {
+        return factory;
+    }
+
+    public @Nullable RecordSink getMasterAsOfJoinMapSink() {
+        return masterAsOfJoinMapSink;
+    }
+
+    public int getMasterColumnCount() {
+        return masterColumnCount;
+    }
+
+    public int @Nullable [] getMasterSymbolKeyColumnIndices() {
+        return masterSymbolKeyColumnIndices;
+    }
+
+    public long getMasterTsScale() {
+        return masterTsScale;
+    }
+
     public Record getRecord() {
         return timeFrameHelper.getRecord();
+    }
+
+    public @Nullable RecordSink getSlaveAsOfJoinMapSink() {
+        return slaveAsOfJoinMapSink;
+    }
+
+    public int @Nullable [] getSlaveSymbolKeyColumnIndices() {
+        return slaveSymbolKeyColumnIndices;
+    }
+
+    public long getSlaveTsScale() {
+        return slaveTsScale;
+    }
+
+    public @Nullable SymbolTranslatingRecord getSymbolTranslatingRecord() {
+        return symbolTranslatingRecord;
+    }
+
+    public HorizonJoinTimeFrameHelper getTimeFrameHelper() {
+        return timeFrameHelper;
+    }
+
+    public boolean isKeyed() {
+        return isKeyed;
     }
 
     public void reopen() {
         if (asOfJoinMap != null) {
             asOfJoinMap.reopen();
         }
+    }
+
+    public void setTimeFrameCursor(TimeFrameCursor cursor) {
+        this.timeFrameCursor = cursor;
     }
 }

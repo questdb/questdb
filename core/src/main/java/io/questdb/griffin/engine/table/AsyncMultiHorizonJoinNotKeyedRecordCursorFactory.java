@@ -1,0 +1,459 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.MessageBus;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.jit.CompiledFilter;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
+import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
+
+/**
+ * Factory for parallel non-keyed multi-slave HORIZON JOIN query execution.
+ * Produces a single output row.
+ */
+public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncMultiHorizonJoinNotKeyedRecordCursorFactory::filterAndReduce;
+    private static final UnorderedPageFrameReducer REDUCE = AsyncMultiHorizonJoinNotKeyedRecordCursorFactory::reduce;
+    private final AsyncMultiHorizonJoinNotKeyedRecordCursor cursor;
+    private final UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom> frameSequence;
+    private final ObjList<GroupByFunction> groupByFunctions;
+    private final JoinRecordMetadata horizonJoinMetadata;
+    private final RecordCursorFactory masterFactory;
+    private final LongList offsets;
+    private final RecordCursorFactory[] slaveFactories;
+    private final int workerCount;
+
+    public AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @Transient @NotNull BytecodeAssembler asm,
+            @NotNull CairoEngine engine,
+            @NotNull MessageBus messageBus,
+            @NotNull RecordMetadata metadata,
+            @NotNull JoinRecordMetadata horizonJoinMetadata,
+            @NotNull RecordCursorFactory masterFactory,
+            @NotNull HorizonJoinSlaveState[] slaveStates,
+            @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @NotNull LongList offsets,
+            int masterTimestampColumnIndex,
+            @NotNull ObjList<GroupByFunction> groupByFunctions,
+            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            int valueCount,
+            int @NotNull [] columnSources,
+            int @NotNull [] columnIndexes,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
+            @Nullable Function filter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
+            @Nullable ObjList<Function> perWorkerFilters,
+            int workerCount
+    ) {
+        super(metadata);
+        try {
+            this.horizonJoinMetadata = horizonJoinMetadata;
+            this.masterFactory = masterFactory;
+            this.offsets = offsets;
+            this.groupByFunctions = groupByFunctions;
+            this.workerCount = workerCount;
+
+            this.slaveFactories = new RecordCursorFactory[slaveStates.length];
+            for (int i = 0; i < slaveStates.length; i++) {
+                slaveFactories[i] = slaveStates[i].getFactory();
+            }
+
+            final AsyncMultiHorizonJoinNotKeyedAtom atom = new AsyncMultiHorizonJoinNotKeyedAtom(
+                    asm,
+                    configuration,
+                    slaveStates,
+                    perSlaveAsOfJoinKeyTypes,
+                    masterTimestampColumnIndex,
+                    offsets,
+                    valueCount,
+                    columnSources,
+                    columnIndexes,
+                    groupByFunctions,
+                    perWorkerGroupByFunctions,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    filter,
+                    filterUsedColumnIndexes,
+                    perWorkerFilters,
+                    workerCount
+            );
+
+            this.frameSequence = new UnorderedPageFrameSequence<>(
+                    engine, configuration, messageBus, atom, filter != null ? FILTER_AND_REDUCE : REDUCE, workerCount
+            );
+
+            this.cursor = new AsyncMultiHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactories);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return masterFactory;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        frameSequence.of(masterFactory, executionContext, ORDER_ASC);
+        cursor.of(frameSequence, executionContext);
+        return cursor;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Async Multi Horizon Join");
+        sink.meta("workers").val(workerCount);
+        sink.meta("offsets").val(offsets.size());
+        sink.meta("slaves").val(slaveFactories.length);
+        sink.setMetadata(horizonJoinMetadata);
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
+        sink.setMetadata(null);
+        sink.child(masterFactory);
+        for (RecordCursorFactory sf : slaveFactories) {
+            sink.child(sf);
+        }
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return frameSequence.getAtom().getFilterContext().getCompiledFilter() != null;
+    }
+
+    private static void filterAndReduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        assert frameRowCount > 0;
+
+        @SuppressWarnings("unchecked") final AsyncMultiHorizonJoinNotKeyedAtom atom =
+                ((UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom>) frameSequence).getAtom();
+
+        final long offsetCount = atom.getOffsetCount();
+        if (offsetCount == 0) {
+            return;
+        }
+
+        final boolean owner = stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        }
+        record.init(frameMemory);
+
+        try {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final SimpleMapValue value = atom.getMapValue(slotId);
+            final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
+            final MultiHorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
+            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final Function filter = filterCtx.getFilter(slotId);
+            final int slaveCount = atom.getSlaveCount();
+
+            // Apply filter to master rows
+            final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+            rows.clear();
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(
+                        compiledFilter,
+                        filterCtx.getBindVarMemory(),
+                        filterCtx.getBindVarFunctions(),
+                        frameMemory,
+                        addressCache,
+                        filterCtx.getDataAddresses(slotId),
+                        filterCtx.getAuxAddresses(slotId),
+                        rows,
+                        frameRowCount
+                );
+            }
+
+            final long filteredRowCount = rows.size();
+            if (filteredRowCount == 0) {
+                return;
+            }
+
+            if (isParquetFrame) {
+                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
+
+            if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
+                record = filteredMemoryRecord;
+            }
+
+            // Get horizon timestamp iterator and initialize for filtered rows
+            final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+            horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
+
+            processHorizonTimestamps(
+                    horizonIterator,
+                    record,
+                    baseRowId,
+                    atom,
+                    slaveCount,
+                    horizonJoinRecord,
+                    value,
+                    functionUpdater,
+                    slotId
+            );
+        } finally {
+            frameMemoryPool.releaseParquetBuffers();
+            atom.release(slotId);
+        }
+    }
+
+    private static void processHorizonTimestamps(
+            AsyncHorizonTimestampIterator horizonIterator,
+            PageFrameMemoryRecord masterRecord,
+            long baseRowId,
+            AsyncMultiHorizonJoinNotKeyedAtom atom,
+            int slaveCount,
+            MultiHorizonJoinRecord horizonJoinRecord,
+            SimpleMapValue value,
+            GroupByFunctionsUpdater functionUpdater,
+            int slotId
+    ) {
+        final Record[] matchedSlaveRecords = new Record[slaveCount];
+
+        for (int s = 0; s < slaveCount; s++) {
+            atom.getSlaveTimeFrameHelper(slotId, s).toTop();
+            Map asOfMap = atom.getAsOfJoinMap(slotId, s);
+            if (asOfMap != null) {
+                asOfMap.clear();
+            }
+        }
+
+        while (horizonIterator.next()) {
+            final long horizonTs = horizonIterator.getHorizonTimestamp();
+            final long masterRowIdx = horizonIterator.getMasterRowIndex();
+            final int offsetIdx = horizonIterator.getOffsetIndex();
+            final long offset = atom.getOffset(offsetIdx);
+
+            masterRecord.setRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
+            final long masterRowId = baseRowId + masterRowIdx;
+
+            for (int s = 0; s < slaveCount; s++) {
+                final HorizonJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(slotId, s);
+                final long scaledHorizonTs = scaleTimestamp(horizonTs, atom.getMasterTimestampScale(s));
+                long asOfRowId = helper.findAsOfRow(scaledHorizonTs);
+
+                long matchRowId = Long.MIN_VALUE;
+                final Map asOfJoinMap = atom.getAsOfJoinMap(slotId, s);
+                final RecordSink masterSink = atom.getMasterAsOfJoinSink(slotId, s);
+                final RecordSink slaveSink = atom.getSlaveAsOfJoinMapSink(slotId, s);
+
+                if (asOfJoinMap != null && masterSink != null && slaveSink != null) {
+                    final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
+                    final SymbolTranslatingRecord symbolTranslatingRecord =
+                            masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
+
+                    if (asOfRowId != Long.MIN_VALUE) {
+                        if (helper.getForwardWatermark() == Long.MIN_VALUE) {
+                            matchRowId = helper.backwardScanForKeyMatch(
+                                    asOfRowId, masterKeyRecord,
+                                    masterSink, slaveSink,
+                                    asOfJoinMap, symbolTranslatingRecord
+                            );
+                            helper.initForwardWatermark(asOfRowId);
+                        } else {
+                            helper.forwardScanToPosition(asOfRowId, slaveSink, asOfJoinMap);
+
+                            MapKey cacheKey = asOfJoinMap.withKey();
+                            cacheKey.put(masterKeyRecord, masterSink);
+                            MapValue cacheValue = cacheKey.findValue();
+
+                            if (cacheValue != null) {
+                                matchRowId = cacheValue.getLong(0);
+                            } else {
+                                matchRowId = helper.backwardScanForKeyMatch(
+                                        asOfRowId, masterKeyRecord,
+                                        masterSink, slaveSink,
+                                        asOfJoinMap, symbolTranslatingRecord
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    matchRowId = asOfRowId;
+                }
+
+                if (matchRowId != Long.MIN_VALUE) {
+                    helper.recordAt(matchRowId);
+                    matchedSlaveRecords[s] = helper.getRecord();
+                } else {
+                    matchedSlaveRecords[s] = null;
+                }
+            }
+
+            horizonJoinRecord.of(masterRecord, offset, horizonTs, matchedSlaveRecords);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, horizonJoinRecord, masterRowId);
+                value.setNew(false);
+            } else {
+                functionUpdater.updateExisting(value, horizonJoinRecord, masterRowId);
+            }
+        }
+    }
+
+    private static void reduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        assert frameRowCount > 0;
+
+        @SuppressWarnings("unchecked") final AsyncMultiHorizonJoinNotKeyedAtom atom =
+                ((UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom>) frameSequence).getAtom();
+
+        final long offsetCount = atom.getOffsetCount();
+        if (offsetCount == 0) {
+            return;
+        }
+
+        final boolean owner = stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        record.init(frameMemory);
+
+        try {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            final SimpleMapValue value = atom.getMapValue(slotId);
+            final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
+            final MultiHorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
+            final int slaveCount = atom.getSlaveCount();
+
+            final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+            horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
+
+            processHorizonTimestamps(
+                    horizonIterator,
+                    record,
+                    baseRowId,
+                    atom,
+                    slaveCount,
+                    horizonJoinRecord,
+                    value,
+                    functionUpdater,
+                    slotId
+            );
+        } finally {
+            frameMemoryPool.releaseParquetBuffers();
+            atom.release(slotId);
+        }
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(frameSequence);
+        Misc.free(cursor);
+        Misc.free(masterFactory);
+        for (RecordCursorFactory sf : slaveFactories) {
+            Misc.free(sf);
+        }
+        Misc.free(horizonJoinMetadata);
+        Misc.freeObjListAndClear(groupByFunctions);
+    }
+}

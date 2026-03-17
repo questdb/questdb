@@ -123,7 +123,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         TimeFrameCursor[] slaveCursors = new TimeFrameCursor[slaveStates.length];
         try {
             for (int i = 0; i < slaveStates.length; i++) {
-                slaveCursors[i] = slaveStates[i].factory.getTimeFrameCursor(executionContext);
+                slaveCursors[i] = slaveStates[i].getFactory().getTimeFrameCursor(executionContext);
             }
             cursor.of(masterCursor, slaveCursors, executionContext);
             return cursor;
@@ -151,7 +151,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.setMetadata(null);
         sink.child(masterFactory);
         for (HorizonJoinSlaveState ss : slaveStates) {
-            sink.child(ss.factory);
+            sink.child(ss.getFactory());
         }
     }
 
@@ -162,7 +162,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         Misc.free(masterFactory);
         for (HorizonJoinSlaveState ss : slaveStates) {
             Misc.free(ss);
-            Misc.free(ss.factory);
+            Misc.free(ss.getFactory());
         }
         Misc.free(horizonJoinMetadata);
         Misc.freeObjListAndClear(groupByFunctions);
@@ -239,10 +239,10 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 Misc.clearObjList(groupByFunctions);
                 Misc.free(groupByAllocator);
                 for (HorizonJoinSlaveState ss : slaveStates) {
-                    if (ss.asOfJoinMap != null) {
-                        ss.asOfJoinMap.close();
+                    if (ss.getAsOfJoinMap() != null) {
+                        ss.getAsOfJoinMap().close();
                     }
-                    Misc.clear(ss.symbolTranslatingRecord);
+                    Misc.clear(ss.getSymbolTranslatingRecord());
                 }
                 Misc.free(horizonIterator);
                 isOpen = false;
@@ -293,9 +293,9 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
         private void buildValue() {
             for (int s = 0; s < slaveCount; s++) {
-                slaveStates[s].timeFrameHelper.toTop();
-                if (slaveStates[s].isKeyed && slaveStates[s].asOfJoinMap != null) {
-                    slaveStates[s].asOfJoinMap.clear();
+                slaveStates[s].getTimeFrameHelper().toTop();
+                if (slaveStates[s].isKeyed() && slaveStates[s].getAsOfJoinMap() != null) {
+                    slaveStates[s].getAsOfJoinMap().clear();
                 }
             }
 
@@ -312,41 +312,41 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
                 for (int s = 0; s < slaveCount; s++) {
                     HorizonJoinSlaveState ss = slaveStates[s];
-                    final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.masterTsScale);
-                    long asOfRowId = ss.timeFrameHelper.findAsOfRow(scaledHorizonTs);
+                    final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.getMasterTsScale());
+                    long asOfRowId = ss.getTimeFrameHelper().findAsOfRow(scaledHorizonTs);
 
                     long matchRowId = Long.MIN_VALUE;
-                    if (ss.isKeyed) {
+                    if (ss.isKeyed()) {
                         Record masterKeyRecord = masterRecord;
-                        if (ss.symbolTranslatingRecord != null) {
-                            ss.symbolTranslatingRecord.of(masterRecord);
-                            masterKeyRecord = ss.symbolTranslatingRecord;
+                        if (ss.getSymbolTranslatingRecord() != null) {
+                            ss.getSymbolTranslatingRecord().of(masterRecord);
+                            masterKeyRecord = ss.getSymbolTranslatingRecord();
                         }
 
                         if (asOfRowId != Long.MIN_VALUE) {
-                            if (ss.timeFrameHelper.getForwardWatermark() == Long.MIN_VALUE) {
-                                matchRowId = ss.timeFrameHelper.backwardScanForKeyMatch(
+                            if (ss.getTimeFrameHelper().getForwardWatermark() == Long.MIN_VALUE) {
+                                matchRowId = ss.getTimeFrameHelper().backwardScanForKeyMatch(
                                         asOfRowId, masterKeyRecord,
-                                        ss.masterAsOfJoinMapSink, ss.slaveAsOfJoinMapSink,
-                                        ss.asOfJoinMap, ss.symbolTranslatingRecord
+                                        ss.getMasterAsOfJoinMapSink(), ss.getSlaveAsOfJoinMapSink(),
+                                        ss.getAsOfJoinMap(), ss.getSymbolTranslatingRecord()
                                 );
-                                ss.timeFrameHelper.initForwardWatermark(asOfRowId);
+                                ss.getTimeFrameHelper().initForwardWatermark(asOfRowId);
                             } else {
-                                ss.timeFrameHelper.forwardScanToPosition(
-                                        asOfRowId, ss.slaveAsOfJoinMapSink, ss.asOfJoinMap
+                                ss.getTimeFrameHelper().forwardScanToPosition(
+                                        asOfRowId, ss.getSlaveAsOfJoinMapSink(), ss.getAsOfJoinMap()
                                 );
 
-                                MapKey cacheKey = ss.asOfJoinMap.withKey();
-                                cacheKey.put(masterKeyRecord, ss.masterAsOfJoinMapSink);
+                                MapKey cacheKey = ss.getAsOfJoinMap().withKey();
+                                cacheKey.put(masterKeyRecord, ss.getMasterAsOfJoinMapSink());
                                 MapValue cacheValue = cacheKey.findValue();
 
                                 if (cacheValue != null) {
                                     matchRowId = cacheValue.getLong(0);
                                 } else {
-                                    matchRowId = ss.timeFrameHelper.backwardScanForKeyMatch(
+                                    matchRowId = ss.getTimeFrameHelper().backwardScanForKeyMatch(
                                             asOfRowId, masterKeyRecord,
-                                            ss.masterAsOfJoinMapSink, ss.slaveAsOfJoinMapSink,
-                                            ss.asOfJoinMap, ss.symbolTranslatingRecord
+                                            ss.getMasterAsOfJoinMapSink(), ss.getSlaveAsOfJoinMapSink(),
+                                            ss.getAsOfJoinMap(), ss.getSymbolTranslatingRecord()
                                     );
                                 }
                             }
@@ -356,7 +356,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     }
 
                     if (matchRowId != Long.MIN_VALUE) {
-                        ss.timeFrameHelper.recordAt(matchRowId);
+                        ss.getTimeFrameHelper().recordAt(matchRowId);
                         matchedSlaveRecords[s] = ss.getRecord();
                     } else {
                         matchedSlaveRecords[s] = null;
@@ -389,11 +389,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             SymbolTableSource[] slaveSymbolSources = new SymbolTableSource[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
-                slaveStates[s].timeFrameHelper.of(slaveCursors[s]);
-                slaveStates[s].timeFrameCursor = slaveCursors[s];
+                slaveStates[s].getTimeFrameHelper().of(slaveCursors[s]);
+                slaveStates[s].setTimeFrameCursor(slaveCursors[s]);
                 slaveSymbolSources[s] = slaveCursors[s];
-                if (slaveStates[s].symbolTranslatingRecord != null) {
-                    slaveStates[s].symbolTranslatingRecord.initSources(masterCursor, slaveCursors[s]);
+                if (slaveStates[s].getSymbolTranslatingRecord() != null) {
+                    slaveStates[s].getSymbolTranslatingRecord().initSources(masterCursor, slaveCursors[s]);
                 }
             }
 
