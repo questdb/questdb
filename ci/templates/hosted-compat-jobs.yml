@@ -10,7 +10,6 @@ jobs:
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"
     pool:
-      vmImage: $(imageName)
       name: $(poolName)
     timeoutInMinutes: 60
     variables:

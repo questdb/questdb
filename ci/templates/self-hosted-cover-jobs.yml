@@ -74,7 +74,6 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
     pool:
-      vmImage: $(imageName)
       name: $(poolName)
     timeoutInMinutes: 60
     variables:
