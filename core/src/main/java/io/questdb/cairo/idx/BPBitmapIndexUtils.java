@@ -356,6 +356,11 @@ public final class BPBitmapIndexUtils {
             return 2;
         }
 
+        // Fast path: single block (count <= BLOCK_CAPACITY) — avoid per-block loops
+        if (count <= BLOCK_CAPACITY) {
+            return encodeKeyNativeSingleBlock(srcAddr, count, destAddr, ctx);
+        }
+
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         long[] deltas = ctx.deltas;
         int[] valueCounts = ctx.blockValueCounts;
@@ -449,6 +454,71 @@ public final class BPBitmapIndexUtils {
             }
             pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
         }
+
+        return (int) (pos - destAddr);
+    }
+
+    /**
+     * Optimized single-block encode for keys with count <= BLOCK_CAPACITY.
+     * Single pass: reads values, computes deltas inline, finds min/max,
+     * writes metadata and packs residuals without per-block loop overhead.
+     */
+    private static int encodeKeyNativeSingleBlock(long srcAddr, int count, long destAddr, EncodeContext ctx) {
+        int numDeltas = count - 1;
+        long firstValue = Unsafe.getUnsafe().getLong(srcAddr);
+
+        // Compute deltas and find min/max in a single pass
+        long minD = Long.MAX_VALUE;
+        long maxD = Long.MIN_VALUE;
+        long[] deltas = ctx.deltas;
+
+        long prev = firstValue;
+        for (int i = 1; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            long d = val - prev;
+            deltas[i] = d;
+            if (d < minD) minD = d;
+            if (d > maxD) maxD = d;
+            prev = val;
+        }
+
+        if (numDeltas == 0) {
+            minD = 0;
+            maxD = 0;
+        }
+
+        long range = maxD - minD;
+        int bitWidth = range == 0 ? 0 : FORBitmapIndexUtils.bitsNeeded(range);
+
+        // Write: blockCount(2B) + valueCount(1B) + firstValue(8B) + minDelta(8B) + bitWidth(1B) + packedData
+        long pos = destAddr;
+        Unsafe.getUnsafe().putShort(pos, (short) 1);
+        pos += 2;
+        Unsafe.getUnsafe().putByte(pos, (byte) count);
+        pos += 1;
+        Unsafe.getUnsafe().putLong(pos, firstValue);
+        pos += 8;
+        Unsafe.getUnsafe().putLong(pos, minD);
+        pos += 8;
+        Unsafe.getUnsafe().putByte(pos, (byte) bitWidth);
+        pos += 1;
+
+        if (bitWidth > 0 && numDeltas > 0) {
+            if (ctx.nativeResidualsAddr != 0) {
+                long nrAddr = ctx.nativeResidualsAddr;
+                for (int i = 0; i < numDeltas; i++) {
+                    Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES, deltas[i + 1] - minD);
+                }
+                BPBitmapIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
+            } else {
+                long[] residuals = ctx.residuals;
+                for (int i = 0; i < numDeltas; i++) {
+                    residuals[i] = deltas[i + 1] - minD;
+                }
+                FORBitmapIndexUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+            }
+        }
+        pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
 
         return (int) (pos - destAddr);
     }
