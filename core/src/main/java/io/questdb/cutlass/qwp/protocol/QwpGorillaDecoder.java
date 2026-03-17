@@ -102,27 +102,22 @@ public class QwpGorillaDecoder {
     }
 
     /**
-     * Resets the decoder with the first two timestamps.
+     * Resets the decoder with the first two timestamps and the encoded data.
      * <p>
      * The first two timestamps are always stored uncompressed and are used
-     * to establish the initial delta for subsequent compression.
+     * to establish the initial delta for subsequent compression. The address
+     * and length point to the Gorilla-compressed delta-of-delta data that
+     * follows the two raw timestamps in the wire format.
      *
      * @param firstTimestamp  the first timestamp in the sequence
      * @param secondTimestamp the second timestamp in the sequence
+     * @param address         the address of the encoded data
+     * @param length          the length of the encoded data in bytes
      */
-    public void reset(long firstTimestamp, long secondTimestamp) {
+    public void reset(long firstTimestamp, long secondTimestamp, long address, long length) {
         this.decodeCount = 0;
         this.prevTimestamp = secondTimestamp;
         this.prevDelta = secondTimestamp - firstTimestamp;
-    }
-
-    /**
-     * Resets the bit reader for reading encoded delta-of-deltas.
-     *
-     * @param address the address of the encoded data
-     * @param length  the length of the encoded data in bytes
-     */
-    public void resetReader(long address, long length) {
         bitReader.reset(address, length);
     }
 

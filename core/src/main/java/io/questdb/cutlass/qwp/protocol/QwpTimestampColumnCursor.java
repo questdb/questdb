@@ -268,8 +268,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                         long gorillaDataAddress = dataAddress + offset;
                         int gorillaDataLength = dataLength - offset;
 
-                        gorillaDecoder.reset(firstTimestamp, secondTimestamp);
-                        gorillaDecoder.resetReader(gorillaDataAddress, gorillaDataLength);
+                        gorillaDecoder.reset(firstTimestamp, secondTimestamp, gorillaDataAddress, gorillaDataLength);
 
                         // Decode all remaining values and cache them to avoid double decoding.
                         // This also computes the byte count of the compressed data.
