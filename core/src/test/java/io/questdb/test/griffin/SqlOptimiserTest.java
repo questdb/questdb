@@ -5161,7 +5161,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from y\n" +
                     "sample by 5d from '2017-12-20' align to calendar time zone 'Europe/London' with offset '10:00'";
 
-            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= to_utc('2017-12-20', 'Europe/London') from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
         });
     }
 
