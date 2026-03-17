@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -357,7 +357,9 @@ public class MutableModelsTest {
         context.setHiExprTimeUnit(WindowExpression.TIME_UNIT_MINUTE);
         context.setHi(200);
         context.setHiKind(WindowJoinContext.FOLLOWING, 40);
-        context.setIncludePrevailing(false, 50);
+        context.setDynamicLo(true);
+        context.setDynamicHi(true);
+        context.setIncludePrevailing(false);
         context.setParentModel(QueryModel.FACTORY.newInstance());
         assertDifferentFromFresh(context, freshContext);
 

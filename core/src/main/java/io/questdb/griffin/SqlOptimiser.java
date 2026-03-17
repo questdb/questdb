@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -291,7 +291,7 @@ public class SqlOptimiser implements Mutable {
                         if (functionFactoryCache.isGroupBy(node.token)) {
                             return true;
                         }
-                        break;
+                        // fall through to traverse rhs and args
                     default:
                         for (int i = 0, n = node.args.size(); i < n; i++) {
                             sqlNodeStack.add(node.args.getQuick(i));
@@ -370,7 +370,7 @@ public class SqlOptimiser implements Mutable {
                         if (node.token != null && orderedGroupByFunctions.contains(node.token)) {
                             return true;
                         }
-                        break;
+                        // fall through to traverse rhs and args
                     default:
                         for (int i = 0, n = node.args.size(); i < n; i++) {
                             sqlNodeStack.add(node.args.getQuick(i));
@@ -458,6 +458,13 @@ public class SqlOptimiser implements Mutable {
 
     private static void linkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).addDependency(child);
+    }
+
+    private static boolean matchesModelAlias(CharSequence prefix, QueryModel model) {
+        if (model.getAlias() != null && Chars.equalsIgnoreCase(model.getAlias().token, prefix)) {
+            return true;
+        }
+        return model.getTableName() != null && Chars.equalsIgnoreCase(model.getTableName(), prefix);
     }
 
     private static boolean modelIsFlex(QueryModel model) {
@@ -4425,6 +4432,39 @@ public class SqlOptimiser implements Mutable {
                 : Chars.equalsIgnoreCase(name, target);
     }
 
+    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
+        ExpressionNode constWhere = model.getConstWhereClause();
+        if (constWhere == null) {
+            return;
+        }
+        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
+        ExpressionNode compileTimeTerms = null;
+        ExpressionNode runtimeTerms = null;
+        // Flatten the AND-tree and classify each conjunct.
+        tempExprs.clear();
+        extractAndTerms(constWhere, tempExprs);
+        for (int i = 0, n = tempExprs.size(); i < n; i++) {
+            ExpressionNode term = tempExprs.getQuick(i);
+            if (isCompileTimeConstant(term)) {
+                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
+            } else {
+                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
+            }
+        }
+        model.setConstWhereClause(compileTimeTerms);
+        if (runtimeTerms != null) {
+            IntList ordered = model.getOrderedJoinModels();
+            int lastIndex = ordered.getQuick(ordered.size() - 1);
+            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
+            lastModel.setPostJoinWhereClause(concatFilters(
+                    legacy,
+                    expressionNodePool,
+                    lastModel.getPostJoinWhereClause(),
+                    runtimeTerms
+            ));
+        }
+    }
+
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
         assert a.slaveIndex == b.slaveIndex;
 
@@ -4559,39 +4599,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
-        ExpressionNode constWhere = model.getConstWhereClause();
-        if (constWhere == null) {
-            return;
-        }
-        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
-        ExpressionNode compileTimeTerms = null;
-        ExpressionNode runtimeTerms = null;
-        // Flatten the AND-tree and classify each conjunct.
-        tempExprs.clear();
-        extractAndTerms(constWhere, tempExprs);
-        for (int i = 0, n = tempExprs.size(); i < n; i++) {
-            ExpressionNode term = tempExprs.getQuick(i);
-            if (isCompileTimeConstant(term)) {
-                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
-            } else {
-                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
-            }
-        }
-        model.setConstWhereClause(compileTimeTerms);
-        if (runtimeTerms != null) {
-            IntList ordered = model.getOrderedJoinModels();
-            int lastIndex = ordered.getQuick(ordered.size() - 1);
-            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
-            lastModel.setPostJoinWhereClause(concatFilters(
-                    legacy,
-                    expressionNodePool,
-                    lastModel.getPostJoinWhereClause(),
-                    runtimeTerms
-            ));
-        }
-    }
-
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
         int p = 0;
         int m = positions.size();
@@ -4607,7 +4614,13 @@ public class SqlOptimiser implements Mutable {
             // which is "result".
             // hence, whenever it exists in "positions" we copy clause to "to"
             // otherwise copy to "result"
-            JoinContext t = p < m && i == positions.getQuick(p) ? to : result;
+            JoinContext t;
+            if (p < m && i == positions.getQuick(p)) {
+                t = to;
+                p++;
+            } else {
+                t = result;
+            }
             int ai = from.aIndexes.getQuick(i);
             int bi = from.bIndexes.getQuick(i);
             t.aIndexes.add(ai);
@@ -5700,6 +5713,17 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
             }
+
+            // process WINDOW JOIN dynamic bound expressions
+            if (jm.getJoinType() == JOIN_WINDOW) {
+                final WindowJoinContext wjc = jm.getWindowJoinContext();
+                if (wjc.isDynamicLo()) {
+                    emitLiteralsTopDown(wjc.getLoExpr(), model);
+                }
+                if (wjc.isDynamicHi()) {
+                    emitLiteralsTopDown(wjc.getHiExpr(), model);
+                }
+            }
         }
 
         final ExpressionNode postJoinWhere = model.getPostJoinWhereClause();
@@ -6665,6 +6689,58 @@ public class SqlOptimiser implements Mutable {
 
         // Clear the base reference — inheritance is now resolved
         window.setBaseWindowName(null, 0);
+    }
+
+    /**
+     * Resolves column prefixes in WINDOW JOIN RANGE BETWEEN bound expressions.
+     * Strips the master table prefix and rejects the slave table prefix with an error.
+     * <p>
+     * This method only processes children of FUNCTION/OPERATION/SET_OPERATION nodes,
+     * so the caller must apply {@link #rewriteWindowJoinBoundLiteral} to the root node
+     * first to handle the case where the bound expression is a bare column reference.
+     */
+    private void resolveWindowJoinBoundColumns(
+            ExpressionNode node,
+            QueryModel masterModel,
+            QueryModel slaveModel
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+
+        sqlNodeStack.clear();
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case FUNCTION:
+                    case OPERATION:
+                    case SET_OPERATION:
+                        if (node.paramCount < 3) {
+                            node.lhs = rewriteWindowJoinBoundLiteral(node.lhs, masterModel, slaveModel);
+                            node.rhs = rewriteWindowJoinBoundLiteral(node.rhs, masterModel, slaveModel);
+                            if (node.rhs != null) {
+                                sqlNodeStack.push(node.rhs);
+                            }
+                            node = node.lhs;
+                        } else {
+                            for (int i = 0, n = node.paramCount; i < n; i++) {
+                                ExpressionNode arg = rewriteWindowJoinBoundLiteral(node.args.getQuick(i), masterModel, slaveModel);
+                                node.args.setQuick(i, arg);
+                                if (arg != null && arg.type != LITERAL) {
+                                    sqlNodeStack.push(arg);
+                                }
+                            }
+                            node = null;
+                        }
+                        continue;
+                    default:
+                        node = null;
+                        continue;
+                }
+            }
+            node = sqlNodeStack.poll();
+        }
     }
 
     // Rewrite:
@@ -9731,6 +9807,28 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private ExpressionNode rewriteWindowJoinBoundLiteral(
+            ExpressionNode node,
+            QueryModel masterModel,
+            QueryModel slaveModel
+    ) throws SqlException {
+        if (node == null || node.type != LITERAL) {
+            return node;
+        }
+        final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+        if (dot == -1) {
+            return node;
+        }
+        final CharSequence prefix = node.token.subSequence(0, dot);
+        if (matchesModelAlias(prefix, slaveModel)) {
+            throw SqlException.$(node.position, "RANGE BETWEEN expression must not reference right table columns");
+        }
+        if (matchesModelAlias(prefix, masterModel)) {
+            return nextLiteral(node.token.subSequence(dot + 1, node.token.length()), node.position);
+        }
+        return node;
+    }
+
     /**
      * Copies the provided order by advice into the given model.
      *
@@ -10380,7 +10478,9 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void validateWindowJoins(
-            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
+            QueryModel model,
+            SqlExecutionContext sqlExecutionContext,
+            int recursionLevel
     ) throws SqlException {
         if (model == null) {
             return;
@@ -10398,38 +10498,80 @@ public class SqlOptimiser implements Mutable {
                 WindowJoinContext context = windowJoinModel.getWindowJoinContext();
                 long lo = 0, hi = 0;
                 switch (context.getLoKind()) {
-                    case WindowJoinContext.PRECEDING:
-                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
-                        break;
-                    case WindowJoinContext.FOLLOWING:
-                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), sqlExecutionContext);
-                        if (lo == Long.MAX_VALUE) {
-                            lo = Long.MIN_VALUE;
+                    case WindowJoinContext.PRECEDING: {
+                        long val = tryEvalNonNegativeLongConstant(context.getLoExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicLo(true);
                         } else {
-                            lo *= -1;
+                            lo = val;
                         }
+                        break;
+                    }
+                    case WindowJoinContext.FOLLOWING: {
+                        long val = tryEvalNonNegativeLongConstant(context.getLoExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicLo(true);
+                        } else {
+                            lo = val;
+                            if (lo == Long.MAX_VALUE) {
+                                lo = Long.MIN_VALUE;
+                            } else {
+                                lo *= -1;
+                            }
+                        }
+                        break;
+                    }
                 }
-                if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
+                if (!context.isDynamicLo() && (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE)) {
                     throw SqlException.position(context.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
                 }
 
                 switch (context.getHiKind()) {
-                    case WindowJoinContext.PRECEDING:
-                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
-                        if (hi == Long.MAX_VALUE) {
-                            hi = Long.MIN_VALUE;
+                    case WindowJoinContext.PRECEDING: {
+                        long val = tryEvalNonNegativeLongConstant(context.getHiExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicHi(true);
                         } else {
-                            hi *= -1;
+                            hi = val;
+                            if (hi == Long.MAX_VALUE) {
+                                hi = Long.MIN_VALUE;
+                            } else {
+                                hi *= -1;
+                            }
                         }
                         break;
-                    case WindowJoinContext.FOLLOWING:
-                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), sqlExecutionContext);
+                    }
+                    case WindowJoinContext.FOLLOWING: {
+                        long val = tryEvalNonNegativeLongConstant(context.getHiExpr(), sqlExecutionContext);
+                        if (val == -1) {
+                            context.setDynamicHi(true);
+                        } else {
+                            hi = val;
+                        }
+                        break;
+                    }
                 }
-                if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
+                if (!context.isDynamicHi() && (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE)) {
                     throw SqlException.position(context.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
                 }
                 context.setHi(hi);
                 context.setLo(lo);
+
+                if (context.isDynamicLo() || context.isDynamicHi()) {
+                    final QueryModel masterModel = model.getJoinModels().get(0);
+                    if (context.isDynamicLo()) {
+                        ExpressionNode loExpr = context.getLoExpr();
+                        loExpr = rewriteWindowJoinBoundLiteral(loExpr, masterModel, windowJoinModel);
+                        context.setLoExpr(loExpr, context.getLoExprPos());
+                        resolveWindowJoinBoundColumns(loExpr, masterModel, windowJoinModel);
+                    }
+                    if (context.isDynamicHi()) {
+                        ExpressionNode hiExpr = context.getHiExpr();
+                        hiExpr = rewriteWindowJoinBoundLiteral(hiExpr, masterModel, windowJoinModel);
+                        context.setHiExpr(hiExpr, context.getHiExprPos());
+                        resolveWindowJoinBoundColumns(hiExpr, masterModel, windowJoinModel);
+                    }
+                }
             }
         }
 
@@ -10538,18 +10680,20 @@ public class SqlOptimiser implements Mutable {
 
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
-            final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!loFunc.isConstant()) {
-                Misc.free(loFunc);
+            // Unlike tryEvalNonNegativeLongConstant, we don't catch SqlException here.
+            // Parse errors (e.g. "invalid constant") must propagate to the caller.
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
                 throw SqlException.$(expr.position, "constant expression expected");
             }
 
             try {
                 long value;
-                if (!(loFunc instanceof CharConstant)) {
-                    value = loFunc.getLong(null);
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
                 } else {
-                    long tmp = (byte) (loFunc.getChar(null) - '0');
+                    long tmp = (byte) (func.getChar(null) - '0');
                     value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
                 }
 
@@ -10560,7 +10704,68 @@ public class SqlOptimiser implements Mutable {
             } catch (UnsupportedOperationException | ImplicitCastException e) {
                 throw SqlException.$(expr.position, "integer expression expected");
             } finally {
-                Misc.free(loFunc);
+                Misc.free(func);
+            }
+        }
+        return Long.MAX_VALUE;
+    }
+
+    /**
+     * Tries to evaluate the expression as a non-negative long constant.
+     * Returns -1 if the expression contains column references (dynamic bound).
+     * Returns {@link Long#MAX_VALUE} if expr is null.
+     */
+    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            // Walk the expression tree iteratively to detect column references.
+            // If found, the expression is dynamic — return -1 without parsing.
+            // This avoids a catch-all SqlException that would mask real parse errors.
+            sqlNodeStack.clear();
+            ExpressionNode node = expr;
+            while (node != null || !sqlNodeStack.isEmpty()) {
+                if (node != null) {
+                    if (node.type == LITERAL) {
+                        return -1;
+                    }
+                    if (node.paramCount < 3) {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                    } else {
+                        for (int i = 0, n = node.paramCount; i < n; i++) {
+                            sqlNodeStack.push(node.args.getQuick(i));
+                        }
+                        node = null;
+                    }
+                    continue;
+                }
+                node = sqlNodeStack.poll();
+            }
+
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                return -1;
+            }
+
+            try {
+                long value;
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
+                } else {
+                    long tmp = (byte) (func.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(func);
             }
         }
         return Long.MAX_VALUE;

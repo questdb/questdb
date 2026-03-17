@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -974,6 +974,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlHashJoinValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+        return 131_072;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanMinGap() {
+        return 1_024;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanSwitchFactor() {
+        return 8;
     }
 
     @Override
