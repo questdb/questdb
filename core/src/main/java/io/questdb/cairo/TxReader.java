@@ -210,8 +210,7 @@ public class TxReader implements Closeable, Mutable {
                 return i;
             }
         }
-        // we should never be here, because the active partition is always native
-        throw CairoException.critical(0).put("could not find first native partition");
+        return -1;
     }
 
     public int getFirstNativePartitionWithoutParquetGenerated() {
@@ -220,8 +219,7 @@ public class TxReader implements Closeable, Mutable {
                 return i;
             }
         }
-        // we should never be here, because the active partition is always native
-        throw CairoException.critical(0).put("could not find first native partition without parquet generated");
+        return -1;
     }
 
     public long getFixedRowCount() {
