@@ -30,7 +30,6 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
 
 /**
  * Tests for QwpWalAppender.
@@ -39,14 +38,12 @@ public class QwpWalAppenderTest {
 
     @Test
     public void testConstructor() {
-        QwpWalAppender appender = new QwpWalAppender(true, 127);
-        assertNotNull(appender);
+        new QwpWalAppender(true, 127);
     }
 
     @Test
     public void testConstructorAutoCreateDisabled() {
-        QwpWalAppender appender = new QwpWalAppender(false, 255);
-        assertNotNull(appender);
+        new QwpWalAppender(false, 255);
     }
 
     @Test
