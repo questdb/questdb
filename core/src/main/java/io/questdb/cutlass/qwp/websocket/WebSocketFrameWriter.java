@@ -41,6 +41,9 @@ public final class WebSocketFrameWriter {
     // Frame header bits
     private static final int FIN_BIT = 0x80;
     private static final int MASK_BIT = 0x80;
+    // RFC 6455 Section 5.5: control frame payload <= 125 bytes;
+    // close payload starts with a 2-byte status code, leaving 123 for the reason.
+    private static final int MAX_CLOSE_REASON_BYTES = 123;
 
     private WebSocketFrameWriter() {
         // Static utility class
@@ -191,7 +194,21 @@ public final class WebSocketFrameWriter {
     }
 
     private static byte[] encodeReason(String reason) {
-        return (reason != null && !reason.isEmpty()) ? reason.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
+        if (reason == null || reason.isEmpty()) {
+            return EMPTY_BYTES;
+        }
+        byte[] bytes = reason.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= MAX_CLOSE_REASON_BYTES) {
+            return bytes;
+        }
+        // Truncate without splitting a multi-byte UTF-8 sequence.
+        int len = MAX_CLOSE_REASON_BYTES;
+        while (len > 0 && (bytes[len] & 0xC0) == 0x80) {
+            len--;
+        }
+        byte[] truncated = new byte[len];
+        System.arraycopy(bytes, 0, truncated, 0, len);
+        return truncated;
     }
 
     private static int writeClosePayload(long buf, int code, byte[] reasonBytes) {
