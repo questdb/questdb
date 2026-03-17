@@ -54,6 +54,85 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
+    public void testO3MergeWithStatisticsDisabled() throws Exception {
+        // Disable parquet statistics and use small row groups to produce multiple row groups.
+        // O3 merge reads row group min/max timestamps via readRowGroupStats();
+        // when statistics are absent, the stat buffers are empty and the merge must
+        // still produce correct results without crashing or corrupting data.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z'),
+                            (9, '2020-01-01T08:00:00.000Z'),
+                            (10, '2020-01-01T09:00:00.000Z'),
+                            (11, '2020-01-01T10:00:00.000Z'),
+                            (12, '2020-01-01T11:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (1000, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 12 rows with row group size 4 → 3 row groups, no statistics.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // O3 insert into the middle row group's time range.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (100, '2020-01-01T04:30:00.000Z'),
+                            (101, '2020-01-01T05:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Table must not be suspended.
+            Assert.assertFalse(
+                    "table should not be suspended after O3 merge with statistics disabled",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            100\t2020-01-01T04:30:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            101\t2020-01-01T05:30:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            9\t2020-01-01T08:00:00.000000Z
+                            10\t2020-01-01T09:00:00.000000Z
+                            11\t2020-01-01T10:00:00.000000Z
+                            12\t2020-01-01T11:00:00.000000Z
+                            1000\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testCopyRowGroupPreservesBloomFilterOffset() throws Exception {
         // Small row group size to produce 3 row groups.
         // Set absolute threshold low so the second O3 triggers a rewrite.

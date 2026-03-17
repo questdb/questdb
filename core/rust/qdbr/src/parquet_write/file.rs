@@ -336,12 +336,16 @@ pub fn create_row_group(
      -> ParquetResult<
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
     > {
+        let mut col_options = options.clone();
+        if column.designated_timestamp {
+            col_options.write_statistics = true;
+        }
         let pages = column_chunk_to_pages(
             *column,
             column_type.clone(),
             offset,
             length,
-            options.clone(),
+            col_options,
             *encoding,
             bloom_set,
         )?;
@@ -434,6 +438,15 @@ pub fn create_row_group_from_partitions(
         let column_type = &column_types[col_idx];
         let col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];
+
+        let options = if first_partition_column.designated_timestamp {
+            &WriteOptions {
+                write_statistics: true,
+                ..options.clone()
+            }
+        } else {
+            options
+        };
 
         let partition_ranges: Vec<(Column, usize, usize)> = partitions
             .iter()

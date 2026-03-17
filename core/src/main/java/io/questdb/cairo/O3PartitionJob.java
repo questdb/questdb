@@ -237,15 +237,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         bloomFilterFpp
                 );
 
-                // Build row group bounds for merge strategy computation
+                // Build row group bounds for merge strategy computation.
+                // Use rowGroupMinTimestamp/rowGroupMaxTimestamp which fall back to
+                // decoding actual data when parquet statistics are absent
+                // (cairo.partition.encoder.parquet.statistics.enabled=false).
                 final LongList rowGroupBounds = ctx.getRowGroupBounds();
-                parquetColumns.add(timestampIndex);
-                parquetColumns.add(timestampColumnType);
-
                 for (int rg = 0; rg < rowGroupCount; rg++) {
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rg);
-                    final long rgMin = rowGroupStatBuffers.getMinValueLong(0);
-                    final long rgMax = rowGroupStatBuffers.getMaxValueLong(0);
+                    final long rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampIndex);
+                    final long rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampIndex);
                     final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(rg);
                     O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
                 }
