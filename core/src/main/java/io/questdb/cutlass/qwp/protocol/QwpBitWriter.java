@@ -50,7 +50,7 @@ public class QwpBitWriter {
 
     // Buffer for accumulating bits before writing
     private long bitBuffer;
-    // Number of bits currently in the buffer (0-63)
+    // Number of bits currently in the buffer (0-7)
     private int bitsInBuffer;
     private long currentAddress;
     private long endAddress;
