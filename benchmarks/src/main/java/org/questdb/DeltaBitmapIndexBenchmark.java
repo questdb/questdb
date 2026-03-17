@@ -1033,20 +1033,21 @@ public class DeltaBitmapIndexBenchmark {
                     writer.seal();
                     long sealTime = System.nanoTime() - sealT0;
 
-                    long bpSealedSize = getDirectorySize(bpDir);
                     System.out.println();
-                    System.out.printf("  BP sealed: %5.1f MB (seal took %.1f ms)%n",
-                            bpSealedSize / (1024.0 * 1024.0), sealTime / 1e6);
-
-                    // Summary
-                    System.out.println();
-                    System.out.printf("  %-25s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
-                    System.out.println("  " + "-".repeat(47));
-                    printRow("Legacy", legacySize, legacySize);
-                    printRow("BP", bpSize, legacySize);
-                    printRow("BP (sealed)", bpSealedSize, legacySize);
+                    System.out.printf("  BP seal took %.1f ms%n", sealTime / 1e6);
                 }
             }
+            // Writer closed by try-with-resources — files truncated to actual size
+            long bpSealedSize = getDirectorySize(bpDir);
+
+            System.out.printf("  BP sealed: %5.1f MB%n", bpSealedSize / (1024.0 * 1024.0));
+
+            System.out.println();
+            System.out.printf("  %-25s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
+            System.out.println("  " + "-".repeat(47));
+            printRow("Legacy", legacySize, legacySize);
+            printRow("BP (unsealed)", bpSize, legacySize);
+            printRow("BP (sealed)", bpSealedSize, legacySize);
 
             // Post-seal reads
             System.out.println();
