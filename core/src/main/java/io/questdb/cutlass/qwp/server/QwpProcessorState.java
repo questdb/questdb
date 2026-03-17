@@ -276,7 +276,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     public void processMessage() {
-        if (bufferPosition == 0) {
+        if (bufferPosition == 0 || !isOk()) {
             return;
         }
 
