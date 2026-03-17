@@ -317,8 +317,8 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
                 // 1h stride in India +5:30, not :30).
                 final long stdOff = tzRules.getStandardOffset();
                 final long localTimestamp = timestamp + stdOff;
-                final long result = floorFunc.floor(localTimestamp, stride, from + offset);
-                return result - stdOff;
+                final long result = floorFunc.floor(localTimestamp, stride, from);
+                return result - stdOff + offset;
             }
             final long tzOff = tzRules.getOffset(timestamp);
             final long localTimestamp = timestamp + tzOff;

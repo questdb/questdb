@@ -867,26 +867,26 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testWithOffsetAcrossDstFallBack() throws Exception {
-        // Non-zero offset + DST fall-back: the offset shifts bucket boundaries, which could
-        // interact with the DST transition. 30m stride with 15m offset across Berlin fall-back.
-        // Buckets align to :15 and :45 instead of :00 and :30.
-        // UTC 00:40 = local 02:40 CEST (+2), floor 30m offset 15m -> local 02:15,
-        // UTC = 02:15 - 2 = 00:15
+        // Non-zero offset + DST fall-back: the offset is a pure shift applied after flooring.
+        // 30m stride with 15m offset across Berlin fall-back.
+        // Standard-local anchoring: stdOff = +1h (CET).
+        // UTC 00:40, local(std) = 01:40, floor(01:40, 30m, 0) = 01:30,
+        // result = 01:30 - 1h + 15m = 00:45 UTC
         assertMemoryLeak(() -> assertTimestampFloorUtc(
                 """
                         timestamp_floor_utc
-                        2021-10-31T00:15:00.000000Z
+                        2021-10-31T00:45:00.000000Z
                         """,
                 "30m", "2021-10-31T00:40:00.000000Z", null, "00:15", "Europe/Berlin"
         ));
 
-        // UTC 01:40 = local 02:40 CET (+1), floor 30m offset 15m -> local 02:15,
-        // UTC = 02:15 - 1 = 01:15
-        // Same local floor but different UTC bucket — fall-back distinctness preserved
+        // UTC 01:40, local(std) = 02:40, floor(02:40, 30m, 0) = 02:30,
+        // result = 02:30 - 1h + 15m = 01:45 UTC
+        // The invariant bucket = bucket_no_offset + offset holds across DST transitions.
         assertMemoryLeak(() -> assertTimestampFloorUtc(
                 """
                         timestamp_floor_utc
-                        2021-10-31T01:15:00.000000Z
+                        2021-10-31T01:45:00.000000Z
                         """,
                 "30m", "2021-10-31T01:40:00.000000Z", null, "00:15", "Europe/Berlin"
         ));
