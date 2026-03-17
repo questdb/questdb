@@ -235,12 +235,24 @@ pub fn binary_to_dict_pages(
                     "invalid offset value in binary aux column: {offset}"
                 )
             })?;
-            let len = types::decode::<i64>(&data[offset..offset + size_of_header]);
+            let len = data.get(offset..offset + size_of_header).ok_or_else(|| {
+                fmt_err!(
+                    Layout,
+                    "invalid offset value in binary aux column: {offset}"
+                )
+            })?;
+            let len = types::decode::<i64>(len);
             if len < 0 {
                 null_count += 1;
                 Ok(None)
             } else {
                 let value_offset = offset + size_of_header;
+                if value_offset + len as usize > data.len() {
+                    return Err(fmt_err!(
+                        Layout,
+                        "invalid offset and length in binary aux column: offset {offset}, length {len}"
+                    ));
+                }
                 Ok(Some(&data[value_offset..value_offset + len as usize]))
             }
         })
