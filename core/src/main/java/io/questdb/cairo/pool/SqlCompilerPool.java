@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -151,8 +151,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public void execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
-            delegate.execute(op, executionContext);
+        public boolean execute(Operation op, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.execute(op, executionContext);
         }
 
         @Override

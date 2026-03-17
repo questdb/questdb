@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -44,18 +44,22 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Character.BYTES;
-            char min = Unsafe.getUnsafe().getChar(ptr);
-            ptr += Character.BYTES;
+            char min = 0;
             for (; ptr < hi; ptr += Character.BYTES) {
                 char value = Unsafe.getUnsafe().getChar(ptr);
-                if (value > 0 && value < min) {
+                if (value > 0 && (value < min || min == 0)) {
                     min = value;
                 }
             }
-            mapValue.putChar(valueIndex, min);
+            if (min != 0) {
+                final char existing = mapValue.getChar(valueIndex);
+                if (min < existing || existing == 0) {
+                    mapValue.putChar(valueIndex, min);
+                }
+            }
         }
     }
 
@@ -68,7 +72,7 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         char min = mapValue.getChar(valueIndex);
         char next = arg.getChar(record);
-        if (next > 0 && next < min) {
+        if (next > 0 && (next < min || min == 0)) {
             mapValue.putChar(valueIndex, next);
         }
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -638,6 +638,26 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     "alter table x add column if not exists a_col int FOOBAR",
                     49,
                     "',' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnQuoted() throws Exception {
+        assertFailure("alter table x add column \"d\" int", 25, "column 'd' already exists");
+    }
+
+    @Test
+    public void testAddDuplicateColumnQuotedIfNotExists() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            // same type — should be a no-op
+            execute("alter table x add column if not exists \"d\" double");
+            // different type — should fail
+            assertExceptionNoLeakCheck(
+                    "alter table x add column if not exists \"d\" int",
+                    43,
+                    "column already exists with a different column type [current type=DOUBLE, requested type=INT]"
             );
         });
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -519,6 +519,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public int getVarcharSize(int columnIndex) {
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
+            if (frameFormat == PartitionFormat.PARQUET) {
+                return VarcharTypeDriver.getSliceValueSize(auxPageAddress, rowIndex);
+            }
             return VarcharTypeDriver.getValueSize(auxPageAddress, rowIndex);
         }
         return TableUtils.NULL_LEN; // Column top.
@@ -551,6 +554,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     public void setRowIndex(long rowIndex) {
         this.rowIndex = rowIndex;
+    }
+
+    /**
+     * Sets both the absolute row index and the compact row index for late-materialized
+     * non-filter columns. In the base class, the compact index is ignored. Overridden
+     * by {@link PageFrameFilteredMemoryRecord} to use the compact index for non-filter columns.
+     */
+    public void setRowIndex(long rowIndex, long compactRowIndex) {
+        setRowIndex(rowIndex);
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {
@@ -710,6 +722,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
+            if (frameFormat == PartitionFormat.PARQUET) {
+                return VarcharTypeDriver.getSliceValue(auxPageAddress, rowIndex, utf8View);
+            }
             final long auxPageLim = auxPageAddress + auxPageSizes.get(columnOffset + columnIndex);
             final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
             final long dataPageLim = dataPageAddress + pageSizes.get(columnOffset + columnIndex);

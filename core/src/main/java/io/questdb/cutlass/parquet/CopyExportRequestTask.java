@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.cutlass.parquet;
 
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -37,9 +38,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -53,13 +57,16 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
+    private @Nullable CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
+    private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
     private @Nullable CreateTableOperation createOp;
     private int dataPageSize;
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
-    private RecordCursorFactory factory;
+    private ParquetExportMode exportMode;
     private CharSequence fileName;
     private RecordMetadata metadata;
     private long now;
@@ -67,15 +74,49 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private @Nullable PageFrameCursor pageFrameCursor;
     private int parquetVersion;
     private boolean rawArrayEncoding;
-    private @Nullable RecordCursorFactory rfc;
     private int rowGroupSize;
+    private RecordCursorFactory selectFactory;
+    private @Nullable String selectText;
     private boolean statisticsEnabled;
     private String tableName;
+    private RecordCursorFactory tempTableFactory;
     private @Nullable StreamWriteParquetCallBack writeCallback;
+
+    public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
+        if (columns == null || columns.isEmpty()) {
+            return;
+        }
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameEnd <= nameStart) {
+                    throw SqlException.$(position > 0 ? position + start : 0, "empty column name in bloom_filter_columns");
+                }
+                CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                if (meta.getColumnIndexQuiet(columnName) < 0) {
+                    throw SqlException.$(position > 0 ? position + start : 0,
+                            "bloom_filter_columns contains non-existent column: ").put(columnName);
+                }
+                start = i + 1;
+            }
+        }
+    }
 
     @Override
     public void clear() {
+        this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
+        this.exportMode = null;
+        this.selectText = null;
         this.tableName = null;
         this.fileName = null;
         this.compressionCodec = -1;
@@ -87,21 +128,45 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.now = 0;
         this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
-        this.rfc = Misc.free(rfc);
-        pageFrameCursor = null;
+        if (tempTableFactory != null) {
+            // Temp-table path owns both the factory and the cursor.
+            tempTableFactory = Misc.free(tempTableFactory);
+            pageFrameCursor = Misc.free(pageFrameCursor);
+        } else {
+            // Ownership belongs to BaseParquetExporter subclass (streamingPfc)
+            // or ExportQueryProcessorState (for DIRECT_PAGE_FRAME).
+            pageFrameCursor = null;
+        }
         writeCallback = null;
         metadata = null;
         streamPartitionParquetExporter.clear();
         descending = false;
-        if (factory != null) { // owned only if setUpStreamPartitionParquetExporter called with factory
-            factory = Misc.free(factory);
-            pageFrameCursor = Misc.free(pageFrameCursor);
-        }
+        bloomFilterColumns = null;
+        bloomFilterColumnsPosition = -1;
+        bloomFilterFpp = Double.NaN;
     }
 
     @Override
     public void close() {
+        selectFactory = Misc.free(selectFactory);
+        createOp = Misc.free(createOp);
+        if (tempTableFactory != null) {
+            tempTableFactory = Misc.free(tempTableFactory);
+            pageFrameCursor = Misc.free(pageFrameCursor);
+        }
         Misc.free(streamPartitionParquetExporter);
+    }
+
+    public @Nullable CharSequence getBloomFilterColumns() {
+        return bloomFilterColumns;
+    }
+
+    public int getBloomFilterColumnsPosition() {
+        return bloomFilterColumnsPosition;
+    }
+
+    public double getBloomFilterFpp() {
+        return bloomFilterFpp;
     }
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -130,6 +195,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public CopyExportContext.ExportTaskEntry getEntry() {
         return entry;
+    }
+
+    public ParquetExportMode getExportMode() {
+        return exportMode;
     }
 
     public CharSequence getFileName() {
@@ -162,6 +231,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public SecurityContext getSecurityContext() {
         return entry.getSecurityContext();
+    }
+
+    public RecordCursorFactory getSelectFactory() {
+        return selectFactory;
+    }
+
+    public @Nullable String getSelectText() {
+        return selectText;
     }
 
     public StreamPartitionParquetExporter getStreamPartitionParquetExporter() {
@@ -205,7 +282,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             boolean descending,
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
-            StreamWriteParquetCallBack writeCallback
+            StreamWriteParquetCallBack writeCallback,
+            ParquetExportMode exportMode,
+            @Nullable String selectText,
+            @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition,
+            double bloomFilterFpp
     ) {
         this.entry = entry;
         this.tableName = tableName;
@@ -224,6 +306,19 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.writeCallback = writeCallback;
         this.now = now;
         this.nowTimestampType = nowTimestampType;
+        this.exportMode = exportMode;
+        this.selectText = selectText;
+        this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterColumnsPosition = bloomFilterColumnsPosition;
+        this.bloomFilterFpp = bloomFilterFpp;
+    }
+
+    public void setCreateOp(@Nullable CreateTableOperation createOp) {
+        this.createOp = createOp;
+    }
+
+    public void setSelectFactory(RecordCursorFactory selectFactory) {
+        this.selectFactory = selectFactory;
     }
 
     public void setUpStreamPartitionParquetExporter() {
@@ -234,15 +329,49 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
     }
 
-    public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
+    public void setUpStreamPartitionParquetExporter(RecordCursorFactory tempTableFactory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
         assert this.pageFrameCursor == null;
-        this.factory = factory;
+        this.tempTableFactory = tempTableFactory;
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
         // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
         pageFrameCursor.setStreamingMode(true);
         streamPartitionParquetExporter.setUp();
+    }
+
+    public void setWriteCallback(@Nullable StreamWriteParquetCallBack writeCallback) {
+        this.writeCallback = writeCallback;
+    }
+
+    protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart >= nameEnd) {
+                    throw CairoException.nonCritical().put("empty column name in bloom_filter_columns")
+                            .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
+                }
+                CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                int columnIndex = meta.getColumnIndexQuiet(columnName);
+                if (columnIndex >= 0) {
+                    indexes.add(columnIndex);
+                } else {
+                    throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName)
+                            .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
+                }
+                start = i + 1;
+            }
+        }
     }
 
     public enum Phase {
@@ -292,6 +421,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
         // Buffer header size: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
+        private DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectUtf8Sink columnNames = new DirectUtf8Sink(32, false, MemoryTag.NATIVE_PARQUET_EXPORTER);
@@ -309,9 +439,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         @Override
         public void clear() {
             // free memory after one query finished, will re-malloc on next query
-            columnNames.close();
-            columnData.close();
-            columnMetadata.close();
+            Misc.free(columnNames);
+            Misc.free(columnData);
+            Misc.free(columnMetadata);
+            Misc.free(bloomFilterColumnIndexes);
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
@@ -328,6 +459,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             columnNames = Misc.free(columnNames);
             columnData = Misc.free(columnData);
             columnMetadata = Misc.free(columnMetadata);
+            bloomFilterColumnIndexes = Misc.free(bloomFilterColumnIndexes);
         }
 
         public void finishExport() throws Exception {
@@ -347,8 +479,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void freeOwnedPageFrameCursor() {
-            if (factory != null) {
-                factory = Misc.free(factory);
+            if (tempTableFactory != null) {
+                tempTableFactory = Misc.free(tempTableFactory);
                 pageFrameCursor = Misc.free(pageFrameCursor);
             }
         }
@@ -400,45 +532,111 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void setUp() {
+            setUp(metadata, pageFrameCursor, null);
+        }
+
+        public void setUp(RecordMetadata adjustedMetadata) {
+            setUp(adjustedMetadata, null, null);
+        }
+
+        /**
+         * Unified writer setup for all export modes.
+         *
+         * @param meta          column metadata to encode
+         * @param pfc           page frame cursor for SYMBOL table lookup (null when cursor-based)
+         * @param baseColumnMap per-output-column base index for hybrid path, or null for
+         *                      direct/temp-table path (where every column is a real table column)
+         */
+        public void setUp(RecordMetadata meta, PageFrameCursor pfc, IntList baseColumnMap) {
+            metadata = meta;
+            pageFrameCursor = pfc;
             columnNames.reopen();
             columnMetadata.reopen();
             columnData.reopen();
 
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                CharSequence columnName = metadata.getColumnName(i);
+            for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                CharSequence columnName = meta.getColumnName(i);
                 final int startSize = columnNames.size();
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
-                final int columnType = metadata.getColumnType(i);
+                final int columnType = meta.getColumnType(i);
+                // GenericRecordMetadata (hybrid/cursor paths) returns i;
+                // table metadata returns the physical writer column index.
+                final int writerIdx = meta.getWriterIndex(i);
 
-                if (ColumnType.isSymbol(columnType)) {
-                    assert pageFrameCursor != null;
-                    StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
+                // A SYMBOL column needs symbol-table metadata when it is a
+                // real table column.  In the hybrid path (baseColumnMap != null)
+                // only pass-through columns (baseColumnMap >= 0) qualify;
+                // in the direct path (baseColumnMap == null) every column is real.
+                boolean isPassThroughSymbol = ColumnType.isSymbol(columnType)
+                        && (baseColumnMap == null || baseColumnMap.getQuick(i) >= 0);
+
+                if (isPassThroughSymbol) {
+                    assert pfc != null;
+                    int symbolTableIdx = baseColumnMap != null ? baseColumnMap.getQuick(i) : i;
+                    StaticSymbolTable symbolTable = pfc.getSymbolTable(symbolTableIdx);
                     assert symbolTable != null;
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
+                    // Mask to 32 bits: symbolColumnType can have bit 31 set (no-null flag),
+                    // making it negative. Without the mask, Java sign-extends it to 64 bits
+                    // before the OR, clobbering writerIdx in the upper 32 bits.
+                    columnMetadata.add((long) writerIdx << 32 | (symbolColumnType & 0xFFFFFFFFL));
                 } else {
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
+                    columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
                 }
             }
+
+            long bloomFilterIndexesPtr = 0;
+            int bloomFilterCount = 0;
+            double fpp = Double.isNaN(bloomFilterFpp) ? DEFAULT_BLOOM_FILTER_FPP : bloomFilterFpp;
+
+            if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                bloomFilterColumnIndexes.reopen();
+                parseBloomFilterColumnIndexes(bloomFilterColumns, metadata, bloomFilterColumnIndexes, bloomFilterColumnsPosition);
+                if (bloomFilterColumnIndexes.size() > 0) {
+                    bloomFilterIndexesPtr = bloomFilterColumnIndexes.getAddress();
+                    bloomFilterCount = (int) bloomFilterColumnIndexes.size();
+                }
+            }
+
             streamWriter = createStreamingParquetWriter(
                     Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
-                    metadata.getColumnCount(),
+                    meta.getColumnCount(),
                     columnNames.ptr(),
                     columnNames.size(),
                     columnMetadata.getAddress(),
-                    metadata.getTimestampIndex(),
+                    meta.getTimestampIndex(),
                     descending,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                     statisticsEnabled,
                     rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    parquetVersion
+                    parquetVersion,
+                    bloomFilterIndexesPtr,
+                    bloomFilterCount,
+                    fpp
             );
+        }
+
+        public void writeHybridFrame(DirectLongList prebuiltColumnData, long frameRowCount) throws Exception {
+            assert streamWriter != -1 && writeCallback != null;
+            currentFrameRowCount = frameRowCount;
+            long buffer = writeStreamingParquetChunk(streamWriter, prebuiltColumnData.getAddress(), frameRowCount);
+            while (buffer != 0) {
+                streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
+            }
+            totalRows += frameRowCount;
+            entry.setStreamingSendRowCount(totalRows);
+            streamExportCurrentPtr = 0;
+            streamExportCurrentSize = 0;
         }
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {

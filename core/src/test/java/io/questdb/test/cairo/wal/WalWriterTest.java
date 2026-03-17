@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,7 +58,10 @@ import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -1915,6 +1918,46 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 // Segment 0 was purged since writer moved to segment 1
                 assertSegmentExistence(false, tableName, 1, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testIsDroppedV1() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("v1_drop");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                v1.create(path.of(root).concat("v1_drop"), 65897);
+                v1.open(path);
+
+                assertIsDropped(v1, path, "v1_drop");
+
+                v1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testIsDroppedV2() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("v2_drop");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
+                v2.create(path.of(root).concat("v2_drop"), 65897);
+                v2.open(path);
+
+                assertIsDropped(v2, path, "v2_drop");
+
+                v2.close();
             }
         });
     }
@@ -4612,6 +4655,22 @@ public class WalWriterTest extends AbstractCairoTest {
 
     static void addColumn(WalWriter writer, String columnName, int columnType) {
         writer.addColumn(columnName, columnType);
+    }
+
+    private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
+        log.addEntry(0, 1, 1, 1, 100, 0, 0, 0);
+        assertFalse("should not be dropped after normal entry", log.isDropped());
+
+        log.addEntry(0, DROP_TABLE_WAL_ID, 0, 0, 200, 0, 0, 0);
+        assertTrue("should be dropped after drop entry", log.isDropped());
+
+        try (TransactionLogCursor cursor = log.getCursor(0, path.of(root).concat(dir))) {
+            assertTrue(cursor.hasNext());
+            assertEquals(1, cursor.getWalId());
+
+            assertTrue(cursor.hasNext());
+            assertEquals(DROP_TABLE_WAL_ID, cursor.getWalId());
+        }
     }
 
     static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {

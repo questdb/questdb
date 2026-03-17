@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -317,6 +317,12 @@ public class IntList implements Mutable, Sinkable {
 
     public int size() {
         return pos;
+    }
+
+    public int[] toArray() {
+        int[] result = new int[pos];
+        System.arraycopy(data, 0, result, 0, pos);
+        return result;
     }
 
     /**

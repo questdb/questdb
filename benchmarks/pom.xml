@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>benchmarks</artifactId>
-    <version>9.3.3-SNAPSHOT</version>
+    <version>9.3.4-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
 
@@ -84,6 +84,11 @@
             <version>17.0.0</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>org.questdb</groupId>
+            <artifactId>questdb-client</artifactId>
+            <version>${questdb.client.version}</version>
+        </dependency>
     </dependencies>
 
     <properties>
@@ -106,6 +111,9 @@
             Name of the benchmark Uber-JAR to generate.
           -->
         <uberjar.name>benchmarks</uberjar.name>
+
+        <!-- Java ILP client version - override with -Dquestdb.client.version=1.0.1-SNAPSHOT for local dev -->
+        <questdb.client.version>1.0.1</questdb.client.version>
     </properties>
 
     <build>
@@ -203,6 +211,12 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>local-client</id>
+            <properties>
+                <questdb.client.version>1.0.1-SNAPSHOT</questdb.client.version>
+            </properties>
+        </profile>
         <profile>
             <id>javadoc</id>
             <build>

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -79,10 +79,6 @@ public class CopyExportContext {
     public CopyExportContext(CairoEngine engine) {
         this.engine = engine;
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
-    }
-
-    public static boolean canStreamExportParquet(RecordCursorFactory factory) throws SqlException {
-        return factory.supportsPageFrameCursor();
     }
 
     public ExportTaskEntry assignExportEntry(
@@ -356,7 +352,9 @@ public class CopyExportContext {
             int partitionBy,
             String tableName,
             String sqlText,
-            int tableOrSelectTextPos
+            int tableOrSelectTextPos,
+            @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition
     ) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
@@ -381,7 +379,9 @@ public class CopyExportContext {
                         false
                 );
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+                createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos);
             }
         } catch (SqlException ex) {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -55,6 +56,7 @@ import io.questdb.griffin.engine.table.SelectivityStats;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -79,10 +81,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     private final IntHashSet filterUsedColumnIndexes;
     private final IntList groupByFunctionToColumnIndex;
     private final IntList groupByFunctionTypes;
+    private final int hiSign;
+    private final char hiTimeUnit;
     private final boolean includePrevailing;
     private final WindowJoinSymbolTableSource joinSymbolTableSource;
-    private final long joinWindowHi;
-    private final long joinWindowLo;
+    private final int loSign;
+    private final char loTimeUnit;
     private final int masterTimestampIndex;
     private final long masterTsScale;
     private final GroupByColumnSink ownerColumnSink;
@@ -102,6 +106,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     // The memory is released between page frame reduce calls.
     private final GroupByAllocator ownerTemporaryAllocator;
     private final GroupByLongList ownerTimestampList;
+    private final @Nullable Function ownerWindowHiFunc;
+    private final @Nullable Function ownerWindowLoFunc;
     private final ObjList<GroupByColumnSink> perWorkerColumnSinks;
     private final ObjList<GroupByAllocator> perWorkerFunctionAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
@@ -118,9 +124,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     private final ObjList<WindowJoinTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final ObjList<GroupByAllocator> perWorkerTemporaryAllocators;
     private final ObjList<GroupByLongList> perWorkerTimestampLists;
+    private final @Nullable ObjList<Function> perWorkerWindowHiFuncs;
+    private final @Nullable ObjList<Function> perWorkerWindowLoFuncs;
     private final long slaveTsScale;
+    private final @Nullable TimestampDriver timestampDriver;
     private final long valueSizeInBytes;
     private final boolean vectorized;
+    private final long windowHi;
+    private final long windowLo;
     private boolean skipAggregation = false;
 
     public AsyncWindowJoinAtom(
@@ -129,8 +140,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             @NotNull RecordCursorFactory slaveFactory,
             @Nullable Function ownerJoinFilter,
             @Nullable ObjList<Function> perWorkerJoinFilters,
-            long joinWindowLo,
-            long joinWindowHi,
+            long windowLo,
+            long windowHi,
+            @Nullable Function ownerWindowLoFunc,
+            @Nullable Function ownerWindowHiFunc,
+            @Nullable ObjList<Function> perWorkerWindowLoFuncs,
+            @Nullable ObjList<Function> perWorkerWindowHiFuncs,
+            int loSign,
+            int hiSign,
+            char loTimeUnit,
+            char hiTimeUnit,
+            @Nullable TimestampDriver timestampDriver,
             boolean includePrevailing,
             int columnSplit,
             int masterTimestampIndex,
@@ -150,13 +170,24 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     ) {
         assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
         assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
+        assert perWorkerWindowLoFuncs == null || perWorkerWindowLoFuncs.size() == workerCount;
+        assert perWorkerWindowHiFuncs == null || perWorkerWindowHiFuncs.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
             this.ownerJoinFilter = ownerJoinFilter;
             this.perWorkerJoinFilters = perWorkerJoinFilters;
-            this.joinWindowLo = joinWindowLo;
-            this.joinWindowHi = joinWindowHi;
+            this.windowLo = windowLo;
+            this.windowHi = windowHi;
+            this.ownerWindowLoFunc = ownerWindowLoFunc;
+            this.ownerWindowHiFunc = ownerWindowHiFunc;
+            this.perWorkerWindowLoFuncs = perWorkerWindowLoFuncs;
+            this.perWorkerWindowHiFuncs = perWorkerWindowHiFuncs;
+            this.loSign = loSign;
+            this.hiSign = hiSign;
+            this.loTimeUnit = loTimeUnit;
+            this.hiTimeUnit = hiTimeUnit;
+            this.timestampDriver = timestampDriver;
             this.includePrevailing = includePrevailing;
             this.masterTimestampIndex = masterTimestampIndex;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
@@ -170,7 +201,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             this.joinSymbolTableSource = new WindowJoinSymbolTableSource(columnSplit);
             this.masterTsScale = masterTsScale;
             this.slaveTsScale = slaveTsScale;
-            this.vectorized = vectorized;
+            this.vectorized = vectorized && ownerWindowLoFunc == null && ownerWindowHiFunc == null;
 
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new WindowJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
@@ -349,6 +380,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         Misc.freeObjList(bindVarFunctions);
         Misc.free(ownerMasterFilter);
         Misc.freeObjList(perWorkerMasterFilters);
+        Misc.free(ownerWindowHiFunc);
+        Misc.free(ownerWindowLoFunc);
+        Misc.freeObjList(perWorkerWindowHiFuncs);
+        Misc.freeObjList(perWorkerWindowLoFuncs);
         Misc.free(ownerFunctionAllocator);
         Misc.freeObjList(perWorkerFunctionAllocators);
         Misc.free(ownerTemporaryAllocator);
@@ -413,6 +448,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
+    public int getHiSign() {
+        return hiSign;
+    }
+
+    public char getHiTimeUnit() {
+        return hiTimeUnit;
+    }
+
     public Function getJoinFilter(int slotId) {
         if (slotId == -1 || perWorkerJoinFilters == null) {
             return ownerJoinFilter;
@@ -427,12 +470,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return perWorkerJoinRecords.getQuick(slotId);
     }
 
-    public long getJoinWindowHi() {
-        return joinWindowHi;
+    public int getLoSign() {
+        return loSign;
     }
 
-    public long getJoinWindowLo() {
-        return joinWindowLo;
+    public char getLoTimeUnit() {
+        return loTimeUnit;
     }
 
     public GroupByLongList getLongList(int slotId) {
@@ -487,6 +530,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return slaveTsScale;
     }
 
+    public @Nullable TimestampDriver getTimestampDriver() {
+        return timestampDriver;
+    }
+
     public GroupByLongList getTimestampList(int slotId) {
         if (slotId == -1) {
             return ownerTimestampList;
@@ -496,6 +543,28 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     public long getValueSizeBytes() {
         return valueSizeInBytes;
+    }
+
+    public long getWindowHi() {
+        return windowHi;
+    }
+
+    public @Nullable Function getWindowHiFunc(int slotId) {
+        if (slotId == -1 || perWorkerWindowHiFuncs == null) {
+            return ownerWindowHiFunc;
+        }
+        return perWorkerWindowHiFuncs.getQuick(slotId);
+    }
+
+    public long getWindowLo() {
+        return windowLo;
+    }
+
+    public @Nullable Function getWindowLoFunc(int slotId) {
+        if (slotId == -1 || perWorkerWindowLoFuncs == null) {
+            return ownerWindowLoFunc;
+        }
+        return perWorkerWindowLoFuncs.getQuick(slotId);
     }
 
     @Override
@@ -525,18 +594,22 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
             PageFrameAddressCache frameAddressCache,
-            IntList framePartitionIndexes,
+            DirectIntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
+            LongList partitionCeilings,
             int frameCount
     ) throws SqlException {
+        final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(
                 pageFrameCursor,
                 frameAddressCache,
                 framePartitionIndexes,
                 frameRowCounts,
                 partitionTimestamps,
-                frameCount
+                partitionCeilings,
+                frameCount,
+                timestampIndex
         );
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
         for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
@@ -547,7 +620,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                     framePartitionIndexes,
                     frameRowCounts,
                     partitionTimestamps,
-                    frameCount
+                    partitionCeilings,
+                    frameCount,
+                    timestampIndex
             );
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
@@ -583,6 +658,35 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 executionContext.setCloneSymbolTables(current);
             }
         }
+
+        if (ownerWindowLoFunc != null) {
+            ownerWindowLoFunc.init(joinSymbolTableSource, executionContext);
+        }
+        if (ownerWindowHiFunc != null) {
+            ownerWindowHiFunc.init(joinSymbolTableSource, executionContext);
+        }
+        if (perWorkerWindowLoFuncs != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerWindowLoFuncs, joinSymbolTableSource, executionContext, ownerWindowLoFunc);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+        if (perWorkerWindowHiFuncs != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerWindowHiFuncs, joinSymbolTableSource, executionContext, ownerWindowHiFunc);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
+    }
+
+    public boolean isDynamicWindow() {
+        return ownerWindowLoFunc != null || ownerWindowHiFunc != null;
     }
 
     public boolean isSkipAggregation() {
@@ -643,22 +747,26 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     @Override
     public void toPlan(PlanSink sink) {
         sink.attr("window lo");
-        if (joinWindowLo == 0) {
+        if (ownerWindowLoFunc != null) {
+            sink.val("dynamic");
+        } else if (windowLo == 0) {
             sink.val("current row");
-        } else if (joinWindowLo < 0) {
-            sink.val(Math.abs(joinWindowLo)).val(" following");
+        } else if (windowLo < 0) {
+            sink.val(Math.abs(windowLo)).val(" following");
         } else {
-            sink.val(joinWindowLo).val(" preceding");
+            sink.val(windowLo).val(" preceding");
         }
         sink.val(includePrevailing ? " (include prevailing)" : " (exclude prevailing)");
 
         sink.attr("window hi");
-        if (joinWindowHi == 0) {
+        if (ownerWindowHiFunc != null) {
+            sink.val("dynamic");
+        } else if (windowHi == 0) {
             sink.val("current row");
-        } else if (joinWindowHi < 0) {
-            sink.val(Math.abs(joinWindowHi)).val(" preceding");
+        } else if (windowHi < 0) {
+            sink.val(Math.abs(windowHi)).val(" preceding");
         } else {
-            sink.val(joinWindowHi).val(" following");
+            sink.val(windowHi).val(" following");
         }
     }
 

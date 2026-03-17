@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,12 +26,12 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineChannel;
-import io.questdb.cutlass.line.LineTcpSenderV2;
-import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineChannel;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
+import io.questdb.client.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;

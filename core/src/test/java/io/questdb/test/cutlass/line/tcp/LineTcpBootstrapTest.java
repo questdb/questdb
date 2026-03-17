@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;

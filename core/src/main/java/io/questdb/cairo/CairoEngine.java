@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -162,6 +162,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
@@ -222,6 +223,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
+    private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, new QdbrWalLocker());
@@ -250,7 +252,11 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
-            this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
+            this.telemetries = new ObjList<>(telemetryWal, telemetryMatView);
+            if (configuration.getTelemetryConfiguration().getEnabled()) {
+                // This is the only one that can be switched off by the configuration
+                telemetries.add(telemetry);
+            }
             this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
@@ -773,6 +779,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public BackupSeqPartLock getBackupSeqPartLock() {
+        return backupSeqPartLock;
+    }
+
     @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
@@ -781,6 +791,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public @NotNull CheckpointListener getCheckpointListener() {
+        return configuration.getCheckpointListener();
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -812,7 +826,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
-        return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
+        return getDdlListener(tableToken.getTableName());
+    }
+
+    public @NotNull DdlListener getDdlListener(String tableName) {
+        return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
     public FrameFactory getFrameFactory() {
@@ -1340,6 +1358,11 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken.isWal();
     }
 
+    @TestOnly
+    public boolean isWalPurgeJobLocked() {
+        return walPurgeJobLock.isLocked();
+    }
+
     public boolean isWalTableDropped(CharSequence tableDir) {
         return tableNameRegistry.isWalTableDropped(tableDir);
     }
@@ -1686,7 +1709,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             enqueueCompileView(fromTableToken);
             enqueueCompileView(toTableToken);
-            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+            getDdlListener(fromTableToken).onTableRenamed(fromTableToken, toTableToken);
 
             return toTableToken;
         } else {
@@ -1730,7 +1753,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.configReloader = configReloader;
     }
 
-    @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
     }
@@ -1778,16 +1800,20 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walLocker = walLocker;
     }
 
-    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
-        this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
-    }
-
     public void signalClose() {
         closing = true;
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, true, false);
+    }
+
+    public boolean tryLockWalPurgeJob(long timeout, TimeUnit timeUnit) {
+        boolean isLocked = tryLockWalPurgeJob0(timeout, timeUnit);
+        if (isLocked) {
+            backupSeqPartLock.onLocked();
+        }
+        return isLocked;
     }
 
     public void unlock(
@@ -1817,6 +1843,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockTableName(TableToken tableToken) {
         tableNameRegistry.unlockTableName(tableToken);
+    }
+
+    public void unlockWalPurgeJob() {
+        walPurgeJobLock.unlock();
     }
 
     public void unlockWalWriters(TableToken tableToken) {
@@ -2141,6 +2171,13 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
         }
+    }
+
+    private boolean tryLockWalPurgeJob0(long timeout, TimeUnit timeUnit) {
+        if (timeout == 0) {
+            return walPurgeJobLock.tryLock();
+        }
+        return walPurgeJobLock.tryLock(timeout, timeUnit);
     }
 
     private void tryRepairTable(TableToken tableToken, CairoException rethrow) {

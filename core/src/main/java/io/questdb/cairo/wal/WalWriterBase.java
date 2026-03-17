@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -158,6 +158,13 @@ abstract class WalWriterBase implements AutoCloseable {
             path.trimTo(pathSize).slash().put(segmentId);
             walDirectoryPolicy.rollbackDirectory(path);
             path.trimTo(pathSize);
+        }
+    }
+
+    void notifyWalClosure() {
+        if (lastSeqTxn != NO_TXN) {
+            sequencer.notifyWalClosed(tableToken, lastSeqTxn, walId);
+            LOG.debug().$("notified WAL closed [walId=").$(walId).$(", txn=").$(lastSeqTxn).I$();
         }
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -51,6 +51,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
@@ -649,6 +650,23 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
+    private double expectDouble(GenericLexer lexer) throws SqlException {
+        CharSequence tok = GenericLexer.unquote(expectStringLiteral(lexer).token);
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "number");
+        } else {
+            negative = false;
+        }
+        try {
+            double result = Numbers.parseDouble(tok);
+            return negative ? -result : result;
+        } catch (NumericException e) {
+            throw err(lexer, tok, "bad number");
+        }
+    }
+
     private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
         if (n != null) {
@@ -676,6 +694,26 @@ public class SqlParser {
         } catch (NumericException e) {
             throw err(lexer, tok, "bad integer");
         }
+    }
+
+    /**
+     * Parses an interval literal like "5s", "-2m", "+10h". Handles optional leading sign.
+     */
+    private ExpressionNode expectIntervalLiteral(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "interval");
+        int pos = lexer.lastTokenPosition();
+
+        // Check for optional sign
+        if (Chars.equals(tok, '-') || Chars.equals(tok, '+')) {
+            char sign = tok.charAt(0);
+            CharSequence valueTok = tok(lexer, "interval value");
+            // Combine sign with value: "-" + "2s" -> "-2s"
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(sign).put(valueTok);
+            return expressionNodePool.next().of(ExpressionNode.CONSTANT, entry.toImmutable(), 0, pos);
+        }
+
+        return expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, pos);
     }
 
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
@@ -738,6 +776,13 @@ public class SqlParser {
             return;
         }
         throw SqlException.$(pos, "one letter sample by period unit expected");
+    }
+
+    private ExpressionNode expectStringLiteral(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "literal");
+        int pos = lexer.lastTokenPosition();
+        assertNameIsQuotedOrNotAKeyword(tok, pos);
+        return nextLiteral(GenericLexer.immutableOf(tok), pos);
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
@@ -810,7 +855,10 @@ public class SqlParser {
             } else {
                 CharSequence tokenAlias = qc.getAst().token;
                 if (qc.isWindowExpression() && ((WindowExpression) qc).isIgnoreNulls()) {
-                    tokenAlias += "_ignore_nulls";
+                    CharacterStoreEntry cse = characterStore.newEntry();
+                    cse.put(tokenAlias);
+                    cse.put("_ignore_nulls");
+                    tokenAlias = cse.toImmutable();
                 }
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
@@ -930,7 +978,7 @@ public class SqlParser {
         expectTok(lexer, "view");
 
         CharSequence tok = tok(lexer, "view name");
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt == null) {
             throw SqlException.viewDoesNotExist(lexer.lastTokenPosition(), tok);
         }
@@ -1147,6 +1195,17 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
                         }
                         model.setParquetVersion(parquetVersion);
+                        break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_COLUMNS:
+                        ExpressionNode bloomFilterColumnsExpr = expectStringLiteral(lexer);
+                        model.setBloomFilterColumns(GenericLexer.unquote(bloomFilterColumnsExpr.token), Chars.isQuoted(bloomFilterColumnsExpr.token) ? bloomFilterColumnsExpr.position + 1 : bloomFilterColumnsExpr.position);
+                        break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_FPP:
+                        double fpp = expectDouble(lexer);
+                        if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_fpp must be between 0 and 1 (exclusive)");
+                        }
+                        model.setBloomFilterFpp(fpp);
                         break;
                     case ExportModel.COPY_OPTION_UNKNOWN:
                         throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
@@ -1404,7 +1463,8 @@ public class SqlParser {
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!tableNames.contains(baseTableNameStr)) {
-                if (cairoEngine.getTableTokenIfExists(baseTableNameStr).isView()) {
+                final TableToken baseTableToken = cairoEngine.getTableTokenIfExists(baseTableNameStr);
+                if (baseTableToken != null && baseTableToken.isView()) {
                     throw SqlException.position(baseTableNamePos)
                             .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
                 }
@@ -2587,7 +2647,7 @@ public class SqlParser {
             proposedNested = variableExpr.rhs.queryModel;
         }
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
             compileViewQuery(model, tt, lexer.lastTokenPosition());
             tok = setModelAliasAndTimestamp(lexer, model);
@@ -2654,11 +2714,58 @@ public class SqlParser {
         // expect multiple [[inner | outer | cross] join]
         int joinType;
         boolean hasWindowJoin = false;
+        boolean hasHorizonJoin = false;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+            // Check if this is a WINDOW clause (named window definitions) rather than WINDOW JOIN
+            // WINDOW clause pattern: WINDOW name AS (...)
+            // WINDOW JOIN pattern: WINDOW JOIN table ON ... or WINDOW table ON ...
+            if (isWindowKeyword(tok)) {
+                // Save lexer state before lookahead
+                int windowLastPos = lexer.lastTokenPosition();
+                CharSequence windowTok = tok;
+
+                // Lookahead: read two tokens after WINDOW to distinguish
+                // WINDOW clause (WINDOW name AS ...) from WINDOW JOIN (WINDOW JOIN table ON ...).
+                // We always check both tokens because join keywords like "join", "cross",
+                // "left" etc. could theoretically be quoted window names.
+                CharSequence nextTok = SqlUtil.fetchNext(lexer);
+                boolean isWindowClause = false;
+                if (nextTok != null) {
+                    if (isAsKeyword(nextTok)) {
+                        // WINDOW AS (...) - missing window name
+                        lexer.backTo(windowLastPos, windowTok);
+                        tok = optTok(lexer);
+                        break;
+                    }
+                    CharSequence afterName = SqlUtil.fetchNext(lexer);
+                    if (afterName != null && isAsKeyword(afterName)) {
+                        isWindowClause = true;
+                    }
+                }
+
+                // Restore lexer to start of "window" token so it can be re-read
+                lexer.backTo(windowLastPos, windowTok);
+
+                if (isWindowClause) {
+                    // Break out of join loop - WINDOW clause will be parsed after the loop
+                    // Re-read "window" so tok is valid for WINDOW clause parsing
+                    tok = optTok(lexer);
+                    break;
+                }
+                // WINDOW JOIN - re-read "window" so tok is valid for parseJoin
+                tok = optTok(lexer);
+            }
             if (hasWindowJoin && joinType != QueryModel.JOIN_WINDOW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "no other join types allowed after window join");
             }
+            if (hasHorizonJoin) {
+                throw SqlException.$((lexer.lastTokenPosition()), "horizon join cannot be combined with other joins");
+            }
+            if (joinType == QueryModel.JOIN_HORIZON && model.getJoinModels().size() > 1) {
+                throw SqlException.$((lexer.lastTokenPosition()), "horizon join cannot be combined with other joins");
+            }
             hasWindowJoin = joinType == QueryModel.JOIN_WINDOW;
+            hasHorizonJoin = joinType == QueryModel.JOIN_HORIZON;
             model.addJoinModel(parseJoin(lexer, model, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
             tok = optTok(lexer);
         }
@@ -2827,6 +2934,73 @@ public class SqlParser {
                 tok = optTok(lexer);
             } while (tok != null && Chars.equals(tok, ','));
         }
+
+        // expect [window]
+        // WINDOW clause for named window definitions: WINDOW w AS (PARTITION BY ... ORDER BY ...)
+        // SQL standard places WINDOW between HAVING/GROUP BY and ORDER BY.
+        if (tok != null && isWindowKeyword(tok)) {
+            do {
+                // Parse window name
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected after 'window'");
+                }
+                if (isAsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "window name expected after 'window'");
+                }
+                validateIdentifier(lexer, tok);
+                SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                // Intern the window name immediately before any more lexer operations
+                // (the lexer reuses its buffer, so tok would be overwritten)
+                CharacterStoreEntry cse = characterStore.newEntry();
+                cse.put(GenericLexer.unquote(tok));
+                CharSequence windowName = cse.toImmutable();
+                int windowNamePos = lexer.lastTokenPosition();
+
+                // Check for duplicate window name in the outer (master) model
+                if (masterModel.getNamedWindows().keyIndex(windowName) < 0) {
+                    throw SqlException.$(windowNamePos, "duplicate window name");
+                }
+
+                // Expect AS
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isAsKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'as' expected after window name");
+                }
+
+                // Expect '('
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || tok.charAt(0) != '(') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'(' expected after 'as'");
+                }
+
+                // Create WindowExpression and parse the specification
+                WindowExpression windowSpec = windowExpressionPool.next();
+                windowSpec.clear();
+                expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
+
+                // Validate base window reference (window inheritance):
+                // the base must be defined earlier in the same WINDOW clause (no forward references)
+                if (windowSpec.hasBaseWindow()) {
+                    CharSequence baseName = windowSpec.getBaseWindowName();
+                    if (masterModel.getNamedWindows().keyIndex(baseName) > -1) {
+                        throw SqlException.$(windowSpec.getBaseWindowNamePosition(), "window '")
+                                .put(baseName).put("' is not defined");
+                    }
+                }
+
+                // Store named window in the outer (master) model where the SELECT columns are defined,
+                // not the FROM model. The window functions in SELECT reference these named windows.
+                masterModel.getNamedWindows().put(windowName, windowSpec);
+
+                tok = optTok(lexer);
+            } while (tok != null && Chars.equals(tok, ','));
+        }
+
+        // Validate that all named window references in SELECT columns are defined.
+        // Fail fast here rather than waiting for the optimizer.
+        validateNamedWindowReferences(masterModel);
 
         // expect [order by]
 
@@ -3123,6 +3297,9 @@ public class SqlParser {
             } else if (isWindowKeyword(tok)) {
                 tok = tok(lexer, "join");
                 joinType = QueryModel.JOIN_WINDOW;
+            } else if (isHorizonKeyword(tok)) {
+                tok = tok(lexer, "join");
+                joinType = QueryModel.JOIN_HORIZON;
             } else {
                 tok = tok(lexer, "join");
             }
@@ -3136,7 +3313,7 @@ public class SqlParser {
 
         tok = expectTableNameOrSubQuery(lexer);
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tok);
+        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
             compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
         } else if (Chars.equals(tok, '(')) {
@@ -3158,6 +3335,7 @@ public class SqlParser {
             case QueryModel.JOIN_LT:
             case QueryModel.JOIN_SPLICE:
             case QueryModel.JOIN_WINDOW:
+            case QueryModel.JOIN_HORIZON:
                 if (tok == null || !isOnKeyword(tok)) {
                     lexer.unparseLast();
                     break;
@@ -3283,15 +3461,104 @@ public class SqlParser {
             tok = optTok(lexer);
             if (tok != null) {
                 if (isIncludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(true, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(true);
                 } else if (isExcludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(false, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(false);
                 } else {
                     lexer.unparseLast();
                 }
             } else {
                 lexer.unparseLast();
             }
+            return joinModel;
+        }
+
+        if (joinType == QueryModel.JOIN_HORIZON) {
+            HorizonJoinContext context = joinModel.getHorizonJoinContext();
+
+            // Expect either RANGE or LIST
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'range' or 'list' expected");
+            }
+
+            if (isRangeKeyword(tok)) {
+                // RANGE FROM <interval> TO <interval> STEP <interval> AS <alias>
+                context.setMode(HorizonJoinContext.MODE_RANGE);
+
+                expectTok(lexer, "from");
+                ExpressionNode fromExpr = expectIntervalLiteral(lexer);
+                context.setRangeFrom(fromExpr, fromExpr.position);
+
+                tok = tok(lexer, "'to'");
+                expectTok(lexer, tok, "to");
+                ExpressionNode toExpr = expectIntervalLiteral(lexer);
+                context.setRangeTo(toExpr);
+
+                tok = tok(lexer, "'step'");
+                expectTok(lexer, tok, "step");
+                ExpressionNode stepExpr = expectIntervalLiteral(lexer);
+                context.setRangeStep(stepExpr, stepExpr.position);
+            } else if (isListKeyword(tok)) {
+                // LIST (<expr>, <expr>, ...) AS <alias>
+                context.setMode(HorizonJoinContext.MODE_LIST);
+
+                tok = tok(lexer, "'('");
+                expectTok(lexer, tok, "(");
+
+                // Parse list of offset expressions
+                // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+                tok = tokIncludingLocalBrace(lexer, "expression");
+                if (Chars.equals(tok, ')')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "at least one offset expression expected");
+                }
+                lexer.unparseLast();
+
+                while (true) {
+                    ExpressionNode offsetExpr = expectIntervalLiteral(lexer);
+                    context.addListOffset(offsetExpr);
+
+                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                    if (Chars.equals(tok, ')')) {
+                        break;
+                    }
+                    if (!Chars.equals(tok, ',')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+                    }
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'range' or 'list' expected");
+            }
+
+            // Expect AS <alias>
+            tok = tok(lexer, "'as'");
+            expectTok(lexer, tok, "as");
+            tok = tok(lexer, "alias");
+            int aliasPos = lexer.lastTokenPosition();
+            ExpressionNode aliasNode = literal(tok, aliasPos);
+            context.setAlias(aliasNode, aliasPos);
+
+            // Create synthetic offset model for the horizon pseudo-table
+            // This model represents the virtual table with offset/timestamp columns
+            QueryModel syntheticOffsetModel = queryModelPool.next();
+            syntheticOffsetModel.setJoinType(QueryModel.JOIN_CROSS);
+            syntheticOffsetModel.setAlias(aliasNode);
+
+            // Move HorizonJoinContext to the synthetic model
+            // The synthetic model holds the range/list configuration
+            HorizonJoinContext syntheticContext = syntheticOffsetModel.getHorizonJoinContext();
+            syntheticContext.copyFrom(context);
+            context.clear();
+
+            // Add offset and timestamp columns to the synthetic model
+            ExpressionNode offsetNode = expressionNodePool.next().of(ExpressionNode.LITERAL, "offset", 0, aliasPos);
+            syntheticOffsetModel.addField(queryColumnPool.next().of("offset", offsetNode));
+
+            ExpressionNode timestampNode = expressionNodePool.next().of(ExpressionNode.LITERAL, "timestamp", 0, aliasPos);
+            syntheticOffsetModel.addField(queryColumnPool.next().of("timestamp", timestampNode));
+
+            // Add synthetic model to parent's join models before the HORIZON JOIN model
+            model.addJoinModel(syntheticOffsetModel);
+
             return joinModel;
         }
 
@@ -4568,35 +4835,6 @@ public class SqlParser {
         return tok;
     }
 
-    private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (tok == null || tok.isEmpty()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
-        }
-
-        if (Chars.isQuoted(tok)) {
-            if (tok.length() == 2) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
-            }
-            return;
-        }
-
-        char c = tok.charAt(0);
-
-        if (!(Character.isLetter(c) || c == '_')) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("identifier should start with a letter or '_'");
-        }
-
-        for (int i = 1, n = tok.length(); i < n; i++) {
-            c = tok.charAt(i);
-            if (!(Character.isLetter(c) ||
-                    Character.isDigit(c) ||
-                    c == '_' ||
-                    c == '$')) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
-            }
-        }
-    }
-
     private void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             tableNames.clear();
@@ -4667,6 +4905,72 @@ public class SqlParser {
                             .put("union on base table is not supported for materialized views: ").put(baseTableName);
                 }
                 validateMatViewQuery(unionModel, baseTableName);
+            }
+        }
+    }
+
+    private void validateNamedWindowReferences(QueryModel model) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                WindowExpression wc = (WindowExpression) qc;
+                if (wc.isNamedWindowReference() && namedWindows.keyIndex(wc.getWindowName()) > -1) {
+                    throw SqlException.$(wc.getWindowNamePosition(), "window '").put(wc.getWindowName()).put("' is not defined");
+                }
+            }
+            // Check nested expression trees for all columns, not just window expressions,
+            // to catch cases like: row_number() OVER w + 1 (where top-level column is +)
+            validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
+        }
+    }
+
+    private void validateNamedWindowReferencesInExpr(ExpressionNode node, LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+            CharSequence name = node.windowExpression.getWindowName();
+            if (namedWindows.keyIndex(name) > -1) {
+                throw SqlException.$(node.windowExpression.getWindowNamePosition(), "window '").put(name).put("' is not defined");
+            }
+        }
+        if (node.paramCount < 3) {
+            validateNamedWindowReferencesInExpr(node.lhs, namedWindows);
+            validateNamedWindowReferencesInExpr(node.rhs, namedWindows);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                validateNamedWindowReferencesInExpr(node.args.getQuick(i), namedWindows);
+            }
+        }
+    }
+
+    static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (tok == null || tok.isEmpty()) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            if (tok.length() == 2) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+            }
+            return;
+        }
+
+        char c = tok.charAt(0);
+
+        if (!(Character.isLetter(c) || c == '_')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("identifier should start with a letter or '_'");
+        }
+
+        for (int i = 1, n = tok.length(); i < n; i++) {
+            c = tok.charAt(i);
+            if (!(Character.isLetter(c) ||
+                    Character.isDigit(c) ||
+                    c == '_' ||
+                    c == '$')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
             }
         }
     }
@@ -4905,6 +5209,7 @@ public class SqlParser {
         tableAliasStop.add("full");
         tableAliasStop.add("range");
         tableAliasStop.add("window");
+        tableAliasStop.add("horizon");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -4933,6 +5238,7 @@ public class SqlParser {
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
         joinStartSet.put("lt", QueryModel.JOIN_LT);
+        joinStartSet.put("horizon", QueryModel.JOIN_HORIZON);
         joinStartSet.put(",", QueryModel.JOIN_CROSS);
         //
         setOperations.add("union");

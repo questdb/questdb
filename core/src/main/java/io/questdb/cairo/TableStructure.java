@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -67,6 +67,10 @@ public interface TableStructure {
 
     default ViewDefinition getViewDefinition() {
         return null;
+    }
+
+    default boolean hasParquetPartitions() {
+        return false;
     }
 
     default void init(TableToken tableToken) {

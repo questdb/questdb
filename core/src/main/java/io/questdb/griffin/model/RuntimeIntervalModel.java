@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -186,6 +186,14 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         outIntervals.setPos(divider);
                         continue;
                     }
+                }
+            } else if (dynamicFunction instanceof CompiledTickExpression compiled) {
+                // Compiled tick expression with date variables ($now, $today, etc.)
+                // Re-evaluates the expression with the current "now" timestamp
+                compiled.init(null, sqlExecutionContext);
+                compiled.evaluate(outIntervals);
+                if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
+                    IntervalUtils.invert(outIntervals, divider);
                 }
             } else {
                 long lo = IntervalUtils.decodeIntervalLo(intervals, i);

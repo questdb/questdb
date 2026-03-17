@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,12 +22,15 @@
  *
  ******************************************************************************/
 
+use std::collections::HashSet;
+
 use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, transmute_slice, ExactSizedIter,
 };
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -42,6 +45,7 @@ pub fn string_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
@@ -50,15 +54,19 @@ pub fn string_to_page(
     let utf16_slices: Vec<Option<&[u16]>> = offsets
         .iter()
         .map(|offset| {
-            let offset =
-                usize::try_from(*offset).expect("invalid offset value in string aux column");
+            let offset = usize::try_from(*offset).map_err(|_| {
+                fmt_err!(
+                    Layout,
+                    "invalid offset value in string aux column: {offset}"
+                )
+            })?;
             let maybe_utf16 = get_utf16(&data[offset..]);
             if maybe_utf16.is_none() {
                 null_count += 1;
             }
-            maybe_utf16
+            Ok(maybe_utf16)
         })
-        .collect();
+        .collect::<ParquetResult<Vec<_>>>()?;
 
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && utf16_slices[i - column_top].is_some());
@@ -70,10 +78,21 @@ pub fn string_to_page(
 
     match encoding {
         Encoding::Plain => {
-            encode_plain(&utf16_slices, &mut buffer, &mut stats);
+            encode_plain(
+                &utf16_slices,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes.as_deref_mut(),
+            )?;
         }
         Encoding::DeltaLengthByteArray => {
-            encode_delta(&utf16_slices, null_count, &mut buffer, &mut stats);
+            encode_delta(
+                &utf16_slices,
+                null_count,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes,
+            )?;
         }
         _ => {
             return Err(fmt_err!(
@@ -106,16 +125,22 @@ fn encode_plain(
     utf16_slices: &[Option<&[u16]>],
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
-) {
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<()> {
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
-        let utf8 = String::from_utf16(utf16).expect("utf16 string");
+        let utf8 = String::from_utf16(utf16)
+            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
         // BYTE_ARRAY: first 4 bytes denote length in little-endian.
         let encoded_len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&encoded_len);
         let value = utf8.as_bytes();
         buffer.extend_from_slice(value);
         stats.update(value);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(value));
+        }
     }
+    Ok(())
 }
 
 fn encode_delta(
@@ -123,7 +148,8 @@ fn encode_delta(
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
-) {
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<()> {
     let lengths = utf16_slices
         .iter()
         .filter_map(|&option| option)
@@ -131,11 +157,16 @@ fn encode_delta(
     let lengths = ExactSizedIter::new(lengths, utf16_slices.len() - null_count);
     delta_bitpacked::encode(lengths, buffer);
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
-        let utf8 = String::from_utf16(utf16).expect("utf16 string");
+        let utf8 = String::from_utf16(utf16)
+            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
         let value = utf8.as_bytes();
         buffer.extend_from_slice(value);
         stats.update(value);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(value));
+        }
     }
+    Ok(())
 }
 
 fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {

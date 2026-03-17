@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -152,7 +152,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         private long forwardRowId = -1;
         private boolean forwardScanExhausted;
         private boolean slaveCursorReadyForForwardScan;
-
 
         protected AsOfJoinDenseRecordCursorBase(
                 int columnSplit,

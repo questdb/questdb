@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,38 +24,38 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DefaultDdlListener;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.http.AbstractLineHttpSender;
-import io.questdb.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.array.DoubleArray;
+import io.questdb.client.cutlass.line.array.LongArray;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.client.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.client.std.Decimal256;
+import io.questdb.client.std.Numbers;
+import io.questdb.client.std.NumericException;
+import io.questdb.client.std.str.DirectUtf8Sink;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.std.Decimal256;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -65,7 +65,10 @@ import org.junit.Test;
 import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.concurrent.CyclicBarrier;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -86,6 +89,91 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public static <T> T createLongArray(int... shape) {
         int[] indices = new int[shape.length];
         return buildNestedArray(ArrayDataType.LONG, shape, 0, indices);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
+        if (currentDim == shape.length - 1) {
+            Object arr = dataType.createArray(shape[currentDim]);
+            for (int i = 0; i < Array.getLength(arr); i++) {
+                indices[currentDim] = i;
+                dataType.setElement(arr, i, indices);
+            }
+            return (T) arr;
+        } else {
+            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shape[currentDim]);
+            for (int i = 0; i < shape[currentDim]; i++) {
+                indices[currentDim] = i;
+                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
+                Array.set(arr, i, subArr);
+            }
+            return (T) arr;
+        }
+    }
+
+    private static void flushAndAssertError(Sender sender, String... errors) {
+        try {
+            sender.flush();
+            Assert.fail("Expected exception");
+        } catch (LineSenderException e) {
+            for (String error : errors) {
+                TestUtils.assertContains(e.getMessage(), error);
+            }
+        }
+    }
+
+    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
+        int i = 0;
+
+        int port = serverMain.getHttpServerPort();
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                .address("localhost:" + port)
+                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                .build()
+        ) {
+            if (count / 2 > 0) {
+                String tableNameUpper = tableName.toUpperCase();
+                for (; i < count / 2; i++) {
+                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                    sender.table(tn)
+                            .symbol("async", "true")
+                            .symbol("location", "santa_monica")
+                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                            .longColumn("water_level", i)
+                            .at(timestamp, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            for (; i < count; i++) {
+                String tableNameUpper = tableName.toUpperCase();
+                String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                sender.table(tn)
+                        .symbol("async", "true")
+                        .symbol("location", "santa_monica")
+                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                        .longColumn("water_level", i)
+                        .at(timestamp, ChronoUnit.MICROS);
+            }
+            sender.flush();
+        }
+    }
+
+    private static void putDouble(DirectUtf8Sink sink, double value) {
+        sink.put('=');
+        sink.putAny((byte) 16);
+        long raw = Double.doubleToRawLongBits(value);
+        sink.putAny((byte) (raw & 0xFF));
+        sink.putAny((byte) ((raw >> 8) & 0xFF));
+        sink.putAny((byte) ((raw >> 16) & 0xFF));
+        sink.putAny((byte) ((raw >> 24) & 0xFF));
+        sink.putAny((byte) ((raw >> 32) & 0xFF));
+        sink.putAny((byte) ((raw >> 40) & 0xFF));
+        sink.putAny((byte) ((raw >> 48) & 0xFF));
+        sink.putAny((byte) ((raw >> 56) & 0xFF));
     }
 
     public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
@@ -712,7 +800,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 50_000;
                 int autoFlushRows = 1000;
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 1_000, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, io.questdb.client.DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 1_000, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.awaitTable("table with space");
@@ -828,10 +916,53 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         // a large batch (mid-request), the server correctly detects the rename and rejects
         // the entire batch with a retryable 503 error. No partial data should be committed.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
-                String tableName = "concurrent_data";
-                String renamedTableName = "concurrent_data_old";
-                int batchSize = 500_000; // Large batch to ensure processing takes time
+            String tableName = "concurrent_data";
+            String renamedTableName = "concurrent_data_old";
+            int batchSize = 500_000;
+
+            // Latch to detect when the server starts processing the large batch.
+            // We set WAL segment rollover row count to 1, so after the init flush
+            // commits (1 row), the WalWriter schedules a segment roll. When the
+            // large batch's first row triggers newRow(), it rolls to a new segment,
+            // opening new column files via ff.openRW(). We intercept that to know
+            // the server has started processing and then trigger the rename.
+            CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            AtomicBoolean trackOpens = new AtomicBoolean(false);
+
+            FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    long fd = super.openRW(name, opts);
+                    if (trackOpens.get()
+                            && Utf8s.containsAscii(name, tableName)
+                            && Utf8s.containsAscii(name, "wal")
+                            && Utf8s.endsWithAscii(name, ".d")) {
+                        walSegmentRolled.countDown();
+                    }
+                    return fd;
+                }
+            };
+
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+            // Force segment roll after the init flush so that the large batch
+            // triggers openRW for new segment column files.
+            env.put(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT.getEnvVarName(), "1");
+
+            Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public Map<String, String> getEnv() {
+                    return env;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            }, Bootstrap.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
 
                 // Create the initial table
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
@@ -842,37 +973,35 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int port = serverMain.getHttpServerPort();
 
-                // Use barriers to coordinate the rename with the batch processing
-                CyclicBarrier flushStartBarrier = new CyclicBarrier(2);
                 AtomicReference<Throwable> senderError = new AtomicReference<>();
 
                 // Sender thread: builds and sends a large batch with auto-flush disabled
                 Thread senderThread = new Thread(() -> {
                     try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                             .address("localhost:" + port)
-                            .disableAutoFlush() // Disable auto-flush so entire batch is sent at once
-                            .retryTimeoutMillis(0) // Disable automatic retries
+                            .disableAutoFlush()
+                            .retryTimeoutMillis(0)
                             .build()
                     ) {
-                        // First flush to populate the cache
+                        // First flush to populate the TUD cache and trigger segment rollover
                         sender.table(tableName)
                                 .symbol("sensor", "init")
                                 .doubleColumn("temperature", 0.0)
                                 .at(1L, ChronoUnit.NANOS);
                         sender.flush();
 
+                        // Enable tracking after init flush so we only detect the large batch
+                        trackOpens.set(true);
+
                         // Build a large batch entirely in memory (no auto-flush)
                         for (int i = 0; i < batchSize; i++) {
                             sender.table(tableName)
                                     .symbol("sensor", "sensor_" + (i % 100))
                                     .doubleColumn("temperature", 20.0 + (i % 30))
-                                    .at(1000000000L + i, ChronoUnit.NANOS);
+                                    .at(1_000_000_000L + i, ChronoUnit.NANOS);
                         }
 
-                        // Signal that we're about to start the flush
-                        flushStartBarrier.await();
-
-                        // Send the entire batch - this will take time on the server
+                        // Send the entire batch
                         sender.flush();
 
                         // If we get here without error, the test should fail
@@ -891,11 +1020,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 senderThread.start();
 
-                // Wait for sender to signal it's about to flush
-                flushStartBarrier.await();
-
-                // Give a brief moment for the flush to start sending data
-                Thread.sleep(10);
+                // Wait until the server starts processing the large batch (segment roll
+                // triggers openRW for new column files). This guarantees the WalWriter
+                // has started appending rows with the old table token.
+                Assert.assertTrue("Timed out waiting for WAL segment roll",
+                        walSegmentRolled.await(60, TimeUnit.SECONDS));
 
                 // Rename the table while the server is processing the large batch
                 serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
@@ -939,7 +1068,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         sender.table(tableName)
                                 .symbol("sensor", "retry_sensor")
                                 .doubleColumn("temperature", 25.0)
-                                .at(2000000000L + i, ChronoUnit.NANOS);
+                                .at(2_000_000_000L + i, ChronoUnit.NANOS);
                     }
                     sender.flush();
                 }
@@ -1452,18 +1581,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             if (i % 2 == 0) {
                                 Numbers.append(sink, v);
                             } else {
-                                sink.put('=');
-                                sink.putAny((byte) 16);
-                                sink.putDouble(v);
+                                putDouble(sink, v);
                             }
                             double a2 = 2 + i;
                             sink.put(",y=\"ystr\",a1=");
                             if (i % 2 != 0) {
                                 Numbers.append(sink, a2);
                             } else {
-                                sink.put('=');
-                                sink.putAny((byte) 16);
-                                sink.putDouble(a2);
+                                putDouble(sink, a2);
                             }
                             long ts = 100000000002000L + i * 1000;
                             sink.put(" ").put(ts).put('\n');
@@ -3126,77 +3251,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
-        if (currentDim == shape.length - 1) {
-            Object arr = dataType.createArray(shape[currentDim]);
-            for (int i = 0; i < Array.getLength(arr); i++) {
-                indices[currentDim] = i;
-                dataType.setElement(arr, i, indices);
-            }
-            return (T) arr;
-        } else {
-            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
-            Object arr = Array.newInstance(componentType, shape[currentDim]);
-            for (int i = 0; i < shape[currentDim]; i++) {
-                indices[currentDim] = i;
-                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
-                Array.set(arr, i, subArr);
-            }
-            return (T) arr;
-        }
-    }
-
-    private static void flushAndAssertError(Sender sender, String... errors) {
-        try {
-            sender.flush();
-            Assert.fail("Expected exception");
-        } catch (LineSenderException e) {
-            for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
-            }
-        }
-    }
-
-    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
-        int i = 0;
-
-        int port = serverMain.getHttpServerPort();
-        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                .address("localhost:" + port)
-                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
-                .build()
-        ) {
-            if (count / 2 > 0) {
-                String tableNameUpper = tableName.toUpperCase();
-                for (; i < count / 2; i++) {
-                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                    sender.table(tn)
-                            .symbol("async", "true")
-                            .symbol("location", "santa_monica")
-                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                            .longColumn("water_level", i)
-                            .at(timestamp, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            for (; i < count; i++) {
-                String tableNameUpper = tableName.toUpperCase();
-                String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                sender.table(tn)
-                        .symbol("async", "true")
-                        .symbol("location", "santa_monica")
-                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                        .longColumn("water_level", i)
-                        .at(timestamp, ChronoUnit.MICROS);
-            }
-            sender.flush();
-        }
     }
 
     private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {

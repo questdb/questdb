@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,6 +47,16 @@ public class ViewCompileTest extends ViewInvalidationTest {
             }
         };
         AbstractViewTest.setUpStatic();
+    }
+
+    @Test
+    public void testCompileViewInQuotes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE VIEW " + VIEW1 + " AS (SELECT 42 AS col)");
+
+            execute("COMPILE VIEW '" + VIEW1 + "'");
+            execute("COMPILE VIEW \"" + VIEW1 + "\"");
+        });
     }
 
     @Test

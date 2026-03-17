@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,6 +48,11 @@ public interface UnaryFunction extends Function {
      * @return the function argument
      */
     Function getArg();
+
+    @Override
+    default int getComplexity() {
+        return getArg().getComplexity();
+    }
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {

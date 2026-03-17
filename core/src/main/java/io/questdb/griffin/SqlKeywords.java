@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -162,6 +162,30 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'e'
                 && (tok.charAt(5) | 32) == 'e'
                 && (tok.charAt(6) | 32) == 'n';
+    }
+
+    public static boolean isBloomFilterColumnsKeyword(CharSequence tok) {
+        return tok.length() == 20
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'm'
+                && tok.charAt(5) == '_'
+                && (tok.charAt(6) | 32) == 'f'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'l'
+                && (tok.charAt(9) | 32) == 't'
+                && (tok.charAt(10) | 32) == 'e'
+                && (tok.charAt(11) | 32) == 'r'
+                && tok.charAt(12) == '_'
+                && (tok.charAt(13) | 32) == 'c'
+                && (tok.charAt(14) | 32) == 'o'
+                && (tok.charAt(15) | 32) == 'l'
+                && (tok.charAt(16) | 32) == 'u'
+                && (tok.charAt(17) | 32) == 'm'
+                && (tok.charAt(18) | 32) == 'n'
+                && (tok.charAt(19) | 32) == 's';
     }
 
     public static boolean isByKeyword(CharSequence tok) {
@@ -420,6 +444,17 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'a'
                 && (tok.charAt(6) | 32) == 's'
                 && (tok.charAt(7) | 32) == 'e';
+    }
+
+    public static boolean isDateaddKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'd'
+                && (tok.charAt(6) | 32) == 'd';
     }
 
     public static boolean isDateStyleKeyword(CharSequence tok) {
@@ -844,6 +879,13 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 't';
     }
 
+    public static boolean isFppKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'p'
+                && (tok.charAt(2) | 32) == 'p';
+    }
+
     public static boolean isFromKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'f'
@@ -909,6 +951,17 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'u'
                 && (tok.charAt(3) | 32) == 'r'
                 && (tok.charAt(4) | 32) == 's';
+    }
+
+    public static boolean isHorizonKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'z'
+                && (tok.charAt(5) | 32) == 'o'
+                && (tok.charAt(6) | 32) == 'n';
     }
 
     public static boolean isIfKeyword(CharSequence tok) {
@@ -2392,9 +2445,9 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'w'
                 && (tok.charAt(1) | 32) == 'i'
                 && (tok.charAt(2) | 32) == 'n'
-                && (tok.charAt(4) | 32) == 'd'
-                && (tok.charAt(5) | 32) == 'o'
-                && (tok.charAt(6) | 32) == 'w';
+                && (tok.charAt(3) | 32) == 'd'
+                && (tok.charAt(4) | 32) == 'o'
+                && (tok.charAt(5) | 32) == 'w';
     }
 
     public static boolean isWithKeyword(CharSequence tok) {

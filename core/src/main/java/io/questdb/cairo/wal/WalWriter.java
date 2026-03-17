@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.Metrics;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
@@ -96,6 +98,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -113,6 +116,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
+    private final int columnsMadviseMode;
     private final DdlListener ddlListener;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
@@ -128,10 +132,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final BoolList symbolMapNullFlagsChanged = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
+    private final boolean walTelemetryEnabled;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
@@ -163,14 +169,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             DdlListener ddlListener,
             WalDirectoryPolicy walDirectoryPolicy,
             WalLocker walLocker,
-            RecentWriteTracker recentWriteTracker
+            RecentWriteTracker recentWriteTracker,
+            Telemetry<TelemetryWalTask> telemetryWal
     ) {
         super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
+        this.columnsMadviseMode = configuration.getWalWriterMadviseMode();
         this.ddlListener = ddlListener;
         this.recentWriteTracker = recentWriteTracker;
+        this.telemetryWal = telemetryWal;
         this.metrics = configuration.getMetrics();
+        this.walTelemetryEnabled = !configuration.getTelemetryConfiguration().getDisableCompletely();
 
         try {
             lockWal();
@@ -882,14 +892,32 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LogRecord logLine = LOG.info();
+                if (walTelemetryEnabled) {
+                    final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
+                    final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;
+                    TelemetryWalTask.store(
+                            telemetryWal,
+                            TelemetryEvent.WAL_TXN_COMMITTED,
+                            tableToken.getTableId(),
+                            walId,
+                            seqTxn,
+                            txnRowCount,
+                            txnRowCount,
+                            0L,
+                            minTs,
+                            maxTs
+                    );
+                }
+                final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
+                // Reduce logging when telemetry is enabled; all the information is saved in sys.telemetry_wal
+                LogRecord logLine = hasReplaceRange || !walTelemetryEnabled ? LOG.info() : LOG.debug();
                 try {
                     logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                             .$(", segTxn=").$(lastSegmentTxn)
                             .$(", seqTxn=").$(seqTxn)
                             .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
                             .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
-                    if (replaceRangeHiTs > replaceRangeLowTs) {
+                    if (hasReplaceRange) {
                         logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
                     }
                 } finally {
@@ -1154,6 +1182,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 Misc.free(path);
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
+            // must happen after the WAL lock is released
+            notifyWalClosure();
             columnVersionReader = Misc.free(columnVersionReader);
         }
     }
@@ -1280,7 +1310,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     -1,
                     MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
-                    Files.POSIX_MADV_RANDOM
+                    columnsMadviseMode
             );
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
@@ -1295,7 +1325,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         getDataAppendPageSize(),
                         MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
-                        Files.POSIX_MADV_RANDOM
+                        columnsMadviseMode
                 );
             }
         } finally {
@@ -1928,7 +1958,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
@@ -2173,7 +2203,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
                 String columnName = metadata.getColumnName(columnIndex);
@@ -2201,7 +2231,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         markColumnRemoved(index, type);
-                        path.trimTo(pathSize);
+
+                        try {
+                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName).I$();
                     } else {
@@ -2252,11 +2287,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        if (securityContext != null) {
-                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
+                        try {
+                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
+                        } finally {
+                            path.trimTo(pathSize);
                         }
-
-                        path.trimTo(pathSize);
                         LOG.info().$("renamed column in WAL [path=")
                                 .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName)

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,9 +25,16 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.ObjList;
 
 public interface RecordComparator {
     int compare(Record record);
 
     void setLeft(Record record);
+
+    @SuppressWarnings("unused")
+    // this is bytecode generated method and bytecode generate implementations
+    default void setRankMaps(ObjList<DirectIntList> rankMaps) {
+    }
 }

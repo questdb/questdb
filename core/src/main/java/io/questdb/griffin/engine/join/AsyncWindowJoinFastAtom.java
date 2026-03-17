@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,9 +39,9 @@ import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -73,8 +73,8 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             @Nullable ObjList<Function> perWorkerJoinFilters,
             int masterSymbolIndex,
             int slaveSymbolIndex,
-            long joinWindowLo,
-            long joinWindowHi,
+            long windowLo,
+            long windowHi,
             boolean includePrevailing,
             int columnSplit,
             int masterTimestampIndex,
@@ -98,8 +98,17 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 slaveFactory,
                 ownerJoinFilter,
                 perWorkerJoinFilters,
-                joinWindowLo,
-                joinWindowHi,
+                windowLo,
+                windowHi,
+                null,
+                null,
+                null,
+                null,
+                0,
+                0,
+                (char) 0,
+                (char) 0,
+                null,
                 includePrevailing,
                 columnSplit,
                 masterTimestampIndex,
@@ -229,9 +238,10 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
             PageFrameAddressCache frameAddressCache,
-            IntList framePartitionIndexes,
+            DirectIntList framePartitionIndexes,
             LongList frameRowCounts,
             LongList partitionTimestamps,
+            LongList partitionCeilings,
             int frameCount
     ) throws SqlException {
         super.initTimeFrameCursors(
@@ -242,6 +252,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 framePartitionIndexes,
                 frameRowCounts,
                 partitionTimestamps,
+                partitionCeilings,
                 frameCount
         );
 

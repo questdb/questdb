@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -2244,7 +2244,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(
                 "f(c) over (partition by b order by ts",
                 35,
-                "')' expected to close OVER clause"
+                "')' expected to close window specification"
         );
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -96,7 +96,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
-            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess());
+            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
         } else {
             this.selectedTimeFrameCursor = null;
         }

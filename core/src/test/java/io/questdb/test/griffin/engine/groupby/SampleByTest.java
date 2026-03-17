@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -4925,7 +4925,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllowsPredicatePushDown() throws Exception {
         String plan = """
-                Radix sort light
+                Encode sort light
                   keys: [tstmp]
                     Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)
                         Async JIT Group By workers: 1
@@ -4956,7 +4956,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [ts1]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym,ts1]
@@ -5635,7 +5635,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [time]
@@ -5669,7 +5669,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,ts]
@@ -5703,7 +5703,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [time,type]
@@ -5720,7 +5720,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,type]
@@ -5753,7 +5753,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,geo6]
@@ -5770,7 +5770,7 @@ public class SampleByTest extends AbstractCairoTest {
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [time]
                                 GroupBy vectorized: false
                                   keys: [id,time,lat]
@@ -5969,6 +5969,314 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToFillLinear() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE ignition (
+                      value_time TIMESTAMP,
+                      double_value DOUBLE
+                    ) timestamp(value_time)
+                    """);
+            execute("""
+                    INSERT INTO ignition (double_value, value_time)
+                    SELECT ((x - 1) % 60)::double AS double_value,
+                           dateadd('s', (x - 1)::int, '2026-02-11T20:06:00') FROM long_sequence(180)
+                    """);
+            drainWalQueue();
+
+            // Without FILL: bucket starts at FROM, single bucket covers the 60s range
+            assertSql(
+                    """
+                            sum\tvalue_time
+                            1770.0\t2026-02-11T20:06:26.916000Z
+                            """,
+                    """
+                            SELECT sum(double_value), value_time FROM ignition
+                            SAMPLE BY 60000T
+                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                            """
+            );
+
+            // With FILL(LINEAR): should produce the same bucket alignment as without FILL
+            assertSql(
+                    """
+                            sum\tvalue_time
+                            1770.0\t2026-02-11T20:06:26.916000Z
+                            """,
+                    """
+                            SELECT sum(double_value), value_time FROM ignition
+                            SAMPLE BY 60000T
+                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                            FILL(LINEAR)
+                            """
+            );
+
+            // With explicit WHERE clause, FILL(LINEAR) should still align to FROM
+            assertSql(
+                    """
+                            sum\tvalue_time
+                            1770.0\t2026-02-11T20:06:26.916000Z
+                            """,
+                    """
+                            SELECT sum(double_value), value_time FROM ignition
+                            WHERE value_time BETWEEN '2026-02-11T20:06:26.916' AND '2026-02-11T20:07:26.916'
+                            SAMPLE BY 60000T
+                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                            FILL(LINEAR)
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillLinearMultiBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(FROM_TO_DDL);
+            drainWalQueue();
+
+            // Multiple buckets with FILL(LINEAR) and FROM-TO should align to FROM
+            assertSql(
+                    """
+                            ts\tavg
+                            2018-01-01T00:00:00.000000Z\t120.5
+                            2018-01-06T00:00:00.000000Z\t360.5
+                            """,
+                    """
+                            SELECT ts, avg(x) FROM fromto
+                            SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
+                            FILL(LINEAR)
+                            """
+            );
+
+            // Verify same result without FILL
+            assertSql(
+                    """
+                            ts\tavg
+                            2018-01-01T00:00:00.000000Z\t120.5
+                            2018-01-06T00:00:00.000000Z\t360.5
+                            """,
+                    """
+                            SELECT ts, avg(x) FROM fromto
+                            SAMPLE BY 5d FROM '2018-01-01' TO '2018-01-31'
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillLinearWithGaps() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a table with gaps so LINEAR interpolation is actually exercised
+            execute("""
+                    CREATE TABLE gaps (
+                      ts TIMESTAMP,
+                      val DOUBLE
+                    ) timestamp(ts)
+                    """);
+            // Insert data at 0s, 10s, 30s — gap at 20s
+            execute("""
+                    INSERT INTO gaps VALUES
+                    ('2026-01-01T00:00:00', 10.0),
+                    ('2026-01-01T00:00:10', 20.0),
+                    ('2026-01-01T00:00:30', 40.0)
+                    """);
+            drainWalQueue();
+
+            // 10s buckets FROM :00 TO :40 — bucket at :20 is a gap and should be interpolated
+            assertSql(
+                    """
+                            ts\tsum
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:10.000000Z\t20.0
+                            2026-01-01T00:00:20.000000Z\t30.0
+                            2026-01-01T00:00:30.000000Z\t40.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM gaps
+                            SAMPLE BY 10s
+                            FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
+                            FILL(LINEAR)
+                            """
+            );
+
+            // Same query with non-aligned FROM — buckets shift
+            assertSql(
+                    """
+                            ts\tsum
+                            2025-12-31T23:59:55.000000Z\t10.0
+                            2026-01-01T00:00:05.000000Z\t20.0
+                            2026-01-01T00:00:15.000000Z\t30.0
+                            2026-01-01T00:00:25.000000Z\t40.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM gaps
+                            SAMPLE BY 10s
+                            FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
+                            FILL(LINEAR)
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillLinearWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE gaps (
+                      ts TIMESTAMP,
+                      val DOUBLE
+                    ) timestamp(ts)
+                    """);
+            execute("""
+                    INSERT INTO gaps VALUES
+                    ('2026-01-01T00:00:00', 10.0),
+                    ('2026-01-01T00:00:10', 20.0),
+                    ('2026-01-01T00:00:30', 40.0)
+                    """);
+            drainWalQueue();
+
+            // ALIGN TO CALENDAR WITH OFFSET + FROM-TO + FILL(LINEAR)
+            // The FROM should anchor the buckets, the offset should not override it
+            assertSql(
+                    """
+                            ts\tsum
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:10.000000Z\t20.0
+                            2026-01-01T00:00:20.000000Z\t30.0
+                            2026-01-01T00:00:30.000000Z\t40.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM gaps
+                            SAMPLE BY 10s
+                            FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
+                            FILL(LINEAR)
+                            ALIGN TO CALENDAR WITH OFFSET '00:05'
+                            """
+            );
+
+            // Non-aligned FROM with offset — FROM should still control alignment
+            assertSql(
+                    """
+                            ts\tsum
+                            2025-12-31T23:59:55.000000Z\t10.0
+                            2026-01-01T00:00:05.000000Z\t20.0
+                            2026-01-01T00:00:15.000000Z\t30.0
+                            2026-01-01T00:00:25.000000Z\t40.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM gaps
+                            SAMPLE BY 10s
+                            FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
+                            FILL(LINEAR)
+                            ALIGN TO CALENDAR WITH OFFSET '00:05'
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillLinearWithTimezone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE gaps (
+                      ts TIMESTAMP,
+                      val DOUBLE
+                    ) timestamp(ts)
+                    """);
+            execute("""
+                    INSERT INTO gaps VALUES
+                    ('2026-01-01T00:00:00', 10.0),
+                    ('2026-01-01T00:00:10', 20.0),
+                    ('2026-01-01T00:00:30', 40.0)
+                    """);
+            drainWalQueue();
+
+            // TIME ZONE + FROM-TO + FILL(LINEAR)
+            // For sub-minute intervals, timezone should not change bucket boundaries
+            // (timezone offsets are whole minutes); FROM should anchor the buckets
+            assertSql(
+                    """
+                            ts\tsum
+                            2026-01-01T00:00:00.000000Z\t10.0
+                            2026-01-01T00:00:10.000000Z\t20.0
+                            2026-01-01T00:00:20.000000Z\t30.0
+                            2026-01-01T00:00:30.000000Z\t40.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM gaps
+                            SAMPLE BY 10s
+                            FROM '2026-01-01T00:00:00' TO '2026-01-01T00:00:40'
+                            FILL(LINEAR)
+                            ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                            """
+            );
+
+            // Non-aligned FROM with timezone — FROM should still control alignment
+            assertSql(
+                    """
+                            ts\tsum
+                            2025-12-31T23:59:55.000000Z\t10.0
+                            2026-01-01T00:00:05.000000Z\t20.0
+                            2026-01-01T00:00:15.000000Z\t30.0
+                            2026-01-01T00:00:25.000000Z\t40.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM gaps
+                            SAMPLE BY 10s
+                            FROM '2025-12-31T23:59:55' TO '2026-01-01T00:00:35'
+                            FILL(LINEAR)
+                            ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillLinearWithTimezoneDst() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dst_data (
+                      ts TIMESTAMP,
+                      val DOUBLE
+                    ) timestamp(ts)
+                    """);
+            // Europe/Berlin 2026 spring-forward: at 2026-03-29 01:00 UTC,
+            // clocks jump from 02:00 CET to 03:00 CEST (UTC+1 to UTC+2).
+            // Data points bracket the transition with a gap in between.
+            execute("""
+                    INSERT INTO dst_data VALUES
+                    ('2026-03-28T22:00:00', 10.0),
+                    ('2026-03-29T03:00:00', 60.0)
+                    """);
+            drainWalQueue();
+
+            // FILL(LINEAR) with 1h buckets spanning the DST transition.
+            // The interpolation cursor uses fixed UTC intervals, so it
+            // produces uniform 1h UTC buckets regardless of DST transitions.
+            // This differs from streaming cursors (FILL(NULL), FILL(PREV))
+            // which adjust for DST and would skip the non-existent local hour.
+            assertSql(
+                    """
+                            ts\tsum
+                            2026-03-28T22:00:00.000000Z\t10.0
+                            2026-03-28T23:00:00.000000Z\t20.0
+                            2026-03-29T00:00:00.000000Z\t30.0
+                            2026-03-29T01:00:00.000000Z\t40.0
+                            2026-03-29T02:00:00.000000Z\t50.0
+                            2026-03-29T03:00:00.000000Z\t60.0
+                            """,
+                    """
+                            SELECT ts, sum(val) FROM dst_data
+                            SAMPLE BY 1h
+                            FROM '2026-03-28T22:00:00' TO '2026-03-29T04:00:00'
+                            FILL(LINEAR)
+                            ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFromToFillNull() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -6013,6 +6321,38 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     "select ts, avg(x) from fromto\n" +
                             "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE ignition (
+                      value_time TIMESTAMP,
+                      double_value DOUBLE
+                    ) timestamp(value_time)
+                    """);
+            execute("""
+                    INSERT INTO ignition (double_value, value_time)
+                    SELECT ((x - 1) % 60)::double AS double_value,
+                           dateadd('s', (x - 1)::int, '2026-02-11T20:06:00') FROM long_sequence(180)
+                    """);
+            drainWalQueue();
+
+            // FILL(PREV) with FROM-TO should align to FROM, same as no-fill
+            assertSql(
+                    """
+                            sum\tvalue_time
+                            1770.0\t2026-02-11T20:06:26.916000Z
+                            """,
+                    """
+                            SELECT sum(double_value), value_time FROM ignition
+                            SAMPLE BY 60000T
+                            FROM '2026-02-11T20:06:26.916' TO '2026-02-11T20:07:26.916'
+                            FILL(PREV)
+                            """
             );
         });
     }
@@ -6103,7 +6443,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6119,7 +6459,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6135,7 +6475,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6151,7 +6491,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6990,7 +7330,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
                                     SelectedRecord
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts1]
                                             Async Group By workers: 1
                                               keys: [sym,ts1]
@@ -7001,7 +7341,7 @@ public class SampleByTest extends AbstractCairoTest {
                                                     Frame forward scan on: x
                                     Hash
                                         SelectedRecord
-                                            Radix sort light
+                                            Encode sort light
                                               keys: [ts1]
                                                 Async Group By workers: 1
                                                   keys: [sym,ts1]
@@ -7034,7 +7374,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             SelectedRecord
                                 AsOf Join
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
@@ -7043,7 +7383,7 @@ public class SampleByTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [ts1,sym]
@@ -7112,7 +7452,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [b]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -7139,7 +7479,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [b]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -7166,7 +7506,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [d]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -7213,7 +7553,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 VirtualRecord
                                   functions: [ts1,ts2,ts1-ts2,count]
@@ -7245,7 +7585,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query2,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 VirtualRecord
                                   functions: [ts1,ts1-ts2,count]
@@ -7296,7 +7636,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
-                                Radix sort light
+                                Encode sort light
                                   keys: [ts]
                                     VirtualRecord
                                       functions: [to_utc(ts),count]
@@ -7330,7 +7670,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,count,max::long/count]
@@ -7364,7 +7704,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
@@ -7398,7 +7738,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
@@ -7432,7 +7772,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
@@ -7466,7 +7806,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,datediff('h',ts2,ts)/count]
@@ -7500,7 +7840,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,datediff('h',ts2,ts)/count,diff2]
@@ -7530,7 +7870,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar time zone 'UTC'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts1]
                                 Async Group By workers: 1
                                   keys: [ts1,sym]
@@ -7562,7 +7902,7 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             Union All
                                 SelectedRecord
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
@@ -7572,7 +7912,7 @@ public class SampleByTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                                 SelectedRecord
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts1]
                                         Async Group By workers: 1
                                           keys: [sym,ts1]
@@ -7603,7 +7943,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "sample by 1m align to calendar ",
                     """
                             Union All
-                                Radix sort light
+                                Encode sort light
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
@@ -7612,7 +7952,7 @@ public class SampleByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
-                                Radix sort light
+                                Encode sort light
                                   keys: [tstmp]
                                     Async Group By workers: 1
                                       keys: [tstmp,sym]
@@ -7638,7 +7978,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [d]
                                 SelectedRecord
                                     Async Group By workers: 1
@@ -11684,7 +12024,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select last(z) s from x sample by 30m fill(null)",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [k]
                                     Fill Range
                                       stride: '30m'

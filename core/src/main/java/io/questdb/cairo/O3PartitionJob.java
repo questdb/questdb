@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -105,7 +104,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         ) {
             long parquetAddr = 0;
             try (
-                    RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
                     PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
                     PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
             ) {
@@ -129,6 +127,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
+                final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
@@ -141,7 +140,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         statisticsEnabled,
                         rawArrayEncoding,
                         rowGroupSize,
-                        dataPageSize
+                        dataPageSize,
+                        bloomFilterFpp
                 );
 
                 // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].
@@ -203,11 +203,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 long mergeRangeLo = srcOooLo;
                 for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-                    parquetColumns.clear();
-                    parquetColumns.add(timestampIndex);
-                    parquetColumns.add(timestampColumnType);
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rowGroup);
-                    final long min = rowGroupStatBuffers.getMinValueLong(0);
+                    final long min = partitionDecoder.rowGroupMinTimestamp(rowGroup, timestampIndex);
                     final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
                             sortedTimestampsAddr,
                             min,

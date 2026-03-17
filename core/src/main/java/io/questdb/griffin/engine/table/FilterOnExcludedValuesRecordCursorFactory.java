@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -85,7 +85,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             @NotNull IntList columnSizeShifts,
             int maxSymbolNotEqualsCount
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.orderDirection = orderDirection;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;

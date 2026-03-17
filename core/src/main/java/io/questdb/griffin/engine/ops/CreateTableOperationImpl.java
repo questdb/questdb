@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -314,6 +314,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public long getBatchSize() {
         return batchSize;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
     }
 
     @Override

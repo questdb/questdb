@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,10 +33,13 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
+
+    public static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
 
     public static native void closeStreamingParquetWriter(
             long writerPtr
@@ -55,7 +58,10 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
     ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
@@ -71,6 +77,7 @@ public class PartitionEncoder {
         );
     }
 
+    @TestOnly
     public static void encodeWithOptions(
             PartitionDescriptor descriptor,
             Path destPath,
@@ -81,6 +88,38 @@ public class PartitionEncoder {
             long dataPageSize,
             int version
     ) {
+        encodeWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                0,
+                0,
+                DEFAULT_BLOOM_FILTER_FPP
+        );
+    }
+
+    public static void encodeWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
+    ) {
+        assert bloomFilterColumnCount >= 0;
+        assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
+        assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
+
         final Utf8Sequence tableName = descriptor.getTableName();
         final int columnCount = descriptor.getColumnCount();
         final long partitionSize = descriptor.getPartitionRowCount();
@@ -103,7 +142,10 @@ public class PartitionEncoder {
                     rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    version
+                    version,
+                    bloomFilterColumnIndexesPtr,
+                    bloomFilterColumnCount,
+                    bloomFilterFpp
             );
         } finally {
             descriptor.clear();
@@ -247,7 +289,10 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
     ) throws CairoException;
 
     static {

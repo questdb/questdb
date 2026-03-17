@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -4646,7 +4646,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop all foobar",
                 9,
-                "';' or 'tables' expected"
+                "unexpected token [foobar]"
         );
     }
 
@@ -4655,7 +4655,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop all tables foobar",
                 16,
-                "';' or 'tables' expected"
+                "unexpected token [foobar]"
         );
     }
 
@@ -5998,6 +5998,129 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select /* HINT_A",
                 7,
                 "[distinct] column expected"
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListBadSeparator() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0s 1s) AS h",
+                90,
+                "',' or ')' expected",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListEmpty() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST () AS h",
+                87,
+                "at least one offset expression expected",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListIntervalLiterals() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (0s, 1s, 2s) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0s, 1s, 2s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListNegativeValues() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (-2s, -1s, 0s) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (-2s, -1s, 0s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListUnitlessZero() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (0, 1s) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0, 1s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListVariousUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (100T, 1s, 1m, 1h, 1d) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (100T, 1s, 1m, 1h, 1d) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListWithNanoAndMicroUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (0n, 500n, 1U, 100U) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0n, 500n, 1U, 100U) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMissingRangeOrList() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) AS h",
+                81,
+                "'range' or 'list' expected",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeBasic() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 2s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeNegativeFrom() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from -1s to 1s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM -1s TO 1s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeUnitlessZero() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0 to 2s step 1s as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0 TO 2s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinRangeVariousUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h range from 0s to 3d step 1h as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 3d STEP 1h AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
         );
     }
 
@@ -9793,6 +9916,38 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPushDownTimestampFilterThroughExcept() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/ ") except select-choose [ts2 ts] ts2 ts from (" +
+                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/ ")" +
+                        ")",
+                "select ts from (select ts1 ts from t1 except select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughIntersect() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/ ") intersect select-choose [ts2 ts] ts2 ts from (" +
+                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/ ")" +
+                        ")",
+                "select ts from (select ts1 ts from t1 intersect select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
@@ -12072,6 +12227,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSubQueryModeNestedCorruption() throws Exception {
+        // Known bug: nested parseAsSubQuery calls corrupt the subQueryMode flag.
+        // parseAsSubQuery sets subQueryMode=true on entry and unconditionally
+        // resets it to false in the finally block. With 3+ nesting levels, the
+        // inner finally resets the flag while the outer subquery is still being
+        // parsed, causing "unexpected token [)]" for a valid query.
+        //
+        // Both the naive save/restore fix and the counter-based fix break 39
+        // other parser tests because subQueryMode's reset-to-false behavior is
+        // relied upon by other parsing paths in non-obvious ways. A proper fix
+        // requires a deeper refactor of how the parser tracks parenthesis context.
+        assertSyntaxError(
+                "SELECT * FROM (SELECT (SELECT x FROM (SELECT x FROM long_sequence(1))) + 0)",
+                74,
+                "unexpected token"
+        );
+    }
+
+    @Test
     public void testSubQuerySyntaxError() throws Exception {
         assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' or column name expected");
     }
@@ -12636,7 +12810,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUnderTerminatedOver2() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close OVER clause");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close window specification");
     }
 
     @Test
@@ -13596,6 +13770,61 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("a", ColumnType.INT)
                         .timestamp("ts")
+        );
+    }
+
+    // Join keyword as window name in WINDOW clause should fail
+    @Test
+    public void testWindowNameJoinKeywordInWindowClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW join AS (ORDER BY ts)",
+                37,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // SQL keyword as window name in OVER clause should fail
+    @Test
+    public void testWindowNameKeywordInOverClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER select from xyz",
+                19,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // SQL keyword as window name in WINDOW clause should fail
+    @Test
+    public void testWindowNameKeywordInWindowClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW select AS (ORDER BY ts)",
+                37,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // Number as window name should fail
+    @Test
+    public void testWindowNameNumberInOverClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER 42 from xyz",
+                19,
+                "identifier should start with a letter or '_'",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // Number as window name in WINDOW clause should fail
+    @Test
+    public void testWindowNameNumberInWindowClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW 42 AS (ORDER BY ts)",
+                37,
+                "identifier should start with a letter or '_'",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
         );
     }
 

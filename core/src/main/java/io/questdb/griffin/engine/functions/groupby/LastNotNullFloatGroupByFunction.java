@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,15 +38,22 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             long hi = ptr + (count - 1) * 4L;
+            long offset = count - 1;
             for (; hi >= ptr; hi -= 4L) {
                 float value = Unsafe.getUnsafe().getFloat(hi);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putFloat(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putFloat(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset--;
             }
         }
     }
@@ -54,7 +61,9 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (!Numbers.isNull(arg.getFloat(record))) {
-            computeFirst(mapValue, record, rowId);
+            if (Numbers.isNull(mapValue.getFloat(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

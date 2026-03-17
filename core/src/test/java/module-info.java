@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ open module io.questdb.test {
     requires static java.sql;
     requires static org.postgresql.jdbc;
     requires static java.management;
+    requires static io.questdb.client;
     requires jdk.management;
     requires org.checkerframework.checker.qual;
 
