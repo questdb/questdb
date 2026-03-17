@@ -288,10 +288,7 @@ public class QwpGeoHashDecoderTest {
     }
 
     @Test
-    public void testDecodeInsufficientDataForValues() throws QwpParseException {
-        // The cursor calculates the packed data region in of() without bounds-checking.
-        // Verify that the consumed byte count exceeds the buffer size, indicating
-        // the cursor detected that more data would be needed than is available.
+    public void testDecodeThrowsOnInsufficientDataForValues() {
         int precisionVarintSize = QwpVarint.encodedLength(10);
         int allocSize = precisionVarintSize + 4; // only 4 bytes for values, need 10
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
@@ -299,12 +296,8 @@ public class QwpGeoHashDecoderTest {
             QwpVarint.encode(address, 10);
 
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
-            int consumed = cursor.of(address, allocSize, 5, false);
-            // 5 rows * 2 bytes (precision 10 -> ceil(10/8)=2) = 10 bytes for values
-            // plus 1 byte for precision varint = 11 bytes consumed
-            // but we only allocated precisionVarintSize + 4 bytes
-            Assert.assertTrue("Consumed bytes should exceed buffer",
-                    consumed > allocSize);
+            Assert.assertThrows(QwpParseException.class, () ->
+                    cursor.of(address, allocSize, 5, false));
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
