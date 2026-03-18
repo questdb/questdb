@@ -244,12 +244,13 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
             int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
             int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
             long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-            genLookup.snapshotMetadata(keyMem, genCount, tryPage);
 
             Unsafe.getUnsafe().loadFence();
             long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
 
-            if (seqStart == seqEnd && keyCount >= this.keyCount) {
+            if (seqStart == seqEnd && keyCount >= this.keyCount
+                    && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                genLookup.snapshotMetadata(keyMem, genCount, tryPage);
                 if (valueMemSize > 0) {
                     ((MemoryCMR) valueMem).changeSize(valueMemSize);
                 }
@@ -316,8 +317,9 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
         for (int attempt = 0; attempt < 2; attempt++) {
             long pageA = PostingIndexUtils.PAGE_A_OFFSET;
             long pageB = PostingIndexUtils.PAGE_B_OFFSET;
-            long seqStartA = keyMem.getLong(pageA + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            long seqStartB = keyMem.getLong(pageB + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+            long memSize = keyMem.size();
+            long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(pageA + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
+            long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(pageB + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
 
             // Pick the page with the higher seq_start
             long bestPage = (seqStartB > seqStartA) ? pageB : pageA;
@@ -331,15 +333,16 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
             long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
             int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
             int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-            long maxValue = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
 
-            // Snapshot gen dir into genLookup
-            genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-
+            // Validate seq_end BEFORE reading gen dir to avoid reading garbage
+            // entries from a torn/corrupted page with bogus genCount
             Unsafe.getUnsafe().loadFence();
             long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
 
-            if (seqStart == seqEnd && seqStart > 0) {
+            if (seqStart == seqEnd && seqStart > 0
+                    && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                // Page is consistent — safe to snapshot gen dir
+                genLookup.snapshotMetadata(keyMem, genCount, tryPage);
                 // Consistent snapshot
                 this.activePageOffset = tryPage;
                 this.keyFileSequence = seqStart;

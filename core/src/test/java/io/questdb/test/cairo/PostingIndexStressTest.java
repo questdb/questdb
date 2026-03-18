@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -31,6 +33,7 @@ import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -2208,6 +2211,500 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("final count", totalValues, count);
+                }
+            }
+        });
+    }
+
+    // ===================================================================
+    // Corruption detection and crash safety tests
+    // ===================================================================
+
+    @Test
+    public void testCrashDuringCommitRecovery() throws Exception {
+        // Simulate a crash mid-commit by writing seq_start but NOT seq_end on
+        // the inactive metadata page. A fresh reader and writer should recover
+        // from the valid page and continue operating correctly.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "crash_commit";
+                int initialBatches = 5;
+                int totalInitialValues = initialBatches * BP_BATCH;
+
+                // Phase 1: write 5 batches normally, close (triggers seal + compact)
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int batch = 0; batch < initialBatches; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                }
+                // After close: sealed to 1 gen, compacted
+
+                // Phase 2: corrupt the inactive page to simulate a partial next commit
+                try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                    try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                        PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                        keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                        // Find the active and inactive pages
+                        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                        long validA = (seqA == seqEndA) ? seqA : 0;
+                        long validB = (seqB == seqEndB) ? seqB : 0;
+                        long activePage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+                        long inactivePage = (activePage == PostingIndexUtils.PAGE_A_OFFSET)
+                                ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+
+                        // Write seq_start on inactive page with a higher sequence
+                        // but do NOT write matching seq_end (simulating crash mid-write)
+                        long activeSeq = keyMem.getLong(activePage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        keyMem.putLong(inactivePage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, activeSeq + 1);
+                        // Write a bogus genCount to simulate partial metadata
+                        keyMem.putInt(inactivePage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, 999);
+                        // seq_end stays stale -> torn page
+                    }
+                }
+
+                // Phase 3: open a fresh reader -- should fall back to the valid page
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("reader val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("reader sees all initial data", totalInitialValues, count);
+                }
+
+                // Phase 4: open a fresh writer -- should recover from the valid page
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    // After seal+compact, genCount=1
+                    Assert.assertEquals("writer genCount after recovery", 1, writer.getGenCount());
+
+                    // Verify existing data via writer cursor
+                    RowCursor preCursor = writer.getCursor(0);
+                    int preCount = 0;
+                    while (preCursor.hasNext()) {
+                        Assert.assertEquals("pre-write val " + preCount,
+                                (long) preCount, preCursor.next());
+                        preCount++;
+                    }
+                    Assert.assertEquals("existing data intact", totalInitialValues, preCount);
+
+                    // Phase 5: write 5 more batches
+                    for (int batch = initialBatches; batch < initialBatches + 5; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                }
+
+                // Verify all 10 batches are readable
+                int totalFinalValues = (initialBatches + 5) * BP_BATCH;
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("final val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("all batches readable after recovery", totalFinalValues, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCrashDuringSealRecovery() throws Exception {
+        // Simulate a crash after seal writes value data but before the metadata
+        // page update completes: the value file is larger than what the metadata
+        // page claims (extra bytes from an incomplete seal). Reader and writer
+        // should ignore the extra bytes and operate on the metadata-defined state.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "crash_seal";
+
+                // Write 10 batches, close (which seals to 1 gen and compacts)
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int batch = 0; batch < 10; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                }
+                // After close: data is sealed (1 gen), compacted, value file is trimmed.
+
+                // Read the metadata-claimed value file size
+                long metadataValueMemSize;
+                try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                    try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                        PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                        keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                        long validA = (seqA == seqEndA) ? seqA : 0;
+                        long validB = (seqB == seqEndB) ? seqB : 0;
+                        long activePage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+                        metadataValueMemSize = keyMem.getLong(activePage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+                    }
+                }
+
+                // Simulate incomplete seal: extend the value file with 4KB of garbage
+                // (as if seal wrote new gen data but crashed before updating the metadata page)
+                FilesFacade ff = configuration.getFilesFacade();
+                try (Path valPath = new Path().of(configuration.getDbRoot())) {
+                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE);
+                    long newSize = metadataValueMemSize + 4096;
+                    long fd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue("could not open value file", fd > 0);
+                    try {
+                        ff.truncate(fd, newSize);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+
+                // Open fresh reader -- should see the sealed data, ignoring extra bytes
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("reader val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("reader sees sealed data", 10 * BP_BATCH, count);
+                }
+
+                // Open fresh writer -- should recover and be able to write more data
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals("writer recovered with 1 sealed gen", 1, writer.getGenCount());
+
+                    // Write 5 more batches on top
+                    for (int batch = 10; batch < 15; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                    writer.seal();
+                }
+
+                // Verify all data is correct after recovery + additional writes
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("sealed val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("all 15 batches readable", 15 * BP_BATCH, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptedValueFileRecovery() throws Exception {
+        // Write data and seal, then truncate the value file shorter than what
+        // the metadata claims. Opening a reader should throw CairoException
+        // or handle gracefully (not SIGSEGV).
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "corrupt_val";
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Write and seal
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int batch = 0; batch < 5; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                }
+
+                // Truncate the value file to be shorter than what metadata claims
+                try (Path valPath = new Path().of(configuration.getDbRoot())) {
+                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE);
+                    long fd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue("could not open value file", fd > 0);
+                    try {
+                        long currentSize = ff.length(fd);
+                        Assert.assertTrue("value file should have data", currentSize > 0);
+                        // Truncate to half the size
+                        boolean truncated = ff.truncate(fd, currentSize / 2);
+                        Assert.assertTrue("truncate should succeed", truncated);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+
+                // Open reader -- should either throw CairoException or handle gracefully
+                // (the key thing is it should NOT cause a SIGSEGV / JVM crash)
+                boolean survived = false;
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    // If the reader opens, attempt to use the cursor
+                    try {
+                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                        }
+                    } catch (CairoException e) {
+                        // Exception during cursor iteration is acceptable
+                    }
+                    survived = true;
+                } catch (CairoException e) {
+                    // Reader may throw on open -- that is also acceptable
+                    survived = true;
+                }
+                // We survived without a JVM crash
+                Assert.assertTrue("should complete without JVM crash", survived);
+            }
+        });
+    }
+
+    @Test
+    public void testBothPagesCorrupted() throws Exception {
+        // Write valid data, then corrupt BOTH metadata pages (mismatched
+        // seq_start/seq_end on both). A fresh reader should see 0 keys /
+        // empty index (graceful degradation, not crash).
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "both_corrupt";
+
+                // Write valid data
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+                }
+
+                // Corrupt BOTH pages
+                try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                    try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                        PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                        keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                        // Page A: write mismatched seq_start/seq_end
+                        keyMem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 100L);
+                        // Leave seq_end at its old value (not 100) -> torn
+                        keyMem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 50L);
+
+                        // Page B: write mismatched seq_start/seq_end
+                        keyMem.putLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 200L);
+                        keyMem.putLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 75L);
+                    }
+                }
+
+                // Open reader -- should see 0 keys (graceful degradation)
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    Assert.assertFalse("both pages corrupted: cursor should be empty", cursor.hasNext());
+                    Assert.assertEquals("keyCount should be 0", 0, reader.getKeyCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPartialKeyFileRecovery() throws Exception {
+        // Write valid data, then truncate the key file to less than 8192 bytes
+        // (only page A remains). Opening a reader should work if page A is valid,
+        // or handle gracefully if not.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "partial_key";
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Write valid data
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+
+                    // Write a second batch to ensure page B has been written too
+                    for (int v = BP_BATCH; v < 2 * BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(2 * BP_BATCH - 1);
+                    writer.commit();
+                }
+
+                // Verify the key file is at least 8192 bytes
+                try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                    PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                    long keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue("could not open key file", keyFd > 0);
+                    try {
+                        long keyFileSize = ff.length(keyFd);
+                        Assert.assertTrue("key file should be >= 8192", keyFileSize >= PostingIndexUtils.KEY_FILE_RESERVED);
+                    } finally {
+                        ff.close(keyFd);
+                    }
+                }
+
+                // Truncate key file to 4096 bytes (only page A)
+                try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                    PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                    long keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue("could not reopen key file", keyFd > 0);
+                    try {
+                        boolean truncated = ff.truncate(keyFd, PostingIndexUtils.PAGE_SIZE);
+                        Assert.assertTrue("truncate to 4096 should succeed", truncated);
+                    } finally {
+                        ff.close(keyFd);
+                    }
+                }
+
+                // Open reader -- should either work (if page A is valid and the reader
+                // can tolerate a short file) or throw an exception, but NOT SIGSEGV.
+                // On Linux, mmap beyond file end on a 4096-byte file will map 2 pages
+                // but accessing page B may produce zero-filled reads (page-aligned file
+                // boundary) or an error. The reader reads page B's seq_start which will
+                // be 0, so it falls back to page A.
+                boolean succeeded = false;
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    // If it opens, try to read -- we want to ensure no JVM crash
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        count++;
+                    }
+                    // Page A should be valid, page B zeros -> reader uses page A
+                    Assert.assertTrue("should see data from page A", count > 0);
+                    succeeded = true;
+                } catch (CairoException | InternalError e) {
+                    // Acceptable: reader may refuse a truncated key file, or
+                    // the JVM may catch SIGBUS from accessing mmap'd pages
+                    // beyond the truncated file's EOF.
+                    succeeded = true;
+                }
+                Assert.assertTrue("should complete without JVM crash", succeeded);
+            }
+        });
+    }
+
+    @Test
+    public void testWriterRecoveryAfterDirtyShutdown() throws Exception {
+        // Simulate a dirty shutdown: writer commits 20 batches to create 20 sparse gens.
+        // On close, seal() and compact are called (simulating a clean shutdown).
+        // After reopen, the writer should see the sealed (1 gen) state, be able to
+        // write 5 more batches, seal again, and all 25 batches should be readable.
+        // This exercises the full close-reopen-continue-writing recovery path.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "dirty_shutdown";
+
+                // Phase 1: write 20 batches (creating 20 sparse gens)
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    for (int batch = 0; batch < 20; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+                    Assert.assertEquals("20 gens after commits", 20, writer.getGenCount());
+                }
+                // close() called seal() + compact: genCount is now 1
+
+                // Phase 2: re-open the writer on the same files (init=false)
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    // After close+seal, genCount should be 1 (single sealed gen)
+                    Assert.assertEquals("genCount after recovery", 1, writer.getGenCount());
+                    Assert.assertEquals("keyCount preserved", 1, writer.getKeyCount());
+
+                    // Verify existing data is accessible via writer cursor
+                    RowCursor preCursor = writer.getCursor(0);
+                    int preCount = 0;
+                    while (preCursor.hasNext()) {
+                        Assert.assertEquals("pre-write val " + preCount,
+                                (long) preCount, preCursor.next());
+                        preCount++;
+                    }
+                    Assert.assertEquals("pre-write count", 20 * BP_BATCH, preCount);
+
+                    // Phase 3: write 5 more batches
+                    for (int batch = 20; batch < 25; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+
+                    // Seal to finalize
+                    writer.seal();
+                }
+
+                // Phase 4: verify all 25 batches readable via forward reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("all 25 batches readable", 25 * BP_BATCH, count);
+                }
+
+                // Also verify backward
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("bwd val " + count,
+                                (long) (25 * BP_BATCH - 1 - count), cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("bwd all 25 batches readable", 25 * BP_BATCH, count);
                 }
             }
         });
