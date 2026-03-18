@@ -266,6 +266,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public RecordCursorFactory unwrapQueryProgress() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             this.executionContext = executionContext;
