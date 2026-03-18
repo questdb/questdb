@@ -1504,7 +1504,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
         }
-        
+
         alterOperationBuilder.ofDropParquetEncoding(
                 tableNamePosition,
                 tableToken,
