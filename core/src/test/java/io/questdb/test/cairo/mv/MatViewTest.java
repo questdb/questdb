@@ -3789,13 +3789,12 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String expected = """
                     to_timezone\tk\ts\tlat\tlon
-                    2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z
-                    2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z
+                    2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z
                     2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z
                     2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\tnull\t2021-03-27T23:48:00.000000Z
-                    2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T01:06:00.000000Z
-                    2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z
-                    2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z
+                    2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z
+                    2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:45:00.000000Z
+                    2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\t109.23418649425325\t2021-03-28T02:37:00.000000Z
                     2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z
                     """;
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), "k", true, true);
@@ -3886,7 +3885,8 @@ public class MatViewTest extends AbstractCairoTest {
                     2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z
                     2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z
                     2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z
-                    2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z
+                    2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T00:55:05.000000Z
+                    2020-10-25T01:00:00.000000Z\t2020-10-25T01:00:00.000000Z\ta\t27.635284834188102\t2020-10-25T01:51:12.000000Z
                     2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z
                     2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z
                     2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z
@@ -6040,11 +6040,11 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String expected = """
                     k\tc
-                    1970-01-02T14:42:00.000000Z\t5
-                    1970-01-02T16:42:00.000000Z\t24
+                    1970-01-02T16:42:00.000000Z\t20
                     1970-01-02T18:42:00.000000Z\t24
                     1970-01-02T20:42:00.000000Z\t24
-                    1970-01-02T22:42:00.000000Z\t23
+                    1970-01-02T22:42:00.000000Z\t24
+                    1970-01-03T00:42:00.000000Z\t8
                     """;
 
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), outSelect(out, viewQuery), null, true, true);
@@ -6139,7 +6139,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String expected = """
                     k\tc
-                    2021-10-31T02:00:00.000000Z\t18
+                    2021-10-31T02:00:00.000000Z\t8
+                    2021-10-31T02:00:00.000000Z\t10
                     2021-10-31T03:00:00.000000Z\t10
                     2021-10-31T04:00:00.000000Z\t10
                     2021-10-31T05:00:00.000000Z\t10
@@ -6172,8 +6173,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String expected = """
                     k\tc
-                    2021-10-31T02:00:00.000000Z\t8
-                    2021-10-31T02:30:00.000000Z\t10
+                    2021-10-31T02:00:00.000000Z\t3
+                    2021-10-31T02:30:00.000000Z\t5
+                    2021-10-31T02:00:00.000000Z\t5
+                    2021-10-31T02:30:00.000000Z\t5
                     2021-10-31T03:00:00.000000Z\t5
                     2021-10-31T03:30:00.000000Z\t5
                     2021-10-31T04:00:00.000000Z\t5
@@ -6201,7 +6204,29 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
-        assertMemoryLeak(() -> testAlignToCalendarTimezoneOffset("PST"));
+        assertMemoryLeak(() -> {
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone 'PST' with offset '00:42'";
+            final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+            final long step = timestampType.getDriver().fromMicros(300000000);
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
+
+            final String expected = """
+                    k\tc
+                    1970-01-02T23:42:00.000000Z\t6
+                    1970-01-03T01:12:00.000000Z\t18
+                    1970-01-03T02:42:00.000000Z\t18
+                    1970-01-03T04:12:00.000000Z\t18
+                    1970-01-03T05:42:00.000000Z\t18
+                    1970-01-03T07:12:00.000000Z\t18
+                    1970-01-03T08:42:00.000000Z\t4
+                    """;
+
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewName, "k", true, true);
+        });
     }
 
     @Test
