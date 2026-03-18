@@ -63,7 +63,13 @@ pub fn string_to_page(
                     "invalid offset value in string aux column: {offset}"
                 )
             })?;
-            let maybe_utf16 = get_utf16(&data[offset..]);
+            let data = data.get(offset..).ok_or_else(|| {
+                fmt_err!(
+                    Layout,
+                    "offset value {offset} is out of bounds for string aux column data"
+                )
+            })?;
+            let maybe_utf16 = get_utf16(data)?;
             if maybe_utf16.is_none() {
                 null_count += 1;
             }
@@ -149,7 +155,13 @@ pub fn string_to_dict_pages(
                 "invalid offset value in string aux column: {offset}"
             )
         })?;
-        match get_utf16(&data[offset..]) {
+        let data = data.get(offset..).ok_or_else(|| {
+            fmt_err!(
+                Layout,
+                "offset value {offset} is out of bounds for string aux column data"
+            )
+        })?;
+        match get_utf16(data)? {
             Some(utf16) => {
                 let next_id = u32::try_from(dict_entries.len())
                     .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
@@ -263,17 +275,22 @@ fn encode_delta(
     Ok(())
 }
 
-fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {
-    let (header, value_tail) = entry_tail.split_at(SIZE_OF_HEADER);
+fn get_utf16(entry_tail: &[u8]) -> ParquetResult<Option<&[u16]>> {
+    let (header, value_tail) = entry_tail
+        .split_at_checked(SIZE_OF_HEADER)
+        .ok_or_else(|| fmt_err!(Layout, "not enough bytes for string header"))?;
     let len_raw = types::decode::<i32>(header);
     if len_raw < 0 {
-        return None;
+        return Ok(None);
     }
     // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
     // The byte content represents valid `u16` values.
     let utf16_tail: &[u16] = unsafe { transmute_slice(value_tail) };
     let char_count = len_raw as usize;
-    Some(&utf16_tail[..char_count])
+    let chars = utf16_tail
+        .get(..char_count)
+        .ok_or_else(|| fmt_err!(Layout, "not enough bytes for string value"))?;
+    Ok(Some(chars))
 }
 
 fn compute_utf8_length(utf16: &[u16]) -> usize {
