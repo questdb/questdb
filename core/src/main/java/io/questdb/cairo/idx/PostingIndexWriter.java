@@ -359,14 +359,8 @@ public class PostingIndexWriter implements IndexWriter {
             valueMemSize = valueMem.getAppendOffset();
 
             genCount = 1;
-            long dirOffset = PostingIndexUtils.getGenDirOffset(0);
-            keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
-            keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
-            keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-            keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-            keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
-
-            updateHeaderAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE));
+            updateHeaderAndGenDirAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE),
+                    sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
         } finally {
             Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_DEFAULT);
@@ -1107,17 +1101,16 @@ public class PostingIndexWriter implements IndexWriter {
                     }
 
                     genCount = 1;
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(0);
-                    keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
-                    keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
-                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
+
+                    // Write gen dir[0] and header atomically (within the same sequence window).
+                    // Without this, a concurrent reader could see the modified gen dir[0]
+                    // (pointing to sealed data) while still using the old genCount (N gens),
+                    // producing duplicate values.
+                    updateHeaderAndGenDirAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE),
+                            sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
                 } finally {
                     Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
-
-                updateHeaderAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE));
 
             } finally {
                 Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1763,15 +1756,10 @@ public class PostingIndexWriter implements IndexWriter {
                     }
 
                     genCount = 1;
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(0);
-                    keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, sealOffset);
-                    keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, (int) (valueMemSize - sealOffset));
-                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
-                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
-                    keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
-                }
 
-                updateHeaderAtomically(genCount, maxValue);
+                    updateHeaderAndGenDirAtomically(genCount, maxValue,
+                            sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
+                }
 
             } finally {
                 Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -2275,6 +2263,38 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.getUnsafe().putByte(destAddr + byteOffset + i, (byte) (existing | (byte) shifted));
             shifted >>>= 8;
         }
+    }
+
+    /**
+     * Atomically publishes a sealed generation by writing the gen dir[0] entry
+     * AND the header within the same sequence window. This prevents a concurrent
+     * reader from seeing the modified gen dir[0] (pointing to sealed data) while
+     * still using the old genCount, which would cause it to read both the sealed
+     * gen and the old sparse gens — producing duplicate values.
+     */
+    private void updateHeaderAndGenDirAtomically(int genCount, long maxValue,
+                                                  long genFileOffset, int genSize,
+                                                  int genKeyCount, int minKey, int maxKey) {
+        long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
+        Unsafe.getUnsafe().storeFence();
+
+        // Gen dir[0] — written inside the sequence window so readers never see
+        // a partially-updated state (old genCount with new gen dir[0])
+        long dirOffset = PostingIndexUtils.getGenDirOffset(0);
+        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genFileOffset);
+        keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, genSize);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, genKeyCount);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
+
+        // Header fields
+        keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
+        keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
+        keyMem.putInt(KEY_RESERVED_OFFSET_GEN_COUNT, genCount);
+        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
     private void updateHeaderAtomically(int genCount, long maxValue) {
