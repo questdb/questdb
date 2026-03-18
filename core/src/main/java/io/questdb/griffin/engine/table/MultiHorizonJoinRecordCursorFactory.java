@@ -149,16 +149,14 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        // TODO: reuse the list
-        TimeFrameCursor[] slaveCursors = new TimeFrameCursor[slaveStates.length];
         try {
             for (int i = 0; i < slaveStates.length; i++) {
-                slaveCursors[i] = slaveStates[i].getFactory().getTimeFrameCursor(executionContext);
+                cursor.slaveCursors[i] = slaveStates[i].getFactory().getTimeFrameCursor(executionContext);
             }
-            cursor.of(masterCursor, slaveCursors, executionContext);
+            cursor.of(masterCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            Misc.free(slaveCursors);
+            Misc.free(cursor.slaveCursors);
             Misc.free(masterCursor);
             throw th;
         }
@@ -280,6 +278,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Create per-slave maps, symbol translating records, and time frame helpers
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.asOfJoinMaps = new Map[slaveCount];
+            this.slaveCursors = new TimeFrameCursor[slaveCount];
             this.symbolTranslatingRecords = new SymbolTranslatingRecord[slaveCount];
             this.timeFrameHelpers = new HorizonJoinTimeFrameHelper[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
@@ -477,7 +476,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             }
         }
 
-        void of(RecordCursor masterCursor, TimeFrameCursor[] slaveCursors, SqlExecutionContext executionContext) throws SqlException {
+        void of(RecordCursor masterCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 groupByAllocator.reopen();
@@ -490,7 +489,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             this.masterCursor = masterCursor;
-            this.slaveCursors = slaveCursors;
 
             // Initialize each slave's time frame helper and symbol translating record
             SymbolTableSource[] slaveSymbolSources = new SymbolTableSource[slaveCount];

@@ -137,16 +137,14 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        // TODO: reuse the list
-        TimeFrameCursor[] slaveCursors = new TimeFrameCursor[slaveStates.length];
         try {
             for (int i = 0; i < slaveStates.length; i++) {
-                slaveCursors[i] = slaveStates[i].getFactory().getTimeFrameCursor(executionContext);
+                cursor.slaveCursors[i] = slaveStates[i].getFactory().getTimeFrameCursor(executionContext);
             }
-            cursor.of(masterCursor, slaveCursors, executionContext);
+            cursor.of(masterCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            Misc.free(slaveCursors);
+            Misc.free(cursor.slaveCursors);
             Misc.free(masterCursor);
             throw th;
         }
@@ -243,6 +241,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Create per-slave maps, symbol translating records, and time frame helpers
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.asOfJoinMaps = new Map[slaveCount];
+            this.slaveCursors = new TimeFrameCursor[slaveCount];
             this.symbolTranslatingRecords = new SymbolTranslatingRecord[slaveCount];
             this.timeFrameHelpers = new HorizonJoinTimeFrameHelper[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
@@ -411,7 +410,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             isValueBuilt = true;
         }
 
-        void of(RecordCursor masterCursor, TimeFrameCursor[] slaveCursors, SqlExecutionContext executionContext) throws SqlException {
+        void of(RecordCursor masterCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 groupByAllocator.reopen();
@@ -423,7 +422,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             this.masterCursor = masterCursor;
-            this.slaveCursors = slaveCursors;
 
             SymbolTableSource[] slaveSymbolSources = new SymbolTableSource[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
