@@ -38,7 +38,7 @@ public class CompiledQueryTest extends AbstractCairoTest {
     @Test
     public void testExecutedAtParseTime() throws Exception {
         assertMemoryLeak(() -> {
-            final CompiledQueryImpl cq = new CompiledQueryImpl(engine);
+            CompiledQueryImpl cq = new CompiledQueryImpl(engine);
 
             cq.clear();
             cq.ofNone();
