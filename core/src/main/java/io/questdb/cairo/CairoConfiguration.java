@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -468,6 +468,10 @@ public interface CairoConfiguration {
 
     int getPartitionEncoderParquetDataPageSize();
 
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+    double getPartitionEncoderParquetO3RewriteUnusedRatio();
+
     int getPartitionEncoderParquetRowGroupSize();
 
     int getPartitionEncoderParquetVersion();
@@ -582,6 +586,12 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    long getSqlHorizonJoinBwdScanAbsoluteThreshold();
+
+    long getSqlHorizonJoinBwdScanMinGap();
+
+    long getSqlHorizonJoinBwdScanSwitchFactor();
+
     int getSqlHorizonJoinMaxOffsets();
 
     /**
@@ -636,8 +646,6 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlOrderByRadixSortThreshold();
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -661,6 +669,8 @@ public interface CairoConfiguration {
     int getSqlSmallPageFrameMaxRows();
 
     int getSqlSmallPageFrameMinRows();
+
+    long getSqlSortEncodedParallelThreshold();
 
     int getSqlSortKeyMaterializationThreshold();
 

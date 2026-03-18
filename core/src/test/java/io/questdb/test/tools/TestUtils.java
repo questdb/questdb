@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,7 @@ import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -172,14 +173,13 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        if (utf8Sequence == null || utf8Sequence.isAscii() != Utf8s.isAscii(utf8Sequence)) {
+        if (utf8Sequence != null && utf8Sequence.isAscii() && !Utf8s.isAscii(utf8Sequence)) {
+            // isAscii()=true but value is not actually ASCII — this is always wrong.
+            // isAscii()=false is conservatively valid even for ASCII values (e.g. Parquet
+            // VarcharSlice uses column-level metadata and may not know per-value).
             Utf8StringSink sink = new Utf8StringSink();
-            sink.put("ascii flag set to '").put(utf8Sequence == null || utf8Sequence.isAscii())
-                    .put("' for value '").put(utf8Sequence).put("'. ");
-            Assert.assertEquals(
-                    sink.toString(),
-                    Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii()
-            );
+            sink.put("ascii flag set to 'true' for non-ASCII value '").put(utf8Sequence).put("'. ");
+            Assert.fail(sink.toString());
         }
     }
 
@@ -1510,7 +1510,6 @@ public final class TestUtils {
                 filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
-            engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
         }
     }
@@ -2581,6 +2580,7 @@ public final class TestUtils {
         public LeakCheck() {
             Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -2607,6 +2607,7 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(

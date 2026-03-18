@@ -19,6 +19,7 @@ pub struct RepeatN {
     pub remaining: usize,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl RepeatN {
     #[inline]
     pub fn new(value: u32, count: usize) -> Self {
@@ -57,6 +58,7 @@ pub enum RleIterator<'a> {
     },
 }
 
+#[allow(clippy::should_implement_trait)]
 impl RleIterator<'_> {
     #[inline(always)]
     #[allow(clippy::should_implement_trait)]
@@ -447,6 +449,7 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers: Vec::new(),
         }
     }
 

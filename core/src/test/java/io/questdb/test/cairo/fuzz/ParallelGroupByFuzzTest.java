@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -921,7 +921,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
@@ -946,7 +946,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
@@ -971,7 +971,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
@@ -996,7 +996,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_count(arr)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
@@ -1021,7 +1021,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_avg(arr)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
@@ -1046,7 +1046,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, array_sum",
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [ts, array_sum]
                                             Async Group By workers: 4
                                               keys: [ts,array_sum]
@@ -1076,7 +1076,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts,dot_product]
@@ -1106,7 +1106,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
@@ -1131,7 +1131,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_sum(arr[a::int:a::int + 2])) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]

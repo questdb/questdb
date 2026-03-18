@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -82,6 +82,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_SORT_KEY_PAGE_SIZE("cairo.sql.sort.key.page.size"),
     CAIRO_SQL_SORT_KEY_MAX_PAGES("cairo.sql.sort.key.max.pages"),
     CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD("cairo.sql.sort.key.materialization.threshold"),
+    CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD("cairo.sql.sort.encoded.parallel.threshold"),
     CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE("cairo.sql.sort.light.value.page.size"),
     CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES("cairo.sql.sort.light.value.max.pages"),
     CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE("cairo.sql.hash.join.value.page.size"),
@@ -106,6 +107,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_TOP_K_ENABLED("cairo.sql.parallel.topk.enabled"),
     CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED("cairo.sql.parallel.horizon.join.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED("cairo.sql.parallel.window.join.enabled"),
+    CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD("cairo.sql.horizon.join.bwd.scan.absolute.threshold"),
+    CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP("cairo.sql.horizon.join.bwd.scan.min.gap"),
+    CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR("cairo.sql.horizon.join.bwd.scan.switch.factor"),
     CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS("cairo.sql.horizon.join.max.offsets"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
@@ -138,6 +142,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY("cairo.sql.with.clause.model.pool.capacity"),
     CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY("cairo.sql.compile.view.model.pool.capacity"),
     CAIRO_SQL_ORDER_BY_SORT_ENABLED("cairo.sql.orderby.sort.enabled"),
+    @Deprecated
     CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD("cairo.sql.orderby.radix.sort.threshold"),
     CAIRO_SQL_COPIER_CHUNKED("cairo.sql.copier.chunked"),
     CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY("cairo.sql.insert.model.pool.capacity"),
@@ -593,6 +598,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
     CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
     CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size"),
+    CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES("cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes"),
+    CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO("cairo.partition.encoder.parquet.o3.rewrite.unused.ratio"),
     HTTP_MIN_SEND_BUFFER_SIZE("http.min.send.buffer.size"),
     HTTP_MIN_RECV_BUFFER_SIZE("http.min.recv.buffer.size"),
     HTTP_MIN_RECEIVE_BUFFER_SIZE("http.min.receive.buffer.size"), // deprecated

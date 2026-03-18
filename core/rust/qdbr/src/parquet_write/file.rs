@@ -34,7 +34,7 @@ pub const DEFAULT_BLOOM_FILTER_FPP: f64 = 0.01;
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 pub const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct WriteOptions {
     /// Whether to write statistics
     pub write_statistics: bool,
@@ -48,8 +48,6 @@ pub struct WriteOptions {
     pub data_page_size: Option<usize>,
     /// If true array columns will be encoded in native QDB format instead of nested lists
     pub raw_array_encoding: bool,
-    /// Set of column indices that should have bloom filters written
-    pub bloom_filter_columns: HashSet<usize>,
     /// False positive probability for bloom filters
     pub bloom_filter_fpp: f64,
 }
@@ -172,7 +170,6 @@ impl<W: Write> ParquetWriter<W> {
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
-            bloom_filter_columns: self.bloom_filter_columns.clone(),
             bloom_filter_fpp: self.bloom_filter_fpp,
         }
     }
@@ -203,6 +200,7 @@ impl<W: Write> ParquetWriter<W> {
             parquet_schema,
             encodings,
             options,
+            bloom_filter_columns: self.bloom_filter_columns,
             parallel,
         })
     }
@@ -222,6 +220,7 @@ pub struct ChunkedWriter<W: Write> {
     parquet_schema: SchemaDescriptor,
     encodings: Vec<Encoding>,
     options: WriteOptions,
+    bloom_filter_columns: HashSet<usize>,
     parallel: bool,
 }
 
@@ -251,7 +250,8 @@ impl<W: Write> ChunkedWriter<W> {
                 length,
                 schema.fields(),
                 &self.encodings,
-                self.options.clone(),
+                self.options,
+                &self.bloom_filter_columns,
                 self.parallel,
             )?;
             self.writer.write(row_group, &bloom_hashes)?;
@@ -272,7 +272,8 @@ impl<W: Write> ChunkedWriter<W> {
             last_partition_end,
             schema.fields(),
             &self.encodings,
-            self.options.clone(),
+            self.options,
+            &self.bloom_filter_columns,
             self.parallel,
         )?;
         self.writer.write(row_group, &bloom_hashes)?;
@@ -288,6 +289,7 @@ impl<W: Write> ChunkedWriter<W> {
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group(
     partition: &Partition,
     offset: usize,
@@ -295,6 +297,7 @@ pub fn create_row_group(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
     let compression = options.compression;
@@ -320,7 +323,7 @@ pub fn create_row_group(
     // This is acceptable as it's temporary memory released after row group is written.
     let bloom_hashes: BloomHashes = (0..num_columns)
         .map(|col_idx| {
-            if options.bloom_filter_columns.contains(&col_idx) {
+            if bloom_filter_columns.contains(&col_idx) {
                 Some(Arc::new(Mutex::new(HashSet::new())))
             } else {
                 None
@@ -328,20 +331,26 @@ pub fn create_row_group(
         })
         .collect();
 
+    // WriteOptions is Copy (no heap fields), so per-column copies are trivial.
     let col_to_iter = |column: &Column,
                        column_type: &ParquetType,
                        encoding: &Encoding,
-                       options: &WriteOptions,
+                       options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
      -> ParquetResult<
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
     > {
+        let col_options = if column.designated_timestamp {
+            WriteOptions { write_statistics: true, ..options }
+        } else {
+            options
+        };
         let pages = column_chunk_to_pages(
             *column,
             column_type.clone(),
             offset,
             length,
-            options.clone(),
+            col_options,
             *encoding,
             bloom_set,
         )?;
@@ -351,7 +360,6 @@ pub fn create_row_group(
     };
 
     let columns: Vec<_> = if parallel {
-        let options = options.clone();
         POOL.install(|| {
             partition
                 .columns
@@ -360,7 +368,7 @@ pub fn create_row_group(
                 .zip(encoding)
                 .zip(&bloom_hashes)
                 .map(|(((column, column_type), enc), bloom)| {
-                    col_to_iter(column, column_type, enc, &options, bloom.clone())
+                    col_to_iter(column, column_type, enc, options, bloom.clone())
                 })
                 .collect::<ParquetResult<Vec<_>>>()
         })?
@@ -372,7 +380,7 @@ pub fn create_row_group(
             .zip(encoding)
             .zip(&bloom_hashes)
             .map(|(((column, column_type), enc), bloom)| {
-                col_to_iter(column, column_type, enc, &options, bloom.clone())
+                col_to_iter(column, column_type, enc, options, bloom.clone())
             })
             .collect::<ParquetResult<Vec<_>>>()?
     };
@@ -394,6 +402,7 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions(
     partitions: &[&Partition],
     first_partition_start: usize,
@@ -401,9 +410,15 @@ pub fn create_row_group_from_partitions(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
-    assert!(!partitions.is_empty(), "partitions cannot be empty");
+    if partitions.is_empty() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "create_row_group_from_partitions: partitions cannot be empty"
+        ));
+    }
     let num_columns = partitions[0].columns.len();
     let num_partitions = partitions.len();
 
@@ -414,7 +429,7 @@ pub fn create_row_group_from_partitions(
     // filter writing. Memory: ~20 bytes per distinct value, ~20MB for 1M unique values.
     let bloom_hashes: BloomHashes = (0..num_columns)
         .map(|col_idx| {
-            if options.bloom_filter_columns.contains(&col_idx) {
+            if bloom_filter_columns.contains(&col_idx) {
                 Some(Arc::new(Mutex::new(HashSet::new())))
             } else {
                 None
@@ -422,8 +437,9 @@ pub fn create_row_group_from_partitions(
         })
         .collect();
 
+    // WriteOptions is Copy (no heap fields), so per-column copies are trivial.
     let col_to_iter = |col_idx: usize,
-                       options: &WriteOptions,
+                       options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
      -> ParquetResult<
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
@@ -431,6 +447,12 @@ pub fn create_row_group_from_partitions(
         let column_type = &column_types[col_idx];
         let col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];
+
+        let options = if first_partition_column.designated_timestamp {
+            WriteOptions { write_statistics: true, ..options }
+        } else {
+            options
+        };
 
         let partition_ranges: Vec<(Column, usize, usize)> = partitions
             .iter()
@@ -462,7 +484,7 @@ pub fn create_row_group_from_partitions(
             let pages = symbol_column_to_pages_multi_partition(
                 &partition_ranges,
                 primitive_type,
-                options.clone(),
+                options,
                 bloom_set,
             )?;
 
@@ -473,7 +495,7 @@ pub fn create_row_group_from_partitions(
         let all_pages = collect_multi_partition_pages(
             &partition_ranges,
             column_type,
-            options,
+            &options,
             col_encoding,
             bloom_set,
         )?;
@@ -483,18 +505,17 @@ pub fn create_row_group_from_partitions(
     };
 
     let columns: Vec<_> = if parallel {
-        let options = options.clone();
         POOL.install(|| {
             (0..num_columns)
                 .into_par_iter()
                 .zip(&bloom_hashes)
-                .map(|(col_idx, bloom)| col_to_iter(col_idx, &options, bloom.clone()))
+                .map(|(col_idx, bloom)| col_to_iter(col_idx, options, bloom.clone()))
                 .collect::<ParquetResult<Vec<_>>>()
         })?
     } else {
         (0..num_columns)
             .zip(&bloom_hashes)
-            .map(|(col_idx, bloom)| col_to_iter(col_idx, &options, bloom.clone()))
+            .map(|(col_idx, bloom)| col_to_iter(col_idx, options, bloom.clone()))
             .collect::<ParquetResult<Vec<_>>>()?
     };
 
@@ -542,7 +563,7 @@ fn collect_multi_partition_pages(
             column_type.clone(),
             offset,
             length,
-            options.clone(),
+            *options,
             encoding,
             bloom_set.clone(),
         )?;
@@ -602,7 +623,7 @@ fn symbol_column_to_pages_multi_partition(
             keys_slice,
             adjusted_column_top,
             global_info.max_key,
-            options.clone(),
+            options,
             primitive_type.clone(),
             offsets,
             chars,
@@ -640,7 +661,7 @@ fn compute_symbol_slice(
     (&keys[lower_bound..upper_bound], adjusted_column_top)
 }
 
-fn column_chunk_to_pages(
+pub(crate) fn column_chunk_to_pages(
     column: Column,
     parquet_type: ParquetType,
     chunk_offset: usize,
@@ -700,7 +721,7 @@ fn column_chunk_to_group_pages(
             parquet_type.clone(),
             offset,
             length,
-            options.clone(),
+            options,
             encoding,
         )
     });
@@ -831,6 +852,44 @@ fn column_chunk_to_primitive_pages(
         );
     }
 
+    if column.data_type.tag() == ColumnTypeTag::Varchar {
+        let mut bloom_guard = bloom_set
+            .as_ref()
+            .map(|arc| {
+                arc.lock()
+                    .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+            })
+            .transpose()?;
+        let bloom_hashes = bloom_guard.as_deref_mut();
+
+        let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
+        let data = column.primary_data;
+        let orig_column_top = column.column_top;
+
+        let mut adjusted_column_top = 0;
+        let lower_bound = if chunk_offset < orig_column_top {
+            adjusted_column_top = orig_column_top - chunk_offset;
+            0
+        } else {
+            chunk_offset - orig_column_top
+        };
+        let upper_bound = if chunk_offset + chunk_length < orig_column_top {
+            adjusted_column_top = chunk_length;
+            0
+        } else {
+            chunk_offset + chunk_length - orig_column_top
+        };
+
+        return varchar::varchar_to_dict_pages(
+            &aux[lower_bound..upper_bound],
+            data,
+            adjusted_column_top,
+            options,
+            primitive_type,
+            bloom_hashes,
+        );
+    }
+
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
     let rows_per_page = cmp::max(
@@ -847,7 +906,7 @@ fn column_chunk_to_primitive_pages(
                 chunk_offset + offset,
                 length,
                 primitive_type.clone(),
-                options.clone(),
+                options,
                 encoding,
                 bloom_set.as_ref(),
             )?;
@@ -1086,19 +1145,11 @@ fn chunk_to_primitive_page(
                 bloom_hashes,
             )
         }
-        ColumnTypeTag::Varchar => {
-            let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
-            let data = column.primary_data;
-            varchar::varchar_to_page(
-                &aux[lower_bound..upper_bound],
-                data,
-                adjusted_column_top,
-                options,
-                primitive_type,
-                encoding,
-                bloom_hashes,
-            )
-        }
+        ColumnTypeTag::Varchar | ColumnTypeTag::VarcharSlice => Err(fmt_err!(
+            InvalidType,
+            "unexpected varchar type in primitive encoder for column {} (should be handled earlier)",
+            column.name,
+        )),
         ColumnTypeTag::Array => {
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;

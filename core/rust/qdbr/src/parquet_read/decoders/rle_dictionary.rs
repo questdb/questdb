@@ -123,9 +123,10 @@ where
             } else {
                 self.inner.error = Some(fmt_err!(
                     Layout,
-                    "index {} is out of dict bounds {}",
+                    "index {} is out of dict bounds {} (row_offset={})",
                     idx,
-                    self.dict.len()
+                    self.dict.len(),
+                    self.buffers_offset
                 ));
                 Ok(())
             }
@@ -408,6 +409,7 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers: Vec::new(),
         }
     }
 

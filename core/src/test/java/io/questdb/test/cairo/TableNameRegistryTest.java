@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -292,7 +292,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         engine.getConfiguration().getMicrosecondClock())
                 ) {
                     barrier.await();
-                    engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
                     while (!done.get() && job.run(0)) {
                         // run until empty

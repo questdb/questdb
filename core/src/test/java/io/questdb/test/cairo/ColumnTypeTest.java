@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -228,6 +228,16 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testGetDriverVarcharSlice() {
+        // VARCHAR_SLICE is a transient in-memory type from read_parquet().
+        // getDriver() must return the same VarcharTypeDriver as for VARCHAR.
+        Assert.assertSame(
+                ColumnType.getDriver(ColumnType.VARCHAR),
+                ColumnType.getDriver(ColumnType.VARCHAR_SLICE)
+        );
+    }
+
+    @Test
     public void testIsDecimalInvalid() {
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.BOOLEAN));
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.DOUBLE));
@@ -259,7 +269,7 @@ public class ColumnTypeTest {
             case ColumnType.UUID, ColumnType.LONG128 -> func.getLong128Lo(null);
             case ColumnType.GEOHASH -> func.getGeoLong(null);
             case ColumnType.IPv4 -> func.getIPv4(null);
-            case ColumnType.VARCHAR -> func.getVarcharA(null);
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> func.getVarcharA(null);
             case ColumnType.ARRAY -> func.getArray(null);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL -> func.getDecimal8(null);
             case ColumnType.DECIMAL16 -> func.getDecimal16(null);
@@ -297,7 +307,7 @@ public class ColumnTypeTest {
             case ColumnType.UUID, ColumnType.LONG128 -> Long128Constant.NULL;
             case ColumnType.GEOHASH -> GeoLongConstant.NULL;
             case ColumnType.IPv4 -> IPv4Constant.NULL;
-            case ColumnType.VARCHAR -> new VarcharConstant("42");
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> new VarcharConstant("42");
             case ColumnType.ARRAY -> new NullArrayConstant(ColumnType.DOUBLE);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL ->
                     new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 0));

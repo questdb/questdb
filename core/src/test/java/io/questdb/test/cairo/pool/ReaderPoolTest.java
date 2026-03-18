@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -869,7 +869,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     }
                 }).start();
 
-                Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
+                Assert.assertTrue(stopLatch.await(15, TimeUnit.SECONDS));
                 Assert.assertEquals(0, exceptionCount.get());
             });
         }

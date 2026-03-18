@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,11 +27,14 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
@@ -721,7 +724,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2020-01-01.parquet')");
                         assertSql("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t1.1 KiB\n" +
+                                        "test_table" + File.separator + "2020-01-01.parquet\t504.0 B\n" +
                                         "test_table" + File.separator + "2020-01-02.parquet\t586.0 B\n",
                                 "select path, diskSizeHuman from export_files()  order by path");
                     });
@@ -812,8 +815,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "price_1h" + File.separator + "2023-11.parquet')");
                         assertSql("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t905.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t912.0 B\n",
+                                        "price_1h" + File.separator + "2023-09.parquet\t913.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t918.0 B\n",
                                 "select path, diskSizeHuman from export_files()  order by path");
                     });
 
@@ -1189,6 +1192,67 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """, "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id");
                             }
                     );
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryVarcharSliceRoundtrip() throws Exception {
+        // VARCHAR_SLICE is a transient type produced by read_parquet(). This test
+        // verifies that VARCHAR_SLICE columns can flow through the parquet write path
+        // (HybridColumnMaterializer) without errors.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_src (
+                        id INT,
+                        vc VARCHAR
+                    )""");
+            execute("""
+                    INSERT INTO vc_src VALUES
+                        (1, 'hello'),
+                        (2, ''),
+                        (3, NULL),
+                        (4, 'café ☕'),
+                        (5, 'world')""");
+
+            // Encode the table to a parquet file so read_parquet() produces VARCHAR_SLICE columns.
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("vc_src")
+            ) {
+                Files.mkdirs(path.of(exportRoot).slash(), configuration.getMkDirMode());
+                path.of(exportRoot).concat("vc_input.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+
+            // Round-trip: read_parquet() → VARCHAR_SLICE → COPY TO parquet
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_input.parquet')) TO 'vc_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        id\tvc
+                                        1\thello
+                                        2\t
+                                        3\t
+                                        4\tcafé ☕
+                                        5\tworld
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_output.parquet') ORDER BY id"
+                        );
+                    });
 
             testCopyExport(stmt, test);
         });

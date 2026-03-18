@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -257,10 +257,12 @@ import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -389,47 +391,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * The matrix doesn't cover generic types (e.g. geohash) since they have a more complex structure.
      */
     private static final int[][] UNION_CAST_MATRIX = new int[][]{
-            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  0}, //  0 = unknown
-            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  1}, //  1 = BOOLEAN
-            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  2}, //  2 = BYTE
-            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  3}, //  3 = SHORT
-            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, //  4 = CHAR
-            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  5}, //  5 = INT
-            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  6}, //  6 = LONG
-            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  7}, //  7 = DATE
-            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  8}, //  8 = TIMESTAMP
-            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11,  9}, //  9 = FLOAT
-            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 10}, // 10 = DOUBLE
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
-            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11}, // 12 = SYMBOL
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 13}, // 13 = LONG256
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = unknown
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 18}, // 18 = BINARY
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 19}, // 19 = UUID
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 20}, // 20 = CURSOR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 21}, // 21 = VARARG
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 22}, // 22 = RECORD
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 23}, // 23 = GEOHASH
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24}, // 24 = LONG128
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 25}, // 25 = IPv4
-            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, -1, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 27}, // 27 = ARRAY
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 28 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 29 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 30 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 31 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 32 = unknown
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 33 = unknown
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 34, 11, 11, 11, 11, 11, 34}, // 34 = DECIMAL
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 35, 11, 11, 11, 11, 35}, // 35 = regclass
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 36, 11, 11, 11, 36}, // 36 = regprocedure
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 37, 11, 11, 37}, // 37 = text[]
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 38, 11, 38}, // 38 = PARAMETER
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 39, 39}, // 39 = INTERVAL
-            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, -1, -1, -1, -1, -1, -1, 34, 35, 36, 37, 38, 39, 40}  // 40 = NULL
+            { 0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  0}, //  0 = unknown
+            {11,  1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  1}, //  1 = BOOLEAN
+            {11, 11,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  2}, //  2 = BYTE
+            {11, 11,  3,  3,  3,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  3}, //  3 = SHORT
+            {11, 11, 11,  3,  4,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 11}, //  4 = CHAR
+            {11, 11,  5,  5,  5,  5,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  5}, //  5 = INT
+            {11, 11,  6,  6,  6,  6,  6,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  6}, //  6 = LONG
+            {11, 11,  7,  7,  7,  7,  7,  7,  8,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  7}, //  7 = DATE
+            {11, 11,  8,  8,  8,  8,  8,  8,  8,  9, 10, 11,  8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  8}, //  8 = TIMESTAMP
+            {11, 11,  9,  9,  9,  9,  9,  9,  9,  9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26,  9}, //  9 = FLOAT
+            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 10}, // 10 = DOUBLE
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11}, // 11 = STRING
+            {11, 11, 11, 11, 11, 11, 11, 11,  8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 11}, // 12 = SYMBOL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 13}, // 13 = LONG256
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 14 = GEOBYTE
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 15 = GEOSHORT
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 16 = GEOINT
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 17 = GEOLONG
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 18}, // 18 = BINARY
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 19}, // 19 = UUID
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 20}, // 20 = CURSOR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 21}, // 21 = VARARG
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 22}, // 22 = RECORD
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 23}, // 23 = GEOHASH
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 24}, // 24 = LONG128
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 25}, // 25 = IPv4
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, -1, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26}, // 26 = VARCHAR
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 26, 27}, // 27 = ARRAY
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 28 = DECIMAL8
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 29 = DECIMAL16
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 30 = DECIMAL32
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 31 = DECIMAL64
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 32 = DECIMAL128
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, // 33 = DECIMAL256
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 34, 11, 11, 11, 11, 11, 26, 34}, // 34 = DECIMAL
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 35, 11, 11, 11, 11, 26, 35}, // 35 = regclass
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 36, 11, 11, 11, 26, 36}, // 36 = regprocedure
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 37, 11, 11, 26, 37}, // 37 = text[]
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 38, 11, 26, 38}, // 38 = PARAMETER
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, -1, -1, -1, -1, -1, -1, 11, 11, 11, 11, 11, 39, 26, 39}, // 39 = INTERVAL
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, -1, -1, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26}, // 40 = VARCHAR_SLICE
+            { 0,  1,  2,  3, 11,  5,  6,  7,  8,  9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, -1, -1, -1, -1, -1, -1, 34, 35, 36, 37, 38, 39, 26, 41}  // 41 = NULL
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
@@ -1473,6 +1476,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private @Nullable ObjList<Function> compileWorkerFunctionsConditionally(
+            SqlExecutionContext executionContext,
+            @Nullable Function func,
+            int sharedQueryWorkerCount,
+            @Nullable ExpressionNode funcExpr,
+            RecordMetadata metadata
+    ) throws SqlException {
+        if (func != null && !func.isThreadSafe() && sharedQueryWorkerCount > 0) {
+            assert funcExpr != null;
+            ObjList<Function> workerFunctions = new ObjList<>();
+            try {
+                for (int i = 0; i < sharedQueryWorkerCount; i++) {
+                    Function workerFunc = functionParser.parseFunction(funcExpr, metadata, executionContext);
+                    workerFunctions.extendAndSet(i, workerFunc);
+                }
+            } catch (Throwable th) {
+                Misc.freeObjList(workerFunctions);
+                throw th;
+            }
+            return workerFunctions;
+        }
+        return null;
+    }
+
     private @Nullable ObjList<ObjList<GroupByFunction>> compileWorkerGroupByFunctionsConditionally(
             SqlExecutionContext executionContext,
             QueryModel model,
@@ -1999,6 +2026,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         newMapping = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
                         break;
                     case VARCHAR:
+                    case VARCHAR_SLICE:
                         newMapping = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
                         break;
                     case STRING:
@@ -2213,6 +2241,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int fromType = castFromMetadata.getColumnType(i);
             int toTag = tagOf(toType);
             int fromTag = tagOf(fromType);
+            // VARCHAR_SLICE is a transient in-memory type (from read_parquet) accessed
+            // through the same getVarcharA() interface as VARCHAR. Normalize it so that
+            // the cast switch below handles it identically to VARCHAR.
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = VARCHAR;
+            }
             if (fromTag == NULL) {
                 castFunctions.add(NullConstant.NULL);
             } else {
@@ -2846,6 +2880,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toType
                                 );
                         }
+                        break;
                     case BINARY:
                         castFunctions.add(BinColumn.newInstance(i));
                         break;
@@ -2916,7 +2951,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOBYTE:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoByteToVarcharCastFunction(
-                                                GeoShortColumn.newInstance(i, toTag),
+                                                GeoByteColumn.newInstance(i, fromType),
                                                 getGeoHashBits(fromType)
                                         )
                                 );
@@ -2924,7 +2959,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOSHORT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoShortToVarcharCastFunction(
-                                                GeoShortColumn.newInstance(i, toTag),
+                                                GeoShortColumn.newInstance(i, fromType),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -2932,7 +2967,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOINT:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(
-                                                GeoIntColumn.newInstance(i, toTag),
+                                                GeoIntColumn.newInstance(i, fromType),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -2940,7 +2975,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case GEOLONG:
                                 castFunctions.add(
                                         CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(
-                                                GeoLongColumn.newInstance(i, toTag),
+                                                GeoLongColumn.newInstance(i, fromType),
                                                 getGeoHashBits(castFromMetadata.getColumnType(i))
                                         )
                                 );
@@ -3045,7 +3080,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                expr = fillValuesExprs.getQuick(0);
+                expr = fillValuesExprs.getQuick(i);
                 if (isNoneKeyword(expr.token)) {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
@@ -4337,6 +4372,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 RecordCursorFactory slave = null;
                 Function joinFilter = null;
+                Function windowHiFunc = null;
+                Function windowLoFunc = null;
+                ObjList<Function> perWorkerWindowLoFuncs = null;
+                ObjList<Function> perWorkerWindowHiFuncs = null;
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
                 try {
@@ -4501,15 +4540,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final WindowJoinContext context = slaveModel.getWindowJoinContext();
                                 final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
                                 long hi = context.getHi();
-                                if (context.getHiExprTimeUnit() != 0) {
+                                if (!context.isDynamicHi() && context.getHiExprTimeUnit() != 0) {
                                     hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                 }
                                 long lo = context.getLo();
-                                if (context.getLoExprTimeUnit() != 0) {
+                                if (!context.isDynamicLo() && context.getLoExprTimeUnit() != 0) {
                                     lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
                                 }
 
-                                if (hi < lo * -1) {
+                                // Compile dynamic bound functions against master metadata.
+                                final boolean isDynamicWindow = context.isDynamicLo() || context.isDynamicHi();
+                                int loSign = 0;
+                                int hiSign = 0;
+                                char loTimeUnit = 0;
+                                char hiTimeUnit = 0;
+                                if (context.isDynamicLo()) {
+                                    windowLoFunc = functionParser.parseFunction(context.getLoExpr(), masterMetadata, executionContext);
+                                    loSign = context.getLoKind() == WindowJoinContext.PRECEDING ? 1 : -1;
+                                    loTimeUnit = context.getLoExprTimeUnit();
+                                }
+                                if (context.isDynamicHi()) {
+                                    windowHiFunc = functionParser.parseFunction(context.getHiExpr(), masterMetadata, executionContext);
+                                    hiSign = context.getHiKind() == WindowJoinContext.FOLLOWING ? 1 : -1;
+                                    hiTimeUnit = context.getHiExprTimeUnit();
+                                }
+
+                                if (!isDynamicWindow && hi < lo * -1) {
                                     throw SqlException.position(Math.max(context.getHiExprPos(), context.getLoExprPos())).put("WINDOW join hi value cannot be less than lo value");
                                 }
 
@@ -4637,7 +4693,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 int leftSymbolIndex = -1;
                                 int rightSymbolIndex = -1;
                                 ExpressionNode parent = null;
-                                if (node != null) {
+                                if (node != null && !isDynamicWindow) {
+                                    // Only extract symbol equality for the fast path.
+                                    // When isDynamicWindow, the general path handles all filtering via joinFilter.
                                     final int columnSplit = master.getMetadata().getColumnCount();
                                     ExpressionNode nn = node;
                                     sqlNodeStack.clear();
@@ -4701,6 +4759,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     if (parent != null) {
                                         joinFilter = compileJoinFilter(parent, joinMetadata, executionContext);
                                     }
+                                } else if (node != null) {
+                                    // Dynamic window: compile the full filter without symbol extraction,
+                                    // since the fast path (WindowJoinFastRecordCursorFactory) is not used.
+                                    joinFilter = compileJoinFilter(node, joinMetadata, executionContext);
                                 }
 
                                 if (joinFilter != null && joinFilter.isConstant()) {
@@ -4724,6 +4786,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         Misc.free(slave);
                                         Misc.free(joinMetadata);
                                         Misc.free(joinFilter);
+                                        Misc.free(windowLoFunc);
+                                        Misc.free(windowHiFunc);
+                                        Misc.freeObjList(groupByFunctions);
                                         master = factory;
                                         break;
                                     } else {
@@ -4781,7 +4846,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                     // WINDOW JOIN tasks are "heavy", hence smaller frame sizes
                                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
-                                    if (leftSymbolIndex != -1) {
+                                    if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         assert rightSymbolIndex != -1;
                                         master = new AsyncWindowJoinFastRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
@@ -4832,6 +4897,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
                                     } else {
+                                        perWorkerWindowLoFuncs = compileWorkerFunctionsConditionally(
+                                                executionContext,
+                                                windowLoFunc,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                context.getLoExpr(),
+                                                masterMetadata
+                                        );
+                                        perWorkerWindowHiFuncs = compileWorkerFunctionsConditionally(
+                                                executionContext,
+                                                windowHiFunc,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                context.getHiExpr(),
+                                                masterMetadata
+                                        );
                                         master = new AsyncWindowJoinRecordCursorFactory(
                                                 executionContext.getCairoEngine(),
                                                 configuration,
@@ -4853,6 +4932,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ),
                                                 lo,
                                                 hi,
+                                                windowLoFunc,
+                                                windowHiFunc,
+                                                perWorkerWindowLoFuncs,
+                                                perWorkerWindowHiFuncs,
+                                                loSign,
+                                                hiSign,
+                                                loTimeUnit,
+                                                hiTimeUnit,
+                                                isDynamicWindow ? timestampDriver : null,
                                                 valueTypes,
                                                 groupByFunctions,
                                                 compileWorkerGroupByFunctionsConditionally(
@@ -4878,10 +4966,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 reduceTaskFactory,
                                                 executionContext.getSharedQueryWorkerCount()
                                         );
+                                        // Factory now owns these resources.
+                                        windowLoFunc = null;
+                                        windowHiFunc = null;
+                                        perWorkerWindowLoFuncs = null;
+                                        perWorkerWindowHiFuncs = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else if (slave.supportsTimeFrameCursor()) {
-                                    if (leftSymbolIndex != -1) {
+                                    if (leftSymbolIndex != -1 && !isDynamicWindow) {
                                         master = new WindowJoinFastRecordCursorFactory(
                                                 asm,
                                                 configuration,
@@ -4912,10 +5005,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 columnIndex,
                                                 lo,
                                                 hi,
+                                                windowLoFunc,
+                                                windowHiFunc,
+                                                loSign,
+                                                hiSign,
+                                                loTimeUnit,
+                                                hiTimeUnit,
+                                                isDynamicWindow ? timestampDriver : null,
                                                 groupByFunctions,
                                                 valueTypes,
                                                 joinFilter
                                         );
+                                        // Factory now owns these functions.
+                                        windowLoFunc = null;
+                                        windowHiFunc = null;
                                     }
                                     executionContext.storeTelemetry(TelemetryEvent.SINGLE_THREAD_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                                 } else {
@@ -5001,6 +5104,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } catch (Throwable th) {
                     Misc.free(joinMetadata);
                     Misc.free(joinFilter);
+                    Misc.free(windowHiFunc);
+                    Misc.free(windowLoFunc);
+                    Misc.freeObjListIfCloseable(perWorkerWindowLoFuncs);
+                    Misc.freeObjListIfCloseable(perWorkerWindowHiFuncs);
                     Misc.freeObjList(groupByFunctions);
                     master = Misc.free(master);
                     if (closeSlaveOnFailure) {
@@ -5063,11 +5170,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (constFilterExpr != null) {
                 Function filter = functionParser.parseFunction(constFilterExpr, null, executionContext);
                 if (!isBoolean(filter.getType())) {
+                    Misc.free(filter);
                     throw SqlException.position(constFilterExpr.position).put("boolean expression expected");
                 }
                 filter.init(null, executionContext);
                 if (filter.isConstant()) {
-                    if (!filter.getBool(null)) {
+                    boolean filterValue = filter.getBool(null);
+                    Misc.free(filter);
+                    if (!filterValue) {
                         // do not copy metadata here
                         // this would have been JoinRecordMetadata, which is new instance anyway
                         // we have to make sure that this metadata is safely transitioned
@@ -5551,8 +5661,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ObjList<ExpressionNode> nodes = model.getOrderBy();
                         int position = 0;
                         for (int j = 0, y = nodes.size(); j < y; j++) {
-                            if (Chars.equals(column, nodes.getQuick(i).token)) {
-                                position = nodes.getQuick(i).position;
+                            if (Chars.equals(column, nodes.getQuick(j).token)) {
+                                position = nodes.getQuick(j).position;
                                 break;
                             }
                         }
@@ -5695,13 +5805,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
-                        final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (
-                                configuration.isSqlOrderBySortEnabled()
-                                        && orderByColumnNames.size() == 1
-                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
-                        ) {
-                            return new LongSortedLightRecordCursorFactory(
+                        if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                            return new EncodedSortLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
                                     recordCursorFactory,
@@ -5756,8 +5861,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
-
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
+                if (configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(metadata, listColumnFilterA)) {
+                    return new EncodedSortRecordCursorFactory(
+                            configuration,
+                            orderedMetadata,
+                            recordCursorFactory,
+                            RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
+                            listColumnFilterA.copy()
+                    );
+                }
                 return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
@@ -5824,118 +5937,119 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode sampleByUnits
     ) throws SqlException {
         final ExpressionNode timezoneName = model.getSampleByTimezoneName();
-        final Function timezoneNameFunc;
+        Function timezoneNameFunc = null;
         final int timezoneNameFuncPos;
         final ExpressionNode offset = model.getSampleByOffset();
-        final Function offsetFunc;
+        Function offsetFunc = null;
         final int offsetFuncPos;
-        final Function sampleFromFunc;
+        Function sampleFromFunc = null;
         final int sampleFromFuncPos;
-        final Function sampleToFunc;
+        Function sampleToFunc = null;
         final int sampleToFuncPos;
 
-        if (timezoneName != null) {
-            timezoneNameFunc = functionParser.parseFunction(
-                    timezoneName,
-                    EmptyRecordMetadata.INSTANCE,
-                    executionContext
-            );
-            timezoneNameFuncPos = timezoneName.position;
-            coerceRuntimeConstantType(timezoneNameFunc, STRING, executionContext, "timezone must be a constant expression of STRING or CHAR type", timezoneNameFuncPos);
-        } else {
-            timezoneNameFunc = StrConstant.NULL;
-            timezoneNameFuncPos = 0;
-        }
-
-        if (offset != null) {
-            offsetFunc = functionParser.parseFunction(
-                    offset,
-                    EmptyRecordMetadata.INSTANCE,
-                    executionContext
-            );
-            offsetFuncPos = offset.position;
-            coerceRuntimeConstantType(offsetFunc, STRING, executionContext, "offset must be a constant expression of STRING or CHAR type", offsetFuncPos);
-        } else {
-            offsetFunc = StrConstant.NULL;
-            offsetFuncPos = 0;
-        }
-
         RecordCursorFactory factory = null;
-        // We require timestamp with asc order.
-        final int timestampIndex;
-        // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
-        executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
         try {
-            factory = generateSubQuery(model, executionContext);
-            timestampIndex = getTimestampIndex(model, factory);
-            if (timestampIndex == -1) {
-                throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
+
+            if (timezoneName != null) {
+                timezoneNameFunc = functionParser.parseFunction(
+                        timezoneName,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                timezoneNameFuncPos = timezoneName.position;
+                coerceRuntimeConstantType(timezoneNameFunc, STRING, executionContext, "timezone must be a constant expression of STRING or CHAR type", timezoneNameFuncPos);
+            } else {
+                timezoneNameFunc = StrConstant.NULL;
+                timezoneNameFuncPos = 0;
             }
-            if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+
+            if (offset != null) {
+                offsetFunc = functionParser.parseFunction(
+                        offset,
+                        EmptyRecordMetadata.INSTANCE,
+                        executionContext
+                );
+                offsetFuncPos = offset.position;
+                coerceRuntimeConstantType(offsetFunc, STRING, executionContext, "offset must be a constant expression of STRING or CHAR type", offsetFuncPos);
+            } else {
+                offsetFunc = StrConstant.NULL;
+                offsetFuncPos = 0;
             }
-        } catch (Throwable e) {
-            Misc.free(factory);
-            throw e;
-        } finally {
-            executionContext.popTimestampRequiredFlag();
-        }
+            // We require timestamp with asc order.
+            final int timestampIndex;
+            // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
+            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
+            try {
+                factory = generateSubQuery(model, executionContext);
+                timestampIndex = getTimestampIndex(model, factory);
+                if (timestampIndex == -1) {
+                    throw SqlException.$(model.getModelPosition(), "base query does not provide designated TIMESTAMP column");
+                }
+                if (factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
+                }
+            } catch (Throwable e) {
+                Misc.free(factory);
+                factory = null;
+                throw e;
+            } finally {
+                executionContext.popTimestampRequiredFlag();
+            }
 
-        final RecordMetadata baseMetadata = factory.getMetadata();
-        ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
-        final int timestampType = baseMetadata.getColumnType(timestampIndex);
-        final TimestampDriver timestampDriver = getTimestampDriver(timestampType);
+            final RecordMetadata baseMetadata = factory.getMetadata();
+            ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
+            final int timestampType = baseMetadata.getColumnType(timestampIndex);
+            final TimestampDriver timestampDriver = getTimestampDriver(timestampType);
 
-        if (model.getSampleByFrom() != null) {
-            sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleFromFuncPos = model.getSampleByFrom().position;
-            coerceRuntimeConstantType(sampleFromFunc, timestampType, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
-        } else {
-            sampleFromFunc = timestampDriver.getTimestampConstantNull();
-            sampleFromFuncPos = 0;
-        }
+            if (model.getSampleByFrom() != null) {
+                sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
+                sampleFromFuncPos = model.getSampleByFrom().position;
+                coerceRuntimeConstantType(sampleFromFunc, timestampType, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
+            } else {
+                sampleFromFunc = timestampDriver.getTimestampConstantNull();
+                sampleFromFuncPos = 0;
+            }
 
-        if (model.getSampleByTo() != null) {
-            sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleToFuncPos = model.getSampleByTo().position;
-            coerceRuntimeConstantType(sampleToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
-        } else {
-            sampleToFunc = timestampDriver.getTimestampConstantNull();
-            sampleToFuncPos = 0;
-        }
+            if (model.getSampleByTo() != null) {
+                sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
+                sampleToFuncPos = model.getSampleByTo().position;
+                coerceRuntimeConstantType(sampleToFunc, timestampType, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
+            } else {
+                sampleToFunc = timestampDriver.getTimestampConstantNull();
+                sampleToFuncPos = 0;
+            }
 
-        final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
-        final TimestampSampler timestampSampler;
-        int fillCount = sampleByFill.size();
+            final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
+            final TimestampSampler timestampSampler;
+            int fillCount = sampleByFill.size();
 
-        // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
-        // but TopDownColumns may have different order and count with BottomUpColumns.
-        // Need to reorganize sampleByFill according to the position relationship between
-        // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
-        if (fillCount > 1 && model.getTopDownColumns().size() != 0) {
-            tempColumnsList.clear();
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
-                if (!column.isWindowExpression()) {
-                    final ExpressionNode node = column.getAst();
-                    if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
-                        tempColumnsList.add(column);
+            // sampleByFill is originally set up based on GroupByFunctions in BottomUpColumns,
+            // but TopDownColumns may have different order and count with BottomUpColumns.
+            // Need to reorganize sampleByFill according to the position relationship between
+            // TopDownColumns and BottomUpColumns to ensure correct fill value alignment.
+            if (fillCount > 1 && model.getTopDownColumns().size() != 0) {
+                tempColumnsList.clear();
+                for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                    final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+                    if (!column.isWindowExpression()) {
+                        final ExpressionNode node = column.getAst();
+                        if (node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
+                            tempColumnsList.add(column);
+                        }
                     }
                 }
-            }
 
-            tempExpressionNodeList.clear();
-            for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
-                int index = tempColumnsList.indexOf(model.getTopDownColumns().getQuick(i));
-                if (index != -1 && fillCount > index) {
-                    tempExpressionNodeList.add(sampleByFill.getQuick(index));
+                tempExpressionNodeList.clear();
+                for (int i = 0, n = model.getTopDownColumns().size(); i < n; i++) {
+                    int index = tempColumnsList.indexOf(model.getTopDownColumns().getQuick(i));
+                    if (index != -1 && fillCount > index) {
+                        tempExpressionNodeList.add(sampleByFill.getQuick(index));
+                    }
                 }
+                sampleByFill = tempExpressionNodeList;
+                fillCount = sampleByFill.size();
             }
-            sampleByFill = tempExpressionNodeList;
-            fillCount = sampleByFill.size();
-        }
 
-        try {
             if (sampleByUnits == null) {
                 timestampSampler = TimestampSamplerFactory.getInstance(timestampDriver, sampleByNode.token, sampleByNode.position);
             } else {
@@ -6284,6 +6398,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sampleToFuncPos
             );
         } catch (Throwable e) {
+            Misc.free(sampleFromFunc);
+            Misc.free(sampleToFunc);
+            Misc.free(timezoneNameFunc);
+            Misc.free(offsetFunc);
             Misc.free(factory);
             throw e;
         } finally {
@@ -7174,6 +7292,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 functions.set(i, new StrFunctionMemoizer(function));
                                 break;
                             case ColumnType.VARCHAR:
+                            case ColumnType.VARCHAR_SLICE:
                                 functions.set(i, new VarcharFunctionMemoizer(function));
                                 break;
                             case ColumnType.SYMBOL:
@@ -7620,7 +7739,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.newInstance(chainTypes, e.key));
+                windowComparators.add(recordComparatorCompiler.newInstance(chainMetadata, e.key));
                 functionGroups.add(e.value);
                 keys.add(e.key);
             }
@@ -8777,6 +8896,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case LONG256:
                     case STRING:
                     case VARCHAR:
+                    case VARCHAR_SLICE:
                     case SYMBOL:
                     case UUID:
                     case GEOBYTE:

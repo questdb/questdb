@@ -19,7 +19,7 @@ fn unzip_option<T: NativeType>(array: &[Option<T>]) -> Result<(Vec<u8>, Vec<u8>)
     let mut values = vec![];
     let iter = array.iter().map(|value| {
         if let Some(item) = value {
-            values.extend_from_slice(item.to_le_bytes().as_ref());
+            values.extend_from_slice(item.to_bytes().as_ref());
             true
         } else {
             false

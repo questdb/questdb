@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -541,7 +541,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
                                   keys: [date_report]
@@ -581,7 +581,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
                                   keys: [date_report]
@@ -622,7 +622,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
                                   keys: [date_report]
@@ -663,7 +663,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report1]
                                 VirtualRecord
                                   functions: [date_report,date_report,count]
@@ -708,7 +708,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,dateadd,dateadd('d',1,date_report),concat(['1',date_report,'3']),count]
@@ -754,7 +754,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,to_str(date_report),dateadd('d',1,date_report),dateadd('d',-1,date_report),count]
@@ -806,7 +806,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]
@@ -1377,7 +1377,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [s, max]
                                 Async Group By workers: 1
                                   keys: [s,max]
@@ -1451,7 +1451,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [x, x1]
                                     VirtualRecord
                                       functions: [x,max,case([1<x,100*x,10*x1]),x1]
@@ -1552,7 +1552,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [x]
                                 VirtualRecord
                                   functions: [x,max,dateadd::long+x1]
@@ -1604,24 +1604,23 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x, max, dateadd]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [x,max,dateadd('s',max::int,dateadd)]
-                                        GroupBy vectorized: false
-                                          keys: [x,dateadd,x1]
-                                          values: [max(y)]
-                                            SelectedRecord
-                                                Hash Join Light
-                                                  condition: t2.y=t1.y
+                                VirtualRecord
+                                  functions: [x,max,dateadd('s',max::int,dateadd)]
+                                    GroupBy vectorized: false
+                                      keys: [x,dateadd,x1]
+                                      values: [max(y)]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: t2.y=t1.y
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                                        Frame forward scan on: t2
                             """
             );
 
@@ -1968,7 +1967,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [s2]
                                 GroupBy vectorized: false
                                   keys: [s2]
@@ -2125,14 +2124,14 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query1,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [i]
                                 VirtualRecord
                                   functions: [ts,i,avg,sum,first_value]
                                     GroupBy vectorized: false
                                       keys: [i]
                                       values: [max(ts),avg(j),sum(j::double),first(j::double)]
-                                        Sort
+                                        Encode sort
                                           keys: [i, ts]
                                             SelectedRecord
                                                 Filter filter: data.ts>=cnt.max-80000
@@ -2202,7 +2201,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query2,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [i]
                                 GroupBy vectorized: false
                                   keys: [i]
@@ -2504,7 +2503,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [y_utc_15m]
                                 GroupBy vectorized: false
                                   keys: [y_utc_15m]
@@ -2539,7 +2538,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [a, b, z]
                                     VirtualRecord
                                       functions: [a,sum,z,views,b]
@@ -2682,7 +2681,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [k1, key2]
                                 VirtualRecord
                                   functions: [k1,key2,key2,count]
@@ -2718,7 +2717,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [column, key, key1 desc]
                                 VirtualRecord
                                   functions: [key+1,key,key,count]
@@ -2750,24 +2749,23 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x, max, dateadd]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [x,max,dateadd('s',max::int,dateadd)]
-                                        GroupBy vectorized: false
-                                          keys: [x,dateadd,x1]
-                                          values: [max(y)]
-                                            SelectedRecord
-                                                Hash Join Light
-                                                  condition: t2.y=t1.y
+                                VirtualRecord
+                                  functions: [x,max,dateadd('s',max::int,dateadd)]
+                                    GroupBy vectorized: false
+                                      keys: [x,dateadd,x1]
+                                      values: [max(y)]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: t2.y=t1.y
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
+                                                        Frame forward scan on: t2
                             """
             );
 
@@ -3347,7 +3345,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [created]
@@ -3395,7 +3393,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [dateadd('h',1,created)]
@@ -3442,7 +3440,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [created]
                                 Async JIT Group By workers: 1
                                   keys: [created]
@@ -3487,7 +3485,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [hour, sym]
                                 VirtualRecord
                                   functions: [sym,hour,avgBid]
@@ -3556,7 +3554,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [category]
                                 VirtualRecord
                                   functions: [sum,sum1,category]
