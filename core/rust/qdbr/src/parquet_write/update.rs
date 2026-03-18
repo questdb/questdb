@@ -113,7 +113,7 @@ pub struct ParquetUpdater {
     accumulated_unused_bytes: u64,
     old_footer_size: u64,
     is_rewrite: bool,
-    schema_updated: bool,
+    symbol_schema_checked: bool,
     result_file_size: u64,
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
@@ -278,7 +278,7 @@ impl ParquetUpdater {
             accumulated_unused_bytes,
             old_footer_size,
             is_rewrite,
-            schema_updated: false,
+            symbol_schema_checked: false,
             result_file_size: 0,
             result_unused_bytes: 0,
             target_qdb_meta: None,
@@ -794,10 +794,10 @@ impl ParquetUpdater {
     /// in schema.rs). The `Column::required` flag is only a write-time hint for
     /// the encoder to emit a fast all-ones RLE run for definition levels.
     fn ensure_schema_matches_columns(&mut self, partition: &Partition) {
-        if self.schema_updated || !self.is_rewrite {
+        if self.symbol_schema_checked || !self.is_rewrite {
             return;
         }
-        self.schema_updated = true;
+        self.symbol_schema_checked = true;
         let fields = self.parquet_file.schema().fields();
         debug_assert_eq!(
             partition.columns.len(),
@@ -1043,9 +1043,11 @@ fn generate_required_zero_page(
             4
         }
         _ => {
-            // Unexpected Required column type for a null chunk. Fall back to
-            // Optional encoding to be safe.
-            return Ok(generate_optional_null_page(row_count));
+            return Err(fmt_err!(
+                InvalidLayout,
+                "cannot generate null chunk for Required column type {:?}",
+                column_type
+            ));
         }
     };
     Ok(vec![0u8; row_count * value_size])
