@@ -27,18 +27,14 @@ package io.questdb.compat;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,11 +57,11 @@ public class ParquetStaleMetadataTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(ParquetStaleMetadataTest.class);
 
     /**
-     * Exports a 3-column table to parquet (QDB metadata has 3-column schema).
-     * Exports a 2-column table to a separate parquet file (QDB metadata has
-     * 2-column schema). Injects the 3-column QDB metadata into the 2-column
-     * file by replacing the footer metadata bytes. Verifies that read_parquet
-     * discards the mismatched metadata and reads the file correctly.
+     * Exports a 3-column table to parquet (QDB metadata has 3-column schema),
+     * then replaces the QDB metadata with a 2-column schema (simulating an
+     * external tool that added a column to the file data but kept the old
+     * metadata). Verifies that read_parquet discards the mismatched metadata,
+     * falls back to physical type inference, and returns all 3 data columns.
      */
     @Test
     public void testReadParquetWithStaleQdbMetadata() throws Exception {
@@ -82,149 +78,106 @@ public class ParquetStaleMetadataTest extends AbstractTest {
         try (final ServerMain serverMain = ServerMain.create(root, env)) {
             serverMain.start();
 
-            // Step 1: Create a 3-column table and export to parquet.
+            // Create a 3-column table.
             serverMain.getEngine().execute(
-                    "CREATE TABLE wide_table (" +
+                    "CREATE TABLE test_table (" +
                             "ts TIMESTAMP, " +
-                            "location VARCHAR, " +
+                            "category VARCHAR, " +
                             "value DOUBLE" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
             serverMain.getEngine().execute(
-                    "INSERT INTO wide_table " +
+                    "INSERT INTO test_table " +
                             "SELECT " +
                             "timestamp_sequence('2024-01-01', 1_000_000) AS ts, " +
-                            "'LOC-' || (x % 3) AS location, " +
+                            "'CAT-' || (x % 3) AS category, " +
                             "x * 1.5 AS value " +
                             "FROM long_sequence(10)"
             );
-            serverMain.awaitTable("wide_table");
+            serverMain.awaitTable("test_table");
 
-            // Step 2: Create a 2-column table (no location) and export.
-            serverMain.getEngine().execute(
-                    "CREATE TABLE narrow_table (" +
-                            "ts TIMESTAMP, " +
-                            "value DOUBLE" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            serverMain.getEngine().execute(
-                    "INSERT INTO narrow_table " +
-                            "SELECT " +
-                            "timestamp_sequence('2024-01-01', 1_000_000) AS ts, " +
-                            "x * 1.5 AS value " +
-                            "FROM long_sequence(10)"
-            );
-            serverMain.awaitTable("narrow_table");
+            // Export to parquet via HTTP. The file has 3 data columns and
+            // 3-column QDB metadata (ts as designated timestamp, category
+            // as varchar, value as double).
+            File parquetFile = new File(importDir, "test.parquet");
+            exportToParquet(serverMain, "SELECT * FROM test_table", parquetFile);
 
-            // Export both tables to parquet using QuestDB's encoder (embeds QDB metadata).
-            File wideFile = new File(importDir, "wide.parquet");
-            File narrowFile = new File(importDir, "narrow.parquet");
-            try (
-                    Path widePath = new Path().of(wideFile.getAbsolutePath());
-                    Path narrowPath = new Path().of(narrowFile.getAbsolutePath());
-                    PartitionDescriptor pd = new PartitionDescriptor();
-                    TableReader wideReader = serverMain.getEngine().getReader("wide_table");
-                    TableReader narrowReader = serverMain.getEngine().getReader("narrow_table")
-            ) {
-                PartitionEncoder.populateFromTableReader(wideReader, pd, 0);
-                PartitionEncoder.encode(pd, widePath);
+            // Inject stale QDB metadata: replace the 3-column schema with a
+            // 2-column schema. This simulates a tool that added a column to
+            // the Parquet data but preserved the old metadata. The schema
+            // length mismatch (2 != 3) triggers the fix, which discards the
+            // stale metadata and falls back to physical type inference.
+            injectStaleMetadata(parquetFile);
 
-                PartitionEncoder.populateFromTableReader(narrowReader, pd, 0);
-                PartitionEncoder.encode(pd, narrowPath);
-            }
-
-            // Step 3: Read the narrow file (2 columns) raw bytes.
-            // The narrow file has QDB metadata for 2 columns (ts, value).
-            // To simulate the bug, we need a file with 2 Parquet data columns
-            // but 3-column QDB metadata. We construct the stale metadata JSON
-            // manually — it says [Timestamp, Varchar, Double] but the file
-            // only has [Timestamp, Double].
-
-            // QDB metadata format: {"version":1,"schema":[{"column_type":N,"column_top":0}, ...]}
-            // Timestamp = 7 (with designated flag), Varchar = 26, Double = 10
-            // The designated timestamp flag: 0x100 (bit 8), ascending: 0x200 (bit 9) -> 7 | 0x300 = 775
-            String staleMetaJson =
-                    "{\"version\":1,\"schema\":[" +
-                            "{\"column_type\":775,\"column_top\":0}," + // ts (designated, ascending)
-                            "{\"column_type\":" + ColumnType.VARCHAR + ",\"column_top\":0}," + // location (STALE!)
-                            "{\"column_type\":" + ColumnType.DOUBLE + ",\"column_top\":0}" + // value
-                            "]}";
-
-            // Rewrite the narrow file footer to inject stale QDB metadata.
-            // Parquet footer structure: [row groups...][footer][4-byte footer length]["PAR1"]
-            // We export via HTTP (which uses the streaming writer) because the
-            // PartitionEncoder creates non-standard parquet for internal use.
-            File modifiedFile = new File(importDir, "modified.parquet");
-            exportToParquetWithStaleMetadata(serverMain, narrowFile, modifiedFile, staleMetaJson);
-
-            // Step 4: Read the modified file with QuestDB's read_parquet.
-            // Without the fix, this fails because stale metadata maps column 1
-            // (value/Double) to the metadata entry for "location" (Varchar).
-            String result = executeQuery(
+            // Read the modified file. Without the fix, the decoder would use
+            // the stale 2-column metadata for a 3-column file, causing type
+            // mismatches (e.g. Double column decoded as Varchar).
+            String jsonResult = executeQuery(
                     serverMain,
-                    "SELECT * FROM read_parquet('modified.parquet')"
+                    "SELECT * FROM read_parquet('test.parquet')"
+            );
+            LOG.info().$("read_parquet result: ").$(jsonResult).$();
+
+            // The HTTP /exec endpoint returns JSON. Verify the response
+            // contains the expected columns and data.
+            Assert.assertTrue(
+                    "result should contain column 'ts'",
+                    jsonResult.contains("\"name\":\"ts\"")
+            );
+            Assert.assertTrue(
+                    "result should contain column 'category'",
+                    jsonResult.contains("\"name\":\"category\"")
+            );
+            Assert.assertTrue(
+                    "result should contain column 'value'",
+                    jsonResult.contains("\"name\":\"value\"")
+            );
+            // Verify data: first row has value = 1 * 1.5 = 1.5
+            Assert.assertTrue(
+                    "result should contain data value 1.5",
+                    jsonResult.contains("1.5")
             );
 
-            Assert.assertNotNull("read_parquet should return data", result);
-            LOG.info().$("read_parquet result: ").$(result).$();
+            // Also verify the column count from the response metadata.
+            // The JSON columns array should have exactly 3 entries.
+            int colCount = countOccurrences(jsonResult, "\"name\":");
+            Assert.assertEquals("Expected 3 columns", 3, colCount);
 
-            // Verify we can also read the narrow file directly (no stale metadata).
-            String narrowResult = executeQuery(
-                    serverMain,
-                    "SELECT * FROM read_parquet('narrow.parquet')"
-            );
-            Assert.assertNotNull("read_parquet should read narrow file", narrowResult);
-
-            serverMain.getEngine().execute("DROP TABLE wide_table");
-            serverMain.getEngine().execute("DROP TABLE narrow_table");
+            serverMain.getEngine().execute("DROP TABLE test_table");
         }
     }
 
     /**
-     * Exports the narrow table via HTTP (to get a standard parquet file),
-     * then injects stale QDB metadata by rewriting the file footer.
+     * Replaces the 3-column QDB metadata in the file with a 2-column version,
+     * padded to the same byte length. The Thrift framing is preserved because
+     * the replacement is the same number of bytes.
      */
-    private void exportToParquetWithStaleMetadata(
-            ServerMain serverMain,
-            File sourceFile,
-            File outputFile,
-            String staleMetaJson
-    ) throws IOException {
-        // Export via HTTP to get a standard-format parquet file.
-        exportToParquet(serverMain, "SELECT * FROM narrow_table", outputFile);
-
-        // Now inject the stale QDB metadata.
-        // Parquet file structure: [data pages...][footer (Thrift)][4-byte footer length][magic "PAR1"]
-        // The footer is a Thrift-encoded FileMetaData structure that contains
-        // key_value_metadata. We need to find and replace the "questdb" entry.
-        //
-        // Since manipulating Thrift binary is complex, we take a simpler approach:
-        // binary search-and-replace the JSON value in the footer.
-        byte[] fileBytes = java.nio.file.Files.readAllBytes(outputFile.toPath());
+    private void injectStaleMetadata(File parquetFile) throws IOException {
+        byte[] fileBytes = java.nio.file.Files.readAllBytes(parquetFile.toPath());
         String fileStr = new String(fileBytes, StandardCharsets.ISO_8859_1);
 
-        // Find the existing QDB metadata JSON in the footer.
-        // The narrow file's QDB metadata has 2 columns.
-        // We replace it with the stale 3-column metadata.
-        int qdbIdx = fileStr.indexOf("\"version\":1,\"schema\":[{");
-        if (qdbIdx < 0) {
-            // No QDB metadata found — the export didn't embed it.
-            // Fall back: just verify read_parquet works on the unmodified file.
-            LOG.info().$("No QDB metadata found in exported file, skipping stale metadata injection").$();
-            return;
-        }
+        // Find the QDB metadata JSON in the footer.
+        String marker = "\"version\":1,\"schema\":[{";
+        int markerIdx = fileStr.indexOf(marker);
+        Assert.assertTrue(
+                "QDB metadata not found in exported parquet file",
+                markerIdx >= 0
+        );
 
-        // Find the end of the JSON object (closing "}")
-        int depth = 0;
-        int jsonStart = qdbIdx - 1; // include the opening "{"
+        // Walk backwards to the opening '{' of the JSON object.
+        int jsonStart = markerIdx - 1;
         while (jsonStart > 0 && fileStr.charAt(jsonStart) != '{') {
             jsonStart--;
         }
+
+        // Walk forwards with brace-depth tracking to find the closing '}'.
+        int depth = 0;
         int jsonEnd = jsonStart;
         for (int i = jsonStart; i < fileStr.length(); i++) {
             char c = fileStr.charAt(i);
-            if (c == '{') depth++;
-            else if (c == '}') {
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
                 depth--;
                 if (depth == 0) {
                     jsonEnd = i + 1;
@@ -232,39 +185,52 @@ public class ParquetStaleMetadataTest extends AbstractTest {
                 }
             }
         }
+        Assert.assertTrue("Failed to find end of QDB metadata JSON", jsonEnd > jsonStart);
 
         String originalJson = fileStr.substring(jsonStart, jsonEnd);
-        LOG.info().$("Original QDB metadata: ").$(originalJson).$();
-        LOG.info().$("Stale QDB metadata: ").$(staleMetaJson).$();
+        int originalLen = originalJson.length();
+        LOG.info().$("Original QDB metadata (").$(originalLen).$(" bytes): ").$(originalJson).$();
 
-        // Only replace if lengths match (otherwise Thrift offsets break).
-        // If they don't match, pad the shorter one or truncate.
-        // For simplicity, if lengths differ we skip the injection.
-        if (originalJson.length() != staleMetaJson.length()) {
-            LOG.info().$("Metadata length mismatch (")
-                    .$(originalJson.length()).$(" vs ").$(staleMetaJson.length())
-                    .$("), padding stale metadata").$();
-            // Pad with spaces inside the JSON to match length.
-            // Add spaces after the last entry's column_top value.
-            while (staleMetaJson.length() < originalJson.length()) {
-                // Insert a space before the closing "]}"
-                staleMetaJson = staleMetaJson.substring(0, staleMetaJson.length() - 2)
-                        + " " + staleMetaJson.substring(staleMetaJson.length() - 2);
-            }
-            if (staleMetaJson.length() > originalJson.length()) {
-                // Stale metadata is longer — can't inject without breaking Thrift offsets.
-                // This test won't work in this case.
-                LOG.info().$("Cannot inject stale metadata: too long after padding").$();
-                return;
-            }
+        // Build a 2-column stale metadata (ts + value, dropping category).
+        // ColumnType.TIMESTAMP = 8, designated timestamp flag = 1 << 17 = 131072
+        // Designated ascending = 8 | 131072 = 131080
+        // ColumnType.DOUBLE = 10
+        String staleJson =
+                "{\"version\":1,\"schema\":[" +
+                        "{\"column_type\":" + (ColumnType.TIMESTAMP | (1 << 17)) + ",\"column_top\":0}," +
+                        "{\"column_type\":" + ColumnType.DOUBLE + ",\"column_top\":0}" +
+                        "]}";
+
+        // Pad with whitespace before the closing "]}" to match the original length.
+        // JSON allows arbitrary whitespace between tokens.
+        Assert.assertTrue(
+                "Stale metadata (" + staleJson.length() + " bytes) must not exceed original ("
+                        + originalLen + " bytes)",
+                staleJson.length() <= originalLen
+        );
+
+        StringBuilder padded = new StringBuilder(staleJson);
+        // Insert spaces before the final "]}"
+        int insertPos = padded.length() - 2;
+        while (padded.length() < originalLen) {
+            padded.insert(insertPos, ' ');
         }
+        String paddedStale = padded.toString();
+        Assert.assertEquals(
+                "Padded stale metadata must be exactly the same length as original",
+                originalLen, paddedStale.length()
+        );
 
-        // Replace the metadata in the raw bytes.
-        byte[] staleBytes = staleMetaJson.getBytes(StandardCharsets.ISO_8859_1);
+        LOG.info().$("Stale QDB metadata (").$(paddedStale.length()).$(" bytes): ").$(paddedStale).$();
+
+        // Binary-replace the metadata in place. Because the byte length is
+        // identical, the Thrift string framing and the Parquet footer length
+        // remain valid.
+        byte[] staleBytes = paddedStale.getBytes(StandardCharsets.ISO_8859_1);
         System.arraycopy(staleBytes, 0, fileBytes, jsonStart, staleBytes.length);
-        java.nio.file.Files.write(outputFile.toPath(), fileBytes);
+        java.nio.file.Files.write(parquetFile.toPath(), fileBytes);
 
-        LOG.info().$("Successfully injected stale QDB metadata into ").$(outputFile.getAbsolutePath()).$();
+        LOG.info().$("Injected stale 2-column QDB metadata into 3-column parquet file").$();
     }
 
     private void exportToParquet(ServerMain serverMain, String query, File outputFile) throws IOException {
@@ -335,5 +301,15 @@ public class ParquetStaleMetadataTest extends AbstractTest {
                 return sb.toString();
             }
         }
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = haystack.indexOf(needle, idx)) != -1) {
+            count++;
+            idx += needle.length();
+        }
+        return count;
     }
 }
