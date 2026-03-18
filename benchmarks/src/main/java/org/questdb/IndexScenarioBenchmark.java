@@ -605,11 +605,13 @@ public class IndexScenarioBenchmark {
             if (c > maxCount) maxCount = c;
             if (c < minCount) minCount = c;
         }
+        java.util.Arrays.sort(counts);
+        int top10Sum = 0;
+        for (int i = Math.max(0, counts.length - 10); i < counts.length; i++) {
+            top10Sum += counts[i];
+        }
         System.out.printf("  key distribution: min=%,d, max=%,d, top-1=%,d, top-10=%,d%n%n",
-                minCount, maxCount, counts[0],
-                java.util.Arrays.stream(counts).boxed()
-                        .sorted(java.util.Comparator.reverseOrder())
-                        .limit(10).mapToInt(Integer::intValue).sum());
+                counts[0], counts[counts.length - 1], counts[counts.length - 1], top10Sum);
 
         int[] readKeys = new int[ZF_READ_BATCH];
         for (int i = 0; i < ZF_READ_BATCH; i++) readKeys[i] = i;
