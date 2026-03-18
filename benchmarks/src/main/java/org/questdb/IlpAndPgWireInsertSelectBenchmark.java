@@ -51,9 +51,9 @@ public class IlpAndPgWireInsertSelectBenchmark {
     private static boolean useIlp;
 
     public static void main(String[] args) throws Exception {
-//        useIlp = false;
-//        runBenchmark();
-//        Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
+        useIlp = false;
+        runBenchmark();
+        Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
         useIlp = true;
         runBenchmark();
     }
