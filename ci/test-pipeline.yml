@@ -207,13 +207,6 @@ stages:
           - download: current
             artifact: rust-llvm-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
-            displayName: "Ensure Rust is installed"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - template: templates/install-llvm.yml
-            parameters:
-              shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-
           - task: Cache@2
             continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -246,66 +239,38 @@ stages:
 
           - bash: |
               set -eux
-              export PATH=$LLVM_TOOLS_PATH:$PATH
-              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
-
-              # Merge partial profdata files from all jobs into the complete report
-              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
-
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              if [ ! -d "$COVERAGE_DIR/deps" ]; then
-                echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
-                exit 1
-              fi
-              # Restore execute permissions lost during artifact download
-              # (PublishBuildArtifacts does not preserve Unix permissions)
-              find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -exec chmod +x {} +
-              mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
-              if [ ${#RUST_TEST_OBJECTS[@]} -eq 0 ]; then
-                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
-                exit 1
-              fi
-              OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
-              for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
-                OBJECT_ARGS+=(--object "$rust_test_object")
-              done
-              if [ ${#OBJECT_ARGS[@]} -le 1 ]; then
-                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
-                exit 1
-              fi
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work|/home/vsts/work)/[0-9]+/s' | head -n 1 || true)
-              if [ -z "$ORIG_PATH" ]; then
-                echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
-                exit 1
-              fi
-              PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
-              echo "Using $((${#OBJECT_ARGS[@]} / 2)) object files for llvm-cov"
+              ls -al $COVERAGE_DIR
 
-              # Export the merged coverage report to LCOV format
-              llvm-cov export \
-              --format=lcov \
-              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-              $PATH_EQUIV_ARGS \
-              "${OBJECT_ARGS[@]}" \
-              --instr-profile=questdbr.profdata \
-              > questdbr.lcov.dat
+              # Concatenate all partial LCOV files into a single file
+              LCOV_FILES=$(find "$COVERAGE_DIR" -name '*.lcov' -type f)
+              if [ -z "$LCOV_FILES" ]; then
+                echo "No LCOV files found in $COVERAGE_DIR"
+                exit 1
+              fi
+              cat $LCOV_FILES > questdbr-combined.lcov.dat
 
-              # Generate HTML report for local inspection
-              llvm-cov show \
-                --format=html \
-                --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-                $PATH_EQUIV_ARGS \
-                "${OBJECT_ARGS[@]}" \
-                --instr-profile=questdbr.profdata \
-                --output-dir $(Build.SourcesDirectory)/rust-coverage
-
-              # Merge LCOV coverage results from multiple objects into a single report
-              python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
+              # Merge LCOV coverage results, normalizing paths from different build agents
+              python3 ./ci/merge_lcov_paths.py questdbr-combined.lcov.dat questdbr-patched.lcov.dat
 
               # Convert LCOV coverage results to Cobertura XML format
               python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload Rust coverage report"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+            inputs:
+              pathToPublish: "$(Build.SourcesDirectory)/cobertura.xml"
+              artifactName: "rust-coverage"
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload merged JaCoCo report"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            inputs:
+              pathToPublish: "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"
+              artifactName: "jacoco-merged-coverage-report"
 
           - bash: |
               set -eux
