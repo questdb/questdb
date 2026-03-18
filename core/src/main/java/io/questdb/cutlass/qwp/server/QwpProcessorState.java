@@ -308,12 +308,12 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (CairoException e) {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
             if (e.isAuthorizationError()) {
-                reject(Status.SECURITY_ERROR, e.getFlyweightMessage().toString(), fd);
+                reject(Status.SECURITY_ERROR, e.getFlyweightMessage(), fd);
             } else if (e.isCritical()) {
                 tudCache.setDistressed();
-                reject(Status.INTERNAL_ERROR, e.getFlyweightMessage().toString(), fd);
+                reject(Status.INTERNAL_ERROR, e.getFlyweightMessage(), fd);
             } else {
-                reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage().toString(), fd);
+                reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
             }
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
@@ -322,7 +322,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void reject(Status status, String errorText, long fd) {
+    public void reject(Status status, CharSequence errorText, long fd) {
         currentStatus = status;
         if (errorText != null) {
             error.put(errorText, 0, Math.min(errorText.length(), maxResponseErrorMessageLength));
