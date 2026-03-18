@@ -225,7 +225,7 @@ public class QwpMessageCursor implements Mutable {
             int symbolLen = (int) varintResult.value;
             address += varintResult.bytesRead;
 
-            if (address + symbolLen > payloadEnd) {
+            if (symbolLen < 0 || address + symbolLen > payloadEnd) {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                         "truncated delta symbol value"
