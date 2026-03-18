@@ -324,6 +324,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void reject(Status status, CharSequence errorText, long fd) {
         currentStatus = status;
+        error.clear();
         if (errorText != null) {
             error.put(errorText, 0, Math.min(errorText.length(), maxResponseErrorMessageLength));
         } else {
