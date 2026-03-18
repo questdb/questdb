@@ -2761,6 +2761,63 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testOutOfOrderTimestamps() throws Exception {
+        runInContext((port) -> {
+            int rowCount = 5000;
+            int batchSize = 500;
+            long baseTs = 1_000_000_000_000L;
+            long step = 1000L;
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+                // Send rows with descending timestamps so every row is out of order
+                for (int i = 0; i < rowCount; i++) {
+                    long ts = baseTs + (rowCount - 1 - i) * step;
+                    sender.table("ooo_test")
+                            .symbol("sym", "s" + (i % 10))
+                            .longColumn("val", i)
+                            .doubleColumn("dbl", i * 1.5)
+                            .at(ts, ChronoUnit.MICROS);
+
+                    if ((i + 1) % batchSize == 0) {
+                        sender.flush();
+                    }
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+
+            assertSql("SELECT count() FROM ooo_test", "count\n" + rowCount + "\n");
+
+            // Verify data is sorted by timestamp after ingestion
+            assertSql(
+                    "SELECT val FROM ooo_test ORDER BY timestamp LIMIT 5",
+                    """
+                            val
+                            4999
+                            4998
+                            4997
+                            4996
+                            4995
+                            """
+            );
+
+            // Verify the last rows
+            assertSql(
+                    "SELECT val FROM ooo_test ORDER BY timestamp DESC LIMIT 5",
+                    """
+                            val
+                            0
+                            1
+                            2
+                            3
+                            4
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSameColumnNameDifferentTypesDifferentTables() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
