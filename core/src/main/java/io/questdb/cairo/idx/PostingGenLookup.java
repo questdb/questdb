@@ -82,7 +82,7 @@ class PostingGenLookup implements Closeable {
     private int keyCount;
     private long memoryBudget = DEFAULT_MEMORY_BUDGET;
 
-    void build(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int genCount) {
+    void build(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int genCount, long activePageOffset) {
         close();
         this.keyCount = keyCount;
         this.builtForGenCount = 0;
@@ -93,26 +93,26 @@ class PostingGenLookup implements Closeable {
             return;
         }
 
-        buildMetadata(keyMem, 0, genCount);
+        buildMetadata(keyMem, 0, genCount, activePageOffset);
         buildLookupIndex(keyMem, valueMem, keyCount, genCount, 0);
         this.builtForGenCount = genCount;
     }
 
-    void buildIncremental(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int newGenCount) {
+    void buildIncremental(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int newGenCount, long activePageOffset) {
         if (newGenCount <= builtForGenCount && this.keyCount == keyCount) {
             return;
         }
 
         if (this.keyCount != keyCount || builtForGenCount == 0 || genFileOffsets == null) {
             // Key count changed or no prior build — full rebuild
-            build(keyMem, valueMem, keyCount, newGenCount);
+            build(keyMem, valueMem, keyCount, newGenCount, activePageOffset);
             return;
         }
 
         int oldGenCount = builtForGenCount;
 
         // Extend metadata arrays
-        buildMetadata(keyMem, oldGenCount, newGenCount);
+        buildMetadata(keyMem, oldGenCount, newGenCount, activePageOffset);
 
         // Extend lookup index
         if (tier == TIER_PER_KEY) {
@@ -232,7 +232,7 @@ class PostingGenLookup implements Closeable {
         }
     }
 
-    private void buildMetadata(MemoryMR keyMem, int fromGen, int toGenCount) {
+    private void buildMetadata(MemoryMR keyMem, int fromGen, int toGenCount, long activePageOffset) {
         if (genFileOffsets == null || genFileOffsets.length < toGenCount) {
             int newSize = Math.max(toGenCount, 16);
             long[] newOffsets = new long[newSize];
@@ -257,7 +257,7 @@ class PostingGenLookup implements Closeable {
         }
 
         for (int g = fromGen; g < toGenCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
             genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
             genDataSizes[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
             genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);

@@ -36,7 +36,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -61,6 +60,7 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
+    private long activePageOffset;
     private long columnTxn;
     private int genCount;
     private int keyCountIncludingNulls;
@@ -185,17 +185,12 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
             );
             this.clock = configuration.getMillisecondClock();
 
-            if (keyMem.getByte(PostingIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != PostingIndexUtils.SIGNATURE) {
-                LOG.error().$("unknown format [corrupt] ").$(path).$();
-                throw CairoException.critical(0).put("Unknown format: ").put(path);
-            }
+            readIndexMetadataFromBestPage();
 
-            int version = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_FORMAT_VERSION);
+            int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
             if (version != 0 && version != PostingIndexUtils.FORMAT_VERSION) {
                 throw CairoException.critical(0).put("Unsupported Posting index version: ").put(version);
             }
-
-            readIndexMetadataAtomically();
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
@@ -214,11 +209,12 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
 
     @Override
     public void reloadConditionally() {
-        long seq = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
-        if (seq != keyFileSequence) {
-            readIndexMetadataAtomically();
-            long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
-            this.keyMem.extend(keyFileSize);
+        // Check both pages for a higher sequence than cached
+        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long maxSeq = Math.max(seqA, seqB);
+        if (maxSeq != keyFileSequence) {
+            readIndexMetadataFromBestPage();
             // Use changeSize instead of extend so the mapping can shrink after
             // a compactValueFile() reduces valueMemSize. If extend() kept the old
             // (larger) mapping, pages beyond the truncated file would fault.
@@ -231,39 +227,35 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
     }
 
     public void updateKeyCount() {
-        int keyCount;
-        int genCount;
-        long valueMemSize;
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
-        while (true) {
-            long seq = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-            Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                keyCount = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                genCount = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
-                valueMemSize = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-                Unsafe.getUnsafe().loadFence();
-                if (seq == keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
-                    break;
-                }
-            }
-            if (clock.getTicks() > deadline) {
-                this.keyCount = 0;
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
-                throw CairoException.critical(0).put(INDEX_CORRUPT);
-            }
-            Os.pause();
+        // Double-buffer protocol: pick the page with the highest valid sequence
+        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        Unsafe.getUnsafe().loadFence();
+        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        Unsafe.getUnsafe().loadFence();
+        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+        long validA = (seqA == seqEndA) ? seqA : 0;
+        long validB = (seqB == seqEndB) ? seqB : 0;
+        long bestSeq = Math.max(validA, validB);
+
+        if (bestSeq <= keyFileSequence) {
+            return; // no update
         }
 
+        long bestPage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+        int keyCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+        int genCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+        long valueMemSize = keyMem.getLong(bestPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+
         if (keyCount >= this.keyCount) {
-            // Extend memory mappings before updating genCount/keyCount so that
-            // any concurrent access using the new genCount finds mapped memory.
-            long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
-            keyMem.extend(keyFileSize);
             // Use changeSize to allow the mapping to shrink after compaction.
             if (valueMemSize > 0) {
                 ((MemoryCMR) valueMem).changeSize(valueMemSize);
             }
+            this.activePageOffset = bestPage;
+            this.keyFileSequence = bestSeq;
+            this.valueMemSize = valueMemSize;
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
             this.genCount = genCount;
@@ -305,39 +297,28 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
         if (genCount == 0 || keyCount == 0) {
             return;
         }
-        genLookup.buildIncremental(keyMem, valueMem, keyCount, genCount);
+        genLookup.buildIncremental(keyMem, valueMem, keyCount, genCount, activePageOffset);
     }
 
-    private void readIndexMetadataAtomically() {
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
-        while (true) {
-            long seq = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-            Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                int keyCount = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                long valueMemSize = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-                int genCount = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+    private void readIndexMetadataFromBestPage() {
+        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        Unsafe.getUnsafe().loadFence();
+        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        Unsafe.getUnsafe().loadFence();
+        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
 
-                Unsafe.getUnsafe().loadFence();
-                if (keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
-                    this.keyFileSequence = seq;
-                    this.valueMemSize = valueMemSize;
-                    this.keyCount = keyCount;
-                    this.genCount = genCount;
-                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+        long validA = (seqA == seqEndA) ? seqA : 0;
+        long validB = (seqB == seqEndB) ? seqB : 0;
+        long bestPage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+        long bestSeq = Math.max(validA, validB);
 
-                    long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
-                    keyMem.extend(keyFileSize);
-                    break;
-                }
-            }
-
-            if (clock.getTicks() > deadline) {
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
-                throw CairoException.critical(0).put(INDEX_CORRUPT);
-            }
-            Os.pause();
-        }
+        this.activePageOffset = bestPage;
+        this.keyFileSequence = bestSeq;
+        this.valueMemSize = keyMem.getLong(bestPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+        this.keyCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+        this.genCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+        this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
     }
 
     private class Cursor implements RowCursor {

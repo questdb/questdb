@@ -56,7 +56,7 @@ import static io.questdb.cairo.idx.PostingIndexUtils.*;
  */
 public class PostingIndexWriter implements IndexWriter {
     private static final int INITIAL_KEY_CAPACITY = 64;
-    private static final int MAX_GEN_COUNT = 256;
+    private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final Log LOG = LogFactory.getLog(PostingIndexWriter.class);
 
     private final CairoConfiguration configuration;
@@ -72,6 +72,7 @@ public class PostingIndexWriter implements IndexWriter {
     // Active key tracking to avoid scanning all keys per flush
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private int activeKeyCount;
+    private long activePageOffset;
     private int blockCapacity;
     private FilesFacade ff;
     // Reusable flush buffers to avoid malloc/free per commit
@@ -114,19 +115,31 @@ public class PostingIndexWriter implements IndexWriter {
     public static void initKeyMemory(MemoryMA keyMem, int blockCapacity) {
         keyMem.jumpTo(0);
         keyMem.truncate();
-        keyMem.putByte(SIGNATURE);
-        keyMem.skip(7);
-        keyMem.putLong(1); // SEQUENCE
+
+        // Zero-fill both 4KB pages (8192 bytes total)
+        for (int i = 0; i < KEY_FILE_RESERVED / Long.BYTES; i++) {
+            keyMem.putLong(0L);
+        }
+
+        // Overwrite Page A fields via direct memory access (the region is already mapped)
+        long baseAddr = keyMem.addressOf(PostingIndexUtils.PAGE_A_OFFSET);
+        // sequence_start = 1
+        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 1L);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(0); // VALUE_MEM_SIZE
-        keyMem.putInt(blockCapacity); // BLOCK_CAPACITY
-        keyMem.putInt(0); // KEY_COUNT
+        // valueMemSize = 0 (already zeroed)
+        // blockCapacity
+        Unsafe.getUnsafe().putInt(baseAddr + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY, blockCapacity);
+        // keyCount = 0 (already zeroed)
+        // maxValue = -1
+        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, -1L);
+        // genCount = 0 (already zeroed)
+        // formatVersion
+        Unsafe.getUnsafe().putInt(baseAddr + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
+        // sequence_end = 1
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(1); // SEQUENCE_CHECK
-        keyMem.putLong(-1); // MAX_VALUE
-        keyMem.putInt(0); // GEN_COUNT
-        keyMem.putInt(FORMAT_VERSION); // FORMAT_VERSION
-        keyMem.skip(KEY_FILE_RESERVED - keyMem.getAppendOffset());
+        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 1L);
+
+        // Page B stays zeroed (seq=0), so Page A is the valid page.
     }
 
     @Override
@@ -179,10 +192,7 @@ public class PostingIndexWriter implements IndexWriter {
         compactValueFile();
 
         if (keyMem.isOpen()) {
-            long keyFileSize = genCount > 0
-                    ? PostingIndexUtils.getGenDirOffset(genCount)
-                    : KEY_FILE_RESERVED;
-            keyMem.setSize(keyFileSize);
+            keyMem.setSize(KEY_FILE_RESERVED);
             Misc.free(keyMem);
         }
         if (valueMem.isOpen()) {
@@ -222,7 +232,7 @@ public class PostingIndexWriter implements IndexWriter {
         // Single sparse generation: seal to convert to stride-indexed dense format
         // (enables Packed mode compression which can be significantly smaller)
         if (genCount == 1) {
-            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(0);
+            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
             int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             if (gen0KeyCount >= 0) {
                 // Already dense — nothing to do
@@ -234,13 +244,13 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Check if incremental seal is possible:
         // gen 0 must be dense, and all subsequent gens must be sparse
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(0);
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         boolean isIncrementalCandidate = gen0KeyCount >= 0;
 
         if (isIncrementalCandidate) {
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(g);
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
                 int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 if (gkc >= 0) {
                     isIncrementalCandidate = false;
@@ -268,7 +278,7 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().setMemory(dirtyStridesAddr, sc, (byte) 0);
         int dirtyCount = 0;
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
@@ -292,7 +302,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // Read gen 0 metadata
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(0);
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         int gen0DataSize = keyMem.getInt(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
         long gen0Addr = valueMem.addressOf(gen0FileOffset);
@@ -359,8 +369,9 @@ public class PostingIndexWriter implements IndexWriter {
             valueMemSize = valueMem.getAppendOffset();
 
             genCount = 1;
-            updateHeaderAndGenDirAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE),
-                    sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
+            writeMetadataPage(genCount,
+                    keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
+                    0, sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
         } finally {
             Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_DEFAULT);
@@ -564,7 +575,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Decode from sparse gens 1..N
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(g);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
@@ -693,7 +704,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long genAddr = valueMem.addressOf(genFileOffset);
@@ -763,7 +774,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                 // Decode from each generation
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                     int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genAddr = valueMem.addressOf(genFileOffset);
@@ -1102,12 +1113,9 @@ public class PostingIndexWriter implements IndexWriter {
 
                     genCount = 1;
 
-                    // Write gen dir[0] and header atomically (within the same sequence window).
-                    // Without this, a concurrent reader could see the modified gen dir[0]
-                    // (pointing to sealed data) while still using the old genCount (N gens),
-                    // producing duplicate values.
-                    updateHeaderAndGenDirAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE),
-                            sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
+                    writeMetadataPage(genCount,
+                            keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
+                            0, sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
                 } finally {
                     Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
@@ -1131,7 +1139,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         LongList values = new LongList();
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
+            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
@@ -1231,12 +1239,14 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public long getMaxValue() {
-        return keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE);
+        return keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
     }
 
     @Override
     public void setMaxValue(long maxValue) {
-        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
+        // Write maxValue directly on the active page for writer-only reads.
+        // Published to readers via writeMetadataPage on next commit/seal.
+        keyMem.putLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
     }
 
     @Override
@@ -1274,20 +1284,26 @@ public class PostingIndexWriter implements IndexWriter {
 
                 kFdUnassigned = false;
                 keyMem.of(ff, keyFd, null, keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
+            }
 
-                byte sig = keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE);
-                if (sig != SIGNATURE) {
+            if (init) {
+                this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+            } else {
+                determineActivePageOffset();
+
+                int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
+                if (version != FORMAT_VERSION) {
                     throw CairoException.critical(0)
-                            .put("Unknown format: invalid BP index signature [fd=").put(keyFd)
-                            .put(", expected=").put(SIGNATURE)
-                            .put(", actual=").put(sig).put(']');
+                            .put("Unsupported Posting index version [fd=").put(keyMem.getFd())
+                            .put(", expected=").put(FORMAT_VERSION)
+                            .put(", actual=").put(version).put(']');
                 }
             }
 
-            this.valueMemSize = keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-            this.blockCapacity = keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
-            this.keyCount = keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
-            this.genCount = keyMem.getInt(KEY_RESERVED_OFFSET_GEN_COUNT);
+            this.valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+            this.blockCapacity = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY);
+            this.keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+            this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
@@ -1364,7 +1380,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long genAddr = valueMem.addressOf(genFileOffset);
@@ -1430,7 +1446,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
 
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(gen);
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                     int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genAddr = valueMem.addressOf(genFileOffset);
@@ -1757,8 +1773,8 @@ public class PostingIndexWriter implements IndexWriter {
 
                     genCount = 1;
 
-                    updateHeaderAndGenDirAtomically(genCount, maxValue,
-                            sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
+                    writeMetadataPage(genCount, maxValue,
+                            0, sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
                 }
 
             } finally {
@@ -1820,19 +1836,25 @@ public class PostingIndexWriter implements IndexWriter {
 
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), -1L, MemoryTag.MMAP_INDEX_WRITER);
                 kFdUnassigned = false;
+            }
 
-                byte sig = keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE);
-                if (sig != SIGNATURE) {
+            if (init) {
+                this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+            } else {
+                determineActivePageOffset();
+
+                int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
+                if (version != FORMAT_VERSION) {
                     throw CairoException.critical(0)
-                            .put("Unknown format: invalid BP index signature [expected=").put(SIGNATURE)
-                            .put(", actual=").put(sig).put(']');
+                            .put("Unsupported Posting index version [expected=").put(FORMAT_VERSION)
+                            .put(", actual=").put(version).put(']');
                 }
             }
 
-            this.valueMemSize = keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-            this.blockCapacity = keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_CAPACITY);
-            this.keyCount = keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
-            this.genCount = keyMem.getInt(KEY_RESERVED_OFFSET_GEN_COUNT);
+            this.valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+            this.blockCapacity = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY);
+            this.keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+            this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
             valueMem.of(
                     ff,
@@ -1869,6 +1891,7 @@ public class PostingIndexWriter implements IndexWriter {
         freeNativeBuffers();
         initKeyMemory(keyMem, blockCapacity);
         valueMem.truncate();
+        activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
         keyCount = 0;
         valueMemSize = 0;
         genCount = 0;
@@ -1890,7 +1913,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (genCount != 1 || keyCount == 0) {
             return;
         }
-        long dirOffset = PostingIndexUtils.getGenDirOffset(0);
+        long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
         long gen0Offset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         if (gen0Offset == 0) {
             return; // already compact
@@ -1914,11 +1937,16 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.getUnsafe().copyMemory(src, dst, gen0Size);
         }
 
-        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
         valueMemSize = gen0Size;
         valueMem.jumpTo(valueMemSize);
 
-        updateHeaderAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE));
+        // Publish compacted gen 0 with file offset 0 via double-buffer protocol
+        int gen0KeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        int gen0MinKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+        int gen0MaxKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+        writeMetadataPage(genCount,
+                keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
+                0, 0L, gen0Size, gen0KeyCount, gen0MinKey, gen0MaxKey);
 
         LOG.info().$("compacted BP index [deadSpace=").$(gen0Offset)
                 .$(", liveSize=").$(gen0Size).$(']').$();
@@ -1971,7 +1999,7 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        long maxValue = keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE);
+        long maxValue = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
 
         // Use sparse format: keyIds + counts + offsets (3 arrays of activeKeyCount)
         int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
@@ -2081,16 +2109,10 @@ public class PostingIndexWriter implements IndexWriter {
         int minKey = activeKeyIds[0];
         int maxKey = activeKeyIds[activeKeyCount - 1];
 
-        long dirOffset = PostingIndexUtils.getGenDirOffset(genCount);
-        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genOffset);
-        keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
-        // Negative genKeyCount signals sparse format
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, -activeKeyCount);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
         genCount++;
-
-        updateHeaderAtomically(genCount, maxValue);
+        // The newly appended gen is at index genCount-1
+        writeMetadataPage(genCount, maxValue,
+                genCount - 1, genOffset, totalGenSize, -activeKeyCount, minKey, maxKey);
 
         // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
@@ -2266,47 +2288,90 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Atomically publishes a sealed generation by writing the gen dir[0] entry
-     * AND the header within the same sequence window. This prevents a concurrent
-     * reader from seeing the modified gen dir[0] (pointing to sealed data) while
-     * still using the old genCount, which would cause it to read both the sealed
-     * gen and the old sparse gens — producing duplicate values.
+     * Determines which metadata page is currently active (has the highest valid sequence).
+     * A page is valid when its sequence_start == sequence_end.
      */
-    private void updateHeaderAndGenDirAtomically(int genCount, long maxValue,
-                                                  long genFileOffset, int genSize,
-                                                  int genKeyCount, int minKey, int maxKey) {
-        long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
-        Unsafe.getUnsafe().storeFence();
+    private void determineActivePageOffset() {
+        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
 
-        // Gen dir[0] — written inside the sequence window so readers never see
-        // a partially-updated state (old genCount with new gen dir[0])
-        long dirOffset = PostingIndexUtils.getGenDirOffset(0);
-        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genFileOffset);
-        keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, genSize);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, genKeyCount);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
-
-        // Header fields
-        keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
-        keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
-        keyMem.putInt(KEY_RESERVED_OFFSET_GEN_COUNT, genCount);
-        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+        long validA = (seqA == seqEndA) ? seqA : 0;
+        long validB = (seqB == seqEndB) ? seqB : 0;
+        activePageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
     }
 
-    private void updateHeaderAtomically(int genCount, long maxValue) {
-        long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
+    /**
+     * Writes a new metadata page to the inactive page (double-buffer protocol).
+     * Copies gen dir entries from the active page, with an optional override for one entry.
+     *
+     * @param genCount        number of generations
+     * @param maxValue        max value to write
+     * @param overrideGenIndex gen dir index to override (-1 to copy all from active page)
+     * @param overrideFileOffset file offset for the overridden gen dir entry
+     * @param overrideSize    size for the overridden gen dir entry
+     * @param overrideKeyCount key count for the overridden gen dir entry
+     * @param overrideMinKey  min key for the overridden gen dir entry
+     * @param overrideMaxKey  max key for the overridden gen dir entry
+     */
+    private void writeMetadataPage(int genCount, long maxValue,
+                                    int overrideGenIndex, long overrideFileOffset,
+                                    int overrideSize, int overrideKeyCount,
+                                    int overrideMinKey, int overrideMaxKey) {
+        // Compute inactive page offset
+        long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
+                ? PostingIndexUtils.PAGE_B_OFFSET
+                : PostingIndexUtils.PAGE_A_OFFSET;
+
+        // Compute new sequence = current active seq + 1
+        long currentSeq = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long newSeq = currentSeq + 1;
+
+        // Write sequence_start first
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, newSeq);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
-        keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
-        keyMem.putInt(KEY_RESERVED_OFFSET_GEN_COUNT, genCount);
-        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
+
+        // Write header fields
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE, valueMemSize);
+        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY, blockCapacity);
+        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT, keyCount);
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
+        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, genCount);
+        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
+
+        // Copy gen dir entries from active page, with optional override
+        for (int g = 0; g < genCount; g++) {
+            long srcOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+            long dstOffset = PostingIndexUtils.getGenDirOffset(inactivePageOffset, g);
+
+            if (g == overrideGenIndex) {
+                keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
+                keyMem.putInt(dstOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
+                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
+                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
+                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
+            } else {
+                // Copy from active page
+                keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET,
+                        keyMem.getLong(srcOffset + GEN_DIR_OFFSET_FILE_OFFSET));
+                keyMem.putInt(dstOffset + GEN_DIR_OFFSET_SIZE,
+                        keyMem.getInt(srcOffset + GEN_DIR_OFFSET_SIZE));
+                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT,
+                        keyMem.getInt(srcOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT));
+                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY,
+                        keyMem.getInt(srcOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
+                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY,
+                        keyMem.getInt(srcOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            }
+        }
+
+        // Write sequence_end last
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, newSeq);
+
+        // Switch active page
+        activePageOffset = inactivePageOffset;
     }
 
     private static class TestFwdCursor implements RowCursor {

@@ -46,10 +46,22 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * packedBlock[0..n-1]  : variable size bitpacked residuals
  * </pre>
  * <p>
- * Key File Layout (.bk):
+ * Key File Layout (.bk) — double-buffered 4KB metadata pages (v2):
  * <pre>
- * [Header 64B: sig(0xfb), seq, valMemSize, blockCapacity, keyCount, seqCheck, maxVal, genCount]
- * [Generation directory: genCount × 24B (offset(8), size(4), keyCount(4), minKey(4), maxKey(4))]
+ * Page A: [0, 4096)
+ * Page B: [4096, 8192)
+ *
+ * Each page:
+ *   [0-7]       sequence_start (8B)
+ *   [8-15]      valueMemSize (8B)
+ *   [16-19]     blockCapacity (4B)
+ *   [20-23]     keyCount (4B)
+ *   [24-31]     maxValue (8B)
+ *   [32-35]     genCount (4B)
+ *   [36-39]     formatVersion (4B)
+ *   [40-63]     reserved (24B)
+ *   [64-4087]   gen dir: up to 167 entries × 24B = 4008B
+ *   [4088-4095] sequence_end (8B) — must equal sequence_start for valid page
  * </pre>
  * <p>
  * Value File Layout (.bv):
@@ -109,18 +121,27 @@ public final class PostingIndexUtils {
     public static final int STRIDE_PACKED_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
     public static final int STRIDE_PACKED_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
 
-    // Key file header offsets (64 bytes)
-    public static final int KEY_FILE_RESERVED = 64;
-    public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
-    public static final int KEY_RESERVED_OFFSET_SEQUENCE = 8;
-    public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 16;
-    public static final int KEY_RESERVED_OFFSET_BLOCK_CAPACITY = 24;
-    public static final int KEY_RESERVED_OFFSET_KEY_COUNT = 28;
-    public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 32;
-    public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;
-    public static final int KEY_RESERVED_OFFSET_GEN_COUNT = 48;
-    public static final int KEY_RESERVED_OFFSET_FORMAT_VERSION = 52;
+    // Double-buffered 4KB metadata pages (v2 format)
+    public static final int PAGE_SIZE = 4096;
+    public static final long PAGE_A_OFFSET = 0;
+    public static final long PAGE_B_OFFSET = 4096;
+    public static final int KEY_FILE_RESERVED = 8192; // was 64
+
+    // Per-page offsets
+    public static final int PAGE_OFFSET_SEQUENCE_START = 0;
+    public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
+    public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
+    public static final int PAGE_OFFSET_KEY_COUNT = 20;
+    public static final int PAGE_OFFSET_MAX_VALUE = 24;
+    public static final int PAGE_OFFSET_GEN_COUNT = 32;
+    public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
+    public static final int PAGE_OFFSET_GEN_DIR = 64;
+    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
+
+    public static final int MAX_GEN_COUNT = 167; // (4088-64)/24 = 167
     public static final int FORMAT_VERSION = 1;
+
+    public static final byte SIGNATURE = (byte) 0xfb;
 
     // Generation directory entry (24 bytes per generation)
     public static final int GEN_DIR_ENTRY_SIZE = 24;
@@ -129,8 +150,6 @@ public final class PostingIndexUtils {
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 12;
     public static final int GEN_DIR_OFFSET_MIN_KEY = 16;
     public static final int GEN_DIR_OFFSET_MAX_KEY = 20;
-
-    public static final byte SIGNATURE = (byte) 0xfb;
 
     private PostingIndexUtils() {
     }
@@ -731,10 +750,13 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Offset of generation directory entry in the key file (no symbol table).
+     * Offset of generation directory entry within a metadata page.
+     *
+     * @param pageBase the base offset of the page (PAGE_A_OFFSET or PAGE_B_OFFSET)
+     * @param genIndex the generation index
      */
-    public static long getGenDirOffset(int genIndex) {
-        return KEY_FILE_RESERVED + (long) genIndex * GEN_DIR_ENTRY_SIZE;
+    public static long getGenDirOffset(long pageBase, int genIndex) {
+        return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
     }
 
     /**
