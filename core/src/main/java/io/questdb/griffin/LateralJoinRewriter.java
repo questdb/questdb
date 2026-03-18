@@ -1346,13 +1346,6 @@ class LateralJoinRewriter {
         }
     }
 
-    // Descends through pass-through wrapper layers (SELECT/ORDER BY/LIMIT projections
-    // with no table and no joins) to find the content model that owns the actual data
-    // sources. Decorrelation operates on the content model because that is where
-    // __outer_ref must be cross-joined and WHERE predicates must be rewritten.
-    // Example: SELECT * FROM (SELECT * FROM t1 JOIN t2 ON ... WHERE ...)
-    //   wrapper: outer SELECT *
-    //   content: inner SELECT * FROM t1 JOIN t2 ...
     private QueryModel findContentModel(QueryModel model) {
         QueryModel current = model;
         while (current.getNestedModel() != null
@@ -2332,6 +2325,9 @@ class LateralJoinRewriter {
                     QueryModel parent = findWrapperParent(topInner, inner);
                     if (parent != null) {
                         parent.setNestedModel(effectiveInner);
+                    } else {
+                        joinModel.setNestedModel(effectiveInner);
+                        topInner = effectiveInner;
                     }
                 }
 
