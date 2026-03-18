@@ -46,7 +46,6 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
     //
     // When pending values before a run aren't 8-aligned, we absorb values from
     // the run's start into the bitpacked block to reach a multiple of 8.
-    let mut buf = Vec::new();
     let mut pending_start: usize = 0; // start of non-run values to be bitpacked
     let mut i: usize = 0;
 
@@ -59,9 +58,9 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
             if remainder == 0 {
                 // Pending is already 8-aligned — flush and emit RLE.
                 if pending_count > 0 {
-                    emit_bitpacked_block(&mut buf, &values[pending_start..i], num_bits)?;
+                    emit_bitpacked_block(writer, &values[pending_start..i], num_bits)?;
                 }
-                emit_rle_block(&mut buf, values[i], run_len, num_bits)?;
+                emit_rle_block(writer, values[i], run_len, num_bits)?;
                 i += run_len;
                 pending_start = i;
             } else {
@@ -71,8 +70,8 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
                 if rle_remaining >= MIN_RLE_RUN {
                     // After absorbing, still enough for a worthwhile RLE block.
                     let bp_end = i + pad_needed;
-                    emit_bitpacked_block(&mut buf, &values[pending_start..bp_end], num_bits)?;
-                    emit_rle_block(&mut buf, values[i], rle_remaining, num_bits)?;
+                    emit_bitpacked_block(writer, &values[pending_start..bp_end], num_bits)?;
+                    emit_rle_block(writer, values[i], rle_remaining, num_bits)?;
                     i += run_len;
                     pending_start = i;
                 } else {
@@ -88,10 +87,9 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
     // Final flush — last block can have non-multiple-of-8 length since the
     // decoder uses the outer remaining counter to stop reading.
     if pending_start < length {
-        emit_bitpacked_block(&mut buf, &values[pending_start..length], num_bits)?;
+        emit_bitpacked_block(writer, &values[pending_start..length], num_bits)?;
     }
 
-    writer.write_all(&buf)?;
     Ok(())
 }
 
@@ -323,7 +321,11 @@ mod tests {
 
         // RLE should be much smaller than pure bitpacking (1000 bytes).
         // A single RLE block costs ~4 bytes.
-        assert!(buf.len() < 10, "encoded size {} should be tiny for all-same data", buf.len());
+        assert!(
+            buf.len() < 10,
+            "encoded size {} should be tiny for all-same data",
+            buf.len()
+        );
     }
 
     #[test]
@@ -365,11 +367,11 @@ mod tests {
     fn test_mixed_runs_and_random() {
         // Interleaved runs and random data (all values fit in 2 bits: 0-3).
         let mut values = Vec::new();
-        values.extend(vec![0u32; 50]);           // run
-        values.extend((0..10).map(|x| x % 4));  // random (0-3)
-        values.extend(vec![3u32; 100]);          // run
-        values.extend((0..20).map(|x| x % 4));  // random
-        values.extend(vec![1u32; 30]);           // run
+        values.extend(vec![0u32; 50]); // run
+        values.extend((0..10).map(|x| x % 4)); // random (0-3)
+        values.extend(vec![3u32; 100]); // run
+        values.extend((0..20).map(|x| x % 4)); // random
+        values.extend(vec![1u32; 30]); // run
         roundtrip_u32(&values, 2);
     }
 
