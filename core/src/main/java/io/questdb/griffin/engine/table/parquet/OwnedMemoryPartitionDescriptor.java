@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,34 @@ import io.questdb.std.Unsafe;
 // This class manages memory for Parquet partition data.
 // It ensures that memory with the same lifetime is handled consistently and is responsible for releasing it.
 public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
+
+    @Override
+    public void addColumn(
+            final CharSequence columnName,
+            int columnType,
+            int columnId,
+            long columnTop,
+            long columnAddr,
+            long columnSize,
+            long columnSecondaryAddr,
+            long columnSecondarySize,
+            long symbolOffsetsAddr,
+            long symbolOffsetsCount
+    ) {
+        final long savedPos = columnData.size();
+        try {
+            super.addColumn(columnName, columnType, columnId, columnTop,
+                    columnAddr, columnSize, columnSecondaryAddr, columnSecondarySize,
+                    symbolOffsetsAddr, symbolOffsetsCount);
+        } catch (Throwable th) {
+            columnData.setPos(savedPos);
+            Unsafe.free(columnAddr, columnSize, MemoryTag.NATIVE_O3);
+            if (!ColumnType.isSymbol(ColumnType.tagOf(columnType))) {
+                Unsafe.free(columnSecondaryAddr, columnSecondarySize, MemoryTag.NATIVE_O3);
+            }
+            throw th;
+        }
+    }
 
     @Override
     public void clear() {

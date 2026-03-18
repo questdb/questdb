@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -613,6 +613,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         closeExcessPartitions();
         streamingMode = false;
+    }
+
+    public boolean hasParquetPartitions() {
+        for (int i = 0; i < partitionCount; i++) {
+            if (txFile.isPartitionParquet(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean isActive() {

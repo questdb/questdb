@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -345,12 +345,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are Infinity and thus ignored
+    @Test // all values except first overflow to Infinity, sum overflows to null
     public void testSumOfAdditionOfDouble2() throws Exception {
         assertAggQuery(
                 """
                         r
-                        1.7E308
+                        null
                         """,
                 "select sum(d+1) r from y",
                 "create table y as ( select 1.7E308 * x as d  from long_sequence(10) )"
@@ -463,12 +463,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are Infinity and thus ignored
+    @Test // all values except first overflow to Infinity, sum overflows to null
     public void testSumOfMultiplicationOfDouble2() throws Exception {
         assertAggQuery(
                 """
                         r
-                        1.7E308
+                        null
                         """,
                 "select sum(d*2) r from y",
                 "create table y as ( select (1.7E308/2)*x as d  from long_sequence(10) )"
@@ -569,12 +569,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are Infinity and thus ignored
+    @Test // all values except first overflow to Infinity, sum overflows to null
     public void testSumOfSubtractionOfDouble2() throws Exception {
         assertAggQuery(
                 """
                         r
-                        -1.7E308
+                        null
                         """,
                 "select sum(d-1) r from y",
                 "create table y as ( select -1.7E308 * x as d  from long_sequence(10) )"

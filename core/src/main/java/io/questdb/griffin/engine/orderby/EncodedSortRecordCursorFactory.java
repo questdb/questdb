@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,40 +35,27 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
-/**
- * Radix sort-based factory for ORDER BY over a single int/ipv4/long/timestamp/date column.
- * Memory overhead is similar to {@link SortedRecordCursorFactory}:
- * each row takes 32 bytes vs 36 bytes in the red-black tree-based factory.
- */
-public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final LongSortedLightRecordCursor cursor;
+    private final EncodedSortRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
 
-    public LongSortedLightRecordCursorFactory(
+    public EncodedSortRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
+            RecordSink recordSink,
             ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
         this.base = base;
-        final int columnIndex = sortColumnFilter.getColumnIndexFactored(0);
-        this.cursor = new LongSortedLightRecordCursor(
+        this.cursor = new EncodedSortRecordCursor(
                 configuration,
-                columnIndex,
-                metadata.getColumnType(columnIndex),
-                sortColumnFilter.getColumnIndex(0) > 0
+                metadata,
+                sortColumnFilter,
+                recordSink
         );
         this.sortColumnFilter = sortColumnFilter;
-    }
-
-    public static boolean isSupportedColumnType(int columnType) {
-        return columnType == ColumnType.INT
-                || columnType == ColumnType.IPv4
-                || columnType == ColumnType.LONG
-                || ColumnType.isTimestamp(columnType)
-                || columnType == ColumnType.DATE;
     }
 
     @Override
@@ -82,9 +69,9 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
         try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
+        } catch (Throwable th) {
             cursor.close();
-            throw ex;
+            throw th;
         }
     }
 
@@ -100,7 +87,7 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Radix sort light");
+        sink.type("Encode sort");
         SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }

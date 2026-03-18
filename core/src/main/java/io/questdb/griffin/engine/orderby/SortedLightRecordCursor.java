@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,30 +31,35 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain chain;
     private final LongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
+    private final ObjList<DirectIntList> rankMaps;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isChainBuilt;
     private boolean isOpen;
 
-    public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
+    public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator, ObjList<DirectIntList> rankMaps) {
         this.chain = chain;
         this.comparator = comparator;
         // assign it once, it's the same instance anyway
         this.chainCursor = chain.getCursor();
         this.isOpen = true;
+        this.rankMaps = rankMaps;
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
+            Misc.freeObjListAndKeepObjects(rankMaps);
             Misc.free(chain);
             baseCursor = Misc.free(baseCursor);
             baseRecord = null;
@@ -102,6 +107,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             isOpen = true;
             chain.reopen();
         }
+        SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
     }

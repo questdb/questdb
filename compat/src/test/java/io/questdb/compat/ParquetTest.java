@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,6 +47,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
@@ -63,6 +64,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.avro.AvroParquetReader;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.statistics.Statistics;
+import org.apache.parquet.column.values.bloomfilter.BloomFilter;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
@@ -71,6 +73,7 @@ import org.apache.parquet.hadoop.metadata.FileMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.InputFile;
+import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.junit.Assert;
@@ -127,7 +130,6 @@ public class ParquetTest extends AbstractTest {
         testPartitionDataConsistency("y", PartitionBy.MONTH, "timestamp", true);
     }
 
-
     @Test
     public void testAllTypesColTopNextPartition() throws Exception {
         final String tableName = "x";
@@ -140,6 +142,632 @@ public class ParquetTest extends AbstractTest {
     public void testAllTypesColTopNextPartition_rawArrayEncoding() throws Exception {
         // column tops added to the next partition
         testPartitionDataConsistency("x", PartitionBy.DAY, "timestamp_ns", true);
+    }
+
+    @Test
+    public void testBloomFilterAllTypes() throws Exception {
+        int colCount = 55; // 28 original (SIMD path) + 27 column-top (non-SIMD path)
+        String ddl = "CREATE TABLE bloom_test AS (SELECT" +
+                " x::byte a_byte," +           // col 0
+                " x::short a_short," +          // col 1
+                " x::char a_char," +            // col 2
+                " (x * 100)::int an_int," +     // col 3
+                " x::long a_long," +            // col 4
+                " cast(x * 1.5 AS FLOAT) a_float," + // col 5
+                " x * 2.5 a_double," +          // col 6
+                " 'hello_' || x a_string," +    // col 7
+                " cast('sym_' || x AS SYMBOL) a_symbol," + // col 8
+                " cast('вітаю_' || x AS VARCHAR) a_varchar," + // col 9
+                " rnd_bin(1, 8, 0) a_bin," +    // col 10
+                " cast(x * 1000000 AS TIMESTAMP) a_ts," + // col 11
+                " cast(x * 86400000 AS DATE) a_date," +   // col 12
+                " cast('192.168.1.' || (x % 256) AS IPv4) a_ip," + // col 13
+                " rnd_geohash(4) a_geo_byte," +   // col 14
+                " rnd_geohash(8) a_geo_short," +  // col 15
+                " rnd_geohash(16) a_geo_int," +   // col 16
+                " rnd_geohash(32) a_geo_long," +  // col 17
+                " rnd_uuid4() a_uuid," +           // col 18
+                " to_long128(x, x + 1000) a_long128," + // col 19
+                " rnd_long256() a_long256," +      // col 20
+                " rnd_decimal(2, 1, 0) a_decimal8," +   // col 21
+                " rnd_decimal(4, 2, 0) a_decimal16," +  // col 22
+                " rnd_decimal(9, 4, 0) a_decimal32," +  // col 23
+                " rnd_decimal(18, 6, 0) a_decimal64," + // col 24
+                " rnd_decimal(38, 10, 0) a_decimal128," + // col 25
+                " rnd_decimal(76, 20, 0) a_decimal256," + // col 26
+                " timestamp_sequence(400000000000, 1000000) designated_ts" + // col 27
+                " FROM long_sequence(200)) TIMESTAMP(designated_ts) PARTITION BY DAY";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_byte_top BYTE");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_short_top SHORT");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_char_top CHAR");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN an_int_top INT");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_long_top LONG");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_float_top FLOAT");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_double_top DOUBLE");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_string_top STRING");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_symbol_top SYMBOL");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_varchar_top VARCHAR");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_bin_top BINARY");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_ts_top TIMESTAMP");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_date_top DATE");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_ip_top IPv4");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_geo_byte_top GEOHASH(4b)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_geo_short_top GEOHASH(8b)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_geo_int_top GEOHASH(16b)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_geo_long_top GEOHASH(32b)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_uuid_top UUID");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_long128_top LONG128");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_long256_top LONG256");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_decimal8_top DECIMAL(2,1)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_decimal16_top DECIMAL(4,2)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_decimal32_top DECIMAL(9,4)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_decimal64_top DECIMAL(18,6)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_decimal128_top DECIMAL(38,10)");
+            serverMain.getEngine().execute("ALTER TABLE bloom_test ADD COLUMN a_decimal256_top DECIMAL(76,20)");
+            serverMain.getEngine().execute(
+                    "INSERT INTO bloom_test(" +
+                            "a_byte, a_short, a_char, an_int, a_long," +
+                            " a_float, a_double," +
+                            " a_string, a_symbol, a_varchar, a_bin," +
+                            " a_ts, a_date, a_ip," +
+                            " a_geo_byte, a_geo_short, a_geo_int, a_geo_long," +
+                            " a_uuid, a_long128, a_long256," +
+                            " a_decimal8, a_decimal16, a_decimal32," +
+                            " a_decimal64, a_decimal128, a_decimal256," +
+                            " a_byte_top, a_short_top, a_char_top, an_int_top, a_long_top," +
+                            " a_float_top, a_double_top," +
+                            " a_string_top, a_symbol_top, a_varchar_top, a_bin_top," +
+                            " a_ts_top, a_date_top, a_ip_top," +
+                            " a_geo_byte_top, a_geo_short_top, a_geo_int_top, a_geo_long_top," +
+                            " a_uuid_top, a_long128_top, a_long256_top," +
+                            " a_decimal8_top, a_decimal16_top, a_decimal32_top," +
+                            " a_decimal64_top, a_decimal128_top, a_decimal256_top," +
+                            " designated_ts" +
+                            ") SELECT" +
+                            " x::byte, x::short, x::char, (x * 100)::int, x::long," +
+                            " cast(x * 1.5 AS FLOAT), x * 2.5," +
+                            " 'hello_' || x, cast('sym_' || x AS SYMBOL)," +
+                            " cast('вітаю_' || x AS VARCHAR), rnd_bin(1, 8, 0)," +
+                            " cast(x * 1000000 AS TIMESTAMP), cast(x * 86400000 AS DATE)," +
+                            " cast('192.168.1.' || (x % 256) AS IPv4)," +
+                            " rnd_geohash(4), rnd_geohash(8), rnd_geohash(16), rnd_geohash(32)," +
+                            " rnd_uuid4(), to_long128(x, x + 1000), rnd_long256()," +
+                            " rnd_decimal(2, 1, 0), rnd_decimal(4, 2, 0), rnd_decimal(9, 4, 0)," +
+                            " rnd_decimal(18, 6, 0), rnd_decimal(38, 10, 0), rnd_decimal(76, 20, 0)," +
+                            " x::byte, x::short, x::char, (x * 100)::int, x::long," +
+                            " cast(x * 1.5 AS FLOAT), x * 2.5," +
+                            " 'hello_' || x, cast('sym_' || x AS SYMBOL)," +
+                            " cast('вітаю_' || x AS VARCHAR), rnd_bin(1, 8, 0)," +
+                            " cast(x * 1000000 AS TIMESTAMP), cast(x * 86400000 AS DATE)," +
+                            " cast('192.168.1.' || (x % 256) AS IPv4)," +
+                            " rnd_geohash(4), rnd_geohash(8), rnd_geohash(16), rnd_geohash(32)," +
+                            " rnd_uuid4(), to_long128(x, x + 1000), rnd_long256()," +
+                            " rnd_decimal(2, 1, 0), rnd_decimal(4, 2, 0), rnd_decimal(9, 4, 0)," +
+                            " rnd_decimal(18, 6, 0), rnd_decimal(38, 10, 0), rnd_decimal(76, 20, 0)," +
+                            " timestamp_sequence(400200000000, 1000000)" +
+                            " FROM long_sequence(200)"
+            );
+
+            serverMain.awaitTable("bloom_test");
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    DirectIntList bloomFilterIndexes = new DirectIntList(colCount, MemoryTag.NATIVE_DEFAULT);
+                    TableReader reader = serverMain.getEngine().getReader("bloom_test")
+            ) {
+                path.of(root).concat("bloom_test.parquet").$();
+                parquetPathStr = path.toString();
+                for (int i = 0; i < colCount; i++) {
+                    bloomFilterIndexes.add(i);
+                }
+
+                int partitionIndex = 0;
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        ROW_GROUP_SIZE * 64,
+                        DATA_PAGE_SIZE * 64,
+                        ParquetVersion.PARQUET_VERSION_V2,
+                        bloomFilterIndexes.getAddress(),
+                        (int) bloomFilterIndexes.size(),
+                        0.01
+                );
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    List<BlockMetaData> rowGroups = metadata.getBlocks();
+                    Assert.assertFalse("Expected at least 1 row group", rowGroups.isEmpty());
+                    BlockMetaData firstBlock = rowGroups.get(0);
+                    List<ColumnChunkMetaData> chunks = firstBlock.getColumns();
+                    Assert.assertEquals(colCount, chunks.size());
+
+                    // col 0: a_byte - INT32
+                    BloomFilter bf = parquetFileReader.readBloomFilter(chunks.get(0));
+                    Assert.assertNotNull("byte", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1)));
+
+                    // col 1: a_short - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(1));
+                    Assert.assertNotNull("short", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1)));
+
+                    // col 2: a_char - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(2));
+                    Assert.assertNotNull("char", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1)));
+
+                    // col 3: an_int - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(3));
+                    Assert.assertNotNull("int", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(100)));
+
+                    // col 4: a_long - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(4));
+                    Assert.assertNotNull("long", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1L)));
+
+                    // col 5: a_float - FLOAT
+                    bf = parquetFileReader.readBloomFilter(chunks.get(5));
+                    Assert.assertNotNull("float", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1.5f)));
+
+                    // col 6: a_double - DOUBLE
+                    bf = parquetFileReader.readBloomFilter(chunks.get(6));
+                    Assert.assertNotNull("double", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(2.5)));
+
+                    // col 7: a_string - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(7));
+                    Assert.assertNotNull("string", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("hello_1"))));
+
+                    // col 8: a_symbol - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(8));
+                    Assert.assertNotNull("symbol", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("sym_1"))));
+
+                    // col 9: a_varchar - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(9));
+                    Assert.assertNotNull("varchar", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("вітаю_1"))));
+
+                    // col 10: a_bin - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(10));
+                    Assert.assertNotNull("binary", bf);
+
+                    // col 11: a_ts - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(11));
+                    Assert.assertNotNull("timestamp", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1_000_000L)));
+
+                    // col 12: a_date - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(12));
+                    Assert.assertNotNull("date", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(86_400_000L)));
+
+                    // col 13: a_ip - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(13));
+                    Assert.assertNotNull("ipv4", bf);
+
+                    // col 14-17: geohash columns
+                    bf = parquetFileReader.readBloomFilter(chunks.get(14));
+                    Assert.assertNotNull("geo_byte", bf);
+                    bf = parquetFileReader.readBloomFilter(chunks.get(15));
+                    Assert.assertNotNull("geo_short", bf);
+                    bf = parquetFileReader.readBloomFilter(chunks.get(16));
+                    Assert.assertNotNull("geo_int", bf);
+                    bf = parquetFileReader.readBloomFilter(chunks.get(17));
+                    Assert.assertNotNull("geo_long", bf);
+
+                    // col 18: a_uuid - FIXED_LEN_BYTE_ARRAY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(18));
+                    Assert.assertNotNull("uuid", bf);
+
+                    // col 19: a_long128 - FIXED_LEN_BYTE_ARRAY (little-endian)
+                    bf = parquetFileReader.readBloomFilter(chunks.get(19));
+                    Assert.assertNotNull("long128", bf);
+                    ByteBuffer l128Buf = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+                    l128Buf.putLong(1L).putLong(1001L); // x=1: lo=1, hi=1+1000
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromConstantByteArray(l128Buf.array()))));
+
+                    // col 20: a_long256
+                    bf = parquetFileReader.readBloomFilter(chunks.get(20));
+                    Assert.assertNotNull("long256", bf);
+
+                    // col 21-26: decimal columns - FIXED_LEN_BYTE_ARRAY (big-endian)
+                    for (int colIdx = 21; colIdx <= 26; colIdx++) {
+                        bf = parquetFileReader.readBloomFilter(chunks.get(colIdx));
+                        Assert.assertNotNull("decimal col " + colIdx, bf);
+                    }
+
+                    // col 27: designated_ts - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(27));
+                    Assert.assertNotNull("designated_ts", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(400_000_000_000L)));
+
+                    // --- Column-top columns (non-SIMD bitpacked path, column_top = 200) ---
+
+                    // col 28: a_byte_top - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(28));
+                    Assert.assertNotNull("byte_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1)));
+
+                    // col 29: a_short_top - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(29));
+                    Assert.assertNotNull("short_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1)));
+
+                    // col 30: a_char_top - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(30));
+                    Assert.assertNotNull("char_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1)));
+
+                    // col 31: an_int_top - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(31));
+                    Assert.assertNotNull("int_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(100)));
+
+                    // col 32: a_long_top - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(32));
+                    Assert.assertNotNull("long_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1L)));
+
+                    // col 33: a_float_top - FLOAT
+                    bf = parquetFileReader.readBloomFilter(chunks.get(33));
+                    Assert.assertNotNull("float_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1.5f)));
+
+                    // col 34: a_double_top - DOUBLE
+                    bf = parquetFileReader.readBloomFilter(chunks.get(34));
+                    Assert.assertNotNull("double_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(2.5)));
+
+                    // col 35: a_string_top - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(35));
+                    Assert.assertNotNull("string_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("hello_1"))));
+
+                    // col 36: a_symbol_top - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(36));
+                    Assert.assertNotNull("symbol_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("sym_1"))));
+
+                    // col 37: a_varchar_top - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(37));
+                    Assert.assertNotNull("varchar_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("вітаю_1"))));
+
+                    // col 38: a_bin_top - BINARY
+                    bf = parquetFileReader.readBloomFilter(chunks.get(38));
+                    Assert.assertNotNull("binary_top", bf);
+
+                    // col 39: a_ts_top - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(39));
+                    Assert.assertNotNull("timestamp_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(1_000_000L)));
+
+                    // col 40: a_date_top - INT64
+                    bf = parquetFileReader.readBloomFilter(chunks.get(40));
+                    Assert.assertNotNull("date_top", bf);
+                    Assert.assertTrue(bf.findHash(bf.hash(86_400_000L)));
+
+                    // col 41: a_ip_top - INT32
+                    bf = parquetFileReader.readBloomFilter(chunks.get(41));
+                    Assert.assertNotNull("ipv4_top", bf);
+
+                    // col 42-45: geohash_top columns
+                    bf = parquetFileReader.readBloomFilter(chunks.get(42));
+                    Assert.assertNotNull("geo_byte_top", bf);
+                    bf = parquetFileReader.readBloomFilter(chunks.get(43));
+                    Assert.assertNotNull("geo_short_top", bf);
+                    bf = parquetFileReader.readBloomFilter(chunks.get(44));
+                    Assert.assertNotNull("geo_int_top", bf);
+                    bf = parquetFileReader.readBloomFilter(chunks.get(45));
+                    Assert.assertNotNull("geo_long_top", bf);
+
+                    // col 46: a_uuid_top
+                    bf = parquetFileReader.readBloomFilter(chunks.get(46));
+                    Assert.assertNotNull("uuid_top", bf);
+
+                    // col 47: a_long128_top - FIXED_LEN_BYTE_ARRAY (little-endian)
+                    bf = parquetFileReader.readBloomFilter(chunks.get(47));
+                    Assert.assertNotNull("long128_top", bf);
+                    l128Buf = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+                    l128Buf.putLong(1L).putLong(1001L);
+                    Assert.assertTrue(bf.findHash(bf.hash(Binary.fromConstantByteArray(l128Buf.array()))));
+
+                    // col 48: a_long256_top
+                    bf = parquetFileReader.readBloomFilter(chunks.get(48));
+                    Assert.assertNotNull("long256_top", bf);
+
+                    // col 49-54: decimal_top columns - FIXED_LEN_BYTE_ARRAY (big-endian)
+                    for (int colIdx = 49; colIdx <= 54; colIdx++) {
+                        bf = parquetFileReader.readBloomFilter(chunks.get(colIdx));
+                        Assert.assertNotNull("decimal_top col " + colIdx, bf);
+                    }
+                }
+
+                try (ParquetReader<GenericRecord> avroReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()) {
+                    long rowCount = 0;
+                    while (avroReader.read() != null) {
+                        rowCount++;
+                    }
+                    Assert.assertEquals(400, rowCount);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testBloomFilterDecimalValues() throws Exception {
+        String ddl = "CREATE TABLE bloom_decimal_test AS (SELECT" +
+                " 1.5::decimal(2,1) a_decimal8," +
+                " 12.34::decimal(4,2) a_decimal16," +
+                " 12345.6789::decimal(9,4) a_decimal32," +
+                " 123456789.012345::decimal(18,6) a_decimal64," +
+                " 1234567890.1234567890::decimal(38,10) a_decimal128," +
+                " 1234567890.12345678901234567890::decimal(76,20) a_decimal256," +
+                " timestamp_sequence(400000000000, 1000000) designated_ts" +
+                " FROM long_sequence(1)) TIMESTAMP(designated_ts) PARTITION BY DAY";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+            serverMain.awaitTable("bloom_decimal_test");
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    DirectIntList bloomFilterIndexes = new DirectIntList(6, MemoryTag.NATIVE_DEFAULT);
+                    TableReader reader = serverMain.getEngine().getReader("bloom_decimal_test")
+            ) {
+                path.of(root).concat("bloom_decimal_test.parquet").$();
+                parquetPathStr = path.toString();
+
+                for (int i = 0; i < 6; i++) {
+                    bloomFilterIndexes.add(i);
+                }
+
+                int partitionIndex = 0;
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        ROW_GROUP_SIZE,
+                        DATA_PAGE_SIZE,
+                        ParquetVersion.PARQUET_VERSION_V2,
+                        bloomFilterIndexes.getAddress(),
+                        (int) bloomFilterIndexes.size(),
+                        0.01
+                );
+
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    BlockMetaData firstBlock = metadata.getBlocks().get(0);
+                    List<ColumnChunkMetaData> chunks = firstBlock.getColumns();
+                    // decimal8(2,1): 1.5 -> unscaled 15, stored as 1 byte big-endian
+                    BloomFilter d8Filter = parquetFileReader.readBloomFilter(chunks.get(0));
+                    Assert.assertNotNull(d8Filter);
+                    Assert.assertTrue(d8Filter.findHash(d8Filter.hash(Binary.fromConstantByteArray(new byte[]{15}))));
+
+                    // decimal16(4,2): 12.34 -> unscaled 1234, stored as 2 bytes big-endian
+                    BloomFilter d16Filter = parquetFileReader.readBloomFilter(chunks.get(1));
+                    Assert.assertNotNull(d16Filter);
+                    ByteBuffer d16Buf = ByteBuffer.allocate(2).order(ByteOrder.BIG_ENDIAN);
+                    d16Buf.putShort((short) 1234);
+                    Assert.assertTrue(d16Filter.findHash(d16Filter.hash(Binary.fromConstantByteArray(d16Buf.array()))));
+
+                    // decimal32(9,4): 12345.6789 -> unscaled 123456789, stored as 4 bytes big-endian
+                    BloomFilter d32Filter = parquetFileReader.readBloomFilter(chunks.get(2));
+                    Assert.assertNotNull(d32Filter);
+                    ByteBuffer d32Buf = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN);
+                    d32Buf.putInt(123_456_789);
+                    Assert.assertTrue(d32Filter.findHash(d32Filter.hash(Binary.fromConstantByteArray(d32Buf.array()))));
+
+                    // decimal64(18,6): 123456789.012345 -> unscaled 123456789012345, stored as 8 bytes big-endian
+                    BloomFilter d64Filter = parquetFileReader.readBloomFilter(chunks.get(3));
+                    Assert.assertNotNull(d64Filter);
+                    ByteBuffer d64Buf = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN);
+                    d64Buf.putLong(123_456_789_012_345L);
+                    Assert.assertTrue(d64Filter.findHash(d64Filter.hash(Binary.fromConstantByteArray(d64Buf.array()))));
+
+                    // decimal128 and decimal256: verify bloom filters exist
+                    BloomFilter d128Filter = parquetFileReader.readBloomFilter(chunks.get(4));
+                    Assert.assertNotNull("Bloom filter should exist for decimal128", d128Filter);
+                    BloomFilter d256Filter = parquetFileReader.readBloomFilter(chunks.get(5));
+                    Assert.assertNotNull("Bloom filter should exist for decimal256", d256Filter);
+                }
+
+                try (ParquetReader<GenericRecord> avroReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()) {
+                    GenericRecord record = avroReader.read();
+                    Assert.assertNotNull(record);
+                    Assert.assertNull("Should have exactly 1 row", avroReader.read());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testBloomFilterNoFalseNegatives() throws Exception {
+        String ddl = "CREATE TABLE bloom_fn_test AS (SELECT" +
+                " x::int an_int," +
+                " x::long a_long," +
+                " x * 1.5 a_double," +
+                " 'val_' || x a_string," +
+                " timestamp_sequence(400000000000, 1000000) designated_ts" +
+                " FROM long_sequence(500)) TIMESTAMP(designated_ts) PARTITION BY DAY";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+            serverMain.awaitTable("bloom_fn_test");
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    DirectIntList bloomFilterIndexes = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT);
+                    TableReader reader = serverMain.getEngine().getReader("bloom_fn_test")
+            ) {
+                path.of(root).concat("bloom_fn_test.parquet").$();
+                parquetPathStr = path.toString();
+
+                for (int i = 0; i < 4; i++) {
+                    bloomFilterIndexes.add(i);
+                }
+
+                int partitionIndex = 0;
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        ROW_GROUP_SIZE,
+                        DATA_PAGE_SIZE,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        bloomFilterIndexes.getAddress(),
+                        (int) bloomFilterIndexes.size(),
+                        0.01
+                );
+
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    List<BlockMetaData> rowGroups = metadata.getBlocks();
+                    Assert.assertTrue("Expected multiple row groups", rowGroups.size() > 1);
+
+                    long rowOffset = 1;
+                    for (int rg = 0; rg < rowGroups.size(); rg++) {
+                        BlockMetaData block = rowGroups.get(rg);
+                        long blockRowCount = block.getRowCount();
+                        List<ColumnChunkMetaData> chunks = block.getColumns();
+
+                        BloomFilter intFilter = parquetFileReader.readBloomFilter(chunks.get(0));
+                        BloomFilter longFilter = parquetFileReader.readBloomFilter(chunks.get(1));
+                        BloomFilter doubleFilter = parquetFileReader.readBloomFilter(chunks.get(2));
+                        BloomFilter stringFilter = parquetFileReader.readBloomFilter(chunks.get(3));
+
+                        Assert.assertNotNull(intFilter);
+                        Assert.assertNotNull(longFilter);
+                        Assert.assertNotNull(doubleFilter);
+                        Assert.assertNotNull(stringFilter);
+
+                        for (long x = rowOffset; x < rowOffset + blockRowCount; x++) {
+                            int intVal = (int) x;
+                            Assert.assertTrue("int bloom filter false negative: " + intVal + " in row group " + rg,
+                                    intFilter.findHash(intFilter.hash(intVal)));
+                            Assert.assertTrue("long bloom filter false negative: " + x + " in row group " + rg,
+                                    longFilter.findHash(longFilter.hash(x)));
+                            Assert.assertTrue("double bloom filter false negative: " + (x * 1.5) + " in row group " + rg,
+                                    doubleFilter.findHash(doubleFilter.hash(x * 1.5)));
+                            Assert.assertTrue("string bloom filter false negative: val_" + x + " in row group " + rg,
+                                    stringFilter.findHash(stringFilter.hash(Binary.fromString("val_" + x))));
+                        }
+                        rowOffset += blockRowCount;
+                    }
+                    Assert.assertEquals(501, rowOffset);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testBloomFilterSelectiveColumns() throws Exception {
+        String ddl = "CREATE TABLE bloom_selective_test AS (SELECT" +
+                " x::int col_with_bloom," +
+                " x::long col_without_bloom," +
+                " 'text_' || x col_str_with_bloom," +
+                " timestamp_sequence(400000000000, 1000000) designated_ts" +
+                " FROM long_sequence(100)) TIMESTAMP(designated_ts) PARTITION BY DAY";
+
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+            serverMain.getEngine().execute(ddl);
+            serverMain.awaitTable("bloom_selective_test");
+
+            final String parquetPathStr;
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    DirectIntList bloomFilterIndexes = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
+                    TableReader reader = serverMain.getEngine().getReader("bloom_selective_test")
+            ) {
+                path.of(root).concat("bloom_selective_test.parquet").$();
+                parquetPathStr = path.toString();
+                bloomFilterIndexes.add(0);
+                bloomFilterIndexes.add(2);
+
+                int partitionIndex = 0;
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        ROW_GROUP_SIZE,
+                        DATA_PAGE_SIZE,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        bloomFilterIndexes.getAddress(),
+                        (int) bloomFilterIndexes.size(),
+                        0.01
+                );
+
+                Configuration configuration = new Configuration();
+                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
+                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+
+                try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
+                    ParquetMetadata metadata = parquetFileReader.getFooter();
+                    BlockMetaData firstBlock = metadata.getBlocks().get(0);
+                    List<ColumnChunkMetaData> chunks = firstBlock.getColumns();
+
+                    // col_with_bloom (col 0) should have bloom filter
+                    BloomFilter bf0 = parquetFileReader.readBloomFilter(chunks.get(0));
+                    Assert.assertNotNull("Bloom filter should exist for col_with_bloom", bf0);
+                    Assert.assertTrue(bf0.findHash(bf0.hash(1)));
+
+                    // col_without_bloom (col 1) should NOT have bloom filter
+                    BloomFilter bf1 = parquetFileReader.readBloomFilter(chunks.get(1));
+                    Assert.assertNull("Bloom filter should NOT exist for col_without_bloom", bf1);
+
+                    // col_str_with_bloom (col 2) should have bloom filter
+                    BloomFilter bf2 = parquetFileReader.readBloomFilter(chunks.get(2));
+                    Assert.assertNotNull("Bloom filter should exist for col_str_with_bloom", bf2);
+                    Assert.assertTrue(bf2.findHash(bf2.hash(Binary.fromString("text_1"))));
+
+                    // designated_ts (col 3) should NOT have bloom filter
+                    BloomFilter bf3 = parquetFileReader.readBloomFilter(chunks.get(3));
+                    Assert.assertNull("Bloom filter should NOT exist for designated_ts", bf3);
+                }
+            }
+        }
     }
 
     private static void assertArray(ArrayView expected, Object actual) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.http.line;
 
+import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
@@ -41,15 +43,19 @@ import io.questdb.client.std.NumericException;
 import io.questdb.client.std.str.DirectUtf8Sink;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -59,7 +65,10 @@ import org.junit.Test;
 import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.concurrent.CyclicBarrier;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -907,10 +916,53 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         // a large batch (mid-request), the server correctly detects the rename and rejects
         // the entire batch with a retryable 503 error. No partial data should be committed.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
-                String tableName = "concurrent_data";
-                String renamedTableName = "concurrent_data_old";
-                int batchSize = 500_000; // Large batch to ensure processing takes time
+            String tableName = "concurrent_data";
+            String renamedTableName = "concurrent_data_old";
+            int batchSize = 500_000;
+
+            // Latch to detect when the server starts processing the large batch.
+            // We set WAL segment rollover row count to 1, so after the init flush
+            // commits (1 row), the WalWriter schedules a segment roll. When the
+            // large batch's first row triggers newRow(), it rolls to a new segment,
+            // opening new column files via ff.openRW(). We intercept that to know
+            // the server has started processing and then trigger the rename.
+            CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            AtomicBoolean trackOpens = new AtomicBoolean(false);
+
+            FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    long fd = super.openRW(name, opts);
+                    if (trackOpens.get()
+                            && Utf8s.containsAscii(name, tableName)
+                            && Utf8s.containsAscii(name, "wal")
+                            && Utf8s.endsWithAscii(name, ".d")) {
+                        walSegmentRolled.countDown();
+                    }
+                    return fd;
+                }
+            };
+
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+            // Force segment roll after the init flush so that the large batch
+            // triggers openRW for new segment column files.
+            env.put(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT.getEnvVarName(), "1");
+
+            Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public Map<String, String> getEnv() {
+                    return env;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            }, Bootstrap.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
 
                 // Create the initial table
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
@@ -921,37 +973,35 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int port = serverMain.getHttpServerPort();
 
-                // Use barriers to coordinate the rename with the batch processing
-                CyclicBarrier flushStartBarrier = new CyclicBarrier(2);
                 AtomicReference<Throwable> senderError = new AtomicReference<>();
 
                 // Sender thread: builds and sends a large batch with auto-flush disabled
                 Thread senderThread = new Thread(() -> {
                     try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                             .address("localhost:" + port)
-                            .disableAutoFlush() // Disable auto-flush so entire batch is sent at once
-                            .retryTimeoutMillis(0) // Disable automatic retries
+                            .disableAutoFlush()
+                            .retryTimeoutMillis(0)
                             .build()
                     ) {
-                        // First flush to populate the cache
+                        // First flush to populate the TUD cache and trigger segment rollover
                         sender.table(tableName)
                                 .symbol("sensor", "init")
                                 .doubleColumn("temperature", 0.0)
                                 .at(1L, ChronoUnit.NANOS);
                         sender.flush();
 
+                        // Enable tracking after init flush so we only detect the large batch
+                        trackOpens.set(true);
+
                         // Build a large batch entirely in memory (no auto-flush)
                         for (int i = 0; i < batchSize; i++) {
                             sender.table(tableName)
                                     .symbol("sensor", "sensor_" + (i % 100))
                                     .doubleColumn("temperature", 20.0 + (i % 30))
-                                    .at(1000000000L + i, ChronoUnit.NANOS);
+                                    .at(1_000_000_000L + i, ChronoUnit.NANOS);
                         }
 
-                        // Signal that we're about to start the flush
-                        flushStartBarrier.await();
-
-                        // Send the entire batch - this will take time on the server
+                        // Send the entire batch
                         sender.flush();
 
                         // If we get here without error, the test should fail
@@ -970,11 +1020,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 senderThread.start();
 
-                // Wait for sender to signal it's about to flush
-                flushStartBarrier.await();
-
-                // Give a brief moment for the flush to start sending data
-                Thread.sleep(10);
+                // Wait until the server starts processing the large batch (segment roll
+                // triggers openRW for new column files). This guarantees the WalWriter
+                // has started appending rows with the old table token.
+                Assert.assertTrue("Timed out waiting for WAL segment roll",
+                        walSegmentRolled.await(60, TimeUnit.SECONDS));
 
                 // Rename the table while the server is processing the large batch
                 serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
@@ -1018,7 +1068,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         sender.table(tableName)
                                 .symbol("sensor", "retry_sensor")
                                 .doubleColumn("temperature", 25.0)
-                                .at(2000000000L + i, ChronoUnit.NANOS);
+                                .at(2_000_000_000L + i, ChronoUnit.NANOS);
                     }
                     sender.flush();
                 }

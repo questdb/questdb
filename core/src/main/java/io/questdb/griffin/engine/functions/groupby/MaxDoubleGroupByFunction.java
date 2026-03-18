@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,10 +45,13 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final double batchMax = Vect.maxDouble(ptr, count);
-            mapValue.putDouble(valueIndex, batchMax);
+            final double existing = mapValue.getDouble(valueIndex);
+            if (batchMax > existing || Numbers.isNull(existing)) {
+                mapValue.putDouble(valueIndex, batchMax);
+            }
         }
     }
 

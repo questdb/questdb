@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,6 +43,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LongTreeChain;
+import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -94,6 +96,17 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
 
+            ObjList<ObjList<DirectIntList>> perGroupRankMaps = new ObjList<>(orderedGroupCount);
+            try {
+                for (int i = 0; i < orderedGroupCount; i++) {
+                    perGroupRankMaps.add(SortKeyEncoder.createRankMaps(chainMetadata, sortKeys.getQuick(i)));
+                }
+            } catch (Throwable t) {
+                freePerGroupRankMaps(perGroupRankMaps);
+                Misc.free(recordChain);
+                throw t;
+            }
+
             ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
             // red&black trees, one for each comparator where comparator is not null
             try {
@@ -109,11 +122,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             } catch (Throwable t) {
                 Misc.freeObjList(orderedSources);
+                freePerGroupRankMaps(perGroupRankMaps);
                 recordChain.close();
                 throw t;
             }
 
-            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources);
+            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources, perGroupRankMaps);
             this.allFunctions = new ObjList<>();
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
@@ -249,6 +263,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         return base.usesIndex();
     }
 
+    private static void freePerGroupRankMaps(ObjList<ObjList<DirectIntList>> perGroupRankMaps) {
+        for (int i = 0, n = perGroupRankMaps.size(); i < n; i++) {
+            Misc.freeObjList(perGroupRankMaps.getQuick(i));
+        }
+    }
+
     private void addSortKeys(PlanSink sink, IntList list) {
         for (int i = 0, n = list.size(); i < n; i++) {
             int colIdx = list.get(i);
@@ -283,6 +303,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     class CachedWindowRecordCursor implements RecordCursor {
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
+        private final ObjList<ObjList<DirectIntList>> perGroupRankMaps;
         private final RecordArray recordChain;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -290,12 +311,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isRecordChainBuilt;
         private long recordChainOffset;
 
-        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<LongTreeChain> orderedSources) {
+        public CachedWindowRecordCursor(IntList columnIndexes, RecordArray recordChain, ObjList<LongTreeChain> orderedSources, ObjList<ObjList<DirectIntList>> perGroupRankMaps) {
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
             this.isOpen = true;
             this.orderedSources = orderedSources;
+            this.perGroupRankMaps = perGroupRankMaps;
         }
 
         @Override
@@ -314,6 +336,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 Misc.free(recordChain);
                 for (int i = 0, n = orderedSources.size(); i < n; i++) {
                     Misc.free(orderedSources.getQuick(i));
+                }
+                for (int i = 0, n = perGroupRankMaps.size(); i < n; i++) {
+                    Misc.freeObjListAndKeepObjects(perGroupRankMaps.getQuick(i));
                 }
                 resetFunctions();
                 isOpen = false;
@@ -500,6 +525,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 reopen(allFunctions);
             }
             Function.init(allFunctions, this, executionContext, null);
+            for (int i = 0; i < orderedGroupCount; i++) {
+                SortKeyEncoder.buildRankMaps(this, perGroupRankMaps.getQuick(i), comparators.getQuick(i));
+            }
         }
 
         private void reopen(ObjList<?> list) {

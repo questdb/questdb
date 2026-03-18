@@ -1,5 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use nonmax::NonMaxU32;
@@ -62,7 +62,11 @@ impl ParquetDecoder {
             accumulated_size += row_group_size;
         }
 
-        assert_eq!(accumulated_size, metadata.num_rows);
+        if accumulated_size != metadata.num_rows {
+            let mut err = ParquetError::new(ParquetErrorReason::Layout);
+            err.add_context("row group sizes do not sum to total row count");
+            return Err(err);
+        }
 
         let mut timestamp_index: Option<NonMaxU32> = None;
 
@@ -145,6 +149,8 @@ impl ParquetDecoder {
             }
         }
 
+        let unused_bytes = qdb_meta.as_ref().map(|m| m.unused_bytes).unwrap_or(0);
+
         // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
@@ -159,6 +165,7 @@ impl ParquetDecoder {
             columns_ptr: columns.as_ptr(),
             columns,
             row_group_sizes_acc,
+            unused_bytes,
         })
     }
 

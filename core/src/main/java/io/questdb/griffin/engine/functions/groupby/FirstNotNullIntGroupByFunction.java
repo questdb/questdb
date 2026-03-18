@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,15 +37,22 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * 4L;
+            long offset = 0;
             for (; ptr < hi; ptr += 4L) {
                 int value = Unsafe.getUnsafe().getInt(ptr);
                 if (value != Numbers.INT_NULL) {
-                    mapValue.putInt(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putInt(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }

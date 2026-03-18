@@ -83,10 +83,13 @@ impl<'a> BaseVarDictDecoder<'a> {
             total_key_len += str_len;
         }
 
-        Ok(Self {
-            dict_values,
-            avg_key_len: total_key_len as f32 / dict_page.num_values as f32,
-        })
+        let avg_key_len = if dict_page.num_values == 0 {
+            0.0
+        } else {
+            total_key_len as f32 / dict_page.num_values as f32
+        };
+
+        Ok(Self { dict_values, avg_key_len })
     }
 }
 
@@ -150,6 +153,12 @@ impl<U, T> PrimitiveDictDecoder<T> for BasePrimitiveDictDecoder<'_, U, T> {
     #[inline]
     #[cfg(target_endian = "little")]
     fn get_dict_value(&self, index: u32) -> T {
+        const {
+            assert!(
+                size_of::<T>() <= size_of::<U>(),
+                "destination type T must not be larger than physical type U"
+            )
+        };
         // SAFETY: Caller guarantees index is in bounds and dict_page is properly sized.
         // We also require little-endian platforms, so no byte swapping is necessary.
         unsafe {
