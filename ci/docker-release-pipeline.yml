@@ -141,8 +141,8 @@ jobs:
             # Docker tags are prefixed with "patch-" and use the short commit hash
             docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
             echo $docker_tag_name
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 -t questdb/questdb:${docker_tag_name} .
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
+            docker buildx build --build-arg tag_name=$tag_name --load -t questdb/questdb:${docker_tag_name} .
+            docker buildx build --build-arg tag_name=$tag_name --load -t questdb/questdb:${docker_tag_name}-rhel --target rhel .
             preflight check container questdb/questdb:${docker_tag_name}-rhel
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
