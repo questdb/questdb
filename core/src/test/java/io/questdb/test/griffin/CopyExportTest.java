@@ -724,7 +724,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2020-01-01.parquet')");
                         assertSql("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t504.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-01.parquet\t501.0 B\n" +
                                         "test_table" + File.separator + "2020-01-02.parquet\t586.0 B\n",
                                 "select path, diskSizeHuman from export_files()  order by path");
                     });
