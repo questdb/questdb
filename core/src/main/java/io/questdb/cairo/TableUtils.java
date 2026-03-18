@@ -2620,6 +2620,11 @@ public final class TableUtils {
         private long partitionTimestamp;
         private TableReader reader;
 
+        public void clear() {
+            this.reader = null;
+            this.metadata = null;
+        }
+
         public boolean hasChanged() {
             reader.reload();
             if (metadata.getMetadataVersion() != metadataVersion) {

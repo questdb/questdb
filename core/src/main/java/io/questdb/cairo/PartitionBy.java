@@ -137,11 +137,13 @@ public final class PartitionBy {
                 }
                 break;
             case MONTH:
+                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
                 if (ttlHoursOrMonths < 1) {
                     return;
                 }
                 break;
             case YEAR:
+                // ttl == 0 means "unset" (no TTL), negative values are months-based TTL
                 if (ttlHoursOrMonths < 1 && ttlHoursOrMonths % 12 == 0) {
                     return;
                 }
