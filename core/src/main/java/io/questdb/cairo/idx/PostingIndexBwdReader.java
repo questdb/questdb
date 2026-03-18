@@ -226,6 +226,7 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
     public void updateKeyCount() {
         int keyCount;
         int genCount;
+        long valueMemSize;
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
             long seq = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -233,6 +234,7 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
             if (keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 keyCount = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 genCount = keyMem.getInt(PostingIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+                valueMemSize = keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
                 Unsafe.getUnsafe().loadFence();
                 if (seq == keyMem.getLong(PostingIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                     break;
@@ -247,11 +249,14 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         }
 
         if (keyCount > this.keyCount) {
+            // Extend memory mappings before updating genCount/keyCount so that
+            // any concurrent access using the new genCount finds mapped memory.
+            long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
+            keyMem.extend(keyFileSize);
+            valueMem.extend(valueMemSize);
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
             this.genCount = genCount;
-            long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
-            keyMem.extend(keyFileSize);
         }
     }
 
