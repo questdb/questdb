@@ -1448,6 +1448,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             final String columnName = tableWriterMetadata.getColumnName(columnIndex);
             final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+            final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
             final boolean notTheTimestamp = columnIndex != timestampIndex;
             final int columnOffset = getPrimaryColumnIndex(columnIndex);
             final MemoryCR oooMem1 = oooColumns.getQuick(columnOffset);
@@ -1499,7 +1500,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         dstAuxAddr,
                         dstAuxSize,
                         0,
-                        0
+                        0,
+                        parquetEncodingConfig
                 );
                 // Ownership transferred to partitionDescriptor, don't free on error.
             } else {
@@ -1561,7 +1563,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             valuesMemSize,
                             // Skip header. Pass element count, not byte size.
                             offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                            symbolCount
+                            symbolCount,
+                            parquetEncodingConfig
                     );
                 } else {
                     partitionDescriptor.addColumn(
@@ -1574,7 +1577,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0,
                             0,
                             0,
-                            0
+                            0,
+                            parquetEncodingConfig
                     );
                 }
             }
@@ -2226,7 +2230,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     valuesMemSize,
                                     // Skip header. Pass element count, not byte size.
                                     offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                                    symbolCount
+                                    symbolCount,
+                                    parquetEncodingConfig
                             );
                         } else {
                             chunkDescriptor.addColumn(
@@ -2239,7 +2244,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     0,
                                     0,
                                     0,
-                                    0
+                                    0,
+                                    parquetEncodingConfig
                             );
                         }
                     }
