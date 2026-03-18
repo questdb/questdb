@@ -55,12 +55,7 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
     private static final Log LOG = LogFactory.getLog(PostingIndexBwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
-    // Bypass the fd cache (and thus the MmapCache) so that each reader gets its
-    // own independent mmap.  When multiple readers share a cached mapping via
-    // MmapCache, one reader's extend() can cause the kernel to mremap (and move)
-    // the shared mapping while another reader still holds raw addresses into it,
-    // leading to SIGSEGV (SEGV_MAPERR) in readBPBlockMetadata / decodeBlock.
-    protected final MemoryMR valueMem = Vm.getCMRInstance(true);
+    protected final MemoryMR valueMem = Vm.getCMRInstance();
     private final Cursor cursor = new Cursor();
     private final PostingGenLookup genLookup = new PostingGenLookup();
     protected MillisecondClock clock;
