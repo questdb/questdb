@@ -184,14 +184,24 @@ public final class FORBitmapIndexUtils {
         if (bitWidth == 64) {
             mask = -1L;
         }
+        int totalBytes = packedDataSize(valueCount, bitWidth);
 
         for (int i = 0; i < valueCount; i++) {
             // Ensure we have enough bits in buffer
-            while (bufferBits < bitWidth) {
-                long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
-                buffer |= (b << bufferBits);
-                bufferBits += 8;
-                srcOffset++;
+            if (bufferBits < bitWidth) {
+                if (bufferBits == 0 && srcOffset + 8 <= totalBytes) {
+                    // Fast path: buffer is empty and at least 8 bytes remain — read a full long
+                    buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
+                    bufferBits = 64;
+                    srcOffset += 8;
+                } else {
+                    // Slow path: read byte-by-byte near the end or when buffer has residual bits
+                    while (bufferBits < bitWidth) {
+                        buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
+                        bufferBits += 8;
+                        srcOffset++;
+                    }
+                }
             }
 
             // Extract offset and add minValue
@@ -218,6 +228,9 @@ public final class FORBitmapIndexUtils {
             mask = -1L;
         }
 
+        // Total packed data size (needed for bounds check on long reads)
+        int totalBytes = packedDataSize(startIndex + valueCount, bitWidth);
+
         // Seek to the byte containing the first value's bits
         long bitPos = (long) startIndex * bitWidth;
         int srcOffset = (int) (bitPos / 8);
@@ -226,21 +239,35 @@ public final class FORBitmapIndexUtils {
         // Pre-fill buffer past the skip bits
         long buffer = 0;
         int bufferBits = 0;
-        while (bufferBits < skipBits + bitWidth) {
-            long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
-            buffer |= (b << bufferBits);
-            bufferBits += 8;
-            srcOffset++;
-        }
-        buffer >>>= skipBits;
-        bufferBits -= skipBits;
-
-        for (int i = 0; i < valueCount; i++) {
-            while (bufferBits < bitWidth) {
-                long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
-                buffer |= (b << bufferBits);
+        if (skipBits == 0 && srcOffset + 8 <= totalBytes) {
+            // Fast path: aligned start, read a full long
+            buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
+            bufferBits = 64;
+            srcOffset += 8;
+        } else {
+            while (bufferBits < skipBits + bitWidth) {
+                buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
                 bufferBits += 8;
                 srcOffset++;
+            }
+            buffer >>>= skipBits;
+            bufferBits -= skipBits;
+        }
+
+        for (int i = 0; i < valueCount; i++) {
+            if (bufferBits < bitWidth) {
+                if (bufferBits == 0 && srcOffset + 8 <= totalBytes) {
+                    // Fast path: buffer is empty and at least 8 bytes remain
+                    buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
+                    bufferBits = 64;
+                    srcOffset += 8;
+                } else {
+                    while (bufferBits < bitWidth) {
+                        buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
+                        bufferBits += 8;
+                        srcOffset++;
+                    }
+                }
             }
             dest[i] = minValue + (buffer & mask);
             buffer >>>= bitWidth;

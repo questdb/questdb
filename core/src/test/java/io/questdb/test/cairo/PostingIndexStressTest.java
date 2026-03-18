@@ -60,6 +60,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     private static final int BP_BATCH = PostingIndexUtils.BLOCK_CAPACITY; // 64
 
+    // PostingGenLookup tier constants (mirrored here since PostingGenLookup is package-private)
+    private static final int TIER_NONE = 0;
+    private static final int TIER_PER_KEY = 1;
+    private static final int TIER_SBBF = 2;
+
     // ===================================================================
     // Fuzz: randomized workloads verified against in-memory oracle
     // ===================================================================
@@ -2708,5 +2713,383 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // ===================================================================
+    // Tier-specific lookup tests
+    // ===================================================================
+
+    @Test
+    public void testTier1PerKeyLookupFwd() {
+        // Write data for 10 active keys spread across 50 sparse generations.
+        // Each key appears in only 2-3 of the 50 gens.
+        // With the default 256MB budget, Tier 1 (per-key) will be used.
+        int activeKeyCount = 10;
+        int totalKeySpace = 1000;
+        int genCount = 50;
+
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            ObjList<LongList> oracle = new ObjList<>();
+            for (int k = 0; k < totalKeySpace; k++) {
+                oracle.add(new LongList());
+            }
+
+            Rnd rnd = new Rnd(777, 777);
+            // Precompute which gens each key appears in (2-3 gens per key)
+            int[][] keyGenMap = new int[activeKeyCount][];
+            for (int k = 0; k < activeKeyCount; k++) {
+                int numGens = 2 + rnd.nextInt(2); // 2 or 3
+                keyGenMap[k] = new int[numGens];
+                for (int g = 0; g < numGens; g++) {
+                    keyGenMap[k][g] = rnd.nextInt(genCount);
+                }
+            }
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier1_fwd", COLUMN_NAME_TXN_NONE)) {
+                long maxVal = -1;
+                long[] nextRowId = new long[totalKeySpace];
+                for (int g = 0; g < genCount; g++) {
+                    boolean anyWritten = false;
+                    for (int k = 0; k < activeKeyCount; k++) {
+                        boolean inThisGen = false;
+                        for (int gIdx : keyGenMap[k]) {
+                            if (gIdx == g) {
+                                inThisGen = true;
+                                break;
+                            }
+                        }
+                        if (inThisGen) {
+                            int key = k * (totalKeySpace / activeKeyCount); // spread keys across key space
+                            for (int v = 0; v < 5; v++) {
+                                long val = nextRowId[key]++;
+                                writer.add(key, val);
+                                oracle.getQuick(key).add(val);
+                                if (val > maxVal) maxVal = val;
+                            }
+                            anyWritten = true;
+                        }
+                    }
+                    if (anyWritten) {
+                        writer.setMaxValue(maxVal);
+                        writer.commit();
+                    }
+                }
+
+                // Open reader INSIDE the writer scope (before seal) so sparse gens exist
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "tier1_fwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    // Force lookup build by reading a cursor
+                    RowCursor firstCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    while (firstCursor.hasNext()) {
+                        firstCursor.next();
+                    }
+                    Assert.assertEquals("Tier 1 should be used",
+                            TIER_PER_KEY, reader.getGenLookupTier());
+
+                    for (int k = 0; k < totalKeySpace; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        long prev = Long.MIN_VALUE;
+                        while (cursor.hasNext()) {
+                            long val = cursor.next();
+                            Assert.assertTrue("key=" + k + " idx=" + idx + " not ascending: " + prev + " -> " + val,
+                                    val > prev);
+                            Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
+                                    idx < expected.size());
+                            Assert.assertEquals("key=" + k + " idx=" + idx,
+                                    expected.getQuick(idx), val);
+                            prev = val;
+                            idx++;
+                        }
+                        Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testTier1PerKeyLookupBwd() {
+        // Same setup as testTier1PerKeyLookupFwd but reads with BwdReader.
+        int activeKeyCount = 10;
+        int totalKeySpace = 1000;
+        int genCount = 50;
+
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            ObjList<LongList> oracle = new ObjList<>();
+            for (int k = 0; k < totalKeySpace; k++) {
+                oracle.add(new LongList());
+            }
+
+            Rnd rnd = new Rnd(777, 777);
+            int[][] keyGenMap = new int[activeKeyCount][];
+            for (int k = 0; k < activeKeyCount; k++) {
+                int numGens = 2 + rnd.nextInt(2);
+                keyGenMap[k] = new int[numGens];
+                for (int g = 0; g < numGens; g++) {
+                    keyGenMap[k][g] = rnd.nextInt(genCount);
+                }
+            }
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier1_bwd", COLUMN_NAME_TXN_NONE)) {
+                long maxVal = -1;
+                long[] nextRowId = new long[totalKeySpace];
+                for (int g = 0; g < genCount; g++) {
+                    boolean anyWritten = false;
+                    for (int k = 0; k < activeKeyCount; k++) {
+                        boolean inThisGen = false;
+                        for (int gIdx : keyGenMap[k]) {
+                            if (gIdx == g) {
+                                inThisGen = true;
+                                break;
+                            }
+                        }
+                        if (inThisGen) {
+                            int key = k * (totalKeySpace / activeKeyCount);
+                            for (int v = 0; v < 5; v++) {
+                                long val = nextRowId[key]++;
+                                writer.add(key, val);
+                                oracle.getQuick(key).add(val);
+                                if (val > maxVal) maxVal = val;
+                            }
+                            anyWritten = true;
+                        }
+                    }
+                    if (anyWritten) {
+                        writer.setMaxValue(maxVal);
+                        writer.commit();
+                    }
+                }
+
+                // Open reader INSIDE the writer scope (before seal) so sparse gens exist
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    // Force lookup build
+                    RowCursor firstCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    while (firstCursor.hasNext()) {
+                        firstCursor.next();
+                    }
+                    Assert.assertEquals("Tier 1 should be used",
+                            TIER_PER_KEY, reader.getGenLookupTier());
+
+                    for (int k = 0; k < totalKeySpace; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                        int idx = expected.size() - 1;
+                        long prev = Long.MAX_VALUE;
+                        while (cursor.hasNext()) {
+                            long val = cursor.next();
+                            Assert.assertTrue("key=" + k + " not descending: " + prev + " -> " + val,
+                                    val < prev);
+                            Assert.assertTrue("key=" + k + " extra bwd values", idx >= 0);
+                            Assert.assertEquals("key=" + k + " bwd idx=" + idx,
+                                    expected.getQuick(idx), val);
+                            prev = val;
+                            idx--;
+                        }
+                        Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testTier2SbbfLookup() {
+        // Write data across 20 sparse generations. Set a tiny memory budget
+        // to force Tier 2 (SBBF) instead of Tier 1.
+        int keyCount = 100;
+        int genCount = 20;
+
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            ObjList<LongList> oracle = new ObjList<>();
+            for (int k = 0; k < keyCount; k++) {
+                oracle.add(new LongList());
+            }
+
+            Rnd rnd = new Rnd(42, 42);
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier2_sbbf", COLUMN_NAME_TXN_NONE)) {
+                long maxVal = -1;
+                long[] nextRowId = new long[keyCount];
+                for (int g = 0; g < genCount; g++) {
+                    // Each gen has ~30 random keys active
+                    int activeInGen = 30;
+                    for (int i = 0; i < activeInGen; i++) {
+                        int key = rnd.nextInt(keyCount);
+                        for (int v = 0; v < 3; v++) {
+                            long val = nextRowId[key]++;
+                            writer.add(key, val);
+                            oracle.getQuick(key).add(val);
+                            if (val > maxVal) maxVal = val;
+                        }
+                    }
+                    writer.setMaxValue(maxVal);
+                    writer.commit();
+                }
+
+                // Open readers INSIDE the writer scope (before seal) so sparse gens exist
+
+                // Verify forward reader with Tier 2 (SBBF)
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    // Set a small budget: too small for Tier 1 (per-key) but enough for Tier 2 (SBBF)
+                    reader.setGenLookupMemoryBudget(1024);
+
+                    // Force lookup rebuild by reading a cursor
+                    RowCursor firstCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    while (firstCursor.hasNext()) {
+                        firstCursor.next();
+                    }
+                    Assert.assertEquals("Tier 2 (SBBF) should be used",
+                            TIER_SBBF, reader.getGenLookupTier());
+
+                    // Verify correctness for all keys
+                    for (int k = 0; k < keyCount; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                        int idx = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
+                                    idx < expected.size());
+                            Assert.assertEquals("key=" + k + " idx=" + idx,
+                                    expected.getQuick(idx), cursor.next());
+                            idx++;
+                        }
+                        Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                    }
+                }
+
+                // Also verify backward reader with Tier 2
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    reader.setGenLookupMemoryBudget(1024);
+
+                    RowCursor firstCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    while (firstCursor.hasNext()) {
+                        firstCursor.next();
+                    }
+                    Assert.assertEquals("Bwd Tier 2 (SBBF) should be used",
+                            TIER_SBBF, reader.getGenLookupTier());
+
+                    for (int k = 0; k < keyCount; k++) {
+                        LongList expected = oracle.getQuick(k);
+                        RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                        int idx = expected.size() - 1;
+                        while (cursor.hasNext()) {
+                            Assert.assertTrue("key=" + k + " bwd extra", idx >= 0);
+                            Assert.assertEquals("key=" + k + " bwd idx=" + idx,
+                                    expected.getQuick(idx), cursor.next());
+                            idx--;
+                        }
+                        Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testTier3FallbackLookup() {
+        // Write data with only 2 sparse generations and small data.
+        // Set budget=0 so Tier 1 is rejected, and genCount <= 2 so Tier 2 is rejected.
+        // This forces Tier 3 (NONE, binary search fallback).
+        int keyCount = 5;
+
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            ObjList<LongList> oracle = new ObjList<>();
+            for (int k = 0; k < keyCount; k++) {
+                oracle.add(new LongList());
+            }
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "tier3_none", COLUMN_NAME_TXN_NONE)) {
+                long maxVal = -1;
+                // Gen 0: keys 0, 1, 2
+                for (int k = 0; k < 3; k++) {
+                    for (int v = 0; v < 10; v++) {
+                        long val = (long) k * 1000 + v;
+                        writer.add(k, val);
+                        oracle.getQuick(k).add(val);
+                        if (val > maxVal) maxVal = val;
+                    }
+                }
+                writer.setMaxValue(maxVal);
+                writer.commit();
+
+                // Gen 1: keys 2, 3, 4
+                for (int k = 2; k < keyCount; k++) {
+                    for (int v = 0; v < 10; v++) {
+                        long val = (long) k * 1000 + 100 + v;
+                        writer.add(k, val);
+                        oracle.getQuick(k).add(val);
+                        if (val > maxVal) maxVal = val;
+                    }
+                }
+                writer.setMaxValue(maxVal);
+                writer.commit();
+            }
+
+            // Verify forward reader with Tier 3 (NONE)
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Set budget=0 to reject Tier 1, genCount=2 rejects Tier 2
+                reader.setGenLookupMemoryBudget(0);
+
+                RowCursor firstCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                while (firstCursor.hasNext()) {
+                    firstCursor.next();
+                }
+                Assert.assertEquals("Tier 3 (NONE) should be used",
+                        TIER_NONE, reader.getGenLookupTier());
+
+                for (int k = 0; k < keyCount; k++) {
+                    LongList expected = oracle.getQuick(k);
+                    RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                    int idx = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
+                                idx < expected.size());
+                        Assert.assertEquals("key=" + k + " idx=" + idx,
+                                expected.getQuick(idx), cursor.next());
+                        idx++;
+                    }
+                    Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                }
+            }
+
+            // Also verify backward reader with Tier 3
+            try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                    configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                reader.setGenLookupMemoryBudget(0);
+
+                RowCursor firstCursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                while (firstCursor.hasNext()) {
+                    firstCursor.next();
+                }
+                Assert.assertEquals("Bwd Tier 3 (NONE) should be used",
+                        TIER_NONE, reader.getGenLookupTier());
+
+                for (int k = 0; k < keyCount; k++) {
+                    LongList expected = oracle.getQuick(k);
+                    RowCursor cursor = reader.getCursor(false, k, 0, Long.MAX_VALUE);
+                    int idx = expected.size() - 1;
+                    while (cursor.hasNext()) {
+                        Assert.assertTrue("key=" + k + " bwd extra", idx >= 0);
+                        Assert.assertEquals("key=" + k + " bwd idx=" + idx,
+                                expected.getQuick(idx), cursor.next());
+                        idx--;
+                    }
+                    Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                }
+            }
+        }
     }
 }

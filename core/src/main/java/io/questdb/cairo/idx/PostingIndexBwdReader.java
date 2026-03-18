@@ -25,20 +25,11 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
@@ -48,22 +39,10 @@ import io.questdb.std.str.Path;
  * and values within each block in reverse — producing values in descending order.
  * Uses PostingGenLookup for tiered gen-to-key mapping with cached metadata.
  */
-public class PostingIndexBwdReader implements BitmapIndexReader {
+public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private static final Log LOG = LogFactory.getLog(PostingIndexBwdReader.class);
 
-    protected final MemoryMR keyMem = Vm.getCMRInstance();
-    protected final MemoryMR valueMem = Vm.getCMRInstance();
     private final Cursor cursor = new Cursor();
-    private final PostingGenLookup genLookup = new PostingGenLookup();
-    protected long columnTop;
-    protected int keyCount;
-    private long activePageOffset;
-    private long columnTxn;
-    private int genCount;
-    private int keyCountIncludingNulls;
-    private long keyFileSequence = -1;
-    private long partitionTxn;
-    private long valueMemSize = -1;
 
     public PostingIndexBwdReader(
             CairoConfiguration configuration,
@@ -74,23 +53,6 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
             long columnTop
     ) {
         of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
-    }
-
-    @Override
-    public void close() {
-        genLookup.close();
-        Misc.free(keyMem);
-        Misc.free(valueMem);
-    }
-
-    @Override
-    public long getColumnTop() {
-        return columnTop;
-    }
-
-    @Override
-    public long getColumnTxn() {
-        return columnTxn;
     }
 
     @Override
@@ -106,201 +68,6 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         }
 
         return EmptyRowCursor.INSTANCE;
-    }
-
-    @Override
-    public long getKeyBaseAddress() {
-        return keyMem.addressOf(0);
-    }
-
-    @Override
-    public int getKeyCount() {
-        return keyCountIncludingNulls;
-    }
-
-    @Override
-    public long getKeyMemorySize() {
-        return keyMem.size();
-    }
-
-    @Override
-    public long getPartitionTxn() {
-        return partitionTxn;
-    }
-
-    @Override
-    public long getValueBaseAddress() {
-        return valueMem.addressOf(0);
-    }
-
-    /**
-     * Returns 0 because PostingIndex does not use the legacy block-linked-list
-     * value file layout. The only consumer (GeoHashNative.latestByAndFilterPrefix)
-     * expects that layout and cannot operate on PostingIndex data regardless.
-     */
-    @Override
-    public int getValueBlockCapacity() {
-        return 0;
-    }
-
-    @Override
-    public long getValueMemorySize() {
-        return valueMem.size();
-    }
-
-    @Override
-    public boolean isOpen() {
-        return keyMem.getFd() != -1;
-    }
-
-    @Override
-    public void of(
-            CairoConfiguration configuration,
-            @Transient Path path,
-            CharSequence columnName,
-            long columnNameTxn,
-            long partitionTxn,
-            long columnTop
-    ) {
-        this.columnTop = columnTop;
-        this.columnTxn = columnNameTxn;
-        this.partitionTxn = partitionTxn;
-        final int plen = path.size();
-
-        try {
-            FilesFacade ff = configuration.getFilesFacade();
-            LPSZ name = PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            keyMem.of(
-                    ff,
-                    name,
-                    ff.getMapPageSize(),
-                    PostingIndexUtils.KEY_FILE_RESERVED,
-                    MemoryTag.MMAP_INDEX_READER,
-                    CairoConfiguration.O_NONE,
-                    -1
-            );
-
-            readIndexMetadataFromBestPage();
-
-            int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
-            if (version != 0 && version != PostingIndexUtils.FORMAT_VERSION) {
-                throw CairoException.critical(0).put("Unsupported Posting index version: ").put(version);
-            }
-
-            this.valueMem.of(
-                    configuration.getFilesFacade(),
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
-                    valueMemSize,
-                    valueMemSize,
-                    MemoryTag.MMAP_INDEX_READER
-            );
-        } catch (Throwable e) {
-            close();
-            throw e;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    @Override
-    public void reloadConditionally() {
-        // Check both pages for a higher sequence than cached
-        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long maxSeq = Math.max(seqA, seqB);
-        if (maxSeq != keyFileSequence) {
-            readIndexMetadataFromBestPage();
-            if (valueMemSize > 0) {
-                ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
-            }
-        }
-    }
-
-    public void updateKeyCount() {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            long seqStartA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            long seqStartB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-
-            long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-            long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-            long tryPage = (attempt == 0) ? bestPage : otherPage;
-
-            long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            if (seqStart <= keyFileSequence) {
-                if (attempt == 0) continue;
-                return;
-            }
-            Unsafe.getUnsafe().loadFence();
-
-            int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-            int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-            long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-
-            Unsafe.getUnsafe().loadFence();
-            long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-            if (seqStart == seqEnd && keyCount >= this.keyCount
-                    && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
-                genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-                if (valueMemSize > 0) {
-                    ((MemoryCMR) valueMem).changeSize(valueMemSize);
-                }
-                this.activePageOffset = tryPage;
-                this.keyFileSequence = seqStart;
-                this.valueMemSize = valueMemSize;
-                this.keyCount = keyCount;
-                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-                this.genCount = genCount;
-                return;
-            }
-        }
-    }
-
-    private void ensureGenLookup() {
-        if (genCount == 0 || keyCount == 0) {
-            return;
-        }
-        genLookup.buildLookupIfNeeded(valueMem, keyCount, genCount);
-    }
-
-    private void readIndexMetadataFromBestPage() {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            long pageA = PostingIndexUtils.PAGE_A_OFFSET;
-            long pageB = PostingIndexUtils.PAGE_B_OFFSET;
-            long memSize = keyMem.size();
-            long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(pageA + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-            long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(pageB + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-
-            long bestPage = (seqStartB > seqStartA) ? pageB : pageA;
-            long otherPage = (bestPage == pageA) ? pageB : pageA;
-            long tryPage = (attempt == 0) ? bestPage : otherPage;
-
-            long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            Unsafe.getUnsafe().loadFence();
-
-            long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-            int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-            int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-
-            Unsafe.getUnsafe().loadFence();
-            long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-            if (seqStart == seqEnd && seqStart > 0
-                    && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
-                genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-                this.activePageOffset = tryPage;
-                this.keyFileSequence = seqStart;
-                this.valueMemSize = valueMemSize;
-                this.keyCount = keyCount;
-                this.genCount = genCount;
-                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-                return;
-            }
-        }
-        this.keyFileSequence = 0;
-        this.valueMemSize = 0;
-        this.keyCount = 0;
-        this.genCount = 0;
     }
 
     private class Cursor implements RowCursor {
@@ -328,6 +95,9 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         private long packedDataBase;
         private int packedStartIdx; // start index of remaining values (going backwards)
         private int packedRemaining;
+        // Tier 1 per-key lookup state (reverse iteration)
+        private int lookupPos;
+        private int lookupEnd;
 
         @Override
         public boolean hasNext() {
@@ -385,6 +155,16 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
             this.minValue = minValue;
             this.maxValue = maxValue;
             this.currentGen = genCount; // will be decremented
+
+            // Set up inverted index range for this key (Tier 1), reverse order
+            if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
+                this.lookupPos = genLookup.getEntryEnd(key) - 1;
+                this.lookupEnd = genLookup.getEntryStart(key);
+            } else {
+                this.lookupPos = -1;
+                this.lookupEnd = 0;
+            }
+
             if (!advanceToPrevRelevantGen()) {
                 currentGen = -1;
                 encodedBlockCount = 0;
@@ -394,6 +174,96 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         }
 
         private boolean advanceToPrevRelevantGen() {
+            int lookupTier = genLookup.getTier();
+
+            if (lookupTier == PostingGenLookup.TIER_PER_KEY) {
+                return advanceWithPerKeyLookupReverse();
+            } else if (lookupTier == PostingGenLookup.TIER_SBBF) {
+                return advanceWithSbbfLookupReverse();
+            } else {
+                return advanceWithLinearScanReverse();
+            }
+        }
+
+        /**
+         * Tier 1: Direct jumps via inverted index in reverse — O(hitGens) per key.
+         */
+        private boolean advanceWithPerKeyLookupReverse() {
+            while (true) {
+                if (lookupPos >= lookupEnd) {
+                    int nextSparseGen = genLookup.getGenIndex(lookupPos);
+
+                    // Check dense gens between currentGen-1 and this sparse gen (in reverse)
+                    currentGen--;
+                    while (currentGen > nextSparseGen) {
+                        if (genLookup.getGenKeyCount(currentGen) >= 0) {
+                            loadDenseGenerationCached(currentGen);
+                            return true;
+                        }
+                        currentGen--;
+                    }
+
+                    // Load sparse gen directly
+                    int posInGen = genLookup.getPosInGen(lookupPos);
+                    lookupPos--;
+                    currentGen = nextSparseGen;
+                    loadSparseGenDirect(currentGen, posInGen);
+                    return true;
+                }
+
+                // No more sparse hits — check remaining dense gens in reverse
+                currentGen--;
+                while (currentGen >= 0) {
+                    if (genLookup.getGenKeyCount(currentGen) >= 0) {
+                        loadDenseGenerationCached(currentGen);
+                        return true;
+                    }
+                    currentGen--;
+                }
+                return false;
+            }
+        }
+
+        /**
+         * Tier 2: SBBF probe per gen in reverse — skip gens where key definitely absent.
+         */
+        private boolean advanceWithSbbfLookupReverse() {
+            currentGen--;
+            while (currentGen >= 0) {
+                int gkc = genLookup.getGenKeyCount(currentGen);
+                if (gkc >= 0) {
+                    // Dense gen
+                    loadDenseGenerationCached(currentGen);
+                    return true;
+                }
+
+                // Sparse gen: check min/max bounds first
+                if (requestedKey < genLookup.getGenMinKey(currentGen) ||
+                        requestedKey > genLookup.getGenMaxKey(currentGen)) {
+                    currentGen--;
+                    continue;
+                }
+
+                // SBBF probe
+                if (!genLookup.mightContainKey(currentGen, requestedKey)) {
+                    currentGen--;
+                    continue;
+                }
+
+                // SBBF says "maybe" — fall back to binary search within this gen
+                loadSparseGenWithBinarySearch(currentGen);
+                if (encodedBlockCount > 0 || packedMode) {
+                    return true;
+                }
+                currentGen--;
+            }
+            return false;
+        }
+
+        /**
+         * Tier 3: Binary search + min/max bounds check per gen in reverse.
+         */
+        private boolean advanceWithLinearScanReverse() {
             currentGen--;
             while (currentGen >= 0) {
                 int gkc = genLookup.getGenKeyCount(currentGen);
@@ -408,14 +278,6 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
                         requestedKey > genLookup.getGenMaxKey(currentGen)) {
                     currentGen--;
                     continue;
-                }
-
-                // Use SBBF if available (Tier 2)
-                if (genLookup.getTier() == PostingGenLookup.TIER_SBBF) {
-                    if (!genLookup.mightContainKey(currentGen, requestedKey)) {
-                        currentGen--;
-                        continue;
-                    }
                 }
 
                 // Binary search in sparse gen
@@ -544,6 +406,38 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
             int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
             long encodedAddr = strideAddr + bpHeaderSize + dataOffset;
+
+            if (totalValueCount == 0) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                return;
+            }
+
+            readBPBlockMetadata(encodedAddr);
+        }
+
+        /**
+         * Loads a sparse generation using the known position from the inverted index,
+         * bypassing binary search entirely.
+         */
+        private void loadSparseGenDirect(int gen, int idx) {
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            int genDataSize = genLookup.getGenDataSize(gen);
+            int genKeyCount = genLookup.getGenKeyCount(gen);
+            int activeKeyCount = -genKeyCount;
+
+            valueMem.extend(genFileOffset + genDataSize);
+            long genAddr = valueMem.addressOf(genFileOffset);
+
+            this.packedMode = false;
+
+            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+            int totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
+            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
+            long encodedAddr = genAddr + headerSize + dataOffset;
 
             if (totalValueCount == 0) {
                 this.encodedBlockCount = 0;
