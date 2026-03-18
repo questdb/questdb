@@ -306,12 +306,12 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         private long minValue;
         private int requestedKey;
         // Block metadata arrays (pre-allocated, grown as needed)
-        private int metadataCapacity;
-        private int[] valueCounts = new int[4];
-        private long[] firstValues = new long[4];
-        private long[] minDeltas = new long[4];
-        private int[] bitWidths = new int[4];
-        private long[] blockPackedAddrs = new long[4];
+        private int metadataCapacity = 256;
+        private int[] valueCounts = new int[256];
+        private long[] firstValues = new long[256];
+        private long[] minDeltas = new long[256];
+        private int[] bitWidths = new int[256];
+        private long[] blockPackedAddrs = new long[256];
         // Packed mode batch state (for count > BLOCK_CAPACITY)
         private boolean packedMode;
         private int packedBitWidth;

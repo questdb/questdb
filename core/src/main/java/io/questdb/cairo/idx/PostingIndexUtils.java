@@ -150,6 +150,8 @@ public final class PostingIndexUtils {
 
     /**
      * Decodes all values for a key from BP-encoded data.
+     * Allocates temporary arrays per call — use the overload with DecodeContext
+     * on hot paths to avoid allocations.
      *
      * @param srcAddr    address of the encoded data for this key
      * @param totalCount total number of values expected
@@ -212,6 +214,140 @@ public final class PostingIndexUtils {
             for (int i = 0; i < numDeltas; i++) {
                 cumulative += blockDeltas[i];
                 dest[destIdx++] = cumulative;
+            }
+        }
+    }
+
+    /**
+     * Decodes all values for a key from BP-encoded data into a Java array,
+     * using pre-allocated workspace arrays from the provided context.
+     *
+     * @param srcAddr    address of the encoded data for this key
+     * @param totalCount total number of values expected
+     * @param dest       destination array (must have room for totalCount values)
+     * @param ctx        reusable decode context (call ensureCapacity first)
+     */
+    public static void decodeKey(long srcAddr, int totalCount, long[] dest, DecodeContext ctx) {
+        int blockCount = Unsafe.getUnsafe().getShort(srcAddr) & 0xFFFF;
+        long pos = srcAddr + 2;
+
+        ctx.ensureCapacity(blockCount);
+        int[] valueCounts = ctx.valueCounts;
+        long[] firstValues = ctx.firstValues;
+        long[] minDeltas = ctx.minDeltas;
+        int[] bitWidths = ctx.bitWidths;
+        long[] blockDeltas = ctx.blockDeltas;
+
+        for (int b = 0; b < blockCount; b++) {
+            valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+        }
+        pos += blockCount;
+
+        for (int b = 0; b < blockCount; b++) {
+            firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+        }
+        pos += (long) blockCount * Long.BYTES;
+
+        for (int b = 0; b < blockCount; b++) {
+            minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+        }
+        pos += (long) blockCount * Long.BYTES;
+
+        for (int b = 0; b < blockCount; b++) {
+            bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+        }
+        pos += blockCount;
+
+        int destIdx = 0;
+        for (int b = 0; b < blockCount; b++) {
+            int count = valueCounts[b];
+            int bitWidth = bitWidths[b];
+            int numDeltas = count - 1;
+
+            if (numDeltas > 0) {
+                if (bitWidth == 0) {
+                    for (int i = 0; i < numDeltas; i++) {
+                        blockDeltas[i] = minDeltas[b];
+                    }
+                } else {
+                    FORBitmapIndexUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                }
+            }
+            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+
+            long cumulative = firstValues[b];
+            dest[destIdx++] = cumulative;
+            for (int i = 0; i < numDeltas; i++) {
+                cumulative += blockDeltas[i];
+                dest[destIdx++] = cumulative;
+            }
+        }
+    }
+
+    /**
+     * Decodes all values for a key from BP-encoded data directly into native memory,
+     * using pre-allocated workspace arrays from the provided context.
+     *
+     * @param srcAddr    address of the encoded data for this key
+     * @param totalCount total number of values expected
+     * @param destAddr   native memory destination address (must have room for totalCount longs)
+     * @param ctx        reusable decode context (call ensureCapacity first)
+     */
+    public static void decodeKeyToNative(long srcAddr, int totalCount, long destAddr, DecodeContext ctx) {
+        int blockCount = Unsafe.getUnsafe().getShort(srcAddr) & 0xFFFF;
+        long pos = srcAddr + 2;
+
+        ctx.ensureCapacity(blockCount);
+        int[] valueCounts = ctx.valueCounts;
+        long[] firstValues = ctx.firstValues;
+        long[] minDeltas = ctx.minDeltas;
+        int[] bitWidths = ctx.bitWidths;
+        long[] blockDeltas = ctx.blockDeltas;
+
+        for (int b = 0; b < blockCount; b++) {
+            valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+        }
+        pos += blockCount;
+
+        for (int b = 0; b < blockCount; b++) {
+            firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+        }
+        pos += (long) blockCount * Long.BYTES;
+
+        for (int b = 0; b < blockCount; b++) {
+            minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+        }
+        pos += (long) blockCount * Long.BYTES;
+
+        for (int b = 0; b < blockCount; b++) {
+            bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+        }
+        pos += blockCount;
+
+        int destIdx = 0;
+        for (int b = 0; b < blockCount; b++) {
+            int count = valueCounts[b];
+            int bitWidth = bitWidths[b];
+            int numDeltas = count - 1;
+
+            if (numDeltas > 0) {
+                if (bitWidth == 0) {
+                    for (int i = 0; i < numDeltas; i++) {
+                        blockDeltas[i] = minDeltas[b];
+                    }
+                } else {
+                    FORBitmapIndexUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                }
+            }
+            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+
+            long cumulative = firstValues[b];
+            Unsafe.getUnsafe().putLong(destAddr + (long) destIdx * Long.BYTES, cumulative);
+            destIdx++;
+            for (int i = 0; i < numDeltas; i++) {
+                cumulative += blockDeltas[i];
+                Unsafe.getUnsafe().putLong(destAddr + (long) destIdx * Long.BYTES, cumulative);
+                destIdx++;
             }
         }
     }
@@ -568,6 +704,28 @@ public final class PostingIndexUtils {
             if (nativeResidualsAddr != 0) {
                 Unsafe.getUnsafe().freeMemory(nativeResidualsAddr);
                 nativeResidualsAddr = 0;
+            }
+        }
+    }
+
+    /**
+     * Reusable workspace for decodeKey to avoid per-call allocations.
+     */
+    public static class DecodeContext {
+        int[] valueCounts;
+        long[] firstValues;
+        long[] minDeltas;
+        int[] bitWidths;
+        long[] blockDeltas = new long[BLOCK_CAPACITY];
+        private int blockCapacity;
+
+        public void ensureCapacity(int blockCount) {
+            if (blockCount > blockCapacity) {
+                blockCapacity = Math.max(blockCount, blockCapacity * 2);
+                valueCounts = new int[blockCapacity];
+                firstValues = new long[blockCapacity];
+                minDeltas = new long[blockCapacity];
+                bitWidths = new int[blockCapacity];
             }
         }
     }
