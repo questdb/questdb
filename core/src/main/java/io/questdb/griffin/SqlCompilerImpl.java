@@ -165,6 +165,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    private static final int PARQUET_DROP_COMPRESSION_FLAG = 0b10;
+    private static final int PARQUET_DROP_ENCODING_FLAG = 0b01;
+    private static final int PARQUET_DROP_FLAGS_ALL = PARQUET_DROP_COMPRESSION_FLAG | PARQUET_DROP_ENCODING_FLAG;
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
@@ -1493,25 +1496,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
-            int columnNamePosition,
             CharSequence columnName,
-            TableRecordMetadata tableMetadata,
-            int columnIndex
+            TableRecordMetadata tableMetadata
     ) throws SqlException {
         // Syntax: ALTER TABLE t ALTER COLUMN c DROP PARQUET
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
         }
-
-        // Drop both encoding and compression
-        int dropFlags = 3;
+        
         alterOperationBuilder.ofDropParquetEncoding(
                 tableNamePosition,
                 tableToken,
                 tableMetadata.getTableId(),
                 columnName,
-                dropFlags
+                PARQUET_DROP_FLAGS_ALL
         );
         securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
@@ -1650,7 +1649,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw e;
         }
         if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, columnType)) {
-            throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType));
+            SqlException e = SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType))
+                    .put(", supported encodings for this type: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
+            throw e;
         }
 
         tok = expectToken(lexer, "',' or ')'");
@@ -2359,10 +2361,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     securityContext,
                                     tableNamePosition,
                                     tableToken,
-                                    columnNamePosition,
                                     columnName,
-                                    tableMetadata,
-                                    columnIndex
+                                    tableMetadata
                             );
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'index' or 'parquet' expected");
