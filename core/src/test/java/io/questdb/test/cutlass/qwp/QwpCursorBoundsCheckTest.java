@@ -109,6 +109,33 @@ public class QwpCursorBoundsCheckTest {
     }
 
     @Test
+    public void testMessageCursorRejectsPayloadLongerThanMessageLength() {
+        int messageLength = HEADER_SIZE;
+        long address = Unsafe.malloc(messageLength, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().setMemory(address, messageLength, (byte) 0);
+            Unsafe.getUnsafe().putByte(address, (byte) 'Q');
+            Unsafe.getUnsafe().putByte(address + 1, (byte) 'W');
+            Unsafe.getUnsafe().putByte(address + 2, (byte) 'P');
+            Unsafe.getUnsafe().putByte(address + 3, (byte) '1');
+            Unsafe.getUnsafe().putByte(address + 4, (byte) 1);
+            Unsafe.getUnsafe().putShort(address + 6, (short) 1);
+            Unsafe.getUnsafe().putInt(address + 8, 1);
+
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            try {
+                cursor.of(address, messageLength, null, null);
+                Assert.fail("expected QwpParseException for truncated message payload");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage().contains("payload exceeds available data"));
+            }
+        } finally {
+            Unsafe.free(address, messageLength, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testStringCursorRejectsAttackerControlledOffset() throws QwpParseException {
         // 1 non-null string row: offset array = 8 bytes, string data = 5 bytes
         int legitimateSize = 13;

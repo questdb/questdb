@@ -129,8 +129,12 @@ public class QwpMessageCursor implements Mutable {
      * @param connectionSymbolDict connection-level symbol dictionary (may be null)
      * @throws QwpParseException if parsing fails
      */
-    public void of(long messageAddress, int messageLength, QwpSchemaCache schemaCache,
-                   ObjList<String> connectionSymbolDict) throws QwpParseException {
+    public void of(
+            long messageAddress,
+            int messageLength,
+            QwpSchemaCache schemaCache,
+            ObjList<String> connectionSymbolDict
+    ) throws QwpParseException {
         this.schemaCache = schemaCache;
         this.connectionSymbolDict = connectionSymbolDict;
 
@@ -143,6 +147,13 @@ public class QwpMessageCursor implements Mutable {
 
         // Calculate payload bounds
         long payloadLength = messageHeader.getPayloadLength();
+        long availablePayloadLength = messageLength - HEADER_SIZE;
+        if (payloadLength > availablePayloadLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "message payload exceeds available data [payloadLength=" + payloadLength + ", available=" + availablePayloadLength + ']'
+            );
+        }
         this.payloadAddress = messageAddress + HEADER_SIZE;
         this.payloadEnd = payloadAddress + payloadLength;
         this.currentTableAddress = payloadAddress;
