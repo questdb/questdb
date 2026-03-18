@@ -176,6 +176,14 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         this.offsetArrayAddress = dataAddress + offset;
         offset += (int) offsetArraySize;
 
+        int firstOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress);
+        if (firstOffset != 0) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
+                    "invalid QWP string offset array: offset[0]=" + firstOffset + ", expected 0"
+            );
+        }
+
         // Calculate total string data size from offset array
         int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
         if (lastOffset < 0 || offset + lastOffset > dataLength) {

@@ -200,11 +200,13 @@ public class QwpStringDecoderTest {
             Unsafe.getUnsafe().putInt(address + 8, 5);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, size, rowCount, TYPE_STRING, false);
-
-            // Row 0: reads from stringDataAddress + 5 to stringDataAddress + 5 -> empty string
-            // The cursor doesn't validate that the first offset is zero.
-            cursor.advanceRow();
+            try {
+                cursor.of(address, size, rowCount, TYPE_STRING, false);
+                Assert.fail("expected QwpParseException for invalid first string offset");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY, e.getErrorCode());
+                Assert.assertTrue(e.getMessage().contains("offset[0]"));
+            }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
