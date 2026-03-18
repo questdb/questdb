@@ -1696,7 +1696,7 @@ public class TableWriterTest extends AbstractCairoTest {
             // Mark parquet ready and switch native partition with parquet
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
-                Assert.assertTrue(writer.switchNativePartitionWithParquet(partitionTimestamp));
+                Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp));
 
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -2908,9 +2908,9 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
 
-                // switchNativePartitionWithParquet on the active partition should return true (skip)
+                // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
                 // without throwing an exception
-                Assert.assertTrue(writer.switchNativePartitionWithParquet(activePartitionTimestamp));
+                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp));
 
                 // Partition should remain native (not converted)
                 TxWriter txWriter = writer.getTxWriter();
@@ -2987,8 +2987,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.assertFalse("Parquet file should be deleted", FF.exists(path.$()));
                 }
 
-                // switchNativePartitionWithParquet should return false and clear the generated flag
-                Assert.assertFalse(writer.switchNativePartitionWithParquet(partitionTimestamp));
+                // switchNativePartitionWithParquet should return SWITCH_NO_PARQUET and clear the generated flag
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, writer.switchNativePartitionWithParquet(partitionTimestamp));
 
                 TxWriter txWriter = writer.getTxWriter();
                 int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);

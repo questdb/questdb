@@ -164,6 +164,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    public static final int SWITCH_NO_PARQUET = -1;
+    public static final int SWITCH_OK = 0;
+    public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
@@ -2877,8 +2880,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
-    // returns false if there is no parquet file to switch to, true otherwise
-    public boolean switchNativePartitionWithParquet(long partitionTimestamp) {
+    // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
+    // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
+    public int switchNativePartitionWithParquet(long partitionTimestamp) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
@@ -2895,12 +2899,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
             // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be switched to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return true;
+            return SWITCH_SKIPPED;
         }
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -2912,11 +2911,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
             // Partition is already in Parquet format.
-            return true;
+            return SWITCH_SKIPPED;
         }
         if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
             // parquet file has not been generated yet
-            return false;
+            return SWITCH_NO_PARQUET;
         }
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
@@ -2938,7 +2937,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.resetPartitionParquetGenerated(partitionIndex);
                 txWriter.bumpPartitionTableVersion();
                 txWriter.commit(denseSymbolMapWriters);
-                return false;
+                return SWITCH_NO_PARQUET;
             }
 
             // upgrade partition version
@@ -2986,7 +2985,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 openPartition(partitionTimestamp, txWriter.getTransientRowCount());
                 setAppendPosition(txWriter.getTransientRowCount(), false);
             }
-            return true;
+            return SWITCH_OK;
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
