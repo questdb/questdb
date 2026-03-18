@@ -33,7 +33,6 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -63,6 +62,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -1541,8 +1541,52 @@ public final class TableUtils {
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
+    public static void parseBloomFilterColumnIndexes(RecordMetadata metadata, CharSequence bloomFilterColumns, DirectIntList indexes) {
+        int start = 0;
+        int len = bloomFilterColumns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || bloomFilterColumns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(bloomFilterColumns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(bloomFilterColumns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart < nameEnd) {
+                    CharSequence columnName = bloomFilterColumns.subSequence(nameStart, nameEnd);
+                    int metadataIndex = metadata.getColumnIndexQuiet(columnName);
+                    if (metadataIndex >= 0 && metadata.getColumnType(metadataIndex) > 0) {
+                        int descriptorIndex = 0;
+                        for (int j = 0; j < metadataIndex; j++) {
+                            if (metadata.getColumnType(j) > 0) {
+                                descriptorIndex++;
+                            }
+                        }
+                        boolean isDuplicate = false;
+                        for (long k = 0, sz = indexes.size(); k < sz; k++) {
+                            if (indexes.get(k) == descriptorIndex) {
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+                        if (!isDuplicate) {
+                            indexes.add(descriptorIndex);
+                        }
+                    } else {
+                        throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName);
+                    }
+                }
+                start = i + 1;
+            }
+        }
+    }
+
     /**
-     * Produces a Parquet file from a native partition.
+     * Produces a Parquet file from a native partition using a TableReader.
+     * Convenience overload that extracts parameters from the reader and delegates to the core method.
+     * Supports concurrent partition change detection via expectedPartitionNameTxn.
      *
      * @param reader                   Table reader
      * @param path                     Path to the native partition directory (will be modified during execution)
@@ -1559,6 +1603,7 @@ public final class TableUtils {
      */
     public static long produceParquetFromNative(
             TableReader reader,
+            SymbolTableProvider symbolTableProvider,
             Path path,
             Path other,
             int pathSize,
@@ -1571,10 +1616,68 @@ public final class TableUtils {
         final TxReader txReader = reader.getTxFile();
         final TableMetadata metadata = reader.getMetadata();
         final long metadataVersion = metadata.getMetadataVersion();
+        final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+        final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
+        final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
+
+        ParquetPartitionChangeCheck changeCheck = null;
+        if (expectedPartitionNameTxn >= 0) {
+            changeCheck = () -> hasPartitionChanged(reader, partitionTimestamp, expectedPartitionNameTxn, metadata, metadataVersion);
+        }
+
+        return produceParquetFromNative(
+                path, other, pathSize,
+                partitionTimestamp, partitionNameTxn, partitionNameTxn,
+                tableName, partitionRowCount,
+                metadata, columnVersionReader,
+                symbolTableProvider,
+                configuration,
+                null, Double.NaN,
+                changeCheck
+        );
+    }
+
+    /**
+     * Produces a Parquet file from a native partition. Core method used by both TableReader and TableWriter callers.
+     *
+     * @param path                Path to the native partition directory (will be modified during execution)
+     * @param other               Path for the output parquet file (will be modified during execution)
+     * @param pathSize            Root path size for restoring paths after modifications
+     * @param partitionTimestamp  Timestamp of the partition
+     * @param partitionNameTxn    Partition name txn for the native source partition
+     * @param parquetNameTxn      Partition name txn for the parquet destination (may differ from partitionNameTxn
+     *                            when the partition version is upgraded during conversion)
+     * @param tableName           Name of the table
+     * @param partitionRowCount   Number of rows in the partition
+     * @param metadata            Table metadata
+     * @param columnVersionReader Column version reader (or writer, which extends reader)
+     * @param symbolTableProvider Symbol table provider
+     * @param configuration       Cairo configuration for parquet encoder options
+     * @param bloomFilterColumns  Comma-separated column names for bloom filters, or null
+     * @param bloomFilterFpp      Bloom filter false-positive probability, or NaN for default
+     * @param changeCheck         Optional check for concurrent partition changes, returns true if changed. Null to skip.
+     * @return The length of the produced Parquet file, or -1 if the partition changed during conversion
+     */
+    public static long produceParquetFromNative(
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetNameTxn,
+            String tableName,
+            long partitionRowCount,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp,
+            @Nullable ParquetPartitionChangeCheck changeCheck
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
-        final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
 
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         if (!ff.exists(path.$())) {
@@ -1583,7 +1686,7 @@ public final class TableUtils {
         final int partitionDirLen = path.size();
         final int pathRootSize = configuration.getDbRoot().length();
 
-        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
         if (ff.exists(other.$())) {
             LOG.info().$("parquet for native partition already present [path=").$substr(pathRootSize, path).I$();
             return ff.length(other.$());
@@ -1591,8 +1694,6 @@ public final class TableUtils {
 
         LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
-        final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
-        final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final int timestampIndex = metadata.getTimestampIndex();
@@ -1605,17 +1706,8 @@ public final class TableUtils {
                         continue; // skip deleted columns
                     }
 
-                    if (expectedPartitionNameTxn >= 0) {
-                        reader.reload();
-                        if (metadata.getMetadataVersion() != metadataVersion) {
-                            // structural change during parquet conversion
-                            return -1L;
-                        }
-                        final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
-                        if (index < 0 || reader.getTxFile().getPartitionNameTxn(index) != expectedPartitionNameTxn) {
-                            // partition updated during parquet conversion
-                            return -1L;
-                        }
+                    if (changeCheck != null && changeCheck.hasChanged()) {
+                        return -1L;
                     }
 
                     final String columnName = metadata.getColumnName(columnIndex);
@@ -1627,9 +1719,8 @@ public final class TableUtils {
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
-                            final StaticSymbolTable symbolTable = reader.getSymbolMapReader(columnIndex);
                             int encodeColumnType = columnType;
-                            if (!symbolTable.containsNullValue()) {
+                            if (!symbolTableProvider.containsNullValue(columnIndex)) {
                                 encodeColumnType |= Integer.MIN_VALUE;
                             }
 
@@ -1660,7 +1751,7 @@ public final class TableUtils {
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                             }
 
-                            final int symbolCount = symbolTable.getSymbolCount();
+                            final int symbolCount = symbolTableProvider.getSymbolCount(columnIndex);
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRONoCache(ff, path.$(), LOG, offsetsMemSize, memoryTag);
                             ff.madvise(symbolOffsetsAddr, offsetsMemSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -1738,16 +1829,35 @@ public final class TableUtils {
                 final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
                 final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
 
-                PartitionEncoder.encodeWithOptions(
-                        partitionDescriptor,
-                        other,
-                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                        statisticsEnabled,
-                        rawArrayEncoding,
-                        rowGroupSize,
-                        dataPageSize,
-                        parquetVersion
-                );
+                long bloomFilterColumnIndexesPtr = 0;
+                int bloomFilterColumnCount = 0;
+                double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
+                DirectIntList bloomFilterIndexes = null;
+
+                try {
+                    if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                        bloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_DEFAULT, true);
+                        parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
+                        bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
+                        bloomFilterColumnCount = (int) bloomFilterIndexes.size();
+                    }
+
+                    PartitionEncoder.encodeWithOptions(
+                            partitionDescriptor,
+                            other,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize,
+                            parquetVersion,
+                            bloomFilterColumnIndexesPtr,
+                            bloomFilterColumnCount,
+                            fpp
+                    );
+                } finally {
+                    Misc.free(bloomFilterIndexes);
+                }
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -2357,6 +2467,15 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
+    private static boolean hasPartitionChanged(TableReader reader, long partitionTimestamp, long expectedPartitionNameTxn, TableMetadata metadata, long metadataVersion) {
+        reader.reload();
+        if (metadata.getMetadataVersion() != metadataVersion) {
+            return true;
+        }
+        final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+        return index < 0 || reader.getTxFile().getPartitionNameTxn(index) != expectedPartitionNameTxn;
+    }
+
     // Utility method for debugging. This method is not used in production.
     @SuppressWarnings("unused")
     static boolean assertTimestampInOrder(long srcTimestampAddr, long srcDataMax) {
@@ -2492,6 +2611,61 @@ public final class TableUtils {
 
     public interface FailureCloseable {
         void close(long prevSize);
+    }
+
+    @FunctionalInterface
+    public interface ParquetPartitionChangeCheck {
+        boolean hasChanged();
+    }
+
+    public interface SymbolTableProvider {
+        boolean containsNullValue(int columnIndex);
+
+        int getSymbolCount(int columnIndex);
+    }
+
+    public static class SymbolTableProviderFromReader implements SymbolTableProvider {
+        private TableReader reader;
+
+        public void clear() {
+            reader = null;
+        }
+
+        @Override
+        public boolean containsNullValue(int columnIndex) {
+            return reader.getSymbolMapReader(columnIndex).containsNullValue();
+        }
+
+        @Override
+        public int getSymbolCount(int columnIndex) {
+            return reader.getSymbolMapReader(columnIndex).getSymbolCount();
+        }
+
+        public void of(TableReader reader) {
+            this.reader = reader;
+        }
+    }
+
+    public static class SymbolTableProviderFromWriter implements SymbolTableProvider {
+        private TableWriter writer;
+
+        public void clear() {
+            writer = null;
+        }
+
+        @Override
+        public boolean containsNullValue(int columnIndex) {
+            return writer.getSymbolMapWriter(columnIndex).getNullFlag();
+        }
+
+        @Override
+        public int getSymbolCount(int columnIndex) {
+            return writer.getSymbolMapWriter(columnIndex).getSymbolCount();
+        }
+
+        public void of(TableWriter writer) {
+            this.writer = writer;
+        }
     }
 
     static {
