@@ -2037,11 +2037,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
                 long uncommittedRows = getUncommittedRowCount();
-                boolean rollWroteEvent = false;
                 if (currentTxnStartRowNum > 0) {
                     // Roll last transaction to new segment
                     rollUncommittedToNewSegment(-1, -1);
-                    rollWroteEvent = lastSegmentTxn >= 0;
                 }
 
                 if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
@@ -2079,9 +2077,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         if (ColumnType.isSymbol(columnType)) {
                             symbolMapNullFlagsChanged.set(columnIndex, true);
                             symbolMapNullFlags.set(columnIndex, true);
-                            // If the roll wrote a WAL event (isCommittingData was true),
-                            // rewrite it now so the symbol null flag is included.
-                            if (rollWroteEvent) {
+                            // Rewrite the WAL event if it was already written without the null flag.
+                            if (lastSegmentTxn >= 0) {
                                 lastSegmentTxn = events.rewriteLastDataRecord(
                                         lastTxnType,
                                         0,
