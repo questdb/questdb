@@ -169,7 +169,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                     Path path = new Path();
                     PartitionDescriptor descriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader(tableName);
-                    PartitionUpdater updater = new PartitionUpdater(ff)
+                    PartitionUpdater updater = new PartitionUpdater()
             ) {
                 final TableToken table = engine.getTableTokenIfExists(tableName);
                 path.concat(root)
@@ -191,16 +191,23 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 long compressionCodec = ParquetCompression.packCompressionCodecLevel(
                         ParquetCompression.COMPRESSION_ZSTD, 1
                 );
+
+                // Update the partition, adding a row.
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(
                         path.$(),
-                        configuration.getWriterFileOpenOpts(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
                         parquetPartitionSize,
                         1,  // index of the timestamp column
                         compressionCodec,
                         false,
                         false,
-                        0,
-                        0,
+                        0L,
+                        0L,
                         0.01,
                         0.0
                 );
