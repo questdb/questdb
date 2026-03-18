@@ -884,7 +884,9 @@ public final class TableUtils {
      * See {@link #packParquetConfig(int, int, int)} for the bit layout.
      */
     public static int getParquetEncodingConfig(MemoryR metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 4);
+        // type(4) + flags(8) + indexBlockCapacity(4) + symbolCapacity(4)
+        final long META_COLUMN_PARQUET_ENCODING_CONFIG_OFFSET = 20;
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + META_COLUMN_PARQUET_ENCODING_CONFIG_OFFSET);
     }
 
     public static int getPartitionBy(TableRecordMetadata metadata, CairoEngine engine) {
