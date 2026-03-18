@@ -97,6 +97,8 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             @NotNull RecordCursorFactory masterFactory,
             @NotNull HorizonJoinSlaveState[] slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             @NotNull LongList offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -130,6 +132,8 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     configuration,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
+                    masterAsOfJoinMapSinkClasses,
+                    slaveAsOfJoinMapSinkClasses,
                     masterTimestampColumnIndex,
                     offsets,
                     valueCount,
@@ -147,7 +151,12 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             );
 
             this.frameSequence = new UnorderedPageFrameSequence<>(
-                    engine, configuration, messageBus, atom, filter != null ? FILTER_AND_REDUCE : REDUCE, workerCount
+                    engine,
+                    configuration,
+                    messageBus,
+                    atom,
+                    filter != null ? FILTER_AND_REDUCE : REDUCE,
+                    workerCount
             );
 
             this.cursor = new AsyncMultiHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactories);
@@ -344,9 +353,12 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     if (asOfRowId != Long.MIN_VALUE) {
                         if (helper.getForwardWatermark() == Long.MIN_VALUE) {
                             matchRowId = helper.backwardScanForKeyMatch(
-                                    asOfRowId, masterKeyRecord,
-                                    masterSink, slaveSink,
-                                    asOfJoinMap, symbolTranslatingRecord
+                                    asOfRowId,
+                                    masterKeyRecord,
+                                    masterSink,
+                                    slaveSink,
+                                    asOfJoinMap,
+                                    symbolTranslatingRecord
                             );
                             helper.initForwardWatermark(asOfRowId);
                         } else {
@@ -360,9 +372,12 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                                 matchRowId = cacheValue.getLong(0);
                             } else {
                                 matchRowId = helper.backwardScanForKeyMatch(
-                                        asOfRowId, masterKeyRecord,
-                                        masterSink, slaveSink,
-                                        asOfJoinMap, symbolTranslatingRecord
+                                        asOfRowId,
+                                        masterKeyRecord,
+                                        masterSink,
+                                        slaveSink,
+                                        asOfJoinMap,
+                                        symbolTranslatingRecord
                                 );
                             }
                         }

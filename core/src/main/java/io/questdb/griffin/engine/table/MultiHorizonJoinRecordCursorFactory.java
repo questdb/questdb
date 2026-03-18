@@ -27,9 +27,11 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -63,6 +65,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -85,6 +88,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull HorizonJoinSlaveState[] slaveStates,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             @NotNull LongList offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -105,6 +110,13 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.offsets = offsets;
             this.recordFunctions = recordFunctions;
 
+            ObjList<RecordSink> masterAsOfJoinMapSinks = new ObjList<>(slaveStates.length);
+            ObjList<RecordSink> slaveAsOfJoinMapSinks = new ObjList<>(slaveStates.length);
+            for (int i = 0; i < slaveStates.length; i++) {
+                masterAsOfJoinMapSinks.add(masterAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
+                slaveAsOfJoinMapSinks.add(slaveAsOfJoinMapSinkClasses[i] != null ? RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[i], null, null, null, null, null, null, null) : null);
+            }
+
             this.cursor = new MultiHorizonJoinRecordCursor(
                     configuration,
                     horizonJoinMetadata,
@@ -115,6 +127,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     masterTimestampColumnIndex,
                     offsets,
                     slaveStates,
+                    masterAsOfJoinMapSinks,
+                    slaveAsOfJoinMapSinks,
                     keyTypes,
                     valueTypes,
                     groupByColumnFilter,
@@ -135,6 +149,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        // TODO: reuse the list
         TimeFrameCursor[] slaveCursors = new TimeFrameCursor[slaveStates.length];
         try {
             for (int i = 0; i < slaveStates.length; i++) {
@@ -143,9 +158,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             cursor.of(masterCursor, slaveCursors, executionContext);
             return cursor;
         } catch (Throwable th) {
-            for (int i = 0; i < slaveCursors.length; i++) {
-                Misc.free(slaveCursors[i]);
-            }
+            Misc.free(slaveCursors);
             Misc.free(masterCursor);
             throw th;
         }
@@ -178,13 +191,13 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(masterFactory);
         for (HorizonJoinSlaveState ss : slaveStates) {
             Misc.free(ss);
-            Misc.free(ss.getFactory());
         }
         Misc.free(horizonJoinMetadata);
         Misc.freeObjList(recordFunctions);
     }
 
     private static class MultiHorizonJoinRecordCursor implements RecordCursor {
+        private final Map[] asOfJoinMaps;
         private final Map dataMap;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
@@ -194,14 +207,18 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         private final MultiHorizonJoinRecord horizonJoinRecord;
         private final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
         private final ObjList<Function> keyFunctions;
-        private final Record[] matchedSlaveRecords;
+        private final ObjList<RecordSink> masterAsOfJoinMapSinks;
         private final int masterTimestampColumnIndex;
+        private final Record[] matchedSlaveRecords;
         private final LongList offsets;
         private final VirtualRecord recordA;
         private final VirtualRecord recordB;
         private final ObjList<Function> recordFunctions;
+        private final ObjList<RecordSink> slaveAsOfJoinMapSinks;
         private final int slaveCount;
         private final HorizonJoinSlaveState[] slaveStates;
+        private final SymbolTranslatingRecord[] symbolTranslatingRecords;
+        private final HorizonJoinTimeFrameHelper[] timeFrameHelpers;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isDataMapBuilt;
         private boolean isOpen;
@@ -219,6 +236,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 int masterTimestampColumnIndex,
                 LongList offsets,
                 HorizonJoinSlaveState[] slaveStates,
+                ObjList<RecordSink> masterAsOfJoinMapSinks,
+                ObjList<RecordSink> slaveAsOfJoinMapSinks,
                 @Transient ArrayColumnTypes keyTypes,
                 @Transient ArrayColumnTypes valueTypes,
                 @Transient ListColumnFilter groupByColumnFilter,
@@ -233,6 +252,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.length;
             this.matchedSlaveRecords = new Record[slaveCount];
+            this.masterAsOfJoinMapSinks = masterAsOfJoinMapSinks;
+            this.slaveAsOfJoinMapSinks = slaveAsOfJoinMapSinks;
 
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
@@ -256,6 +277,22 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     keyFunctions, null, null, null, null
             );
 
+            // Create per-slave maps, symbol translating records, and time frame helpers
+            final long lookahead = configuration.getSqlAsOfJoinLookAhead();
+            this.asOfJoinMaps = new Map[slaveCount];
+            this.symbolTranslatingRecords = new SymbolTranslatingRecord[slaveCount];
+            this.timeFrameHelpers = new HorizonJoinTimeFrameHelper[slaveCount];
+            for (int s = 0; s < slaveCount; s++) {
+                HorizonJoinSlaveState ss = slaveStates[s];
+                if (ss.getAsOfJoinKeyTypes() != null) {
+                    asOfJoinMaps[s] = MapFactory.createUnorderedMap(configuration, ss.getAsOfJoinKeyTypes(), new SingleColumnType(ColumnType.LONG));
+                }
+                if (ss.getMasterSymbolKeyColumnIndices() != null) {
+                    symbolTranslatingRecords[s] = new SymbolTranslatingRecord(ss.getMasterColumnCount(), ss.getMasterSymbolKeyColumnIndices(), ss.getSlaveSymbolKeyColumnIndices());
+                }
+                timeFrameHelpers[s] = new HorizonJoinTimeFrameHelper(lookahead, ss.getSlaveTsScale());
+            }
+
             this.isOpen = true;
         }
 
@@ -269,20 +306,16 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         public void close() {
             if (isOpen) {
                 masterCursor = Misc.free(masterCursor);
-                if (slaveCursors != null) {
-                    for (int i = 0; i < slaveCursors.length; i++) {
-                        slaveCursors[i] = Misc.free(slaveCursors[i]);
-                    }
-                }
+                Misc.free(slaveCursors);
                 mapCursor = Misc.free(mapCursor);
                 Misc.free(dataMap);
                 Misc.clearObjList(groupByFunctions);
                 Misc.free(groupByAllocator);
-                for (HorizonJoinSlaveState ss : slaveStates) {
-                    if (ss.getAsOfJoinMap() != null) {
-                        ss.getAsOfJoinMap().close();
+                for (int s = 0; s < slaveCount; s++) {
+                    if (asOfJoinMaps[s] != null) {
+                        asOfJoinMaps[s].close();
                     }
-                    Misc.clear(ss.getSymbolTranslatingRecord());
+                    Misc.clear(symbolTranslatingRecords[s]);
                 }
                 Misc.free(horizonIterator);
                 isOpen = false;
@@ -345,9 +378,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
         private void buildMap() {
             for (int s = 0; s < slaveCount; s++) {
-                slaveStates[s].getTimeFrameHelper().toTop();
-                if (slaveStates[s].isKeyed() && slaveStates[s].getAsOfJoinMap() != null) {
-                    slaveStates[s].getAsOfJoinMap().clear();
+                timeFrameHelpers[s].toTop();
+                if (slaveStates[s].isKeyed() && asOfJoinMaps[s] != null) {
+                    asOfJoinMaps[s].clear();
                 }
             }
             dataMap.clear();
@@ -367,40 +400,43 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 for (int s = 0; s < slaveCount; s++) {
                     HorizonJoinSlaveState ss = slaveStates[s];
                     final long scaledHorizonTs = scaleTimestamp(horizonTs, ss.getMasterTsScale());
-                    long asOfRowId = ss.getTimeFrameHelper().findAsOfRow(scaledHorizonTs);
+                    long asOfRowId = timeFrameHelpers[s].findAsOfRow(scaledHorizonTs);
 
                     long matchRowId = Long.MIN_VALUE;
                     if (ss.isKeyed()) {
                         Record masterKeyRecord = masterRecord;
-                        if (ss.getSymbolTranslatingRecord() != null) {
-                            ss.getSymbolTranslatingRecord().of(masterRecord);
-                            masterKeyRecord = ss.getSymbolTranslatingRecord();
+                        if (symbolTranslatingRecords[s] != null) {
+                            symbolTranslatingRecords[s].of(masterRecord);
+                            masterKeyRecord = symbolTranslatingRecords[s];
                         }
 
                         if (asOfRowId != Long.MIN_VALUE) {
-                            if (ss.getTimeFrameHelper().getForwardWatermark() == Long.MIN_VALUE) {
-                                matchRowId = ss.getTimeFrameHelper().backwardScanForKeyMatch(
+                            if (timeFrameHelpers[s].getForwardWatermark() == Long.MIN_VALUE) {
+                                matchRowId = timeFrameHelpers[s].backwardScanForKeyMatch(
                                         asOfRowId, masterKeyRecord,
-                                        ss.getMasterAsOfJoinMapSink(), ss.getSlaveAsOfJoinMapSink(),
-                                        ss.getAsOfJoinMap(), ss.getSymbolTranslatingRecord()
+                                        masterAsOfJoinMapSinks.getQuick(s), slaveAsOfJoinMapSinks.getQuick(s),
+                                        asOfJoinMaps[s], symbolTranslatingRecords[s]
                                 );
-                                ss.getTimeFrameHelper().initForwardWatermark(asOfRowId);
+                                timeFrameHelpers[s].initForwardWatermark(asOfRowId);
                             } else {
-                                ss.getTimeFrameHelper().forwardScanToPosition(
-                                        asOfRowId, ss.getSlaveAsOfJoinMapSink(), ss.getAsOfJoinMap()
+                                timeFrameHelpers[s].forwardScanToPosition(
+                                        asOfRowId, slaveAsOfJoinMapSinks.getQuick(s), asOfJoinMaps[s]
                                 );
 
-                                MapKey cacheKey = ss.getAsOfJoinMap().withKey();
-                                cacheKey.put(masterKeyRecord, ss.getMasterAsOfJoinMapSink());
+                                MapKey cacheKey = asOfJoinMaps[s].withKey();
+                                cacheKey.put(masterKeyRecord, masterAsOfJoinMapSinks.getQuick(s));
                                 MapValue cacheValue = cacheKey.findValue();
 
                                 if (cacheValue != null) {
                                     matchRowId = cacheValue.getLong(0);
                                 } else {
-                                    matchRowId = ss.getTimeFrameHelper().backwardScanForKeyMatch(
-                                            asOfRowId, masterKeyRecord,
-                                            ss.getMasterAsOfJoinMapSink(), ss.getSlaveAsOfJoinMapSink(),
-                                            ss.getAsOfJoinMap(), ss.getSymbolTranslatingRecord()
+                                    matchRowId = timeFrameHelpers[s].backwardScanForKeyMatch(
+                                            asOfRowId,
+                                            masterKeyRecord,
+                                            masterAsOfJoinMapSinks.getQuick(s),
+                                            slaveAsOfJoinMapSinks.getQuick(s),
+                                            asOfJoinMaps[s],
+                                            symbolTranslatingRecords[s]
                                     );
                                 }
                             }
@@ -410,8 +446,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     }
 
                     if (matchRowId != Long.MIN_VALUE) {
-                        ss.getTimeFrameHelper().recordAt(matchRowId);
-                        matchedSlaveRecords[s] = ss.getRecord();
+                        timeFrameHelpers[s].recordAt(matchRowId);
+                        matchedSlaveRecords[s] = timeFrameHelpers[s].getRecord();
                     } else {
                         matchedSlaveRecords[s] = null;
                     }
@@ -446,8 +482,10 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 isOpen = true;
                 groupByAllocator.reopen();
                 dataMap.reopen();
-                for (HorizonJoinSlaveState ss : slaveStates) {
-                    ss.reopen();
+                for (int s = 0; s < slaveCount; s++) {
+                    if (asOfJoinMaps[s] != null) {
+                        asOfJoinMaps[s].reopen();
+                    }
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
@@ -457,11 +495,10 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             // Initialize each slave's time frame helper and symbol translating record
             SymbolTableSource[] slaveSymbolSources = new SymbolTableSource[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
-                slaveStates[s].getTimeFrameHelper().of(slaveCursors[s]);
-                slaveStates[s].setTimeFrameCursor(slaveCursors[s]);
+                timeFrameHelpers[s].of(slaveCursors[s]);
                 slaveSymbolSources[s] = slaveCursors[s];
-                if (slaveStates[s].getSymbolTranslatingRecord() != null) {
-                    slaveStates[s].getSymbolTranslatingRecord().initSources(masterCursor, slaveCursors[s]);
+                if (symbolTranslatingRecords[s] != null) {
+                    symbolTranslatingRecords[s].initSources(masterCursor, slaveCursors[s]);
                 }
             }
 

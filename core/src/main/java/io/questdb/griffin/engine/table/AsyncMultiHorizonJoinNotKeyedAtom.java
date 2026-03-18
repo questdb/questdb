@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
@@ -58,6 +59,8 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
             @NotNull CairoConfiguration configuration,
             @NotNull HorizonJoinSlaveState[] slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
             @NotNull LongList offsets,
             int valueCount,
@@ -78,6 +81,8 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
                 configuration,
                 slaveStates,
                 perSlaveAsOfJoinKeyTypes,
+                masterAsOfJoinMapSinkClasses,
+                slaveAsOfJoinMapSinkClasses,
                 masterTimestampColumnIndex,
                 offsets,
                 columnSources,

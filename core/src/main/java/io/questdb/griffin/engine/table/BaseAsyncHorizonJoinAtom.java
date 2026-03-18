@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -53,7 +52,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
@@ -121,15 +119,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -181,49 +170,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         try {
             // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
             if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        masterAsOfJoinMapSinkClass,
-                        masterAsOfJoinColumnTypes,
-                        masterAsOfJoinColumnFilter,
-                        null,
-                        null,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharMaster,
-                        writeTimestampAsNanosMaster
-                );
-                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        slaveAsOfJoinMapSinkClass,
-                        slaveAsOfJoinColumnTypes,
-                        slaveAsOfJoinColumnFilter,
-                        null,
-                        null,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharSlave,
-                        writeTimestampAsNanosSlave
-                );
+                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
+                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
-                            masterAsOfJoinMapSinkClass,
-                            masterAsOfJoinColumnTypes,
-                            masterAsOfJoinColumnFilter,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharMaster,
-                            writeTimestampAsNanosMaster
-                    ));
-                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
-                            slaveAsOfJoinMapSinkClass,
-                            slaveAsOfJoinColumnTypes,
-                            slaveAsOfJoinColumnFilter,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharSlave,
-                            writeTimestampAsNanosSlave
-                    ));
+                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
+                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;

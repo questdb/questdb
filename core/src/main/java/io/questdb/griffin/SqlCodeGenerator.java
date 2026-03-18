@@ -3897,15 +3897,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         asOfJoinKeyTypes,
                         masterAsOfJoinMapSinkClass,
                         slaveAsOfJoinMapSinkClass,
-                        masterMetadata,
-                        listColumnFilterB,
-                        slaveMetadata,
-                        listColumnFilterA,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharB,
-                        asOfWriteStringAsVarcharA,
-                        writeTimestampAsNanosB,
-                        writeTimestampAsNanosA,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices,
@@ -3944,15 +3935,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
-                    masterMetadata,
-                    listColumnFilterB,
-                    slaveMetadata,
-                    listColumnFilterA,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharB,
-                    asOfWriteStringAsVarcharA,
-                    writeTimestampAsNanosB,
-                    writeTimestampAsNanosA,
                     masterMetadata.getColumnCount(),
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -5931,6 +5913,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int masterTsType = masterMetadata.getTimestampType();
             slaveStates = new HorizonJoinSlaveState[slaveCount];
             ColumnTypes[] perSlaveAsOfJoinKeyTypes = new ColumnTypes[slaveCount];
+            @SuppressWarnings("unchecked")
+            Class<RecordSink>[] masterAsOfJoinMapSinkClasses = new Class[slaveCount];
+            @SuppressWarnings("unchecked")
+            Class<RecordSink>[] slaveAsOfJoinMapSinkClasses = new Class[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
                 RecordMetadata slaveMeta = slaveMetadatas[s];
                 QueryModel slaveModel = slaveModels.getQuick(s);
@@ -5947,8 +5933,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // Process ASOF join keys for this slave
                 ArrayColumnTypes asOfJoinKeyTypes = null;
-                RecordSink masterAsOfJoinMapSink = null;
-                RecordSink slaveAsOfJoinMapSink = null;
                 int[] masterSymbolKeyColumnIndices = null;
                 int[] slaveSymbolKeyColumnIndices = null;
 
@@ -6021,37 +6005,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveSymbolKeyColumnIndices = slaveSymbolKeyCols.toArray();
                     }
 
-                    masterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                            RecordSinkFactory.getInstanceClass(configuration, asm, masterMetadata, listColumnFilterB, null, null, asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB),
-                            masterMetadata,
-                            listColumnFilterB,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharB,
-                            writeTimestampAsNanosB
+                    // Store ASOF join sink classes for this slave.
+                    // RecordSink instances have mutable fields (e.g. Decimal128/Decimal256)
+                    // and must not be shared across workers. The async atom constructor
+                    // creates owner + per-worker instances from these classes.
+                    masterAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
+                            configuration, asm, masterMetadata, listColumnFilterB, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharB, writeTimestampAsNanosB
                     );
-                    slaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                            RecordSinkFactory.getInstanceClass(configuration, asm, slaveMeta, listColumnFilterA, null, null, asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA),
-                            slaveMeta,
-                            listColumnFilterA,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharA,
-                            writeTimestampAsNanosA
+                    slaveAsOfJoinMapSinkClasses[s] = RecordSinkFactory.getInstanceClass(
+                            configuration, asm, slaveMeta, listColumnFilterA, null, null,
+                            asOfWriteSymbolAsString, asOfWriteStringAsVarcharA, writeTimestampAsNanosA
                     );
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
 
                 slaveStates[s] = new HorizonJoinSlaveState(
-                        configuration,
                         slaveFactory,
                         perSlaveMasterTsScale,
                         perSlaveSlaveTsScale,
                         asOfJoinKeyTypes,
-                        masterAsOfJoinMapSink,
-                        slaveAsOfJoinMapSink,
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices
@@ -6081,6 +6054,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             innerMetadata0,
                             masterFactory,
                             slaveStates0,
+                            masterAsOfJoinMapSinkClasses,
+                            slaveAsOfJoinMapSinkClasses,
                             offsets,
                             masterTimestampColumnIndex,
                             groupByFunctions0,
@@ -6097,6 +6072,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata0,
                         masterFactory,
                         slaveStates0,
+                        masterAsOfJoinMapSinkClasses,
+                        slaveAsOfJoinMapSinkClasses,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -6150,6 +6127,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterFactory,
                         slaveStates0,
                         perSlaveAsOfJoinKeyTypes,
+                        masterAsOfJoinMapSinkClasses,
+                        slaveAsOfJoinMapSinkClasses,
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
@@ -6191,6 +6170,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterFactory,
                     slaveStates0,
                     perSlaveAsOfJoinKeyTypes,
+                    masterAsOfJoinMapSinkClasses,
+                    slaveAsOfJoinMapSinkClasses,
                     offsets,
                     masterTimestampColumnIndex,
                     groupByFunctions0,
@@ -6227,10 +6208,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (HorizonJoinSlaveState ss : slaveStates) {
                     Misc.free(ss);
                 }
-            }
-            // Free all slave factories on error
-            for (int s = 0, n = slaveFactories.size(); s < n; s++) {
-                Misc.free(slaveFactories.getQuick(s));
+            } else {
+                // Free all slave factories on error (not yet owned by slaveStates)
+                for (int s = 0, n = slaveFactories.size(); s < n; s++) {
+                    Misc.free(slaveFactories.getQuick(s));
+                }
             }
             throw th;
         }

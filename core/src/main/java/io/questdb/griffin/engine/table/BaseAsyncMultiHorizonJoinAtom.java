@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
@@ -69,7 +70,7 @@ import java.io.Closeable;
  * 1. Per-worker x per-slave time frame helpers for ASOF JOIN lookups via ConcurrentTimeFrameCursor
  * 2. Per-worker group by functions and updaters (shared across slaves)
  * 3. Per-worker x per-slave ASOF join maps for symbol -> rowId mappings (when keyed join)
- * 4. Per-slave RecordSinks (shared across workers, since compiled bytecode is stateless)
+ * 4. Per-worker x per-slave RecordSinks (RecordSink instances have mutable state and must not be shared)
  * 5. Filter resources (compiled and Java filters, shared across slaves)
  */
 public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
@@ -83,12 +84,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final GroupByFunctionsUpdater ownerFunctionUpdater;
     protected final ObjList<GroupByFunction> ownerGroupByFunctions;
     protected final AsyncHorizonTimestampIterator ownerHorizonIterator;
+    protected final ObjList<RecordSink> ownerMasterAsOfJoinSinks;
     protected final ConcurrentTimeFrameCursor[] ownerSlaveTimeFrameCursors;
+    protected final ObjList<RecordSink> ownerSlaveAsOfJoinSinks;
     protected final HorizonJoinTimeFrameHelper[] ownerSlaveTimeFrameHelpers;
     protected final SymbolTranslatingRecord[] ownerSymbolTranslatingRecords;
-    protected final RecordSink[] perSlaveMasterAsOfJoinSinks;
     protected final long[] perSlaveMasterTsScales;
-    protected final RecordSink[] perSlaveSlaveAsOfJoinSinks;
     protected final ObjList<GroupByAllocator> perWorkerAllocators;
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
     protected final ObjList<MultiHorizonJoinRecord> perWorkerCombinedRecords;
@@ -96,6 +97,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
     protected final PerWorkerLocks perWorkerLocks;
+    protected final ObjList<ObjList<RecordSink>> perWorkerMasterAsOfJoinSinks;
+    protected final ObjList<ObjList<RecordSink>> perWorkerSlaveAsOfJoinSinks;
     protected final ObjList<ConcurrentTimeFrameCursor> perWorkerSlaveTimeFrameCursors;
     protected final ObjList<HorizonJoinTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
@@ -108,6 +111,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             @NotNull CairoConfiguration configuration,
             @NotNull HorizonJoinSlaveState[] slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
             @NotNull LongList offsets,
             int @NotNull [] columnSources,
@@ -156,14 +161,35 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             // Per-worker locks
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
-            // Per-slave master timestamp scales and sinks (shared across workers)
+            // Per-slave master timestamp scales and per-worker sinks
             this.perSlaveMasterTsScales = new long[slaveCount];
-            this.perSlaveMasterAsOfJoinSinks = new RecordSink[slaveCount];
-            this.perSlaveSlaveAsOfJoinSinks = new RecordSink[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
                 perSlaveMasterTsScales[s] = slaveStates[s].getMasterTsScale();
-                perSlaveMasterAsOfJoinSinks[s] = slaveStates[s].getMasterAsOfJoinMapSink();
-                perSlaveSlaveAsOfJoinSinks[s] = slaveStates[s].getSlaveAsOfJoinMapSink();
+            }
+            this.ownerMasterAsOfJoinSinks = new ObjList<>(slaveCount);
+            this.ownerSlaveAsOfJoinSinks = new ObjList<>(slaveCount);
+            this.perWorkerMasterAsOfJoinSinks = new ObjList<>(workerCount);
+            this.perWorkerSlaveAsOfJoinSinks = new ObjList<>(workerCount);
+            for (int w = 0; w < workerCount; w++) {
+                perWorkerMasterAsOfJoinSinks.add(new ObjList<>(slaveCount));
+                perWorkerSlaveAsOfJoinSinks.add(new ObjList<>(slaveCount));
+            }
+            for (int s = 0; s < slaveCount; s++) {
+                if (masterAsOfJoinMapSinkClasses[s] != null) {
+                    ownerMasterAsOfJoinSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                    ownerSlaveAsOfJoinSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                    for (int w = 0; w < workerCount; w++) {
+                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClasses[s], null, null, null, null, null, null, null));
+                    }
+                } else {
+                    ownerMasterAsOfJoinSinks.add(null);
+                    ownerSlaveAsOfJoinSinks.add(null);
+                    for (int w = 0; w < workerCount; w++) {
+                        perWorkerMasterAsOfJoinSinks.getQuick(w).add(null);
+                        perWorkerSlaveAsOfJoinSinks.getQuick(w).add(null);
+                    }
+                }
             }
 
             // Create time frame cursors from slave factories - one per worker + owner per slave
@@ -383,8 +409,10 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     }
 
     public RecordSink getMasterAsOfJoinSink(int slotId, int slaveIndex) {
-        // RecordSinks are stateless compiled bytecode, thread-safe
-        return perSlaveMasterAsOfJoinSinks[slaveIndex];
+        if (slotId == -1) {
+            return ownerMasterAsOfJoinSinks.getQuick(slaveIndex);
+        }
+        return perWorkerMasterAsOfJoinSinks.getQuick(slotId).getQuick(slaveIndex);
     }
 
     public Record getMasterKeyRecord(int slotId, int slaveIndex, Record masterRecord) {
@@ -425,8 +453,10 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     }
 
     public RecordSink getSlaveAsOfJoinMapSink(int slotId, int slaveIndex) {
-        // RecordSinks are stateless compiled bytecode, thread-safe
-        return perSlaveSlaveAsOfJoinSinks[slaveIndex];
+        if (slotId == -1) {
+            return ownerSlaveAsOfJoinSinks.getQuick(slaveIndex);
+        }
+        return perWorkerSlaveAsOfJoinSinks.getQuick(slotId).getQuick(slaveIndex);
     }
 
     public int getSlaveCount() {
@@ -489,7 +519,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
      */
     public void initSlaveTimeFrameCursors(
             int slaveIndex,
-            SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
             PageFrameAddressCache slaveFrameAddressCache,

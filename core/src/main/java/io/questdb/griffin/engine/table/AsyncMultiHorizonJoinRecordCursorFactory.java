@@ -98,6 +98,8 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             @NotNull RecordCursorFactory masterFactory,
             @NotNull HorizonJoinSlaveState[] slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             @NotNull LongList offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
@@ -137,6 +139,8 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     horizonJoinMetadata,
                     slaveStates,
                     perSlaveAsOfJoinKeyTypes,
+                    masterAsOfJoinMapSinkClasses,
+                    slaveAsOfJoinMapSinkClasses,
                     masterTimestampColumnIndex,
                     offsets,
                     keyTypes,
@@ -357,9 +361,16 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
 
             processHorizonTimestamps(
-                    atom, horizonIterator, slaveCount, baseRowId, record,
-                    horizonJoinRecord, groupByMapFragment, groupByMapSink,
-                    functionUpdater, slotId
+                    atom,
+                    horizonIterator,
+                    slaveCount,
+                    baseRowId,
+                    record,
+                    horizonJoinRecord,
+                    groupByMapFragment,
+                    groupByMapSink,
+                    functionUpdater,
+                    slotId
             );
         } finally {
             frameMemoryPool.releaseParquetBuffers();
@@ -430,9 +441,12 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     if (asOfRowId != Long.MIN_VALUE) {
                         if (helper.getForwardWatermark() == Long.MIN_VALUE) {
                             matchRowId = helper.backwardScanForKeyMatch(
-                                    asOfRowId, masterKeyRecord,
-                                    masterSink, slaveSink,
-                                    asOfJoinMap, symbolTranslatingRecord
+                                    asOfRowId,
+                                    masterKeyRecord,
+                                    masterSink,
+                                    slaveSink,
+                                    asOfJoinMap,
+                                    symbolTranslatingRecord
                             );
                             helper.initForwardWatermark(asOfRowId);
                         } else {
@@ -446,9 +460,12 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                                 matchRowId = cacheValue.getLong(0);
                             } else {
                                 matchRowId = helper.backwardScanForKeyMatch(
-                                        asOfRowId, masterKeyRecord,
-                                        masterSink, slaveSink,
-                                        asOfJoinMap, symbolTranslatingRecord
+                                        asOfRowId,
+                                        masterKeyRecord,
+                                        masterSink,
+                                        slaveSink,
+                                        asOfJoinMap,
+                                        symbolTranslatingRecord
                                 );
                             }
                         }
@@ -524,9 +541,16 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             processHorizonTimestamps(
-                    atom, horizonIterator, slaveCount, baseRowId, record,
-                    horizonJoinRecord, groupByMapFragment, groupByMapSink,
-                    functionUpdater, slotId
+                    atom,
+                    horizonIterator,
+                    slaveCount,
+                    baseRowId,
+                    record,
+                    horizonJoinRecord,
+                    groupByMapFragment,
+                    groupByMapSink,
+                    functionUpdater,
+                    slotId
             );
         } finally {
             frameMemoryPool.releaseParquetBuffers();

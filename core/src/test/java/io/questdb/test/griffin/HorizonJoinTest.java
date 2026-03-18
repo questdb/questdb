@@ -46,7 +46,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     private final TestTimestampType rightTableTimestampType;
 
     public HorizonJoinTest() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final Rnd rnd = TestUtils.generateRandom(LOG, 110807351224397L, 1773843497272L);
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
         this.parallelHorizonJoinEnabled = rnd.nextBoolean();
@@ -767,61 +767,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHorizonJoinKeyedAllMasterSymbolsMissing() throws Exception {
-        // All master symbols have no match in the slave table.
-        // Exercises the hasNonExistentKey() fast path in backwardScanForKeyMatch.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
-                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
-                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0)
-                            """
-            );
-
-            // Slave has only symbol C — no overlap with master
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('2024-01-01T00:00:00.500000Z', 'C', 100.0),
-                                ('2024-01-01T00:00:02.500000Z', 'C', 200.0)
-                            """
-            );
-
-            String sql = "SELECT t.sym, h.offset / " + getSecondsDivisor() + " AS sec_offs, count() AS n, avg(p.price) AS avg_price " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (0, 5s) AS h " +
-                    "GROUP BY t.sym, sec_offs " +
-                    "ORDER BY t.sym, h.offset";
-
-            assertQueryNoLeakCheck(
-                    """
-                            sym\tsec_offs\tn\tavg_price
-                            A\t0\t2\tnull
-                            A\t5\t2\tnull
-                            B\t0\t1\tnull
-                            B\t5\t1\tnull
-                            """,
-                    sql,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void testHorizonJoinKeyedAdaptiveScanSwitch() throws Exception {
         // Tests that the adaptive backward-to-forward scan switch produces correct results.
         // Slave has a rare key ("RARE") that appears only once at the beginning.
@@ -960,6 +905,61 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             sym\tn\tavg_price
                             A\t3\t1.0
                             RARE\t3\t100.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedAllMasterSymbolsMissing() throws Exception {
+        // All master symbols have no match in the slave table.
+        // Exercises the hasNonExistentKey() fast path in backwardScanForKeyMatch.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0)
+                            """
+            );
+
+            // Slave has only symbol C — no overlap with master
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'C', 100.0),
+                                ('2024-01-01T00:00:02.500000Z', 'C', 200.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, h.offset / " + getSecondsDivisor() + " AS sec_offs, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0, 5s) AS h " +
+                    "GROUP BY t.sym, sec_offs " +
+                    "ORDER BY t.sym, h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tsec_offs\tn\tavg_price
+                            A\t0\t2\tnull
+                            A\t5\t2\tnull
+                            B\t0\t1\tnull
+                            B\t5\t1\tnull
                             """,
                     sql,
                     null,
@@ -4364,6 +4364,268 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMultiHorizonJoinBasic() throws Exception {
+        // Two slaves with same ON key, LIST offsets
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'A', 20.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO bids VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0),
+                                ('2024-01-01T00:00:01.500000Z', 'A', 150.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO asks VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 101.0),
+                                ('2024-01-01T00:00:01.500000Z', 'A', 151.0)
+                            """
+            );
+
+            // At offset 0:
+            //   Trade 1 (ts=1s): bid ASOF = 100.0, ask ASOF = 101.0
+            //   Trade 2 (ts=2s): bid ASOF = 150.0, ask ASOF = 151.0
+            // avg(bid) = (100+150)/2 = 125, avg(ask) = (101+151)/2 = 126
+            assertQueryNoLeakCheck(
+                    """
+                            avg_bid\tavg_ask
+                            125.0\t126.0
+                            """,
+                    """
+                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                            FROM trades AS t
+                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinKeyedWithMultipleOffsets() throws Exception {
+        // Two slaves, keyed, with multiple offsets
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:05.000000Z', 'A', 10.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO bids VALUES
+                                ('2024-01-01T00:00:04.000000Z', 'A', 100.0),
+                                ('2024-01-01T00:00:06.000000Z', 'A', 200.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO asks VALUES
+                                ('2024-01-01T00:00:04.000000Z', 'A', 101.0),
+                                ('2024-01-01T00:00:06.000000Z', 'A', 201.0)
+                            """
+            );
+
+            // offsets: -2s, 0, 2s
+            // Trade at ts=5s:
+            //   offset -2s (horizon=3s): bid ASOF=null, ask ASOF=null
+            //   offset  0s (horizon=5s): bid ASOF=100.0 (at 4s), ask ASOF=101.0 (at 4s)
+            //   offset  2s (horizon=7s): bid ASOF=200.0 (at 6s), ask ASOF=201.0 (at 6s)
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg_bid\tavg_ask
+                            -2\tnull\tnull
+                            0\t100.0\t101.0
+                            2\t200.0\t201.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                            "LIST (-2s, 0, 2s) AS h " +
+                            "GROUP BY sec_offs " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinMissingRangeOrList() throws Exception {
+        // Multiple HORIZON JOINs without RANGE/LIST on any of them
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t2.sym) " +
+                            "FROM t1 " +
+                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
+                            "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
+                    0,
+                    "HORIZON JOIN requires offset configuration (RANGE or LIST)"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinMixedKeyedAndNotKeyed() throws Exception {
+        // One keyed slave, one not-keyed (timestamp-only ASOF)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE rates (ts #TIMESTAMP, rate DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO rates VALUES
+                                ('2024-01-01T00:00:00.500000Z', 1.5)
+                            """
+            );
+
+            // prices is keyed (ON sym), rates is not keyed (timestamp-only ASOF)
+            assertQueryNoLeakCheck(
+                    """
+                            avg_price\tavg_rate
+                            100.0\t1.5
+                            """,
+                    """
+                            SELECT avg(p.price) AS avg_price, avg(r.rate) AS avg_rate
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            HORIZON JOIN rates AS r
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinNonHorizonAfterHorizon() throws Exception {
+        // Non-horizon join after horizon join should be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t2.sym) " +
+                            "FROM t1 " +
+                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
+                            "JOIN t3 ON (t1.sym = t3.sym) " +
+                            "LIST (0) AS h",
+                    64,
+                    "only horizon joins can follow a horizon join"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinNonHorizonBeforeHorizon() throws Exception {
+        // Non-horizon join before horizon join should be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t3.sym) " +
+                            "FROM t1 " +
+                            "JOIN t2 ON (t1.sym = t2.sym) " +
+                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
+                            "LIST (0) AS h",
+                    56,
+                    "horizon join cannot be combined with other joins"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinWhereOnNonLastSlave() throws Exception {
+        // WHERE referencing a non-last slave column should be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(b.bid), avg(a.ask) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                            "LIST (0) AS h " +
+                            "WHERE b.bid > 0",
+                    157,
+                    "HORIZON JOIN WHERE clause can only reference master table columns"
+            );
+        });
+    }
+
     private void assertHorizonJoinTypeMismatch(String masterKeyType, String slaveKeyType) throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4429,271 +4691,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     null,
                     true,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinBasic() throws Exception {
-        // Two slaves with same ON key, LIST offsets
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "false");
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
-                                ('2024-01-01T00:00:02.000000Z', 'A', 20.0)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO bids VALUES
-                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0),
-                                ('2024-01-01T00:00:01.500000Z', 'A', 150.0)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO asks VALUES
-                                ('2024-01-01T00:00:00.500000Z', 'A', 101.0),
-                                ('2024-01-01T00:00:01.500000Z', 'A', 151.0)
-                            """
-            );
-
-            // At offset 0:
-            //   Trade 1 (ts=1s): bid ASOF = 100.0, ask ASOF = 101.0
-            //   Trade 2 (ts=2s): bid ASOF = 150.0, ask ASOF = 151.0
-            // avg(bid) = (100+150)/2 = 125, avg(ask) = (101+151)/2 = 126
-            assertQueryNoLeakCheck(
-                    """
-                            avg_bid\tavg_ask
-                            125.0\t126.0
-                            """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinKeyedWithMultipleOffsets() throws Exception {
-        // Two slaves, keyed, with multiple offsets
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "false");
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('2024-01-01T00:00:05.000000Z', 'A', 10.0)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO bids VALUES
-                                ('2024-01-01T00:00:04.000000Z', 'A', 100.0),
-                                ('2024-01-01T00:00:06.000000Z', 'A', 200.0)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO asks VALUES
-                                ('2024-01-01T00:00:04.000000Z', 'A', 101.0),
-                                ('2024-01-01T00:00:06.000000Z', 'A', 201.0)
-                            """
-            );
-
-            // offsets: -2s, 0, 2s
-            // Trade at ts=5s:
-            //   offset -2s (horizon=3s): bid ASOF=null, ask ASOF=null
-            //   offset  0s (horizon=5s): bid ASOF=100.0 (at 4s), ask ASOF=101.0 (at 4s)
-            //   offset  2s (horizon=7s): bid ASOF=200.0 (at 6s), ask ASOF=201.0 (at 6s)
-            assertQueryNoLeakCheck(
-                    """
-                            sec_offs\tavg_bid\tavg_ask
-                            -2\tnull\tnull
-                            0\t100.0\t101.0
-                            2\t200.0\t201.0
-                            """,
-                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (-2s, 0, 2s) AS h " +
-                            "GROUP BY sec_offs " +
-                            "ORDER BY sec_offs",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinMixedKeyedAndNotKeyed() throws Exception {
-        // One keyed slave, one not-keyed (timestamp-only ASOF)
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "false");
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
-                    leftTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE rates (ts #TIMESTAMP, rate DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            execute(
-                    """
-                            INSERT INTO trades VALUES
-                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO prices VALUES
-                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0)
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO rates VALUES
-                                ('2024-01-01T00:00:00.500000Z', 1.5)
-                            """
-            );
-
-            // prices is keyed (ON sym), rates is not keyed (timestamp-only ASOF)
-            assertQueryNoLeakCheck(
-                    """
-                            avg_price\tavg_rate
-                            100.0\t1.5
-                            """,
-                    """
-                            SELECT avg(p.price) AS avg_price, avg(r.rate) AS avg_rate
-                            FROM trades AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            HORIZON JOIN rates AS r
-                                LIST (0) AS h
-                            """,
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinMissingRangeOrList() throws Exception {
-        // Multiple HORIZON JOINs without RANGE/LIST on any of them
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.sym) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
-                    0,
-                    "HORIZON JOIN requires offset configuration (RANGE or LIST)"
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinNonHorizonAfterHorizon() throws Exception {
-        // Non-horizon join after horizon join should be rejected
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t2.sym) " +
-                            "FROM t1 " +
-                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
-                            "JOIN t3 ON (t1.sym = t3.sym) " +
-                            "LIST (0) AS h",
-                    64,
-                    "only horizon joins can follow a horizon join"
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinNonHorizonBeforeHorizon() throws Exception {
-        // Non-horizon join before horizon join should be rejected
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(t3.sym) " +
-                            "FROM t1 " +
-                            "JOIN t2 ON (t1.sym = t2.sym) " +
-                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
-                            "LIST (0) AS h",
-                    56,
-                    "horizon join cannot be combined with other joins"
-            );
-        });
-    }
-
-    @Test
-    public void testMultiHorizonJoinWhereOnNonLastSlave() throws Exception {
-        // WHERE referencing a non-last slave column should be rejected
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            assertExceptionNoLeakCheck(
-                    "SELECT avg(b.bid), avg(a.ask) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
-                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
-                            "LIST (0) AS h " +
-                            "WHERE b.bid > 0",
-                    157,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
             );
         });
     }

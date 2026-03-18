@@ -62,11 +62,11 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
     private final VirtualRecord recordA;
     private final int slaveCount;
     private final RecordCursorFactory[] slaveFactories;
+    private final LongList[] slavePartitionCeilings;
+    private final LongList[] slavePartitionTimestamps;
     private final PageFrameAddressCache[] slaveTimeFrameAddressCaches;
     private final DirectIntList[] slaveTimeFramePartitionIndexes;
     private final LongList[] slaveTimeFrameRowCounts;
-    private final LongList[] slavePartitionTimestamps;
-    private final LongList[] slavePartitionCeilings;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom> frameSequence;
     private boolean isExhausted;
@@ -194,7 +194,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 populatePartitionTimestamps(slaveFrameCursors[s], slavePartitionTimestamps[s], slavePartitionCeilings[s]);
                 try {
                     atom.initSlaveTimeFrameCursors(
-                            s, executionContext, masterSource,
+                            s,
+                            masterSource,
                             slaveFrameCursors[s],
                             slaveTimeFrameAddressCaches[s],
                             slaveTimeFramePartitionIndexes[s],

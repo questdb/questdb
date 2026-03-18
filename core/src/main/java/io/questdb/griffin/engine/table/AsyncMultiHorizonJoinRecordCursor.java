@@ -74,12 +74,12 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private final int slaveCount;
     private final RecordCursorFactory[] slaveFactories;
+    private final LongList[] slavePartitionCeilings;
+    private final LongList[] slavePartitionTimestamps;
     // Per-slave time frame cache data
     private final PageFrameAddressCache[] slaveTimeFrameAddressCaches;
     private final DirectIntList[] slaveTimeFramePartitionIndexes;
     private final LongList[] slaveTimeFrameRowCounts;
-    private final LongList[] slavePartitionTimestamps;
-    private final LongList[] slavePartitionCeilings;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence;
@@ -259,7 +259,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 populatePartitionTimestamps(slaveFrameCursors[s], slavePartitionTimestamps[s], slavePartitionCeilings[s]);
                 try {
                     atom.initSlaveTimeFrameCursors(
-                            s, executionContext, masterSource,
+                            s,
+                            masterSource,
                             slaveFrameCursors[s],
                             slaveTimeFrameAddressCaches[s],
                             slaveTimeFramePartitionIndexes[s],
