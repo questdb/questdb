@@ -321,6 +321,7 @@ public final class TableUtils {
             long maxTimestamp,
             int ttl
     ) {
+        assert ttl != 0 : "ttl cannot be 0, invalid value";
         final long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
         // TTL < 0 means it's in months
         return ttl > 0
