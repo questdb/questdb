@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,7 +54,12 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
     private static final Log LOG = LogFactory.getLog(PostingIndexFwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
-    protected final MemoryMR valueMem = Vm.getCMRInstance();
+    // Bypass the fd cache (and thus the MmapCache) so that each reader gets its
+    // own independent mmap.  When multiple readers share a cached mapping via
+    // MmapCache, one reader's extend() can cause the kernel to mremap (and move)
+    // the shared mapping while another reader still holds raw addresses into it,
+    // leading to SIGSEGV (SEGV_MAPERR) in readBPBlockMetadata / decodeNextBlock.
+    protected final MemoryMR valueMem = Vm.getCMRInstance(true);
     private final Cursor cursor = new Cursor();
     private final PostingGenLookup genLookup = new PostingGenLookup();
     protected MillisecondClock clock;
@@ -218,7 +224,14 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
             readIndexMetadataAtomically();
             long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
             this.keyMem.extend(keyFileSize);
-            this.valueMem.extend(valueMemSize);
+            // Use changeSize instead of extend so the mapping can shrink after
+            // a compactValueFile() reduces valueMemSize. If extend() kept the old
+            // (larger) mapping, pages beyond the truncated file would fault.
+            if (valueMemSize > 0) {
+                ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
+            }
+            // Invalidate genLookup so it rebuilds from the new gen metadata
+            genLookup.close();
         }
     }
 
@@ -247,12 +260,15 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
             Os.pause();
         }
 
-        if (keyCount > this.keyCount) {
+        if (keyCount >= this.keyCount) {
             // Extend memory mappings before updating genCount/keyCount so that
             // any concurrent access using the new genCount finds mapped memory.
             long keyFileSize = PostingIndexUtils.getGenDirOffset(genCount);
             keyMem.extend(keyFileSize);
-            valueMem.extend(valueMemSize);
+            // Use changeSize to allow the mapping to shrink after compaction.
+            if (valueMemSize > 0) {
+                ((MemoryCMR) valueMem).changeSize(valueMemSize);
+            }
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
             this.genCount = genCount;
