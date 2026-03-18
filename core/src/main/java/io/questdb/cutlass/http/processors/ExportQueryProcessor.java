@@ -700,7 +700,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         null,
                         state.getExportModel().getBloomFilterColumns(),
                         0,
-                        state.getExportModel().getBloomFilterFpp()
+                        state.getExportModel().getBloomFilterFpp(),
+                        sqlExecutionContext.getBindVariableService()
                 );
                 exporter.of(state.task);
                 exporter.setExportMode(exportMode);

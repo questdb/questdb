@@ -252,7 +252,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         resolvedSelectText,
                         bloomFilterColumns,
                         bloomFilterColumnsPosition,
-                        bloomFilterFpp
+                        bloomFilterFpp,
+                        executionContext.getBindVariableService()
                 );
                 task.setSelectFactory(selectFactory);
                 selectFactory = null;
