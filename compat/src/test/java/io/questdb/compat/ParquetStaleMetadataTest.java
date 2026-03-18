@@ -79,21 +79,21 @@ public class ParquetStaleMetadataTest extends AbstractTest {
             serverMain.start();
 
             // Create a 3-column table.
-            serverMain.getEngine().execute(
-                    "CREATE TABLE test_table (" +
-                            "ts TIMESTAMP, " +
-                            "category VARCHAR, " +
-                            "value DOUBLE" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY"
-            );
-            serverMain.getEngine().execute(
-                    "INSERT INTO test_table " +
-                            "SELECT " +
-                            "timestamp_sequence('2024-01-01', 1_000_000) AS ts, " +
-                            "'CAT-' || (x % 3) AS category, " +
-                            "x * 1.5 AS value " +
-                            "FROM long_sequence(10)"
-            );
+            serverMain.getEngine().execute("""
+                    CREATE TABLE test_table (
+                        ts TIMESTAMP,
+                        category VARCHAR,
+                        value DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            serverMain.getEngine().execute("""
+                    INSERT INTO test_table
+                    SELECT
+                        timestamp_sequence('2024-01-01', 1_000_000) AS ts,
+                        'CAT-' || (x % 3) AS category,
+                        x * 1.5 AS value
+                    FROM long_sequence(10)
+                    """);
             serverMain.awaitTable("test_table");
 
             // Export to parquet via HTTP. The file has 3 data columns and
@@ -136,6 +136,12 @@ public class ParquetStaleMetadataTest extends AbstractTest {
             Assert.assertTrue(
                     "result should contain data value 1.5",
                     jsonResult.contains("1.5")
+            );
+
+            // Verify row count: the /exec JSON contains "count":N
+            Assert.assertTrue(
+                    "result should contain 10 rows",
+                    jsonResult.contains("\"count\":10")
             );
 
             // Also verify the column count from the response metadata.
