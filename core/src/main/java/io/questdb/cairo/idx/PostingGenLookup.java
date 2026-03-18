@@ -82,6 +82,60 @@ class PostingGenLookup implements Closeable {
     private int keyCount;
     private long memoryBudget = DEFAULT_MEMORY_BUDGET;
 
+    /**
+     * Snapshots gen dir entries from keyMem into local arrays. Called by the reader
+     * inside the seq_start/seq_end validation window so the snapshot is consistent.
+     * Does NOT build the lookup index (tier1/tier2) — call buildLookupIfNeeded after.
+     */
+    void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
+        if (genCount == 0) {
+            return;
+        }
+        // Ensure arrays are large enough
+        if (genFileOffsets == null || genFileOffsets.length < genCount) {
+            int newSize = Math.max(genCount, 16);
+            genFileOffsets = new long[newSize];
+            genDataSizes = new int[newSize];
+            genKeyCounts = new int[newSize];
+            genMinKeys = new int[newSize];
+            genMaxKeys = new int[newSize];
+        }
+        for (int g = 0; g < genCount; g++) {
+            long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
+            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+            genDataSizes[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+        }
+        // Free stale lookup index; buildLookupIfNeeded will rebuild
+        freeTier1();
+        freeTier2();
+        builtForGenCount = 0;
+    }
+
+    /**
+     * Builds the lookup index (tier1/tier2) if the gen dir metadata has been
+     * snapshotted but the index hasn't been built yet for the current genCount.
+     * Called from ensureGenLookup() after snapshotMetadata() has populated the arrays.
+     */
+    void buildLookupIfNeeded(MemoryMR valueMem, int keyCount, int genCount) {
+        if (genCount <= builtForGenCount && this.keyCount == keyCount) {
+            return;
+        }
+        this.keyCount = keyCount;
+        if (genCount == 0 || keyCount == 0 || genFileOffsets == null) {
+            this.builtForGenCount = genCount;
+            this.tier = TIER_NONE;
+            return;
+        }
+        // Metadata is already in the arrays from snapshotMetadata — just build the index
+        freeTier1();
+        freeTier2();
+        buildLookupIndex(null, valueMem, keyCount, genCount, 0);
+        this.builtForGenCount = genCount;
+    }
+
     void build(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int genCount, long activePageOffset) {
         close();
         this.keyCount = keyCount;

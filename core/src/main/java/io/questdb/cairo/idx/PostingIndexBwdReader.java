@@ -216,13 +216,9 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         long maxSeq = Math.max(seqA, seqB);
         if (maxSeq != keyFileSequence) {
             readIndexMetadataFromBestPage();
-            // Use changeSize instead of extend so the mapping can shrink after
-            // a compactValueFile() reduces valueMemSize.
             if (valueMemSize > 0) {
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
             }
-            // Invalidate genLookup so it rebuilds from the new gen metadata
-            genLookup.close();
         }
     }
 
@@ -266,28 +262,46 @@ public class PostingIndexBwdReader implements BitmapIndexReader {
         if (genCount == 0 || keyCount == 0) {
             return;
         }
-        genLookup.buildIncremental(keyMem, valueMem, keyCount, genCount, activePageOffset);
+        genLookup.buildLookupIfNeeded(valueMem, keyCount, genCount);
     }
 
     private void readIndexMetadataFromBestPage() {
-        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        Unsafe.getUnsafe().loadFence();
-        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        Unsafe.getUnsafe().loadFence();
-        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        for (int attempt = 0; attempt < 2; attempt++) {
+            long pageA = PostingIndexUtils.PAGE_A_OFFSET;
+            long pageB = PostingIndexUtils.PAGE_B_OFFSET;
+            long seqStartA = keyMem.getLong(pageA + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+            long seqStartB = keyMem.getLong(pageB + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
 
-        long validA = (seqA == seqEndA) ? seqA : 0;
-        long validB = (seqB == seqEndB) ? seqB : 0;
-        long bestPage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-        long bestSeq = Math.max(validA, validB);
+            long bestPage = (seqStartB > seqStartA) ? pageB : pageA;
+            long otherPage = (bestPage == pageA) ? pageB : pageA;
+            long tryPage = (attempt == 0) ? bestPage : otherPage;
 
-        this.activePageOffset = bestPage;
-        this.keyFileSequence = bestSeq;
-        this.valueMemSize = keyMem.getLong(bestPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-        this.keyCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-        this.genCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-        this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+            long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+            Unsafe.getUnsafe().loadFence();
+
+            long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+            int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+            int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+
+            genLookup.snapshotMetadata(keyMem, genCount, tryPage);
+
+            Unsafe.getUnsafe().loadFence();
+            long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+            if (seqStart == seqEnd && seqStart > 0) {
+                this.activePageOffset = tryPage;
+                this.keyFileSequence = seqStart;
+                this.valueMemSize = valueMemSize;
+                this.keyCount = keyCount;
+                this.genCount = genCount;
+                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                return;
+            }
+        }
+        this.keyFileSequence = 0;
+        this.valueMemSize = 0;
+        this.keyCount = 0;
+        this.genCount = 0;
     }
 
     private class Cursor implements RowCursor {
