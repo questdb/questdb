@@ -499,6 +499,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCacheFlag(),
                     symbolCapacity
             );
+            columnMetadata.setParquetEncodingConfig(model.getParquetEncodingConfig());
             augmentedColumnMetadata.put(columnNameStr, columnMetadata);
         }
     }
