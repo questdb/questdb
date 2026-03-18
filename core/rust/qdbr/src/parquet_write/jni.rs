@@ -168,15 +168,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     bloom_filter_fpp: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
-        // Take ownership of fds immediately so Rust closes them on any error
-        // path below. The Java caller must set its fd locals to -1 before this
-        // JNI call so that it never double-closes on the exception path.
-        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
-        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
-
         // reader_fd and writer_fd must be distinct OS file descriptors.
         // Both are closed by Rust when ParquetUpdater is dropped.
-        // Passing the same fd would cause a double-close bug.
+        // Check before taking ownership to avoid double-close.
         if reader_fd == writer_fd {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -184,6 +178,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 reader_fd
             ));
         }
+
+        // Take ownership of fds so Rust closes them on any error path below.
+        // The Java caller must set its fd locals to -1 before this JNI call
+        // so that it never double-closes on the exception path.
+        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
+        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
 
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;

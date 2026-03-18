@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -241,8 +241,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 // partitionUpdater.of() transfers fd ownership to Rust.
-                // Rust closes both fds on success (via destroy) and on error
-                // (via File drop). Skip Java-side close once ownership transfers.
+                // Rust closes both fds when destroy() is called (via close()).
+                // The outer catch calls partitionUpdater.close() on error.
                 partitionUpdater.of(
                         path.$(),
                         readerFdOs,
@@ -297,6 +297,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Use the parquet-side column index (not the table-side index)
                 // because the decoder resolves columns by their position in the
                 // parquet file schema, which may differ after ADD/DROP COLUMN.
+                // Read timestamp statistics when available (fast path). Fall back
+                // to rowGroupMinTimestamp/rowGroupMaxTimestamp which decode actual
+                // data when statistics are absent
                 final int timestampParquetIdx = tableToParquetIdx.getQuick(timestampIndex);
                 assert timestampParquetIdx >= 0 : "timestamp column missing from parquet file";
                 final LongList rowGroupBounds = ctx.getRowGroupBounds();
@@ -305,12 +308,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetColumns.add(timestampColumnType);
 
                 for (int rg = 0; rg < rowGroupCount; rg++) {
+                    final long rgMin, rgMax;
                     partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rg);
-                    final long rgMin = rowGroupStatBuffers.getMinValueLong(0);
-                    final long rgMax = rowGroupStatBuffers.getMaxValueLong(0);
+                    boolean hasTimestampStats = rowGroupStatBuffers.getMinValueSize(0) == Long.BYTES;
+                    if (hasTimestampStats) {
+                        rgMin = rowGroupStatBuffers.getMinValueLong(0);
+                        rgMax = rowGroupStatBuffers.getMaxValueLong(0);
+                    } else {
+                        rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampIndex);
+                        rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampIndex);
+                    }
                     final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(rg);
                     O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
                 }
+                parquetColumns.clear();
 
                 // Compute merge actions (scratch lists are reused across calls within the same partition)
                 final ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf = ctx.getActionsBuf();
@@ -468,7 +479,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .$(", unusedPct=").$(newParquetSize > 0 ? (100.0 * resultUnusedBytes / newParquetSize) : 0)
                         .$(", partitionMutates=").$(isRewrite)
                         .I$();
-            } catch (Throwable e) {
+
+                // Update indexes.
+                // In rewrite mode, the new file is in a txn-named directory.
+                final long txnName = isRewrite ? txn : srcNameTxn;
+                path.of(pathToTable);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
+                updateParquetIndexes(
+                        partitionBy,
+                        partitionTimestamp,
+                        tableWriter,
+                        txnName,
+                        o3Basket,
+                        newPartitionSize,
+                        newParquetSize,
+                        pathToTable,
+                        path,
+                        ff,
+                        partitionDecoder,
+                        tableWriterMetadata,
+                        parquetColumns,
+                        rowGroupBuffers,
+                    isRewrite
+            );} catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
                     Path newPath = Path.getThreadLocal2(pathToTable);
@@ -483,36 +516,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 }
             }
-
-            // Update indexes.
-            // In rewrite mode, the new file is in a txn-named directory.
-            final long txnName = isRewrite ? txn : srcNameTxn;
-            path.of(pathToTable);
-            setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
-            updateParquetIndexes(
-                    partitionBy,
-                    partitionTimestamp,
-                    tableWriter,
-                    txnName,
-                    o3Basket,
-                    newPartitionSize,
-                    newParquetSize,
-                    pathToTable,
-                    path,
-                    ff,
-                    partitionDecoder,
-                    tableWriterMetadata,
-                    parquetColumns,
-                    rowGroupBuffers,
-                    isRewrite
-            );
         } catch (Throwable th) {
             LOG.error().$("process partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(th)
                     .I$();
+            // Release the Rust-owned file descriptors immediately so that
+            // the truncation below (update mode) does not compete with them,
+            // and on Windows the file is not locked by stale fds.
+            partitionUpdater.close();
             if (!isRewrite) {
-                // Update mode: the file is re-opened here because PartitionUpdater owns the file descriptor.
-                // Truncate to the previous uncorrupted size.
+                // Update mode: truncate to the previous uncorrupted size.
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
                 final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
@@ -524,6 +537,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
+            ctx.releaseResources();
             // Determine the parquet file size from the correct path.
             path.of(pathToTable);
             if (isRewrite) {
@@ -1520,11 +1534,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 long dstAuxSize = ctd.getAuxVectorSize(rowCount);
                 long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, o3Lo, o3Hi);
 
-                final long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
-                long dstDataAddr = 0;
+                long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
+                long dstDataAddr;
                 try {
                     dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
+                } catch (Throwable th) {
+                    Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
+                    throw th;
+                }
 
+                try {
                     O3CopyJob.mergeCopy(
                             columnType,
                             mergeIndexAddr,
@@ -1539,9 +1558,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     );
                 } catch (Throwable th) {
                     Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
-                    if (dstDataAddr != 0) {
-                        Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
-                    }
+                    Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
                     throw th;
                 }
 
@@ -1557,10 +1574,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         0,
                         0
                 );
+                // Ownership transferred to partitionDescriptor, don't free on error.
             } else {
                 final long srcOooFixAddr = oooMem1.addressOf(0);
                 long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
-                final long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+                long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
 
                 try {
                     O3CopyJob.mergeCopy(
@@ -1581,20 +1599,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (ColumnType.isSymbol(columnType)) {
-                    final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
-                    final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
-                    final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
+                    final MemoryR offsetsMem;
+                    final MemoryR valuesMem;
+                    final int symbolCount;
+                    final long valuesMemSize;
+                    int encodeColumnType;
+                    try {
+                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                        offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                        valuesMem = symbolMapWriter.getSymbolValuesMemory();
 
-                    final int symbolCount = symbolMapWriter.getSymbolCount();
-                    final long offset = SymbolMapWriter.keyToOffset(symbolCount);
-                    assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
-                    final long valuesMemSize = offsetsMem.getLong(offset);
-                    assert valuesMemSize <= valuesMem.size();
+                        symbolCount = symbolMapWriter.getSymbolCount();
+                        final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                        assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
+                        valuesMemSize = offsetsMem.getLong(offset);
+                        assert valuesMemSize <= valuesMem.size();
 
-                    // High bit = no-null hint for def level encoding, not schema Repetition.
-                    int encodeColumnType = columnType;
-                    if (!symbolMapWriter.getNullFlag()) {
-                        encodeColumnType |= Integer.MIN_VALUE;
+                        // High bit = no-null hint for def level encoding, not schema Repetition.
+                        encodeColumnType = columnType;
+                        if (!symbolMapWriter.getNullFlag()) {
+                            encodeColumnType |= Integer.MIN_VALUE;
+                        }
+                    } catch (Throwable th) {
+                        Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
+                        throw th;
                     }
                     partitionDescriptor.addColumn(
                             columnName,
@@ -2203,6 +2231,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (neededAuxSize > mergeDstBufs.getQuick(bi4 + 3)) {
                         if (mergeDstBufs.getQuick(bi4 + 2) != 0) {
                             Unsafe.free(mergeDstBufs.getQuick(bi4 + 2), mergeDstBufs.getQuick(bi4 + 3), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4 + 2, 0);
+                            mergeDstBufs.setQuick(bi4 + 3, 0);
                         }
                         mergeDstBufs.setQuick(bi4 + 2, Unsafe.malloc(neededAuxSize, MemoryTag.NATIVE_O3));
                         mergeDstBufs.setQuick(bi4 + 3, neededAuxSize);
@@ -2214,6 +2244,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (neededDataSize > mergeDstBufs.getQuick(bi4 + 1)) {
                         if (mergeDstBufs.getQuick(bi4) != 0) {
                             Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4, 0);
+                            mergeDstBufs.setQuick(bi4 + 1, 0);
                         }
                         mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededDataSize, MemoryTag.NATIVE_O3));
                         mergeDstBufs.setQuick(bi4 + 1, neededDataSize);
@@ -2236,6 +2268,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (neededFixSize > mergeDstBufs.getQuick(bi4 + 1)) {
                         if (mergeDstBufs.getQuick(bi4) != 0) {
                             Unsafe.free(mergeDstBufs.getQuick(bi4), mergeDstBufs.getQuick(bi4 + 1), MemoryTag.NATIVE_O3);
+                            mergeDstBufs.setQuick(bi4, 0);
+                            mergeDstBufs.setQuick(bi4 + 1, 0);
                         }
                         mergeDstBufs.setQuick(bi4, Unsafe.malloc(neededFixSize, MemoryTag.NATIVE_O3));
                         mergeDstBufs.setQuick(bi4 + 1, neededFixSize);

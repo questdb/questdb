@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -585,6 +585,12 @@ public interface CairoConfiguration {
     int getSqlHashJoinValueMaxPages();
 
     int getSqlHashJoinValuePageSize();
+
+    long getSqlHorizonJoinBwdScanAbsoluteThreshold();
+
+    long getSqlHorizonJoinBwdScanMinGap();
+
+    long getSqlHorizonJoinBwdScanSwitchFactor();
 
     int getSqlHorizonJoinMaxOffsets();
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1840,6 +1840,69 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithCoalesceVarArgsWrappedAggregate() throws Exception {
+        // Regression test: coalesce with 3+ arguments has paramCount > 2, so all
+        // children go into the args list. hasGroupByFunc did not traverse args
+        // for FUNCTION nodes, failing to detect sum() inside
+        // coalesce(NULL, NULL, sum(x)).
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                coalesce(NULL, NULL, SUM(population))
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotWithCoalesceWrappedAggregate() throws Exception {
+        // Regression test: coalesce(0, sum(x)) has paramCount=2, so lhs=0 and
+        // rhs=sum(x). hasGroupByFunc followed node.lhs after the FUNCTION case
+        // but never pushed node.rhs onto the stack, missing sum() in the rhs
+        // position. coalesce picks the first non-null arg (0), so all results
+        // are 0.
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            NL\t0\t0\t0
+                            US\t0\t0\t0
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                coalesce(0, SUM(population))
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
     public void testPivotWithComplexInitialStatement() throws Exception {
         assertQueryAndPlan(
                 "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
@@ -2872,6 +2935,8 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
+    // Tests for printRecordColumnOrNull - various data types in PIVOT IN subqueries
+
     @Test
     public void testPivotWithNullValues() throws Exception {
         assertMemoryLeak(() -> {
@@ -2952,8 +3017,6 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Frame forward scan on: cities
                         """);
     }
-
-    // Tests for printRecordColumnOrNull - various data types in PIVOT IN subqueries
 
     @Test
     public void testPivotWithOrderByNotPresentInForOrGroupBy() throws Exception {
@@ -3706,5 +3769,37 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: cities
                         """);
+    }
+
+    @Test
+    public void testPivotWithWrappedAggregate() throws Exception {
+        // Regression test: hasGroupByFunc() in SqlOptimiser did not traverse rhs
+        // and args of non-aggregate FUNCTION nodes. abs(sum(x)) is a valid
+        // aggregate expression for PIVOT, but abs has paramCount=1 and its
+        // argument is stored in rhs, which the FUNCTION case did not traverse.
+        // PIVOT rejected it with "expected aggregate function".
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                abs(SUM(population))
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
     }
 }
