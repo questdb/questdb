@@ -223,10 +223,10 @@ public final class PostingIndexUtils {
                         blockDeltas[i] = minDeltas[b];
                     }
                 } else {
-                    FORBitmapIndexUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
                 }
             }
-            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
             // Cumulative sum from firstValue to reconstruct absolute values
             long cumulative = firstValues[b];
@@ -290,10 +290,10 @@ public final class PostingIndexUtils {
                         blockDeltas[i] = minDeltas[b];
                     }
                 } else {
-                    FORBitmapIndexUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
                 }
             }
-            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
             long cumulative = firstValues[b];
             dest[destIdx++] = cumulative;
@@ -356,10 +356,10 @@ public final class PostingIndexUtils {
                         blockDeltas[i] = minDeltas[b];
                     }
                 } else {
-                    FORBitmapIndexUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
                 }
             }
-            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
             long cumulative = firstValues[b];
             Unsafe.getUnsafe().putLong(destAddr + (long) destIdx * Long.BYTES, cumulative);
@@ -444,7 +444,7 @@ public final class PostingIndexUtils {
 
             minDeltas[b] = minD;
             long range = maxD - minD;
-            bitWidths[b] = range == 0 ? 0 : FORBitmapIndexUtils.bitsNeeded(range);
+            bitWidths[b] = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
         }
 
         // Write encoded data
@@ -498,10 +498,10 @@ public final class PostingIndexUtils {
                     for (int i = 0; i < numDeltas; i++) {
                         residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
                     }
-                    FORBitmapIndexUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+                    BitpackUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
                 }
             }
-            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
         }
 
         return (int) (pos - destAddr);
@@ -571,7 +571,7 @@ public final class PostingIndexUtils {
 
             minDeltas[b] = minD;
             long range = maxD - minD;
-            bitWidths[b] = range == 0 ? 0 : FORBitmapIndexUtils.bitsNeeded(range);
+            bitWidths[b] = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
         }
 
         // Write encoded data
@@ -619,10 +619,10 @@ public final class PostingIndexUtils {
                     for (int i = 0; i < numDeltas; i++) {
                         residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
                     }
-                    FORBitmapIndexUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+                    BitpackUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
                 }
             }
-            pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
         }
 
         return (int) (pos - destAddr);
@@ -658,7 +658,7 @@ public final class PostingIndexUtils {
         }
 
         long range = maxD - minD;
-        int bitWidth = range == 0 ? 0 : FORBitmapIndexUtils.bitsNeeded(range);
+        int bitWidth = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
 
         // Write: blockCount(2B) + valueCount(1B) + firstValue(8B) + minDelta(8B) + bitWidth(1B) + packedData
         long pos = destAddr;
@@ -685,10 +685,10 @@ public final class PostingIndexUtils {
                 for (int i = 0; i < numDeltas; i++) {
                     residuals[i] = deltas[i + 1] - minD;
                 }
-                FORBitmapIndexUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+                BitpackUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
             }
         }
-        pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+        pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
         return (int) (pos - destAddr);
     }

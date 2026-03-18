@@ -60,7 +60,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * [Block 0 for Key 1: ...]
  * </pre>
  */
-public final class FORBitmapIndexUtils {
+public final class BitpackUtils {
 
     // Block configuration
     public static final int BLOCK_CAPACITY = 128;  // Values per block (power of 2 for fast division)

@@ -53,7 +53,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * FSST writers have a per-key capacity of 128 values per commit (DEFAULT_BLOCK_VALUES).
  * Tests batch writes and commit accordingly.
  */
-public class BPFSSTBitmapIndexTest extends AbstractCairoTest {
+public class PostingFSSTIndexTest extends AbstractCairoTest {
 
     private static final int BP_BATCH = PostingIndexUtils.BLOCK_CAPACITY;     // 64
     private static final int FSST_BATCH = FSSTBitmapIndexUtils.DEFAULT_BLOCK_VALUES; // 128

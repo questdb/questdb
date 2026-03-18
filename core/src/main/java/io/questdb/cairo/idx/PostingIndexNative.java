@@ -104,7 +104,7 @@ public final class PostingIndexNative {
      */
     public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth,
                                         long minValue, long[] dest) {
-        FORBitmapIndexUtils.unpackAllValues(srcAddr, valueCount, bitWidth, minValue, dest);
+        BitpackUtils.unpackAllValues(srcAddr, valueCount, bitWidth, minValue, dest);
     }
 
     private static void packValuesNativeFallback(long valuesAddr, int count, long minValue,

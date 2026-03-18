@@ -318,10 +318,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         blockDeltas[i] = minDeltas[b];
                     }
                 } else {
-                    FORBitmapIndexUtils.unpackAllValues(packedDataAddr, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(packedDataAddr, numDeltas, bitWidth, minDeltas[b], blockDeltas);
                 }
             }
-            packedDataAddr += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidth);
+            packedDataAddr += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
             // Cumulative sum from firstValue
             long cumulative = firstValues[b];
@@ -338,7 +338,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private void decodeNextPackedBatch() {
             int batch = Math.min(packedRemaining, PostingIndexUtils.BLOCK_CAPACITY);
-            FORBitmapIndexUtils.unpackValuesFrom(packedDataBase, packedStartIdx, batch, packedBitWidth, packedBaseValue, blockBuffer);
+            BitpackUtils.unpackValuesFrom(packedDataBase, packedStartIdx, batch, packedBitWidth, packedBaseValue, blockBuffer);
             packedStartIdx += batch;
             packedRemaining -= batch;
             blockBufferPos = 0;
@@ -406,7 +406,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     int lo = startCount, hi = endCount - 1;
                     while (lo < hi) {
                         int mid = (lo + hi) >>> 1;
-                        long val = FORBitmapIndexUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                        long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
                         if (val < minValue) {
                             lo = mid + 1;
                         } else {
@@ -422,7 +422,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     int lo = effectiveStart, hi = effectiveStart + effectiveCount - 1;
                     while (lo < hi) {
                         int mid = (lo + hi + 1) >>> 1;
-                        long val = FORBitmapIndexUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                        long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
                         if (val > maxValue) {
                             hi = mid - 1;
                         } else {
@@ -445,7 +445,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.currentBlock = 0;
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.BLOCK_CAPACITY);
-                FORBitmapIndexUtils.unpackValuesFrom(dataAddr, effectiveStart, batch, bitWidth, baseValue, blockBuffer);
+                BitpackUtils.unpackValuesFrom(dataAddr, effectiveStart, batch, bitWidth, baseValue, blockBuffer);
                 this.blockBufferPos = 0;
                 this.blockBufferEnd = batch;
                 this.packedStartIdx = effectiveStart + batch;
@@ -580,7 +580,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // Advance packedDataAddr past skipped blocks
             for (int b = 0; b < startBlock; b++) {
                 int numDeltas = valueCounts[b] - 1;
-                packedDataStart += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidths[b]);
+                packedDataStart += BitpackUtils.packedDataSize(numDeltas, bitWidths[b]);
             }
 
             // Trim trailing blocks that are entirely above maxValue

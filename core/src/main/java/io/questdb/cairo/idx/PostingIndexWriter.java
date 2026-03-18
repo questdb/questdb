@@ -486,14 +486,14 @@ public class PostingIndexWriter implements IndexWriter {
             strideMaxValue = 0;
         }
         long strideRange = strideMaxValue - strideMinValue;
-        int localBitWidth = strideRange <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(strideRange);
+        int localBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
 
         // Compute sizes
         int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
         int bpSize = bpHeaderSize + bpDataTotal;
 
         int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
-        int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, localBitWidth);
+        int packedDataSize = BitpackUtils.packedDataSize(totalStrideValues, localBitWidth);
         int packedSize = packedHeaderSize + packedDataSize;
 
         boolean usePacked = packedSize < bpSize;
@@ -529,7 +529,7 @@ public class PostingIndexWriter implements IndexWriter {
                     long packedDataAddr = strideAddr + phSize;
                     // Unpack directly to native destination using per-value random access
                     for (int i = 0; i < count; i++) {
-                        long val = FORBitmapIndexUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue);
+                        long val = BitpackUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue);
                         Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES, val);
                         totalCount++;
                     }
@@ -813,7 +813,7 @@ public class PostingIndexWriter implements IndexWriter {
                                     long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
 
                                     for (int i = 0; i < count; i++) {
-                                        long val = FORBitmapIndexUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue);
+                                        long val = BitpackUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue);
                                         Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, val);
                                     }
 
@@ -992,10 +992,10 @@ public class PostingIndexWriter implements IndexWriter {
                                 strideMaxValue = 0;
                             }
                             long strideRange = strideMaxValue - strideMinValue;
-                            int localBitWidth = strideRange <= 0 ? 1 : FORBitmapIndexUtils.bitsNeeded(strideRange);
+                            int localBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
 
                             int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
-                            int packedDataSize = FORBitmapIndexUtils.packedDataSize(totalStrideValues, localBitWidth);
+                            int packedDataSize = BitpackUtils.packedDataSize(totalStrideValues, localBitWidth);
                             int packedSize = packedHeaderSize + packedDataSize;
 
                             boolean usePacked = packedSize < bpSize;
@@ -1103,7 +1103,7 @@ public class PostingIndexWriter implements IndexWriter {
                     int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                     long packedDataAddr = strideAddr + packedHeaderSize;
                     for (int i = 0; i < count; i++) {
-                        values.add(FORBitmapIndexUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue));
+                        values.add(BitpackUtils.unpackValue(packedDataAddr, startIdx + i, bitWidth, baseValue));
                     }
                     continue;
                 }

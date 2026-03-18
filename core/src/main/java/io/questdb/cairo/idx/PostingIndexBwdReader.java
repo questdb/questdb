@@ -301,7 +301,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                         blockDeltas[i] = minDeltas[b];
                     }
                 } else {
-                    FORBitmapIndexUtils.unpackAllValues(blockPackedAddrs[b], numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(blockPackedAddrs[b], numDeltas, bitWidth, minDeltas[b], blockDeltas);
                 }
             }
 
@@ -321,7 +321,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // Unpack from the end of remaining values
             int batchStart = packedStartIdx - batch;
             for (int i = 0; i < batch; i++) {
-                blockBuffer[i] = FORBitmapIndexUtils.unpackValue(packedDataBase, batchStart + i, packedBitWidth, packedBaseValue);
+                blockBuffer[i] = BitpackUtils.unpackValue(packedDataBase, batchStart + i, packedBitWidth, packedBaseValue);
             }
             packedStartIdx = batchStart;
             packedRemaining -= batch;
@@ -391,7 +391,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int batch = Math.min(count, PostingIndexUtils.BLOCK_CAPACITY);
                 int batchStart = startCount + count - batch;
                 for (int i = 0; i < batch; i++) {
-                    blockBuffer[i] = FORBitmapIndexUtils.unpackValue(dataAddr, batchStart + i, bitWidth, baseValue);
+                    blockBuffer[i] = BitpackUtils.unpackValue(dataAddr, batchStart + i, bitWidth, baseValue);
                 }
                 this.blockBufferPos = batch - 1;
                 this.packedStartIdx = batchStart;
@@ -516,7 +516,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             for (int b = 0; b < encodedBlockCount; b++) {
                 blockPackedAddrs[b] = pos;
                 int numDeltas = valueCounts[b] - 1;
-                pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidths[b]);
+                pos += BitpackUtils.packedDataSize(numDeltas, bitWidths[b]);
             }
 
             this.currentBlock = encodedBlockCount - 1;
