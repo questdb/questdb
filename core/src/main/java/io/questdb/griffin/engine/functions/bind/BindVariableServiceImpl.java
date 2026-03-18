@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -100,11 +101,12 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     /**
-     * Creates an independent deep copy of the given BindVariableService's
-     * indexed and named variable values. The returned instance owns its own
-     * Function objects, so it is safe to use on a different thread after
-     * the source is cleared. ARRAY values are not deep-copied; these types
-     * are not expected in COPY subquery bind variables.
+     * snapshot() creates an independent deep copy of the given
+     * BindVariableService's indexed and named variable values. The returned
+     * instance owns its own Function objects, so it is safe to use on a
+     * different thread after the source is cleared. snapshot() does not
+     * deep-copy ARRAY values; these types are not expected in COPY subquery
+     * bind variables.
      */
     public static BindVariableServiceImpl snapshot(
             BindVariableService source,
@@ -119,7 +121,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // indexed variables ($1, $2, ...)
         int count = source.getIndexedVariableCount();
         for (int i = 0; i < count; i++) {
-            dec = snapshotFunction(source.getFunction(i), i, copy, dec);
+            dec = snapshotIndexedFunction(source.getFunction(i), i, copy, dec);
         }
 
         // named variables — keys are stored without colon prefix,
@@ -139,7 +141,32 @@ public class BindVariableServiceImpl implements BindVariableService {
         return copy;
     }
 
-    private static Decimal256 snapshotFunction(
+    private static BinarySequence copyBinarySequence(BinarySequence src) {
+        if (src == null) {
+            return null;
+        }
+        long len = src.length();
+        if (len > Integer.MAX_VALUE) {
+            throw CairoException.nonCritical().put("BINARY bind variable too large to snapshot [length=").put(len).put(']');
+        }
+        byte[] buf = new byte[(int) len];
+        for (int i = 0; i < len; i++) {
+            buf[i] = src.byteAt(i);
+        }
+        return new BinarySequence() {
+            @Override
+            public byte byteAt(long index) {
+                return buf[(int) index];
+            }
+
+            @Override
+            public long length() {
+                return buf.length;
+            }
+        };
+    }
+
+    private static Decimal256 snapshotIndexedFunction(
             Function f,
             int index,
             BindVariableServiceImpl copy,
@@ -186,28 +213,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         return dec;
     }
 
-    private static BinarySequence copyBinarySequence(BinarySequence src) {
-        if (src == null) {
-            return null;
-        }
-        long len = src.length();
-        byte[] buf = new byte[(int) len];
-        for (int i = 0; i < len; i++) {
-            buf[i] = src.byteAt(i);
-        }
-        return new BinarySequence() {
-            @Override
-            public byte byteAt(long index) {
-                return buf[(int) index];
-            }
-
-            @Override
-            public long length() {
-                return buf.length;
-            }
-        };
-    }
-
     private static void snapshotNamedFunction(
             Function f,
             CharSequence name,
@@ -220,9 +225,10 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.SHORT -> copy.setShort(name, f.getShort(null));
             case ColumnType.CHAR -> copy.setChar(name, f.getChar(null));
             case ColumnType.INT -> copy.setInt(name, f.getInt(null));
+            // no named IPv4 setter exists on the BindVariableService interface
             case ColumnType.LONG -> copy.setLong(name, f.getLong(null));
             case ColumnType.DATE -> copy.setDate(name, f.getDate(null));
-            case ColumnType.TIMESTAMP -> copy.setTimestamp(name, f.getTimestamp(null));
+            case ColumnType.TIMESTAMP -> copy.setTimestampWithType(name, type, f.getTimestamp(null));
             case ColumnType.FLOAT -> copy.setFloat(name, f.getFloat(null));
             case ColumnType.DOUBLE -> copy.setDouble(name, f.getDouble(null));
             case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(name, f.getStrA(null));
