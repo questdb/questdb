@@ -1688,7 +1688,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fileLength = produceParquetFromNative(
                         reader, symbolTableProvider,
                         path, other, pathSize, partitionTimestamp,
-                        PRODUCT, partitionIndex, configuration, -1
+                        PRODUCT, partitionIndex, configuration, -1, null
                 );
                 Assert.assertTrue(fileLength > 0);
             }
@@ -2964,7 +2964,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fileLength = produceParquetFromNative(
                         reader, symbolTableProvider,
                         path, other, pathSize, partitionTimestamp,
-                        PRODUCT, partitionIndex, configuration, -1
+                        PRODUCT, partitionIndex, configuration, -1, null
                 );
                 Assert.assertTrue(fileLength > 0);
             }
