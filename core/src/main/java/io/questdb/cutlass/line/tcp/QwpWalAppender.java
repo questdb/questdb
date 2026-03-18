@@ -115,7 +115,7 @@ public class QwpWalAppender implements QuietCloseable {
             case ColumnType.UUID -> TYPE_UUID;
             case ColumnType.LONG256 -> TYPE_LONG256;
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> TYPE_GEOHASH;
-            default -> throw new IllegalArgumentException("Unsupported QuestDB type: " + columnType);
+            default -> throw CairoException.nonCritical().put("unsupported QuestDB type: ").put(columnType);
         };
     }
 
@@ -145,11 +145,11 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_GEOHASH -> ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
             case TYPE_DOUBLE_ARRAY -> ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false);
             case TYPE_LONG_ARRAY ->
-                    throw new IllegalArgumentException("Long arrays are not supported, only double arrays");
+                    throw CairoException.nonCritical().put("long arrays are not supported, only double arrays");
             case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
             case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
             case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
-            default -> throw new IllegalArgumentException("Unknown QWP v1 type: " + ilpType);
+            default -> throw CairoException.nonCritical().put("unknown QWP v1 type: ").put(ilpType);
         };
     }
 
@@ -736,8 +736,9 @@ public class QwpWalAppender implements QuietCloseable {
                             }
                         } else {
                             // Unsupported column type - this should not happen as all types are handled
-                            throw new UnsupportedOperationException("Unsupported column type for columnar write: "
-                                    + ColumnType.nameOf(columnType));
+                            throw CairoException.nonCritical()
+                                    .put("unsupported column type for columnar write: ")
+                                    .put(ColumnType.nameOf(columnType));
                         }
                     }
                 }
