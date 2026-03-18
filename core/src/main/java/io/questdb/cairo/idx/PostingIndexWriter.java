@@ -78,8 +78,6 @@ public class PostingIndexWriter implements IndexWriter {
     // Reusable flush buffers to avoid malloc/free per commit
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
-    private long flushTmpBuf;
-    private int flushTmpBufCapacity;
     private int genCount;
     private boolean hasPendingData;
     private int keyCapacity;
@@ -437,30 +435,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         long srcAddr = gen0Addr + gen0SiSize + strideOff;
-        // Extend valueMem and copy stride block
-        long destFilePos = valueMem.getAppendOffset();
-        // Write placeholder, then overwrite with copyMemory
-        for (int i = 0; i < strideSize; i += Integer.BYTES) {
-            valueMem.putInt(0);
-        }
-        // Handle remainder bytes
-        int remainder = strideSize % Integer.BYTES;
-        if (remainder > 0) {
-            // Back up: we over-wrote some. Actually let's just use putByte for exact size
-            valueMem.jumpTo(destFilePos);
-            int written = 0;
-            while (written + Long.BYTES <= strideSize) {
-                valueMem.putLong(Unsafe.getUnsafe().getLong(srcAddr + written));
-                written += (int) Long.BYTES;
-            }
-            while (written < strideSize) {
-                valueMem.putByte(Unsafe.getUnsafe().getByte(srcAddr + written));
-                written++;
-            }
-        } else {
-            long destAddr = valueMem.addressOf(destFilePos);
-            Unsafe.getUnsafe().copyMemory(srcAddr, destAddr, strideSize);
-        }
+        valueMem.putBlockOfBytes(srcAddr, strideSize);
     }
 
     private void encodeDirtyStride(int s, int ks, long gen0Addr, int gen0KeyCount, int gen0SiSize,
@@ -637,15 +612,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
-            int written = 0;
-            while (written + Long.BYTES <= packedDataSize) {
-                valueMem.putLong(Unsafe.getUnsafe().getLong(packedBuf + written));
-                written += (int) Long.BYTES;
-            }
-            while (written < packedDataSize) {
-                valueMem.putByte(Unsafe.getUnsafe().getByte(packedBuf + written));
-                written++;
-            }
+            valueMem.putBlockOfBytes(packedBuf, packedDataSize);
         } finally {
             Unsafe.free(packedBuf, packedDataSize > 0 ? packedDataSize : 1, MemoryTag.NATIVE_DEFAULT);
         }
@@ -675,15 +642,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (bpKeySizes[j] > 0) {
                 int bytesWritten = bpKeySizes[j];
-                int written = 0;
-                while (written + Long.BYTES <= bytesWritten) {
-                    valueMem.putLong(Unsafe.getUnsafe().getLong(bpTrialBuf + bpBufOffset + written));
-                    written += (int) Long.BYTES;
-                }
-                while (written < bytesWritten) {
-                    valueMem.putByte(Unsafe.getUnsafe().getByte(bpTrialBuf + bpBufOffset + written));
-                    written++;
-                }
+                valueMem.putBlockOfBytes(bpTrialBuf + bpBufOffset, bytesWritten);
                 dataOffset += bytesWritten;
             }
             bpBufOffset += bpKeySizes[j];
@@ -870,15 +829,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                 // Phase 3: Re-encode into single generation using stride-indexed format
                 // with adaptive per-stride encoding (BP vs Packed)
-                int maxPerKey = 0;
-                for (int key = 0; key < keyCount; key++) {
-                    int c = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                    if (c > maxPerKey) maxPerKey = c;
-                }
-                int perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(maxPerKey);
-                long tmpBuf = Unsafe.malloc(perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
-
-                try {
+                {
                     int sc = PostingIndexUtils.strideCount(keyCount);
                     int siSize = PostingIndexUtils.strideIndexSize(keyCount);
 
@@ -1027,15 +978,7 @@ public class PostingIndexWriter implements IndexWriter {
                                     }
 
                                     // Write packed data to valueMem
-                                    int written = 0;
-                                    while (written + Long.BYTES <= packedDataSize) {
-                                        valueMem.putLong(Unsafe.getUnsafe().getLong(packedBuf + written));
-                                        written += (int) Long.BYTES;
-                                    }
-                                    while (written < packedDataSize) {
-                                        valueMem.putByte(Unsafe.getUnsafe().getByte(packedBuf + written));
-                                        written++;
-                                    }
+                                    valueMem.putBlockOfBytes(packedBuf, packedDataSize);
                                 } finally {
                                     Unsafe.free(packedBuf, packedDataSize > 0 ? packedDataSize : 1, MemoryTag.NATIVE_DEFAULT);
                                 }
@@ -1070,15 +1013,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                                     if (bpKeySizes[j] > 0) {
                                         int bytesWritten = bpKeySizes[j];
-                                        int written = 0;
-                                        while (written + Long.BYTES <= bytesWritten) {
-                                            valueMem.putLong(Unsafe.getUnsafe().getLong(bpTrialBuf + bpBufOffset + written));
-                                            written += (int) Long.BYTES;
-                                        }
-                                        while (written < bytesWritten) {
-                                            valueMem.putByte(Unsafe.getUnsafe().getByte(bpTrialBuf + bpBufOffset + written));
-                                            written++;
-                                        }
+                                        valueMem.putBlockOfBytes(bpTrialBuf + bpBufOffset, bytesWritten);
                                         dataOffset += bytesWritten;
                                     }
                                     bpBufOffset += bpKeySizes[j];
@@ -1116,8 +1051,6 @@ public class PostingIndexWriter implements IndexWriter {
                     writeMetadataPage(genCount,
                             keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
                             0, sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
-                } finally {
-                    Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
 
             } finally {
@@ -1697,15 +1630,7 @@ public class PostingIndexWriter implements IndexWriter {
                                             packIdx++;
                                         }
                                     }
-                                    int written = 0;
-                                    while (written + Long.BYTES <= packedDataSize) {
-                                        valueMem.putLong(Unsafe.getUnsafe().getLong(packedBuf + written));
-                                        written += (int) Long.BYTES;
-                                    }
-                                    while (written < packedDataSize) {
-                                        valueMem.putByte(Unsafe.getUnsafe().getByte(packedBuf + written));
-                                        written++;
-                                    }
+                                    valueMem.putBlockOfBytes(packedBuf, packedDataSize);
                                 } finally {
                                     Unsafe.free(packedBuf, packedDataSize > 0 ? packedDataSize : 1, MemoryTag.NATIVE_DEFAULT);
                                 }
@@ -1735,15 +1660,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                                     if (bpKeySizes[j] > 0) {
                                         int bytesWritten = bpKeySizes[j];
-                                        int written = 0;
-                                        while (written + Long.BYTES <= bytesWritten) {
-                                            valueMem.putLong(Unsafe.getUnsafe().getLong(bpTrialBuf + bpBufOffset + written));
-                                            written += (int) Long.BYTES;
-                                        }
-                                        while (written < bytesWritten) {
-                                            valueMem.putByte(Unsafe.getUnsafe().getByte(bpTrialBuf + bpBufOffset + written));
-                                            written++;
-                                        }
+                                        valueMem.putBlockOfBytes(bpTrialBuf + bpBufOffset, bytesWritten);
                                         dataOffset += bytesWritten;
                                     }
                                     bpBufOffset += bpKeySizes[j];
@@ -2242,11 +2159,6 @@ public class PostingIndexWriter implements IndexWriter {
             flushHeaderBuf = 0;
             flushHeaderBufCapacity = 0;
         }
-        if (flushTmpBuf != 0) {
-            Unsafe.free(flushTmpBuf, flushTmpBufCapacity, MemoryTag.NATIVE_DEFAULT);
-            flushTmpBuf = 0;
-            flushTmpBufCapacity = 0;
-        }
         encodeCtx.close();
         keyCapacity = 0;
     }
@@ -2340,30 +2252,20 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, genCount);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
 
-        // Copy gen dir entries from active page, with optional override
-        for (int g = 0; g < genCount; g++) {
-            long srcOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-            long dstOffset = PostingIndexUtils.getGenDirOffset(inactivePageOffset, g);
-
-            if (g == overrideGenIndex) {
-                keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
-                keyMem.putInt(dstOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
-                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
-                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
-                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
-            } else {
-                // Copy from active page
-                keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET,
-                        keyMem.getLong(srcOffset + GEN_DIR_OFFSET_FILE_OFFSET));
-                keyMem.putInt(dstOffset + GEN_DIR_OFFSET_SIZE,
-                        keyMem.getInt(srcOffset + GEN_DIR_OFFSET_SIZE));
-                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT,
-                        keyMem.getInt(srcOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT));
-                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY,
-                        keyMem.getInt(srcOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
-                keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY,
-                        keyMem.getInt(srcOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
-            }
+        // Bulk copy all gen dir entries from active page, then overwrite the one entry if needed
+        if (genCount > 0) {
+            long srcGenDir = keyMem.addressOf(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
+            long dstGenDir = keyMem.addressOf(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
+            int genDirBytes = genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            Unsafe.getUnsafe().copyMemory(srcGenDir, dstGenDir, genDirBytes);
+        }
+        if (overrideGenIndex >= 0) {
+            long dstOffset = PostingIndexUtils.getGenDirOffset(inactivePageOffset, overrideGenIndex);
+            keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
+            keyMem.putInt(dstOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
+            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
+            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
+            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
         }
 
         // Write sequence_end last

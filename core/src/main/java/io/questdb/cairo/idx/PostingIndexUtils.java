@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -378,8 +379,12 @@ public final class PostingIndexUtils {
      */
     public static int encodeKey(long[] values, int count, long destAddr) {
         EncodeContext ctx = new EncodeContext();
-        ctx.ensureCapacity(count);
-        return encodeKey(values, count, destAddr, ctx);
+        try {
+            ctx.ensureCapacity(count);
+            return encodeKey(values, count, destAddr, ctx);
+        } finally {
+            ctx.close();
+        }
     }
 
     /**
@@ -533,10 +538,12 @@ public final class PostingIndexUtils {
         long[] residuals = ctx.residuals;
 
         // Compute deltas — reading directly from native memory
-        deltas[0] = Unsafe.getUnsafe().getLong(srcAddr);
+        long prev = Unsafe.getUnsafe().getLong(srcAddr);
+        deltas[0] = prev;
         for (int i = 1; i < count; i++) {
-            deltas[i] = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES)
-                    - Unsafe.getUnsafe().getLong(srcAddr + (long) (i - 1) * Long.BYTES);
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            deltas[i] = val - prev;
+            prev = val;
         }
 
         // Per-block metadata
@@ -715,13 +722,13 @@ public final class PostingIndexUtils {
                 blockBitWidths = new int[blockCapacity];
             }
             if (nativeResidualsAddr == 0 && PostingIndexNative.isNativeAvailable()) {
-                nativeResidualsAddr = Unsafe.getUnsafe().allocateMemory((long) BLOCK_CAPACITY * Long.BYTES);
+                nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         }
 
         public void close() {
             if (nativeResidualsAddr != 0) {
-                Unsafe.getUnsafe().freeMemory(nativeResidualsAddr);
+                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 nativeResidualsAddr = 0;
             }
         }

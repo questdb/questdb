@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Chars;
+
 /**
  * Defines the types of column indexes supported by QuestDB.
  * The index type is stored as a 3-bit value in the column metadata flags,
@@ -93,30 +95,18 @@ public final class IndexType {
             return NONE;
         }
         // Case-insensitive comparison
-        if (equalsIgnoreCase(name, "SYMBOL") || equalsIgnoreCase(name, "LEGACY")) {
+        if (Chars.equalsIgnoreCase(name, "SYMBOL") || Chars.equalsIgnoreCase(name, "LEGACY")) {
             return SYMBOL;
         }
-        if (equalsIgnoreCase(name, "POSTING")) {
+        if (Chars.equalsIgnoreCase(name, "POSTING")) {
             return POSTING;
         }
-        if (equalsIgnoreCase(name, "FSST")) {
+        if (Chars.equalsIgnoreCase(name, "FSST")) {
             return FSST;
         }
-        if (equalsIgnoreCase(name, "NONE")) {
+        if (Chars.equalsIgnoreCase(name, "NONE")) {
             return NONE;
         }
         return NONE;
-    }
-
-    private static boolean equalsIgnoreCase(CharSequence a, String b) {
-        if (a.length() != b.length()) {
-            return false;
-        }
-        for (int i = 0; i < a.length(); i++) {
-            if (Character.toUpperCase(a.charAt(i)) != Character.toUpperCase(b.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 }

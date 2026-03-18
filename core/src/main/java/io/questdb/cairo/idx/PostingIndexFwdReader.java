@@ -38,7 +38,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -49,17 +48,14 @@ import io.questdb.std.str.Path;
  * Generation iteration uses PostingGenLookup for tiered gen-to-key mapping.
  */
 public class PostingIndexFwdReader implements BitmapIndexReader {
-    private static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     private static final Log LOG = LogFactory.getLog(PostingIndexFwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     private final Cursor cursor = new Cursor();
     private final PostingGenLookup genLookup = new PostingGenLookup();
-    protected MillisecondClock clock;
     protected long columnTop;
     protected int keyCount;
-    protected long spinLockTimeoutMs;
     private long activePageOffset;
     private long columnTxn;
     private int genCount;
@@ -169,7 +165,6 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
         final int plen = path.size();
-        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
 
         try {
             FilesFacade ff = configuration.getFilesFacade();
@@ -183,7 +178,6 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
                     CairoConfiguration.O_NONE,
                     -1
             );
-            this.clock = configuration.getMillisecondClock();
 
             readIndexMetadataFromBestPage();
 
