@@ -33,6 +33,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.str.Path;
@@ -172,10 +173,9 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 int colIndex = writer.getMetadata().getColumnIndex("b");
                 int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(0, TableUtils.getParquetConfigEncoding(config));
-                // compression = ZSTD (4) + 1 = 5 in packed form
-                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DEFAULT, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetCompression.COMPRESSION_ZSTD, TableUtils.getParquetConfigCompression(config) - 1);
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config) - 1);
             }
         });
     }
@@ -203,9 +203,9 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 int colIndex = reader.getMetadata().getColumnIndex("a");
                 int config = reader.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
-                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetCompression.COMPRESSION_ZSTD, TableUtils.getParquetConfigCompression(config) - 1);
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config) - 1);
             }
         });
     }
@@ -280,7 +280,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 // Setting encoding only should keep encoding but clear compression
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
                 int encoding = TableUtils.getParquetConfigEncoding(config);
-                Assert.assertEquals(4, encoding);
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, encoding);
                 Assert.assertEquals(0, TableUtils.getParquetConfigCompression(config));
                 Assert.assertEquals(0, TableUtils.getParquetConfigCompressionLevel(config));
             }
@@ -645,7 +645,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 int colIndex = writer.getMetadata().getColumnIndex("f");
                 int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
             }
         });
     }
@@ -661,7 +661,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 int colIndex = writer.getMetadata().getColumnIndex("i");
                 int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
                 Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
-                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
             }
         });
     }
