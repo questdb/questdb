@@ -233,6 +233,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path other;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
+    private final DirectIntList parquetBloomFilterIndexes;
     private final DirectIntList parquetColumnIdsAndTypes;
     private final PartitionDecoder parquetDecoder = new PartitionDecoder();
     private final int partitionBy;
@@ -456,6 +457,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
+            this.parquetBloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_TABLE_WRITER, true);
             this.parquetColumnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER);
 
             if (metadata.isWalEnabled()) {
@@ -5238,6 +5240,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
         Misc.free(parquetDecoder);
+        Misc.free(parquetBloomFilterIndexes);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
@@ -8934,7 +8937,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolTableProvider,
                 configuration,
                 bloomFilterColumns, bloomFilterFpp,
-                null
+                parquetBloomFilterIndexes, null
         );
     }
 

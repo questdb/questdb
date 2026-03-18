@@ -1635,7 +1635,7 @@ public final class TableUtils {
                 metadata, columnVersionReader,
                 symbolTableProvider,
                 configuration,
-                null, Double.NaN,
+                null, Double.NaN, null,
                 expectedPartitionNameTxn >= 0 ? partitionChangeDetector : null
         );
     }
@@ -1658,6 +1658,9 @@ public final class TableUtils {
      * @param configuration           Cairo configuration for parquet encoder options
      * @param bloomFilterColumns      Comma-separated column names for bloom filters, or null
      * @param bloomFilterFpp          Bloom filter false-positive probability, or NaN for default
+     * @param bloomFilterIndexes      Reusable DirectIntList for bloom filter column indexes. Must be non-null when
+     *                                bloomFilterColumns is set. Callers should keep a single instance and pass it
+     *                                on every call to avoid per-invocation allocation.
      * @param partitionChangeDetector Optional check for concurrent partition changes, returns true if changed. Null to skip.
      * @return The length of the produced Parquet file, or -1 if the partition changed during conversion
      */
@@ -1676,6 +1679,7 @@ public final class TableUtils {
             CairoConfiguration configuration,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp,
+            @Nullable DirectIntList bloomFilterIndexes,
             @Nullable PartitionChangeDetector partitionChangeDetector
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -1835,32 +1839,28 @@ public final class TableUtils {
                 long bloomFilterColumnIndexesPtr = 0;
                 int bloomFilterColumnCount = 0;
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
-                DirectIntList bloomFilterIndexes = null;
 
-                try {
-                    if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
-                        bloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_DEFAULT, true);
-                        parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
-                        bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
-                        bloomFilterColumnCount = (int) bloomFilterIndexes.size();
-                    }
-
-                    PartitionEncoder.encodeWithOptions(
-                            partitionDescriptor,
-                            other,
-                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                            statisticsEnabled,
-                            rawArrayEncoding,
-                            rowGroupSize,
-                            dataPageSize,
-                            parquetVersion,
-                            bloomFilterColumnIndexesPtr,
-                            bloomFilterColumnCount,
-                            fpp
-                    );
-                } finally {
-                    Misc.free(bloomFilterIndexes);
+                if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                    assert bloomFilterIndexes != null : "bloomFilterIndexes must be provided when bloomFilterColumns is set";
+                    bloomFilterIndexes.clear();
+                    parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
+                    bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
+                    bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                 }
+
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        other,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion,
+                        bloomFilterColumnIndexesPtr,
+                        bloomFilterColumnCount,
+                        fpp
+                );
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
