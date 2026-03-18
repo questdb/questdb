@@ -29,9 +29,13 @@ import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -1758,5 +1762,454 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    // ===================================================================
+    // Double-buffered metadata page protocol tests
+    // ===================================================================
+
+    @Test
+    public void testPageFlipVisibility() throws Exception {
+        // Writer commits 10 times. After each commit, a fresh reader reload
+        // sees the correct data. Track which page the reader uses and verify
+        // the writer alternates between pages with monotonically increasing seqs.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "page_flip_vis";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+
+                        long prevSeq = -1;
+                        long prevPageUsed = -1;
+
+                        for (int commit = 0; commit < 10; commit++) {
+                            long base = (long) commit * BP_BATCH;
+                            for (int v = 0; v < BP_BATCH; v++) {
+                                writer.add(0, base + v);
+                            }
+                            writer.setMaxValue(base + BP_BATCH - 1);
+                            writer.commit();
+
+                            // Reload reader to pick up the new commit
+                            reader.reloadConditionally();
+
+                            // Read seq_start from both pages to determine which is active
+                            long keyBase = reader.getKeyBaseAddress();
+                            long seqA = Unsafe.getUnsafe().getLong(
+                                    keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                            long seqEndA = Unsafe.getUnsafe().getLong(
+                                    keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                            long seqB = Unsafe.getUnsafe().getLong(
+                                    keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                            long seqEndB = Unsafe.getUnsafe().getLong(
+                                    keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                            long validA = (seqA == seqEndA) ? seqA : 0;
+                            long validB = (seqB == seqEndB) ? seqB : 0;
+                            long bestSeq = Math.max(validA, validB);
+                            long bestPage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+
+                            // Sequence must increase monotonically
+                            Assert.assertTrue("commit " + commit + ": seq " + bestSeq + " not > prevSeq " + prevSeq,
+                                    bestSeq > prevSeq);
+
+                            // Pages must alternate (writer writes to inactive, then flips)
+                            if (prevPageUsed >= 0) {
+                                Assert.assertNotEquals(
+                                        "commit " + commit + ": expected page flip but same page used",
+                                        prevPageUsed, bestPage);
+                            }
+
+                            prevSeq = bestSeq;
+                            prevPageUsed = bestPage;
+
+                            // Verify all data is readable
+                            RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                            int expectedCount = (commit + 1) * BP_BATCH;
+                            int count = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals("commit " + commit + " val " + count,
+                                        (long) count, cursor.next());
+                                count++;
+                            }
+                            Assert.assertEquals("commit " + commit + " count", expectedCount, count);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTornPageFallback() throws Exception {
+        // Writer commits data, creating a valid state. Then manually corrupt
+        // one page (seq_start without matching seq_end). A fresh reader should
+        // fall back to the valid page.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "torn_page_fb";
+
+                // Write initial data (2 commits to get both pages written)
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+
+                    for (int v = BP_BATCH; v < 2 * BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(2 * BP_BATCH - 1);
+                    writer.commit();
+                }
+
+                // Determine which page is currently active (highest valid seq)
+                // Then corrupt the OTHER page's seq_start without matching seq_end
+                try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                    try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                        PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                        keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                        long validA = (seqA == seqEndA) ? seqA : 0;
+                        long validB = (seqB == seqEndB) ? seqB : 0;
+                        long activePage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+                        long otherPage = (activePage == PostingIndexUtils.PAGE_A_OFFSET)
+                                ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+
+                        // Corrupt the OTHER page: write a high seq_start but don't match seq_end
+                        keyMem.putLong(otherPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 999L);
+                        // seq_end stays at its old value -> torn page
+                    }
+                }
+
+                // Open a fresh reader — should fall back to the valid page
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("count after other page corruption", 2 * BP_BATCH, count);
+                }
+
+                // Now corrupt the ACTIVE page (the one with the highest valid seq)
+                try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                    try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                        PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                        keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                        long validA = (seqA == seqEndA) ? seqA : 0;
+                        long validB = (seqB == seqEndB) ? seqB : 0;
+                        long activePage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+
+                        // Corrupt the active page: write a new seq_start without matching seq_end
+                        keyMem.putLong(activePage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 9999L);
+                        // seq_end stays at its old valid value -> torn
+                    }
+                }
+
+                // Open reader — should fall back to the other page (the old valid one)
+                // The other page was corrupted earlier with seq_start=999, but its
+                // old seq_end doesn't match 999. So the reader's readIndexMetadataFromBestPage
+                // tries the highest seq_start (9999) first — that's torn. Falls back to the
+                // other page with seq_start=999 — also torn. Both pages are torn, so the reader
+                // should see 0 keys (graceful degradation, not a crash).
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    Assert.assertFalse("both pages torn: cursor should be empty", cursor.hasNext());
+                }
+
+                // Fix: restore one valid page so we can verify fallback works when only one is torn
+                try (MemoryCMARW keyMem = Vm.getCMARWInstance()) {
+                    try (Path keyPath = new Path().of(configuration.getDbRoot())) {
+                        PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
+                        keyMem.smallFile(configuration.getFilesFacade(), keyPath.$(), MemoryTag.MMAP_DEFAULT);
+
+                        // Make page A valid with seq=50
+                        keyMem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 50L);
+                        Unsafe.getUnsafe().storeFence();
+                        keyMem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 50L);
+
+                        // Page B stays torn (seq_start=999 != seq_end)
+                        // Page A seq=50 should be picked
+                    }
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("restored page A, val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    // Page A should have the data from when it was last validly written
+                    Assert.assertTrue("restored page A should have data", count > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotDecoupledFromPage() throws Exception {
+        // Writer commits 5 batches. Reader reloads and snapshots gen dir.
+        // Then the writer seals (overwriting gen dir on the inactive page and flipping).
+        // The reader's cursor should still iterate correctly using its snapshotted gen dir.
+        final String dbRoot = configuration.getDbRoot().toString();
+        final String name = "snap_decoupled";
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+
+        try (Path path = new Path().of(dbRoot)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                // Write 5 sparse gens to key 0
+                for (int batch = 0; batch < 5; batch++) {
+                    long base = (long) batch * BP_BATCH;
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, base + v);
+                    }
+                    writer.setMaxValue(base + BP_BATCH - 1);
+                    writer.commit();
+                }
+
+                int expectedTotal = 5 * BP_BATCH;
+                CyclicBarrier readerReady = new CyclicBarrier(2);
+                CyclicBarrier sealDone = new CyclicBarrier(2);
+
+                Thread readerThread = new Thread(() -> {
+                    try (Path rPath = new Path().of(dbRoot);
+                         PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                 configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // Reload to snapshot the 5 sparse gens
+                        reader.reloadConditionally();
+
+                        // Create cursor (this snapshots gen dir into genLookup)
+                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+
+                        // Signal to writer: reader has snapshotted, go ahead and seal
+                        readerReady.await();
+
+                        // Wait for writer to finish sealing
+                        sealDone.await();
+
+                        // Now iterate the cursor — seal has rewritten gen dir on
+                        // the now-active page, but cursor uses the snapshotted copy.
+                        long prev = -1;
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            long val = cursor.next();
+                            if (val <= prev) {
+                                throw new AssertionError(
+                                        "non-ascending at pos " + count + ": " + prev + " -> " + val);
+                            }
+                            if (val != count) {
+                                throw new AssertionError(
+                                        "expected " + count + " got " + val + " at pos " + count);
+                            }
+                            prev = val;
+                            count++;
+                        }
+                        if (count != expectedTotal) {
+                            throw new AssertionError(
+                                    "expected " + expectedTotal + " values, got " + count);
+                        }
+                    } catch (Throwable t) {
+                        error.compareAndSet(null, t);
+                    }
+                });
+                readerThread.setDaemon(true);
+                readerThread.start();
+
+                // Wait for reader to snapshot
+                readerReady.await();
+
+                // Seal: merges 5 sparse gens into 1 dense gen, writes to inactive page, flips
+                writer.seal();
+
+                // Signal reader: seal is done
+                sealDone.await();
+
+                readerThread.join(10_000);
+                if (readerThread.isAlive()) readerThread.interrupt();
+
+                if (error.get() != null) {
+                    throw new AssertionError("Snapshot decoupled test failed", error.get());
+                }
+
+                // Also verify a fresh reader sees all data after seal
+                try (PostingIndexFwdReader freshReader = new PostingIndexFwdReader(
+                        configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = freshReader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(expectedTotal, count);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testMaxGenCountAutoSeal() throws Exception {
+        // Write exactly MAX_GEN_COUNT+1 batches to trigger auto-seal.
+        // The writer calls seal() inside flushAllPending when genCount > MAX_GEN_COUNT.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "auto_seal_max";
+
+                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 1; // 168
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int batch = 0; batch < batchCount; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                    }
+
+                    // After MAX_GEN_COUNT+1 commits, auto-seal should have triggered,
+                    // reducing genCount back to 1 (sealed) plus any commits after seal.
+                    // The auto-seal fires at genCount > MAX_GEN_COUNT, so after the 168th
+                    // commit genCount becomes 168 > 167, triggering seal() which sets it to 1.
+                    Assert.assertTrue(
+                            "genCount should be <= MAX_GEN_COUNT after auto-seal, was " + writer.getGenCount(),
+                            writer.getGenCount() <= PostingIndexUtils.MAX_GEN_COUNT);
+                }
+
+                // Verify all data is readable
+                int totalValues = batchCount * BP_BATCH;
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("total count", totalValues, count);
+                }
+
+                // Also verify backward
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("bwd val " + count,
+                                (long) (totalValues - 1 - count), cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("bwd total count", totalValues, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRapidPageCycling() throws Exception {
+        // Writer commits 500 times in a tight loop with small batches.
+        // This cycles through both pages ~250 times each. After every 50 commits,
+        // a reader reloads and verifies all data.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "rapid_cycling";
+                int totalCommits = 500;
+                int batchSize = 10; // small batches to keep it fast
+                int checkEvery = 50;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+
+                        for (int commit = 0; commit < totalCommits; commit++) {
+                            long base = (long) commit * batchSize;
+                            for (int v = 0; v < batchSize; v++) {
+                                writer.add(0, base + v);
+                            }
+                            writer.setMaxValue(base + batchSize - 1);
+                            writer.commit();
+
+                            if ((commit + 1) % checkEvery == 0) {
+                                reader.reloadConditionally();
+
+                                // Verify both pages have valid sequences (no corruption)
+                                long keyBase = reader.getKeyBaseAddress();
+                                long seqA = Unsafe.getUnsafe().getLong(
+                                        keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                                long seqEndA = Unsafe.getUnsafe().getLong(
+                                        keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                                long seqB = Unsafe.getUnsafe().getLong(
+                                        keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                                long seqEndB = Unsafe.getUnsafe().getLong(
+                                        keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                                // Both pages should be valid (seq_start == seq_end) since writes are single-threaded
+                                Assert.assertEquals("commit " + (commit + 1) + " page A torn",
+                                        seqA, seqEndA);
+                                Assert.assertEquals("commit " + (commit + 1) + " page B torn",
+                                        seqB, seqEndB);
+
+                                // The active page should have a higher seq
+                                long bestSeq = Math.max(seqA, seqB);
+                                Assert.assertTrue("commit " + (commit + 1) + " seq should be positive",
+                                        bestSeq > 0);
+
+                                // Verify all data
+                                int expectedTotal = (commit + 1) * batchSize;
+                                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                long prev = -1;
+                                int count = 0;
+                                while (cursor.hasNext()) {
+                                    long val = cursor.next();
+                                    Assert.assertTrue(
+                                            "commit " + (commit + 1) + " non-ascending at " + count + ": " + prev + " -> " + val,
+                                            val > prev);
+                                    prev = val;
+                                    count++;
+                                }
+                                Assert.assertEquals("commit " + (commit + 1) + " count",
+                                        expectedTotal, count);
+                            }
+                        }
+                    }
+                }
+
+                // Final verification with a fresh reader
+                int totalValues = totalCommits * batchSize;
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals("final val " + count, (long) count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals("final count", totalValues, count);
+                }
+            }
+        });
     }
 }

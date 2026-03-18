@@ -224,38 +224,44 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
     }
 
     public void updateKeyCount() {
-        // Double-buffer protocol: pick the page with the highest valid sequence
-        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        Unsafe.getUnsafe().loadFence();
-        long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        Unsafe.getUnsafe().loadFence();
-        long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        // Use the same snapshot-and-validate protocol as readIndexMetadataFromBestPage.
+        // Try best page first, fall back to other if mid-write.
+        for (int attempt = 0; attempt < 2; attempt++) {
+            long seqStartA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+            long seqStartB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
 
-        long validA = (seqA == seqEndA) ? seqA : 0;
-        long validB = (seqB == seqEndB) ? seqB : 0;
-        long bestSeq = Math.max(validA, validB);
+            long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+            long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+            long tryPage = (attempt == 0) ? bestPage : otherPage;
 
-        if (bestSeq <= keyFileSequence) {
-            return; // no update
-        }
-
-        long bestPage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-        int keyCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-        int genCount = keyMem.getInt(bestPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-        long valueMemSize = keyMem.getLong(bestPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-
-        if (keyCount >= this.keyCount) {
-            // Use changeSize to allow the mapping to shrink after compaction.
-            if (valueMemSize > 0) {
-                ((MemoryCMR) valueMem).changeSize(valueMemSize);
+            long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+            if (seqStart <= keyFileSequence) {
+                if (attempt == 0) continue; // try other page
+                return; // no update available
             }
-            this.activePageOffset = bestPage;
-            this.keyFileSequence = bestSeq;
-            this.valueMemSize = valueMemSize;
-            this.keyCount = keyCount;
-            this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-            this.genCount = genCount;
+            Unsafe.getUnsafe().loadFence();
+
+            int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+            int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+            long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+            genLookup.snapshotMetadata(keyMem, genCount, tryPage);
+
+            Unsafe.getUnsafe().loadFence();
+            long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+            if (seqStart == seqEnd && keyCount >= this.keyCount) {
+                if (valueMemSize > 0) {
+                    ((MemoryCMR) valueMem).changeSize(valueMemSize);
+                }
+                this.activePageOffset = tryPage;
+                this.keyFileSequence = seqStart;
+                this.valueMemSize = valueMemSize;
+                this.keyCount = keyCount;
+                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                this.genCount = genCount;
+                return;
+            }
+            // Page was mid-write, try the other
         }
     }
 
