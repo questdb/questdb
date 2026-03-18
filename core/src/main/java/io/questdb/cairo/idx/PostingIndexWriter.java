@@ -210,7 +210,20 @@ public class PostingIndexWriter implements IndexWriter {
     public void seal() {
         flushAllPending();
 
-        if (genCount <= 1 || keyCount == 0) {
+        if (genCount == 0 || keyCount == 0) {
+            return;
+        }
+
+        // Single sparse generation: seal to convert to stride-indexed dense format
+        // (enables Packed mode compression which can be significantly smaller)
+        if (genCount == 1) {
+            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(0);
+            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            if (gen0KeyCount >= 0) {
+                // Already dense — nothing to do
+                return;
+            }
+            sealFull();
             return;
         }
 

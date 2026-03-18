@@ -142,8 +142,10 @@ public final class PostingIndexUtils {
     public static int computeMaxEncodedSize(int count) {
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         // 2B blockCount + blockCount * (1B valueCount + 8B firstValue + 8B minDelta + 1B bitWidth)
-        // + blockCount * 63 * 8 bytes worst case packed data (63 deltas × 64 bits; first value per block is in firstValues[])
-        return 2 + blockCount * 18 + blockCount * (BLOCK_CAPACITY - 1) * 8;
+        // + (count - blockCount) * 8 bytes worst case packed data
+        // Each block's first value is in firstValues[], so total deltas = count - blockCount.
+        int totalDeltas = count - blockCount;
+        return 2 + blockCount * 18 + totalDeltas * 8;
     }
 
     /**

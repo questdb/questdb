@@ -641,7 +641,8 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
                 long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET);
                 long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
                 int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
-                int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startCount;
+                int endCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+                int count = endCount - startCount;
 
                 if (count == 0) {
                     clearBlockState();
@@ -651,6 +652,46 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
                 int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
                 long dataAddr = strideAddr + packedHeaderSize;
 
+                // Binary search to skip values below minValue.
+                // Packed values are monotonically increasing (value - baseValue),
+                // so we can use O(1) random access via unpackValue.
+                int effectiveStart = startCount;
+                int effectiveCount = count;
+                if (minValue > 0 && bitWidth > 0 && count > 1) {
+                    int lo = startCount, hi = endCount - 1;
+                    while (lo < hi) {
+                        int mid = (lo + hi) >>> 1;
+                        long val = FORBitmapIndexUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                        if (val < minValue) {
+                            lo = mid + 1;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    effectiveStart = lo;
+                    effectiveCount = endCount - effectiveStart;
+                }
+
+                // Also trim values above maxValue from the end
+                if (maxValue < Long.MAX_VALUE && effectiveCount > 1) {
+                    int lo = effectiveStart, hi = effectiveStart + effectiveCount - 1;
+                    while (lo < hi) {
+                        int mid = (lo + hi + 1) >>> 1;
+                        long val = FORBitmapIndexUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                        if (val > maxValue) {
+                            hi = mid - 1;
+                        } else {
+                            lo = mid;
+                        }
+                    }
+                    effectiveCount = lo - effectiveStart + 1;
+                }
+
+                if (effectiveCount <= 0) {
+                    clearBlockState();
+                    return;
+                }
+
                 this.packedMode = true;
                 this.packedBitWidth = bitWidth;
                 this.packedBaseValue = baseValue;
@@ -658,12 +699,12 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
                 this.encodedBlockCount = 0;
                 this.currentBlock = 0;
 
-                int batch = Math.min(count, PostingIndexUtils.BLOCK_CAPACITY);
-                FORBitmapIndexUtils.unpackValuesFrom(dataAddr, startCount, batch, bitWidth, baseValue, blockBuffer);
+                int batch = Math.min(effectiveCount, PostingIndexUtils.BLOCK_CAPACITY);
+                FORBitmapIndexUtils.unpackValuesFrom(dataAddr, effectiveStart, batch, bitWidth, baseValue, blockBuffer);
                 this.blockBufferPos = 0;
                 this.blockBufferEnd = batch;
-                this.packedStartIdx = startCount + batch;
-                this.packedRemaining = count - batch;
+                this.packedStartIdx = effectiveStart + batch;
+                this.packedRemaining = effectiveCount - batch;
                 return;
             }
 
@@ -741,33 +782,77 @@ public class PostingIndexFwdReader implements BitmapIndexReader {
             }
 
             long pos = encodedAddr;
-            this.encodedBlockCount = Unsafe.getUnsafe().getShort(pos) & 0xFFFF;
+            int blockCount = Unsafe.getUnsafe().getShort(pos) & 0xFFFF;
             pos += 2;
 
-            ensureMetadataCapacity(encodedBlockCount);
+            ensureMetadataCapacity(blockCount);
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
-            pos += encodedBlockCount;
+            pos += blockCount;
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
             }
-            pos += (long) encodedBlockCount * Long.BYTES;
+            pos += (long) blockCount * Long.BYTES;
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
             }
-            pos += (long) encodedBlockCount * Long.BYTES;
+            pos += (long) blockCount * Long.BYTES;
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
-            pos += encodedBlockCount;
+            pos += blockCount;
 
-            this.packedDataAddr = pos;
-            this.currentBlock = 0;
+            // pos now points to the start of packed data for block 0
+            long packedDataStart = pos;
+
+            // Skip blocks whose values are entirely below minValue.
+            // firstValues[] stores the first (lowest) absolute value per block.
+            // Since values are monotonically increasing, if firstValues[b+1] <= minValue
+            // then all values in block b are < minValue and can be skipped.
+            int startBlock = 0;
+            if (minValue > 0 && blockCount > 1) {
+                // Binary search: find the last block whose firstValue <= minValue.
+                // That block (or the one before it) is where we need to start decoding.
+                int lo = 0, hi = blockCount - 1;
+                while (lo < hi) {
+                    int mid = (lo + hi + 1) >>> 1;
+                    if (firstValues[mid] <= minValue) {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+                // lo is the last block with firstValues[lo] <= minValue.
+                // This block might contain values >= minValue, so start here.
+                startBlock = lo;
+            }
+
+            // Advance packedDataAddr past skipped blocks
+            for (int b = 0; b < startBlock; b++) {
+                int numDeltas = valueCounts[b] - 1;
+                packedDataStart += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidths[b]);
+            }
+
+            // Trim trailing blocks that are entirely above maxValue
+            int endBlock = blockCount;
+            if (maxValue < Long.MAX_VALUE && blockCount > 0) {
+                // Find first block whose firstValue > maxValue — all subsequent blocks can be skipped
+                for (int b = startBlock; b < blockCount; b++) {
+                    if (firstValues[b] > maxValue) {
+                        endBlock = b;
+                        break;
+                    }
+                }
+            }
+
+            this.encodedBlockCount = endBlock;
+            this.packedDataAddr = packedDataStart;
+            this.currentBlock = startBlock;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
         }
