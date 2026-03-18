@@ -102,9 +102,10 @@ where
             } else {
                 Err(fmt_err!(
                     Layout,
-                    "index {} is out of dict bounds {}",
+                    "index {} is out of dict bounds {} (row_offset={})",
                     idx,
-                    self.dict.len()
+                    self.dict.len(),
+                    self.buffers_offset
                 ))
             }
         } else {

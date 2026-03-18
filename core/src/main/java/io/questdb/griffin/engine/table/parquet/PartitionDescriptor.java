@@ -44,7 +44,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
     public static final int COLUMN_SIZE_OFFSET = 4;
     public static final int PARQUET_ENCODING_CONFIG_OFFSET = 9;
     public static final int SYMBOL_OFFSET_ADDR_OFFSET = 7;
-    public static final int SYMBOL_OFFSET_SIZE_OFFSET = 8;
+    public static final int SYMBOL_OFFSET_COUNT_OFFSET = 8;
     // A single DirectLongList to store all the column-related data
     protected DirectLongList columnData = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
     // A single DirectUtf8Sink to store all the column names
@@ -65,7 +65,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
             long columnSecondaryAddr,
             long columnSecondarySize,
             long symbolOffsetsAddr,
-            long symbolOffsetsSize,
+            long symbolOffsetsCount,
             int parquetEncodingConfig
     ) {
         addColumn0(columnName, columnType, columnId, columnTop);
@@ -74,7 +74,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         columnData.add(columnSecondaryAddr);
         columnData.add(columnSecondarySize);
         columnData.add(symbolOffsetsAddr);
-        columnData.add(symbolOffsetsSize);
+        columnData.add(symbolOffsetsCount);
         columnData.add(parquetEncodingConfig);
     }
 
@@ -93,7 +93,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         columnData.add(0); // columnSecondaryAddr
         columnData.add(0); // columnSecondarySize
         columnData.add(0); // symbolOffsetsAddr
-        columnData.add(0); // symbolOffsetsSize
+        columnData.add(0); // symbolOffsetsCount
         columnData.add(parquetEncodingConfig);
     }
 
@@ -166,9 +166,9 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
     }
 
     // must be called after addColumn
-    public void setSymbolOffsetsAddr(long symbolOffsetsAddr, long symbolOffsetsSize) {
+    public void setSymbolOffsetsAddr(long symbolOffsetsAddr, long symbolOffsetsCount) {
         columnData.set(pendingEntryIndex + SYMBOL_OFFSET_ADDR_OFFSET, symbolOffsetsAddr);
-        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_SIZE_OFFSET, symbolOffsetsSize);
+        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_COUNT_OFFSET, symbolOffsetsCount);
     }
 
     private void addColumn0(CharSequence columnName, int columnType, long columnId, long columnTop) {

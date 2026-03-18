@@ -99,6 +99,7 @@ pub fn binary_to_page(
         )),
     }?;
 
+    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,

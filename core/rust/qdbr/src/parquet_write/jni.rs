@@ -14,11 +14,35 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::write::Version;
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jint,
+) {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.copyRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    match parquet_updater.copy_row_group(rg_index) {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!("could not copy row group {rg_index}"));
+            err.add_context("error in PartitionUpdater.copyRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_create(
@@ -27,8 +51,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     allocator: *const QdbAllocator,
     src_path_len: u32,
     src_path_ptr: *const u8,
-    raw_fd: i32,
-    file_size: u64,
+    reader_fd: i32,
+    read_file_size: u64,
+    writer_fd: i32,
+    write_file_size: u64,
     timestamp_index: jint,
     compression_codec: jlong,
     statistics_enabled: jboolean,
@@ -39,8 +65,22 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     min_compression_ratio: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
-        // SAFETY: JNI caller guarantees a valid file descriptor for the duration of the updater.
-        let file = unsafe { File::from_raw_fd_i32(raw_fd) };
+        // reader_fd and writer_fd must be distinct OS file descriptors.
+        // Both are closed by Rust when ParquetUpdater is dropped.
+        // Check before taking ownership to avoid double-close.
+        if reader_fd == writer_fd {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "reader_fd and writer_fd must be different file descriptors, got {}",
+                reader_fd
+            ));
+        }
+
+        // Take ownership of fds so Rust closes them on any error path below.
+        // The Java caller must set its fd locals to -1 before this JNI call
+        // so that it never double-closes on the exception path.
+        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
+        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
 
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
@@ -70,8 +110,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
-            file,
-            file_size,
+            reader_file,
+            read_file_size,
+            writer_file,
+            write_file_size,
             sorting_columns,
             statistics_enabled,
             raw_array_encoding,
@@ -119,24 +161,40 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
-) {
+) -> jlong {
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.updateFileMetadata");
-        return err.into_cairo_exception().throw(&mut env);
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
     }
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
     // Single-threaded JNI access guarantees no aliasing.
     let parquet_updater = unsafe { &mut *updater };
     match parquet_updater.end(None) {
-        Ok(_) => (),
+        Ok(file_size) => file_size as jlong,
         Err(mut err) => {
             err.add_context("could not update partition metadata");
             err.add_context("error in PartitionUpdater.updateFileMetadata");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw::<jlong>(&mut env)
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_getResultUnusedBytes(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+) -> jlong {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultUnusedBytes");
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
+    }
+
+    let parquet_updater = unsafe { &*updater };
+    parquet_updater.result_unused_bytes() as jlong
 }
 
 #[no_mangle]
@@ -146,7 +204,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_updater: *mut ParquetUpdater,
     table_name_len: u32,
     table_name_ptr: *const u8,
-    row_group_id: jshort,
+    row_group_id: jint,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -155,9 +213,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
-    let orig_row_group_id = row_group_id;
-    let row_group_id = Some(row_group_id);
-
     if parquet_updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.updateRowGroup");
@@ -169,10 +224,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
-        let table_name = "update";
         let partition = create_partition_descriptor(
-            table_name.as_ptr(),
-            table_name.len() as i32,
+            table_name_ptr,
+            table_name_len as i32,
             col_count,
             col_names_ptr,
             col_names_len,
@@ -181,11 +235,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        if let Some(row_group_id) = row_group_id {
-            parquet_updater.replace_row_group(&partition, row_group_id)
-        } else {
-            parquet_updater.append_row_group(&partition)
-        }
+        parquet_updater.replace_row_group(&partition, row_group_id)
     };
 
     match update() {
@@ -198,9 +248,63 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             let table_name =
                 std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
             err.add_context(format!(
-                "could not update row group {orig_row_group_id} for table {table_name}"
+                "could not update row group {row_group_id} for table {table_name}"
             ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_insertRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    parquet_updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
+    position: jint,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_data_ptr: *const i64,
+    col_data_len: jlong,
+    timestamp_index: jint,
+    row_count: jlong,
+) {
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.insertRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+    let parquet_updater = unsafe { &mut *parquet_updater };
+
+    let mut insert = || -> ParquetResult<()> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.insert_row_group(&partition, position)
+    };
+
+    match insert() {
+        Ok(_) => (),
+        Err(mut err) => {
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not insert row group at position {position} for table {table_name}"
+            ));
+            err.add_context("error in PartitionUpdater.insertRowGroup");
             err.into_cairo_exception().throw(&mut env)
         }
     }
@@ -386,7 +490,7 @@ fn create_partition_descriptor(
         let secondary_col_size = col_data[raw_idx + 6];
 
         let symbol_offsets_addr = col_data[raw_idx + 7];
-        let symbol_offsets_size = col_data[raw_idx + 8];
+        let symbol_offsets_count = col_data[raw_idx + 8];
 
         let parquet_encoding_config = col_data[raw_idx + 9] as i32;
 
@@ -403,7 +507,7 @@ fn create_partition_descriptor(
             secondary_col_addr as *const u8,
             secondary_col_size as usize,
             symbol_offsets_addr as *const u64,
-            symbol_offsets_size as usize,
+            symbol_offsets_count as usize,
             designated_timestamp,
             true,
             parquet_encoding_config,
@@ -980,7 +1084,7 @@ fn update_partition_data(
         let secondary_col_addr = col_data[raw_idx + 3];
         let secondary_col_size = col_data[raw_idx + 4];
         let symbol_offsets_addr = col_data[raw_idx + 5];
-        let symbol_offsets_size = col_data[raw_idx + 6];
+        let symbol_offsets_count = col_data[raw_idx + 6];
         let primary_ptr = primary_col_addr as *const u8;
         let secondary_ptr = secondary_col_addr as *const u8;
         let symbol_offsets_ptr = symbol_offsets_addr as *const u64;
@@ -1006,7 +1110,7 @@ fn update_partition_data(
         } else {
             // SAFETY: JNI caller guarantees a valid pointer to `symbol_offsets_size` elements of symbol offset data.
             // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
-            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size as usize) }
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_count as usize) }
         };
     }
 
