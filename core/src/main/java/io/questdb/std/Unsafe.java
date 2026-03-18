@@ -58,7 +58,6 @@ public final class Unsafe {
     private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
-    private static final Method implAddExports;
 
     private Unsafe() {
     }
@@ -486,7 +485,6 @@ public final class Unsafe {
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
 
             OVERRIDE = AccessibleObject_override_fieldOffset();
-            implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
 
             AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
             if (classDefiner == null) {
@@ -499,7 +497,6 @@ public final class Unsafe {
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
-        makeAccessible(implAddExports);
 
         // A single allocation for all the off-heap native memory counters.
         // Might help with locality, given they're often incremented together.
