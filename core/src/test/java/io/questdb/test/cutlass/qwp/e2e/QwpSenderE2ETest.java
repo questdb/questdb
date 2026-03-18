@@ -3027,6 +3027,50 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTimestampNanosToMicrosGorillaDisabled() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ts_nanos_to_micros_multi";
+            execute("CREATE TABLE " + table + " (" +
+                    "ts_col TIMESTAMP, " +
+                    "value LONG, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.setGorillaEnabled(false);
+                // Row 1: sub-microsecond nanos get truncated
+                sender.table(table)
+                        .timestampColumn("ts_col", 1_645_747_200_123_456_789L, ChronoUnit.NANOS)
+                        .longColumn("value", 1)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2: different sub-microsecond remainder
+                sender.table(table)
+                        .timestampColumn("ts_col", 1_645_747_200_234_567_890L, ChronoUnit.NANOS)
+                        .longColumn("value", 2)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3: exact microsecond boundary (no truncation)
+                sender.table(table)
+                        .timestampColumn("ts_col", 1_645_747_200_000_000_000L, ChronoUnit.NANOS)
+                        .longColumn("value", 3)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM " + table, "count\n3\n");
+            // Nanosecond values divided by 1000, sub-microsecond remainder truncated
+            assertSql(
+                    "SELECT ts_col, value FROM " + table + " ORDER BY ts",
+                    """
+                            ts_col\tvalue
+                            2022-02-25T00:00:00.123456Z\t1
+                            2022-02-25T00:00:00.234567Z\t2
+                            2022-02-25T00:00:00.000000Z\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_uuid";
