@@ -63,6 +63,9 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
 
     @Override
     public boolean runSerially() {
+        if (checkClosed()) {
+            return false;
+        }
         boolean ran = false;
         boolean committed = false;
         int count;

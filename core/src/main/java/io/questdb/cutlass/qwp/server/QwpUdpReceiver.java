@@ -73,6 +73,8 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     protected long fd;
     protected long processedCount;
     protected long totalCount;
+    private volatile boolean closed;
+    private volatile boolean closedAcknowledged;
     private long droppedBadMagicCount;
     private long droppedBadVersionCount;
     private long droppedParseErrorCount;
@@ -250,6 +252,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     public void close() {
         if (fd > -1) {
             boolean wasRunning = running.compareAndSet(true, false);
+            closed = true;
 
             // Close socket to unblock any blocking recvRaw() call
             if (nf.close(fd) != 0) {
@@ -262,6 +265,17 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 started.await();
                 halted.await();
             }
+
+            // Ensure no in-flight runSerially() before freeing resources.
+            // After setting closed=true and closing the fd, recvRaw() returns
+            // promptly and runSerially() exits. We spin-call run() until
+            // runSerially() executes under the SynchronizedJob lock with
+            // closed=true, confirming no concurrent access to shared resources.
+            while (!closedAcknowledged) {
+                this.run(0);
+                Os.pause();
+            }
+
             fd = -1;
 
             try {
@@ -306,6 +320,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     @Override
     public boolean runSerially() {
+        if (checkClosed()) {
+            return false;
+        }
         boolean ran = false;
         boolean committed = false;
         int count;
@@ -356,6 +373,14 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             thread.setName("qwp-udp-receiver");
             thread.start();
         }
+    }
+
+    protected boolean checkClosed() {
+        if (closed) {
+            closedAcknowledged = true;
+            return true;
+        }
+        return false;
     }
 
     protected void processDatagram(long address, int length) {
