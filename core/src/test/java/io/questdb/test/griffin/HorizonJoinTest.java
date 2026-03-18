@@ -4619,6 +4619,25 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiHorizonJoinMissingRangeOrList() throws Exception {
+        // Multiple HORIZON JOINs without RANGE/LIST on any of them
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t2.sym) " +
+                            "FROM t1 " +
+                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
+                            "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
+                    0,
+                    "HORIZON JOIN requires offset configuration (RANGE or LIST)"
+            );
+        });
+    }
+
+    @Test
     public void testMultiHorizonJoinNonHorizonAfterHorizon() throws Exception {
         // Non-horizon join after horizon join should be rejected
         assertMemoryLeak(() -> {
@@ -4634,6 +4653,47 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "LIST (0) AS h",
                     64,
                     "only horizon joins can follow a horizon join"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinNonHorizonBeforeHorizon() throws Exception {
+        // Non-horizon join before horizon join should be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t3.sym) " +
+                            "FROM t1 " +
+                            "JOIN t2 ON (t1.sym = t2.sym) " +
+                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
+                            "LIST (0) AS h",
+                    56,
+                    "horizon join cannot be combined with other joins"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinWhereOnNonLastSlave() throws Exception {
+        // WHERE referencing a non-last slave column should be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(b.bid), avg(a.ask) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                            "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                            "LIST (0) AS h " +
+                            "WHERE b.bid > 0",
+                    157,
+                    "HORIZON JOIN WHERE clause can only reference master table columns"
             );
         });
     }

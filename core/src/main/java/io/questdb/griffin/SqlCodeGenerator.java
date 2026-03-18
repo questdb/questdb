@@ -5131,6 +5131,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (horizonContext == null) {
                                     // Non-last HORIZON JOIN (no RANGE/LIST). Save the slave for later
                                     // and continue. The last HORIZON JOIN will collect all slaves.
+                                    validateHorizonJoinFilter(model, index, slaveModel);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                     processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
@@ -5162,21 +5163,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
                                 if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
-                                    // Multi-slave HORIZON JOIN: collect all slaves
+                                    // Multi-slave HORIZON JOIN: collect all slaves.
+                                    // Ownership of all slave factories transfers to generateMultiHorizonJoinFactory,
+                                    // which frees them on error. Clear the pending list and set closeSlaveOnFailure
+                                    // to false so the outer catch block doesn't double-free.
                                     pendingHorizonSlaves.add(slave);
                                     pendingHorizonSlaveModels.add(slaveModel);
+                                    closeSlaveOnFailure = false;
+                                    ObjList<RecordCursorFactory> slaves = pendingHorizonSlaves;
+                                    ObjList<QueryModel> slaveMs = pendingHorizonSlaveModels;
+                                    pendingHorizonSlaves = null;
+                                    pendingHorizonSlaveModels = null;
                                     master = generateMultiHorizonJoinFactory(
                                             parentModel,
                                             horizonContext,
                                             master,
                                             masterAlias,
                                             masterMetadata,
-                                            pendingHorizonSlaves,
-                                            pendingHorizonSlaveModels,
+                                            slaves,
+                                            slaveMs,
                                             executionContext
                                     );
-                                    pendingHorizonSlaves.clear();
-                                    pendingHorizonSlaveModels.clear();
                                 } else {
                                     // Single-slave HORIZON JOIN (existing path)
                                     master = generateHorizonJoinFactory(
@@ -5243,6 +5250,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (closeSlaveOnFailure) {
                         Misc.free(slave);
                     }
+                    Misc.freeObjList(pendingHorizonSlaves);
                     throw th;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
@@ -5288,6 +5296,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
                 }
+            }
+
+            if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
+                Misc.freeObjList(pendingHorizonSlaves);
+                // master will be freed by the outer catch block
+                throw SqlException.position(model.getModelPosition())
+                        .put("HORIZON JOIN requires offset configuration (RANGE or LIST)");
             }
 
             if (master == null) {

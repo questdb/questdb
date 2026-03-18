@@ -331,10 +331,13 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             slaveFrameCursors[s] = (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC);
         }
 
-        // Initialize record functions with multi-slave symbol table source
+        // Initialize symbol table source with master and all slave sources
         final MultiHorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
-        // Symbol table source will be fully initialized in buildSlaveTimeFrameCacheConditionally
-        // For now, just initialize with master source
+        final SymbolTableSource[] slaveSources = new SymbolTableSource[slaveCount];
+        for (int s = 0; s < slaveCount; s++) {
+            slaveSources[s] = slaveFrameCursors[s];
+        }
+        symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
         Function.init(recordFunctions, symbolTableSource, executionContext, null);
 
         isDataMapBuilt = false;
