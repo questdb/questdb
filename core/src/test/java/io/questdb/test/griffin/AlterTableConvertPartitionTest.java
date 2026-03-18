@@ -291,6 +291,54 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertLastPartitionWal() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "CREATE TABLE x AS (SELECT" +
+                            " x id," +
+                            " timestamp_sequence('2024-06', 500)::" + timestampType.getTypeName() + " designated_ts" +
+                            " FROM long_sequence(10)) timestamp(designated_ts) PARTITION BY MONTH WAL"
+            );
+            drainWalQueue();
+
+            // Verify initial row count.
+            assertQueryNoLeakCheck(
+                    "count\n10\n",
+                    "SELECT count() FROM x",
+                    null, false, true
+            );
+
+            // Convert the last (and only) partition to parquet.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'");
+            drainWalQueue();
+
+            // Verify parquet file exists and count is still correct after conversion.
+            assertPartitionExists("x", "2024-06.1");
+            assertSql(
+                    "count\n10\n",
+                    "SELECT count() FROM x"
+            );
+
+            // Insert O3 data into the same parquet partition.
+            execute("INSERT INTO x(id, designated_ts) VALUES (100, '2024-06-15T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Verify data correctness: original 10 rows + 1 new row.
+            assertSql(
+                    "count\n11\n",
+                    "SELECT count() FROM x"
+            );
+
+            // Verify the O3-inserted row is present.
+            assertSql(
+                    "id\tdesignated_ts\n" +
+                            "100\t2024-06-15T00:00:00.000000" + (timestampType == TestTimestampType.NANO ? "000Z" : "Z") + "\n",
+                    "SELECT id, designated_ts FROM x WHERE id = 100"
+            );
+        });
+    }
+
+    @Test
     public void testConvertListPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertListPartitions";

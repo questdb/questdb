@@ -103,7 +103,7 @@ impl RowGroupMetaData {
     }
 
     /// Method to convert to Thrift.
-    pub(crate) fn into_thrift(self) -> RowGroup {
+    pub fn into_thrift(self) -> RowGroup {
         let file_offset = self
             .columns
             .iter()
