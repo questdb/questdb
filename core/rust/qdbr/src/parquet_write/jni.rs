@@ -1064,8 +1064,16 @@ fn create_partition_template(
 
     for col_idx in 0..col_count {
         let raw_idx = col_idx * 2;
-        let col_name_size = col_meta_datas[raw_idx];
-        let (col_name, tail) = col_names.split_at(col_name_size as usize);
+        let col_name_size = col_meta_datas[raw_idx] as usize;
+        if col_name_size > col_names.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column name size {} exceeds remaining name buffer length {}",
+                col_name_size,
+                col_names.len()
+            ));
+        }
+        let (col_name, tail) = col_names.split_at(col_name_size);
         col_names = tail;
 
         let packed = col_meta_datas[raw_idx + 1];

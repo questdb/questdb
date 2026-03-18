@@ -562,16 +562,15 @@ impl ParquetUpdater {
 
         let old_rg = &self.file_metadata.row_groups[rg_idx];
         let row_count = old_rg.num_rows();
-        let old_columns_meta = old_rg.columns();
 
-        // Determine byte range of existing column chunk data.
-        let mut rg_start = u64::MAX;
-        let mut rg_end = 0u64;
-        for col in old_columns_meta {
-            let (start, len) = col.byte_range();
-            rg_start = rg_start.min(start);
-            rg_end = rg_end.max(start + len);
-        }
+        // Determine byte range of existing column chunk data, including
+        // the last column's bloom filter when present.
+        let (rg_start, rg_end) = old_rg.data_byte_range(&mut self.reader).with_context(|_| {
+            format!(
+                "copy_row_group_with_null_columns: failed to compute byte range for rg {}",
+                rg_idx
+            )
+        })?;
         if rg_start >= rg_end {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -606,6 +605,9 @@ impl ParquetUpdater {
                 }
                 if let Some(ref mut idx_offset) = meta.index_page_offset {
                     *idx_offset += offset_delta;
+                }
+                if let Some(ref mut bf_offset) = meta.bloom_filter_offset {
+                    *bf_offset += offset_delta;
                 }
             }
             col_chunk.column_index_offset = None;
