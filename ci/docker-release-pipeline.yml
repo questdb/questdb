@@ -48,8 +48,7 @@ jobs:
       - task: CmdLine@2
         displayName: Check that trivy is installed and present in PATH
         inputs:
-          script: |
-            which trivy
+          script: which trivy
 
       - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
