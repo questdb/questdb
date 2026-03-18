@@ -46,11 +46,10 @@ jobs:
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
       - task: CmdLine@2
-        displayName: Install Trivy vulnerability scanner
+        displayName: Check that trivy is installed and present in PATH
         inputs:
           script: |
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh -o /tmp/install-trivy.sh
-            sh /tmp/install-trivy.sh -b /usr/local/bin
+            which trivy
 
       - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
