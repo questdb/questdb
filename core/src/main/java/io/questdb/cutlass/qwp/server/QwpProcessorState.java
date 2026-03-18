@@ -60,6 +60,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private final StringSink error = new StringSink();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
+    private final StringSink rejectMsg = new StringSink();
     private final QwpStreamingDecoder streamingDecoder;
     // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
@@ -124,7 +125,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
         long required = (long) bufferPosition + len;
         if (required > maxBufferSize) {
-            reject(Status.PARSE_ERROR, "message size exceeds maximum buffer size of " + maxBufferSize + " bytes", fd);
+            rejectMsg.clear();
+            rejectMsg.put("message size exceeds maximum buffer size of ").put(maxBufferSize).put(" bytes");
+            reject(Status.PARSE_ERROR, rejectMsg, fd);
             return;
         }
         ensureCapacity((int) required);
@@ -291,7 +294,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema(), tableBlock);
                 if (tud == null) {
-                    reject(Status.INTERNAL_ERROR, "failed to create table update details for: " + tableBlock.getTableName(), fd);
+                    rejectMsg.clear();
+                    rejectMsg.put("failed to create table update details for: ").put(tableBlock.getTableName());
+                    reject(Status.INTERNAL_ERROR, rejectMsg, fd);
                     return;
                 }
 
@@ -304,7 +309,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (CommitFailedException e) {
             LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
             tudCache.setDistressed();
-            reject(Status.INTERNAL_ERROR, "commit failed: " + e.getMessage(), fd);
+            rejectMsg.clear();
+            rejectMsg.put("commit failed: ").put(e.getMessage());
+            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
         } catch (CairoException e) {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
             if (e.isAuthorizationError()) {
@@ -318,7 +325,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
             tudCache.setDistressed();
-            reject(Status.INTERNAL_ERROR, "unexpected error: " + e.getMessage(), fd);
+            rejectMsg.clear();
+            rejectMsg.put("unexpected error: ").put(e.getMessage());
+            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
         }
     }
 
