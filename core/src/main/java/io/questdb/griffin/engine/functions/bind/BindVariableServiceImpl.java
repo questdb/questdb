@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.UndefinedFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -96,6 +97,62 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
         this.arrayVarPool = new ObjectPool<>(ArrayBindVariable::new, poolSize); // todo: this might be excessive, smaller pool size might be enough
         this.decimalVarPool = new ObjectPool<>(DecimalBindVariable::new, poolSize);
+    }
+
+    /**
+     * Creates an independent deep copy of the given BindVariableService.
+     * The returned instance owns its own Function objects with copied values,
+     * so it is safe to use on a different thread after the source is cleared.
+     */
+    public static BindVariableServiceImpl snapshot(
+            BindVariableService source,
+            CairoConfiguration configuration
+    ) throws SqlException {
+        if (source == null) {
+            return null;
+        }
+        BindVariableServiceImpl copy = new BindVariableServiceImpl(configuration);
+        int count = source.getIndexedVariableCount();
+        for (int i = 0; i < count; i++) {
+            Function f = source.getFunction(i);
+            if (f == null) {
+                continue;
+            }
+            int type = f.getType();
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BOOLEAN -> copy.setBoolean(i, f.getBool(null));
+                case ColumnType.BYTE -> copy.setByte(i, f.getByte(null));
+                case ColumnType.SHORT -> copy.setShort(i, f.getShort(null));
+                case ColumnType.CHAR -> copy.setChar(i, f.getChar(null));
+                case ColumnType.INT -> copy.setInt(i, f.getInt(null));
+                case ColumnType.IPv4 -> copy.setIPv4(i, f.getIPv4(null));
+                case ColumnType.LONG -> copy.setLong(i, f.getLong(null));
+                case ColumnType.DATE -> copy.setDate(i, f.getDate(null));
+                case ColumnType.TIMESTAMP -> copy.setTimestampWithType(i, type, f.getTimestamp(null));
+                case ColumnType.FLOAT -> copy.setFloat(i, f.getFloat(null));
+                case ColumnType.DOUBLE -> copy.setDouble(i, f.getDouble(null));
+                case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(i, f.getStrA(null));
+                case ColumnType.VARCHAR -> copy.setVarchar(i, f.getVarcharA(null));
+                case ColumnType.LONG256 -> {
+                    Long256 val = f.getLong256A(null);
+                    copy.setLong256(i, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+                }
+                case ColumnType.UUID -> copy.setUuid(i, f.getLong128Lo(null), f.getLong128Hi(null));
+                case ColumnType.BINARY -> copy.setBin(i, f.getBin(null));
+                case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                        copy.setGeoHash(i, f.getGeoLong(null), type);
+                case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+                    Decimal256 dec = new Decimal256();
+                    f.getDecimal256(null, dec);
+                    copy.setDecimal(i, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+                }
+                default -> {
+                    // UNDEFINED, ARRAY, or unknown — define with type only (no value)
+                    copy.define(i, type, 0);
+                }
+            }
+        }
+        return copy;
     }
 
     @Override

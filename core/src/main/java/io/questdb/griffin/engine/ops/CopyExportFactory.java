@@ -47,6 +47,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
@@ -253,7 +254,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         bloomFilterColumns,
                         bloomFilterColumnsPosition,
                         bloomFilterFpp,
-                        executionContext.getBindVariableService()
+                        BindVariableServiceImpl.snapshot(
+                                executionContext.getBindVariableService(),
+                                executionContext.getCairoEngine().getConfiguration()
+                        )
                 );
                 task.setSelectFactory(selectFactory);
                 selectFactory = null;
