@@ -44,6 +44,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
 
@@ -694,9 +695,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             long bufferAddr = rawSocket.getBufferAddress();
             int bufferSize = rawSocket.getBufferSize();
 
-            // Calculate payload size
-            byte[] msgBytes = errorMessage != null ? errorMessage.getBytes(StandardCharsets.UTF_8) : new byte[0];
-            int msgLen = Math.min(msgBytes.length, 1024);
+            // Calculate payload size (UTF-8 byte count, capped at 1024 bytes)
+            int msgLen = errorMessage != null ? Utf8s.utf8Bytes(errorMessage, 1024) : 0;
             int payloadLen = 9 + 2 + msgLen; // status + seq + len + msg
 
             int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
@@ -716,9 +716,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 Unsafe.getUnsafe().putShort(bufferAddr + offset, (short) msgLen);
                 offset += 2;
 
-                // Write message
-                for (int i = 0; i < msgLen; i++) {
-                    Unsafe.getUnsafe().putByte(bufferAddr + offset + i, msgBytes[i]);
+                // Write message (UTF-16 to UTF-8 directly to native memory, no byte[] allocation)
+                if (msgLen > 0) {
+                    Utf8s.strCpyUtf8(errorMessage, bufferAddr + offset, msgLen);
                 }
                 offset += msgLen;
 

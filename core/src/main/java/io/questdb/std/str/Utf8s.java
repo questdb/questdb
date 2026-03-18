@@ -1090,6 +1090,52 @@ public final class Utf8s {
         }
     }
 
+    /**
+     * Encodes a CharSequence from UTF-16 to UTF-8, writing directly to native
+     * memory at {@code destAddr}. Writes at most {@code maxBytes} bytes without
+     * splitting multi-byte sequences. Invalid surrogates are replaced with '?'.
+     *
+     * @return the number of UTF-8 bytes written
+     */
+    public static int strCpyUtf8(@NotNull CharSequence src, long destAddr, int maxBytes) {
+        int pos = 0;
+        for (int i = 0, n = src.length(); i < n; i++) {
+            char c = src.charAt(i);
+            if (c < 0x80) {
+                if (pos + 1 > maxBytes) break;
+                Unsafe.getUnsafe().putByte(destAddr + pos, (byte) c);
+                pos++;
+            } else if (c < 0x800) {
+                if (pos + 2 > maxBytes) break;
+                Unsafe.getUnsafe().putByte(destAddr + pos, (byte) (192 | c >> 6));
+                Unsafe.getUnsafe().putByte(destAddr + pos + 1, (byte) (128 | c & 63));
+                pos += 2;
+            } else if (Character.isSurrogate(c)) {
+                if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(src.charAt(i + 1))) {
+                    if (pos + 4 > maxBytes) break;
+                    int cp = Character.toCodePoint(c, src.charAt(i + 1));
+                    Unsafe.getUnsafe().putByte(destAddr + pos, (byte) (240 | cp >> 18));
+                    Unsafe.getUnsafe().putByte(destAddr + pos + 1, (byte) (128 | cp >> 12 & 63));
+                    Unsafe.getUnsafe().putByte(destAddr + pos + 2, (byte) (128 | cp >> 6 & 63));
+                    Unsafe.getUnsafe().putByte(destAddr + pos + 3, (byte) (128 | cp & 63));
+                    pos += 4;
+                    i++;
+                } else {
+                    if (pos + 1 > maxBytes) break;
+                    Unsafe.getUnsafe().putByte(destAddr + pos, (byte) '?');
+                    pos++;
+                }
+            } else {
+                if (pos + 3 > maxBytes) break;
+                Unsafe.getUnsafe().putByte(destAddr + pos, (byte) (224 | c >> 12));
+                Unsafe.getUnsafe().putByte(destAddr + pos + 1, (byte) (128 | c >> 6 & 63));
+                Unsafe.getUnsafe().putByte(destAddr + pos + 2, (byte) (128 | c & 63));
+                pos += 3;
+            }
+        }
+        return pos;
+    }
+
     public static String stringFromUtf8Bytes(long lo, long hi) {
         if (hi == lo) {
             return "";
@@ -1232,6 +1278,42 @@ public final class Utf8s {
             } else {
                 count += 3;
             }
+        }
+        return count;
+    }
+
+    /**
+     * Returns the number of UTF-8 bytes needed to encode the given sequence,
+     * stopping when the cumulative count would exceed {@code maxBytes}.
+     * Multi-byte characters are not split; surrogate handling matches
+     * {@link #strCpyUtf8(CharSequence, long, int)}.
+     */
+    public static int utf8Bytes(@NotNull CharSequence sequence, int maxBytes) {
+        int count = 0;
+        int len = sequence.length();
+
+        for (int i = 0; i < len; i++) {
+            char ch = sequence.charAt(i);
+            int charBytes;
+            if (ch < 0x80) {
+                charBytes = 1;
+            } else if (ch < 0x800) {
+                charBytes = 2;
+            } else if (Character.isSurrogate(ch)) {
+                if (Character.isHighSurrogate(ch) && i + 1 < len && Character.isLowSurrogate(sequence.charAt(i + 1))) {
+                    charBytes = 4;
+                    if (count + charBytes > maxBytes) break;
+                    count += charBytes;
+                    i++;
+                    continue;
+                } else {
+                    charBytes = 1; // '?' replacement
+                }
+            } else {
+                charBytes = 3;
+            }
+            if (count + charBytes > maxBytes) break;
+            count += charBytes;
         }
         return count;
     }
