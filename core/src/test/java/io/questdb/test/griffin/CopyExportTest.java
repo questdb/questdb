@@ -1229,11 +1229,11 @@ public class CopyExportTest extends AbstractCairoTest {
                     """);
 
             bindVariableService.clear();
-            bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
+            bindVariableService.setInt(0, 2);
 
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID(
-                            "COPY (SELECT * FROM ts_table2 WHERE ts <= $1) TO 'bind_streaming' WITH FORMAT parquet",
+                            "COPY (SELECT * FROM ts_table2 WHERE x <= $1) TO 'bind_streaming' WITH FORMAT parquet",
                             sqlExecutionContext
                     );
 

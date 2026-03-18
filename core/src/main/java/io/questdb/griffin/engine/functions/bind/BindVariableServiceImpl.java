@@ -100,9 +100,11 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     /**
-     * Creates an independent deep copy of the given BindVariableService.
-     * The returned instance owns its own Function objects with copied values,
-     * so it is safe to use on a different thread after the source is cleared.
+     * Creates an independent deep copy of the given BindVariableService's
+     * indexed and named variable values. The returned instance owns its own
+     * Function objects, so it is safe to use on a different thread after
+     * the source is cleared. ARRAY values are not deep-copied; these types
+     * are not expected in COPY subquery bind variables.
      */
     public static BindVariableServiceImpl snapshot(
             BindVariableService source,
@@ -112,47 +114,136 @@ public class BindVariableServiceImpl implements BindVariableService {
             return null;
         }
         BindVariableServiceImpl copy = new BindVariableServiceImpl(configuration);
+        Decimal256 dec = null;
+
+        // indexed variables ($1, $2, ...)
         int count = source.getIndexedVariableCount();
         for (int i = 0; i < count; i++) {
-            Function f = source.getFunction(i);
-            if (f == null) {
-                continue;
-            }
-            int type = f.getType();
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.BOOLEAN -> copy.setBoolean(i, f.getBool(null));
-                case ColumnType.BYTE -> copy.setByte(i, f.getByte(null));
-                case ColumnType.SHORT -> copy.setShort(i, f.getShort(null));
-                case ColumnType.CHAR -> copy.setChar(i, f.getChar(null));
-                case ColumnType.INT -> copy.setInt(i, f.getInt(null));
-                case ColumnType.IPv4 -> copy.setIPv4(i, f.getIPv4(null));
-                case ColumnType.LONG -> copy.setLong(i, f.getLong(null));
-                case ColumnType.DATE -> copy.setDate(i, f.getDate(null));
-                case ColumnType.TIMESTAMP -> copy.setTimestampWithType(i, type, f.getTimestamp(null));
-                case ColumnType.FLOAT -> copy.setFloat(i, f.getFloat(null));
-                case ColumnType.DOUBLE -> copy.setDouble(i, f.getDouble(null));
-                case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(i, f.getStrA(null));
-                case ColumnType.VARCHAR -> copy.setVarchar(i, f.getVarcharA(null));
-                case ColumnType.LONG256 -> {
-                    Long256 val = f.getLong256A(null);
-                    copy.setLong256(i, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
-                }
-                case ColumnType.UUID -> copy.setUuid(i, f.getLong128Lo(null), f.getLong128Hi(null));
-                case ColumnType.BINARY -> copy.setBin(i, f.getBin(null));
-                case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                        copy.setGeoHash(i, f.getGeoLong(null), type);
-                case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
-                    Decimal256 dec = new Decimal256();
-                    f.getDecimal256(null, dec);
-                    copy.setDecimal(i, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
-                }
-                default -> {
-                    // UNDEFINED, ARRAY, or unknown — define with type only (no value)
-                    copy.define(i, type, 0);
-                }
+            dec = snapshotFunction(source.getFunction(i), i, copy, dec);
+        }
+
+        // named variables — keys are stored without colon prefix,
+        // but getFunction() expects the colon prefix for lookup
+        ObjList<CharSequence> names = source.getNamedVariables();
+        StringSink nameBuf = new StringSink();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            CharSequence name = names.getQuick(i);
+            nameBuf.clear();
+            nameBuf.put(':').put(name);
+            Function f = source.getFunction(nameBuf);
+            if (f != null) {
+                snapshotNamedFunction(f, name, copy);
             }
         }
+
         return copy;
+    }
+
+    private static Decimal256 snapshotFunction(
+            Function f,
+            int index,
+            BindVariableServiceImpl copy,
+            Decimal256 dec
+    ) throws SqlException {
+        if (f == null) {
+            return dec;
+        }
+        int type = f.getType();
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN -> copy.setBoolean(index, f.getBool(null));
+            case ColumnType.BYTE -> copy.setByte(index, f.getByte(null));
+            case ColumnType.SHORT -> copy.setShort(index, f.getShort(null));
+            case ColumnType.CHAR -> copy.setChar(index, f.getChar(null));
+            case ColumnType.INT -> copy.setInt(index, f.getInt(null));
+            case ColumnType.IPv4 -> copy.setIPv4(index, f.getIPv4(null));
+            case ColumnType.LONG -> copy.setLong(index, f.getLong(null));
+            case ColumnType.DATE -> copy.setDate(index, f.getDate(null));
+            case ColumnType.TIMESTAMP -> copy.setTimestampWithType(index, type, f.getTimestamp(null));
+            case ColumnType.FLOAT -> copy.setFloat(index, f.getFloat(null));
+            case ColumnType.DOUBLE -> copy.setDouble(index, f.getDouble(null));
+            case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(index, f.getStrA(null));
+            case ColumnType.VARCHAR -> copy.setVarchar(index, f.getVarcharA(null));
+            case ColumnType.LONG256 -> {
+                Long256 val = f.getLong256A(null);
+                copy.setLong256(index, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            }
+            case ColumnType.UUID -> copy.setUuid(index, f.getLong128Lo(null), f.getLong128Hi(null));
+            case ColumnType.BINARY -> copy.setBin(index, copyBinarySequence(f.getBin(null)));
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    copy.setGeoHash(index, f.getGeoLong(null), type);
+            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+                if (dec == null) {
+                    dec = new Decimal256();
+                }
+                f.getDecimal256(null, dec);
+                copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+            }
+            default -> {
+                // UNDEFINED, ARRAY, or unknown — define with type only (no value)
+                copy.define(index, type, 0);
+            }
+        }
+        return dec;
+    }
+
+    private static BinarySequence copyBinarySequence(BinarySequence src) {
+        if (src == null) {
+            return null;
+        }
+        long len = src.length();
+        byte[] buf = new byte[(int) len];
+        for (int i = 0; i < len; i++) {
+            buf[i] = src.byteAt(i);
+        }
+        return new BinarySequence() {
+            @Override
+            public byte byteAt(long index) {
+                return buf[(int) index];
+            }
+
+            @Override
+            public long length() {
+                return buf.length;
+            }
+        };
+    }
+
+    private static void snapshotNamedFunction(
+            Function f,
+            CharSequence name,
+            BindVariableServiceImpl copy
+    ) throws SqlException {
+        int type = f.getType();
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN -> copy.setBoolean(name, f.getBool(null));
+            case ColumnType.BYTE -> copy.setByte(name, f.getByte(null));
+            case ColumnType.SHORT -> copy.setShort(name, f.getShort(null));
+            case ColumnType.CHAR -> copy.setChar(name, f.getChar(null));
+            case ColumnType.INT -> copy.setInt(name, f.getInt(null));
+            case ColumnType.LONG -> copy.setLong(name, f.getLong(null));
+            case ColumnType.DATE -> copy.setDate(name, f.getDate(null));
+            case ColumnType.TIMESTAMP -> copy.setTimestamp(name, f.getTimestamp(null));
+            case ColumnType.FLOAT -> copy.setFloat(name, f.getFloat(null));
+            case ColumnType.DOUBLE -> copy.setDouble(name, f.getDouble(null));
+            case ColumnType.STRING, ColumnType.SYMBOL -> copy.setStr(name, f.getStrA(null));
+            case ColumnType.VARCHAR -> copy.setVarchar(name, f.getVarcharA(null));
+            case ColumnType.LONG256 -> {
+                Long256 val = f.getLong256A(null);
+                copy.setLong256(name, val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3());
+            }
+            case ColumnType.UUID -> copy.setUuid(name, f.getLong128Lo(null), f.getLong128Hi(null));
+            case ColumnType.BINARY -> copy.setBin(name, copyBinarySequence(f.getBin(null)));
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    copy.setGeoHash(name, f.getGeoLong(null), type);
+            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+                Decimal256 dec = new Decimal256();
+                f.getDecimal256(null, dec);
+                copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
+            }
+            default -> {
+                // UNDEFINED, ARRAY, or unknown — skip
+            }
+        }
     }
 
     @Override
