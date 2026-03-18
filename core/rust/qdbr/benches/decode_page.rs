@@ -25,7 +25,7 @@ use questdbr::parquet_write::bench::{
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::sync::atomic::AtomicUsize;
 
@@ -178,7 +178,6 @@ fn write_options() -> WriteOptions {
         row_group_size: None,
         data_page_size: None,
         raw_array_encoding: true,
-        bloom_filter_columns: HashSet::new(),
         bloom_filter_fpp: 0.01,
     }
 }
@@ -186,7 +185,7 @@ fn write_options() -> WriteOptions {
 fn primitive_type_for(column_type: ColumnType) -> PrimitiveType {
     let raw_array_encoding = column_type.tag() == ColumnTypeTag::Array;
     let parquet_type =
-        column_type_to_parquet_type(0, "col", column_type, false, false, raw_array_encoding)
+        column_type_to_parquet_type(0, "col", column_type, false, raw_array_encoding)
             .expect("parquet type");
 
     match parquet_type {
@@ -1491,7 +1490,7 @@ fn build_cases() -> Vec<BenchCase> {
         let column_type = ColumnType::new(ColumnTypeTag::Boolean, 0);
         let primitive_type = primitive_type_for(column_type);
         let page = data_page_from(
-            boolean_to_page(&data, 0, options.clone(), primitive_type.clone()).expect("page"),
+            boolean_to_page(&data, 0, options, primitive_type.clone()).expect("page"),
         );
         cases.push(build_case(
             format!("boolean_plain_n{null_pct}"),
@@ -1561,8 +1560,7 @@ fn build_cases() -> Vec<BenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_int96_data(ROW_COUNT, null_pct);
             let page = data_page_from(
-                bytes_to_page(&data, false, 0, options.clone(), int96_pt.clone(), None)
-                    .expect("page"),
+                bytes_to_page(&data, false, 0, options, int96_pt.clone(), None).expect("page"),
             );
             cases.push(build_case(
                 format!("timestamp_int96_plain_n{null_pct}"),
@@ -1640,7 +1638,7 @@ fn build_cases() -> Vec<BenchCase> {
                 int_slice_to_page_nullable::<i32, i32, false>(
                     &data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type.clone(),
                     Encoding::Plain,
                     None,
@@ -1689,7 +1687,7 @@ fn build_cases() -> Vec<BenchCase> {
                     int_slice_to_page_nullable::<i64, i64, false>(
                         &data,
                         0,
-                        options.clone(),
+                        options,
                         primitive_type.clone(),
                         encoding,
                         None,
@@ -1736,7 +1734,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type.clone(),
                     Encoding::Plain,
                     None,
@@ -1798,7 +1796,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     encoding,
                     None,
@@ -1828,7 +1826,7 @@ fn build_cases() -> Vec<BenchCase> {
                         &data.aux,
                         &data.data,
                         0,
-                        options.clone(),
+                        options,
                         primitive_type,
                         encoding,
                         None,
@@ -1858,7 +1856,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.aux,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     Encoding::DeltaLengthByteArray,
                     None,
@@ -1886,15 +1884,9 @@ fn build_cases() -> Vec<BenchCase> {
             let primitive_type = primitive_type_for(column_type);
             let mut dict = None;
             let mut data_page = None;
-            let iter = varchar_to_dict_pages(
-                &data.aux,
-                &data.data,
-                0,
-                options.clone(),
-                primitive_type,
-                None,
-            )
-            .expect("varchar dict pages");
+            let iter =
+                varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type, None)
+                    .expect("varchar dict pages");
             for page in iter {
                 let page = page.expect("page");
                 match page {
@@ -1924,15 +1916,9 @@ fn build_cases() -> Vec<BenchCase> {
             let primitive_type = primitive_type_for(varchar_type);
             let mut dict = None;
             let mut data_page = None;
-            let iter = varchar_to_dict_pages(
-                &data.aux,
-                &data.data,
-                0,
-                options.clone(),
-                primitive_type,
-                None,
-            )
-            .expect("varchar dict pages");
+            let iter =
+                varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type, None)
+                    .expect("varchar dict pages");
             for page in iter {
                 let page = page.expect("page");
                 match page {
@@ -1983,7 +1969,7 @@ fn build_cases() -> Vec<BenchCase> {
                     &data.offsets,
                     &data.data,
                     0,
-                    options.clone(),
+                    options,
                     primitive_type,
                     encoding,
                     None,
@@ -2027,15 +2013,8 @@ fn build_cases() -> Vec<BenchCase> {
             let column_type = encode_array_type(ColumnTypeTag::Double, 1).expect("array type");
             let primitive_type = primitive_type_for(column_type);
             let page = data_page_from(
-                array_to_raw_page(
-                    &data.aux,
-                    &data.data,
-                    0,
-                    options.clone(),
-                    primitive_type,
-                    encoding,
-                )
-                .expect("page"),
+                array_to_raw_page(&data.aux, &data.data, 0, options, primitive_type, encoding)
+                    .expect("page"),
             );
             cases.push(build_case(
                 format!("array_{enc}_n{null_pct}"),
@@ -2076,7 +2055,7 @@ fn build_cases() -> Vec<BenchCase> {
             &data.offsets,
             &data.chars,
             0,
-            options.clone(),
+            options,
             primitive_type,
             false,
             None,

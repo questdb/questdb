@@ -33,6 +33,34 @@ import io.questdb.std.Unsafe;
 public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
 
     @Override
+    public void addColumn(
+            final CharSequence columnName,
+            int columnType,
+            int columnId,
+            long columnTop,
+            long columnAddr,
+            long columnSize,
+            long columnSecondaryAddr,
+            long columnSecondarySize,
+            long symbolOffsetsAddr,
+            long symbolOffsetsCount
+    ) {
+        final long savedPos = columnData.size();
+        try {
+            super.addColumn(columnName, columnType, columnId, columnTop,
+                    columnAddr, columnSize, columnSecondaryAddr, columnSecondarySize,
+                    symbolOffsetsAddr, symbolOffsetsCount);
+        } catch (Throwable th) {
+            columnData.setPos(savedPos);
+            Unsafe.free(columnAddr, columnSize, MemoryTag.NATIVE_O3);
+            if (!ColumnType.isSymbol(ColumnType.tagOf(columnType))) {
+                Unsafe.free(columnSecondaryAddr, columnSecondarySize, MemoryTag.NATIVE_O3);
+            }
+            throw th;
+        }
+    }
+
+    @Override
     public void clear() {
         final int columnCount = getColumnCount();
         for (long columnIndex = 0; columnIndex < columnCount; columnIndex++) {
