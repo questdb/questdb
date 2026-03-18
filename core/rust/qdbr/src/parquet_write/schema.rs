@@ -27,8 +27,8 @@ pub fn column_type_to_parquet_type(
     // is stable across O3 merges. This avoids a REQUIRED→OPTIONAL transition that
     // would break copy_row_group (raw-copied pages already have def levels encoded).
     //
-    // Symbol columns are always Optional even when Column::required is true (no
-    // nulls). The `required` flag is only a write-time hint that lets the encoder
+    // Symbol columns are always Optional even when Column::not_null_hint is true (no
+    // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
     // emit a fast all-ones RLE run for definition levels instead of computing
     // per-row values. See symbol_to_pages() in symbol.rs.
     let is_notnull_type = matches!(
@@ -337,7 +337,7 @@ pub struct Column {
     /// Repetition (symbols are always Optional) — it only lets the encoder take a
     /// fast path that writes an all-ones RLE run for definition levels instead of
     /// computing per-row values.
-    pub required: bool,
+    pub not_null_hint: bool,
     pub designated_timestamp_ascending: bool,
 }
 
@@ -380,7 +380,7 @@ impl Column {
             ));
         }
 
-        let required = column_type < 0;
+        let not_null_hint = column_type < 0;
         let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
@@ -409,7 +409,7 @@ impl Column {
             secondary_data,
             symbol_offsets,
             designated_timestamp,
-            required,
+            not_null_hint,
             designated_timestamp_ascending,
         })
     }

@@ -587,14 +587,14 @@ fn symbol_column_to_pages_multi_partition(
     let offsets = first_column.symbol_offsets;
     let chars = first_column.secondary_data;
 
-    // Collect partition slice info (keys_slice, adjusted_column_top, required)
+    // Collect partition slice info (keys_slice, adjusted_column_top, not_null_hint)
     let partition_slices: Vec<(&[i32], usize, bool)> = partition_ranges
         .iter()
         .map(|(col, offset, length)| {
             let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
             let (keys_slice, adjusted_column_top) =
                 compute_symbol_slice(keys, col.column_top, *offset, *length);
-            (keys_slice, adjusted_column_top, col.required)
+            (keys_slice, adjusted_column_top, col.not_null_hint)
         })
         .collect();
 
@@ -618,7 +618,7 @@ fn symbol_column_to_pages_multi_partition(
     let mut pages = Vec::with_capacity(partition_ranges.len() + 1);
     pages.push(Page::Dict(dict_page));
 
-    for &(keys_slice, adjusted_column_top, required) in partition_slices.iter() {
+    for &(keys_slice, adjusted_column_top, not_null_hint) in partition_slices.iter() {
         let data_page = symbol::symbol_to_data_page_only(
             keys_slice,
             adjusted_column_top,
@@ -627,7 +627,7 @@ fn symbol_column_to_pages_multi_partition(
             primitive_type.clone(),
             offsets,
             chars,
-            required,
+            not_null_hint,
             None,
         )?;
 
@@ -847,7 +847,7 @@ fn column_chunk_to_primitive_pages(
             adjusted_column_top,
             options,
             primitive_type,
-            column.required,
+            column.not_null_hint,
             bloom_set,
         );
     }

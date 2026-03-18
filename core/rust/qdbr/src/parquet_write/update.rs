@@ -357,11 +357,7 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn insert_row_group(
-        &mut self,
-        partition: &Partition,
-        position: i32,
-    ) -> ParquetResult<()> {
+    pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
         self.ensure_schema_matches_columns(partition);
         let row_count = partition
             .columns
@@ -789,7 +785,7 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
-    /// Updates the file-level schema when any column's required flag disagrees
+    /// Updates the file-level schema when any column's not_null_hint flag disagrees
     /// with the schema's repetition. This happens when an O3 merge introduces
     /// null values into a symbol column that was previously all-non-null
     /// (Required in the schema). Only safe in rewrite mode where all row groups
@@ -798,11 +794,11 @@ impl ParquetUpdater {
     /// Handles a legacy edge case during rewrite: old parquet files may have
     /// Symbol columns marked as Required in the schema (written before the
     /// convention was established that symbols are always Optional). If the
-    /// current data now contains nulls (`!col.required`), the schema must be
+    /// current data now contains nulls (`!col.not_null_hint`), the schema must be
     /// downgraded to Optional so the rewritten pages include definition levels.
     ///
     /// New files always write symbols as Optional (see `column_type_to_parquet_type`
-    /// in schema.rs). The `Column::required` flag is only a write-time hint for
+    /// in schema.rs). The `Column::not_null_hint` flag is only a write-time hint for
     /// the encoder to emit a fast all-ones RLE run for definition levels.
     fn ensure_schema_matches_columns(&mut self, partition: &Partition) {
         if self.symbol_schema_checked || !self.is_rewrite {
@@ -823,7 +819,7 @@ impl ParquetUpdater {
             .zip(fields.iter())
             .any(|(col, field)| {
                 col.data_type.tag() == ColumnTypeTag::Symbol
-                    && !col.required
+                    && !col.not_null_hint
                     && field.get_field_info().repetition == Repetition::Required
             });
         if !needs_update {
@@ -831,16 +827,14 @@ impl ParquetUpdater {
         }
         let mut new_fields: Vec<ParquetType> = fields.to_vec();
         for (col, field) in partition.columns.iter().zip(new_fields.iter_mut()) {
-            if col.data_type.tag() == ColumnTypeTag::Symbol && !col.required {
+            if col.data_type.tag() == ColumnTypeTag::Symbol && !col.not_null_hint {
                 if let ParquetType::PrimitiveType(ref mut pt) = field {
                     pt.field_info.repetition = Repetition::Optional;
                 }
             }
         }
-        let schema = SchemaDescriptor::new(
-            self.parquet_file.schema().name().to_string(),
-            new_fields,
-        );
+        let schema =
+            SchemaDescriptor::new(self.parquet_file.schema().name().to_string(), new_fields);
         self.parquet_file.set_schema(schema);
     }
 
@@ -980,7 +974,11 @@ fn generate_null_column_chunk_bytes(
     let total_size = chunk_bytes.len() as i64;
 
     let encodings = if is_symbol {
-        vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE_DICTIONARY, ThriftEncoding::RLE]
+        vec![
+            ThriftEncoding::PLAIN,
+            ThriftEncoding::RLE_DICTIONARY,
+            ThriftEncoding::RLE,
+        ]
     } else {
         vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE]
     };
