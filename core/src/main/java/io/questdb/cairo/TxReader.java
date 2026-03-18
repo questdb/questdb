@@ -215,7 +215,7 @@ public class TxReader implements Closeable, Mutable {
 
     public int getFirstNativePartitionWithoutParquetGenerated() {
         for (int i = 0, n = getPartitionCount(); i < n; i++) {
-            if (!isPartitionParquetGenerated(i)) {
+            if (!isPartitionParquetGenerated(i) && !isPartitionParquet(i)) {
                 return i;
             }
         }
