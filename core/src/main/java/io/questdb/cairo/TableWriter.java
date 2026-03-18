@@ -6650,9 +6650,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     } else {
                         final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
-                        // partitionMutates is always true here (in-place update, not rewrite).
+                        final boolean parquetRewrite = Numbers.decodeHighInt(flags) != 0;
                         if (parquetFileSize > -1) {
-                            txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                            if (parquetRewrite) {
+                                // Rewrite: new parquet file is in a new txn-named directory.
+                                // Bump the partition name txn and queue old dir for removal.
+                                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            } else {
+                                txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                            }
                             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
