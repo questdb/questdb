@@ -2822,6 +2822,147 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T58: LIMIT with function ORDER BY — compensateLimit must find LIMIT and ORDER BY
+    // on different wrapper layers and resolve ORDER BY aliases through intermediate SELECTs
+    @Test
+    public void testT58LimitWithFunctionOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 3, '2024-01-01T00:10:00.000000Z'),
+                    (1, 7, '2024-01-01T00:20:00.000000Z'),
+                    (1, 1, '2024-01-01T00:30:00.000000Z'),
+                    (2, 10, '2024-01-01T01:10:00.000000Z'),
+                    (2, 4, '2024-01-01T01:20:00.000000Z'),
+                    (2, 8, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // ORDER BY abs(val - 5) triggers moveOrderByFunctionsIntoOuterSelect.
+            // Per-group LIMIT 2: for each t1 row, take 2 vals closest to 5.
+            assertQueryNoLeakCheck(
+                    """
+                            a\tval
+                            1\t3
+                            1\t7
+                            2\t4
+                            2\t8
+                            """,
+                    """
+                            SELECT t1.a, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val FROM t2
+                                WHERE t2.t1_id = t1.a
+                                ORDER BY abs(val - 5)
+                                LIMIT 2
+                            ) sub
+                            ORDER BY t1.a, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T59: LEFT LATERAL + LIMIT — per-group LIMIT with NULL fill for no-match groups
+    @Test
+    public void testT59LeftLateralLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 30, '2024-01-01T00:30:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // t1.a=3 has no matching t2 rows → NULL fill from LEFT JOIN
+            assertQueryNoLeakCheck(
+                    """
+                            a\tval
+                            1\t30
+                            1\t20
+                            2\t40
+                            3\tnull
+                            """,
+                    """
+                            SELECT t1.a, sub.val
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT val FROM t2
+                                WHERE t2.t1_id = t1.a
+                                ORDER BY val DESC
+                                LIMIT 2
+                            ) sub
+                            ORDER BY t1.a, sub.val DESC
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T60: LIMIT with OFFSET — per-group LIMIT offset,count
+    @Test
+    public void testT60LimitWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 30, '2024-01-01T00:30:00.000000Z'),
+                    (1, 40, '2024-01-01T00:40:00.000000Z'),
+                    (2, 50, '2024-01-01T01:10:00.000000Z'),
+                    (2, 60, '2024-01-01T01:20:00.000000Z'),
+                    (2, 70, '2024-01-01T01:30:00.000000Z'),
+                    (2, 80, '2024-01-01T01:40:00.000000Z')
+                    """);
+
+            // OFFSET 1, LIMIT 2: skip top 1, take next 2 per group (ORDER BY val DESC)
+            assertQueryNoLeakCheck(
+                    """
+                            a\tval
+                            1\t30
+                            1\t20
+                            2\t70
+                            2\t60
+                            """,
+                    """
+                            SELECT t1.a, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val FROM t2
+                                WHERE t2.t1_id = t1.a
+                                ORDER BY val DESC
+                                LIMIT 1, 2
+                            ) sub
+                            ORDER BY t1.a, sub.val DESC
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

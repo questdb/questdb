@@ -252,9 +252,9 @@ public class SqlOptimiser implements Mutable {
                 expressionNodePool,
                 queryColumnPool,
                 queryModelPool,
-                contextPool,
                 windowExpressionPool,
                 sqlNodeStack,
+                sqlNodeStack2,
                 functionParser
         );
         initialiseOperatorExpressions();
@@ -988,53 +988,6 @@ public class SqlOptimiser implements Mutable {
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
-    private void applyLateralCountCoalesce(QueryModel model) {
-        ObjList<CharSequence> countCols = model.getLateralCountColumns();
-        if (countCols.size() > 0) {
-            ObjList<QueryColumn> cols = model.getBottomUpColumns();
-            for (int i = 0, n = cols.size(); i < n; i++) {
-                QueryColumn pc = cols.getQuick(i);
-                ExpressionNode ast = pc.getAst();
-                if (ast == null || ast.type != ExpressionNode.LITERAL) {
-                    continue;
-                }
-                CharSequence colRef = ast.token;
-                int dotPos = Chars.indexOf(colRef, '.');
-                CharSequence colName = dotPos > 0
-                        ? colRef.subSequence(dotPos + 1, colRef.length())
-                        : colRef;
-                for (int j = 0, m = countCols.size(); j < m; j++) {
-                    if (Chars.equalsIgnoreCase(colName, countCols.getQuick(j))) {
-                        ExpressionNode coalesce = expressionNodePool.next().of(
-                                ExpressionNode.FUNCTION, "coalesce", 0, ast.position
-                        );
-                        coalesce.paramCount = 2;
-                        coalesce.args.clear();
-                        coalesce.args.add(expressionNodePool.next().of(
-                                ExpressionNode.CONSTANT, "0", 0, ast.position
-                        ));
-                        coalesce.args.add(ast);
-                        pc.of(pc.getAlias(), coalesce);
-                        break;
-                    }
-                }
-            }
-            countCols.clear();
-        }
-        if (model.getNestedModel() != null) {
-            applyLateralCountCoalesce(model.getNestedModel());
-        }
-        if (model.getUnionModel() != null) {
-            applyLateralCountCoalesce(model.getUnionModel());
-        }
-        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-            QueryModel jm = model.getJoinModels().getQuick(i);
-            if (jm.getNestedModel() != null) {
-                applyLateralCountCoalesce(jm.getNestedModel());
-            }
-        }
-    }
-
     private void addJoinContext(QueryModel parent, JoinContext context) {
         QueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getJoinContext();
@@ -1626,6 +1579,53 @@ public class SqlOptimiser implements Mutable {
                 constNameToIndex.put(name, literalCollectorAIndexes.get(0));
                 constNameToNode.put(name, node.rhs);
                 constNameToToken.put(name, node.token);
+            }
+        }
+    }
+
+    private void applyLateralCountCoalesce(QueryModel model) {
+        ObjList<CharSequence> countCols = model.getLateralCountColumns();
+        if (countCols.size() > 0) {
+            ObjList<QueryColumn> cols = model.getBottomUpColumns();
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                QueryColumn pc = cols.getQuick(i);
+                ExpressionNode ast = pc.getAst();
+                if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                    continue;
+                }
+                CharSequence colRef = ast.token;
+                int dotPos = Chars.indexOf(colRef, '.');
+                CharSequence colName = dotPos > 0
+                        ? colRef.subSequence(dotPos + 1, colRef.length())
+                        : colRef;
+                for (int j = 0, m = countCols.size(); j < m; j++) {
+                    if (Chars.equalsIgnoreCase(colName, countCols.getQuick(j))) {
+                        ExpressionNode coalesce = expressionNodePool.next().of(
+                                ExpressionNode.FUNCTION, "coalesce", 0, ast.position
+                        );
+                        coalesce.paramCount = 2;
+                        coalesce.args.clear();
+                        coalesce.args.add(expressionNodePool.next().of(
+                                ExpressionNode.CONSTANT, "0", 0, ast.position
+                        ));
+                        coalesce.args.add(ast);
+                        pc.of(pc.getAlias(), coalesce);
+                        break;
+                    }
+                }
+            }
+            countCols.clear();
+        }
+        if (model.getNestedModel() != null) {
+            applyLateralCountCoalesce(model.getNestedModel());
+        }
+        if (model.getUnionModel() != null) {
+            applyLateralCountCoalesce(model.getUnionModel());
+        }
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            QueryModel jm = model.getJoinModels().getQuick(i);
+            if (jm.getNestedModel() != null) {
+                applyLateralCountCoalesce(jm.getNestedModel());
             }
         }
     }
@@ -9982,6 +9982,67 @@ public class SqlOptimiser implements Mutable {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
+    /**
+     * Tries to evaluate the expression as a non-negative long constant.
+     * Returns -1 if the expression contains column references (dynamic bound).
+     * Returns {@link Long#MAX_VALUE} if expr is null.
+     */
+    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            // Walk the expression tree iteratively to detect column references.
+            // If found, the expression is dynamic — return -1 without parsing.
+            // This avoids a catch-all SqlException that would mask real parse errors.
+            sqlNodeStack.clear();
+            ExpressionNode node = expr;
+            while (node != null || !sqlNodeStack.isEmpty()) {
+                if (node != null) {
+                    if (node.type == LITERAL) {
+                        return -1;
+                    }
+                    if (node.paramCount < 3) {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                    } else {
+                        for (int i = 0, n = node.paramCount; i < n; i++) {
+                            sqlNodeStack.push(node.args.getQuick(i));
+                        }
+                        node = null;
+                    }
+                    continue;
+                }
+                node = sqlNodeStack.poll();
+            }
+
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                return -1;
+            }
+
+            try {
+                long value;
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
+                } else {
+                    long tmp = (byte) (func.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(func);
+            }
+        }
+        return Long.MAX_VALUE;
+    }
+
     private boolean tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
         // Only push filters on the designated timestamp into union branches.
         // Timestamp filters enable partition pruning — the only high-value optimization here.
@@ -10734,67 +10795,6 @@ public class SqlOptimiser implements Mutable {
             if (!func.isConstant()) {
                 Misc.free(func);
                 throw SqlException.$(expr.position, "constant expression expected");
-            }
-
-            try {
-                long value;
-                if (!(func instanceof CharConstant)) {
-                    value = func.getLong(null);
-                } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
-                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
-                }
-
-                if (value < 0) {
-                    throw SqlException.$(expr.position, "non-negative integer expression expected");
-                }
-                return value;
-            } catch (UnsupportedOperationException | ImplicitCastException e) {
-                throw SqlException.$(expr.position, "integer expression expected");
-            } finally {
-                Misc.free(func);
-            }
-        }
-        return Long.MAX_VALUE;
-    }
-
-    /**
-     * Tries to evaluate the expression as a non-negative long constant.
-     * Returns -1 if the expression contains column references (dynamic bound).
-     * Returns {@link Long#MAX_VALUE} if expr is null.
-     */
-    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expr != null) {
-            // Walk the expression tree iteratively to detect column references.
-            // If found, the expression is dynamic — return -1 without parsing.
-            // This avoids a catch-all SqlException that would mask real parse errors.
-            sqlNodeStack.clear();
-            ExpressionNode node = expr;
-            while (node != null || !sqlNodeStack.isEmpty()) {
-                if (node != null) {
-                    if (node.type == LITERAL) {
-                        return -1;
-                    }
-                    if (node.paramCount < 3) {
-                        if (node.rhs != null) {
-                            sqlNodeStack.push(node.rhs);
-                        }
-                        node = node.lhs;
-                    } else {
-                        for (int i = 0, n = node.paramCount; i < n; i++) {
-                            sqlNodeStack.push(node.args.getQuick(i));
-                        }
-                        node = null;
-                    }
-                    continue;
-                }
-                node = sqlNodeStack.poll();
-            }
-
-            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                Misc.free(func);
-                return -1;
             }
 
             try {
