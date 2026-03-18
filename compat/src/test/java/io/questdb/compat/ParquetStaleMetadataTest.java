@@ -32,7 +32,6 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -54,7 +53,6 @@ import java.util.Map;
  * the data but preserving the original key-value metadata.
  */
 public class ParquetStaleMetadataTest extends AbstractTest {
-    private static final Log LOG = LogFactory.getLog(ParquetStaleMetadataTest.class);
 
     /**
      * Exports a 3-column table to parquet (QDB metadata has 3-column schema),
@@ -132,6 +130,18 @@ public class ParquetStaleMetadataTest extends AbstractTest {
                     "result should contain column 'value'",
                     jsonResult.contains("\"name\":\"value\"")
             );
+            // Verify column types: the stale metadata was discarded, so types
+            // are inferred from Parquet physical types (not from the stale QDB
+            // metadata which would map a VARCHAR type onto the DOUBLE column).
+            Assert.assertTrue(
+                    "value column should be inferred as DOUBLE",
+                    jsonResult.contains("\"type\":\"DOUBLE\"")
+            );
+            Assert.assertTrue(
+                    "category column should be inferred as VARCHAR",
+                    jsonResult.contains("\"type\":\"VARCHAR\"")
+            );
+
             // Verify data: first row has value = 1 * 1.5 = 1.5
             Assert.assertTrue(
                     "result should contain data value 1.5",
@@ -172,7 +182,7 @@ public class ParquetStaleMetadataTest extends AbstractTest {
 
         // Walk backwards to the opening '{' of the JSON object.
         int jsonStart = markerIdx - 1;
-        while (jsonStart > 0 && fileStr.charAt(jsonStart) != '{') {
+        while (jsonStart >= 0 && fileStr.charAt(jsonStart) != '{') {
             jsonStart--;
         }
 
