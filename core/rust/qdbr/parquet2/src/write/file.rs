@@ -682,6 +682,13 @@ impl<W: Write> ParquetFile<W> {
         match &self.mode {
             Mode::Update(metadata, _) => {
                 let ordinal = if let Some(ordinal) = ordinal {
+                    if ordinal < 0 {
+                        return Err(Error::InvalidParameter(format!(
+                            "Row group ordinal must be non-negative, got {}",
+                            ordinal
+                        ))
+                            .into());
+                    }
                     let num_row_groups = metadata.row_groups.len();
                     let ordinal = ordinal as usize;
                     if ordinal >= num_row_groups {
@@ -715,6 +722,13 @@ impl<W: Write> ParquetFile<W> {
     where
         E: std::error::Error + From<Error>,
     {
+        if position < 0 {
+            return Err(Error::InvalidParameter(format!(
+                "Insert position must be non-negative, got {}",
+                position
+            ))
+                .into());
+        }
         match &self.mode {
             Mode::Update(_, _) => {
                 self.add_row_group(row_group, position as usize, bloom_hashes)?;

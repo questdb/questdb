@@ -390,6 +390,13 @@ impl ParquetUpdater {
     }
 
     pub fn copy_row_group(&mut self, rg_index: i32) -> ParquetResult<()> {
+        if rg_index < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group: negative rg_index: {}",
+                rg_index
+            ));
+        }
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
             return Err(fmt_err!(
