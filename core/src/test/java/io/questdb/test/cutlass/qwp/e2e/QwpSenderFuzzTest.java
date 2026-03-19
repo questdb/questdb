@@ -25,12 +25,18 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
@@ -39,6 +45,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
+import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -60,6 +67,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
+    private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
     private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
             {"terület", "TERÜLet", "tERülET", "TERÜLET"},
@@ -78,6 +86,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     };
     private final String[] symbolValueBases = new String[]{"us-midwest", "London"};
     private final AtomicLong timestampMicros = new AtomicLong(1_465_839_830_102_300L);
+    private double columnConvertProb;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
@@ -112,6 +121,13 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testAddColumnsNoSymbols() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
         initFuzzParameters(-1, -1, 4, -1, false, false, false);
+        runTest();
+    }
+
+    @Test
+    public void testAddConvertColumns() throws Exception {
+        initLoadParameters(15, 2, 2, 5, 75);
+        initFuzzParameters(-1, -1, 4, -1, false, true, false, 0.05);
         runTest();
     }
 
@@ -241,11 +257,29 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         runTest();
     }
 
-    private CharSequence addColumn(LineData line, int colIndex, QwpWebSocketSender sender, Rnd rnd) {
+    private static int changeColumnTypeTo(Rnd rnd, int columnType) {
+        int nextColType = columnType;
+        return switch (columnType) {
+            case ColumnType.STRING -> rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> {
+                while (nextColType == columnType) {
+                    nextColType = integerColumnTypes[rnd.nextInt(integerColumnTypes.length)];
+                }
+                yield nextColType;
+            }
+            case ColumnType.FLOAT -> ColumnType.DOUBLE;
+            case ColumnType.DOUBLE -> ColumnType.FLOAT;
+            case TIMESTAMP -> ColumnType.LONG;
+            default -> columnType;
+        };
+    }
+
+    private void addColumn(LineData line, int colIndex, QwpWebSocketSender sender, Rnd rnd) {
         CharSequence colName = generateColumnName(colIndex, false, rnd);
         CharSequence colValue = addColumnValue(colTypes[colIndex], colValueBases[colIndex], colName, sender, rnd);
         line.addColumn(colName, colValue);
-        return colName;
     }
 
     private String addColumnValue(short type, String valueBase, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
@@ -296,11 +330,10 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private CharSequence addSymbol(LineData line, int symIndex, QwpWebSocketSender sender, Rnd rnd) {
+    private void addSymbol(LineData line, int symIndex, QwpWebSocketSender sender, Rnd rnd) {
         CharSequence symName = generateSymbolName(symIndex, false, rnd);
         CharSequence symValue = addSymbolValue(symIndex, symName, sender, rnd);
         line.addColumn(symName, symValue);
-        return symName;
     }
 
     private String addSymbolValue(int index, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
@@ -399,12 +432,12 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         return skipColumns(generateOrdering(colNameBases.length, rnd), rnd);
     }
 
-    private String getTableName(int tableIndex) {
-        return "weather" + tableIndex;
-    }
-
     private int[] getSymbolIndexes(Rnd rnd) {
         return skipColumns(generateOrdering(symbolNameBases.length, rnd), rnd);
+    }
+
+    private String getTableName(int tableIndex) {
+        return "weather" + tableIndex;
     }
 
     private void initFuzzParameters(
@@ -412,6 +445,17 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             int newColumnFactor, int nonAsciiValueFactor,
             boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace
     ) {
+        initFuzzParameters(columnReorderingFactor, columnSkipFactor, newColumnFactor,
+                nonAsciiValueFactor, diffCasesInColNames, exerciseSymbols, sendSymbolsWithSpace, 0);
+    }
+
+    private void initFuzzParameters(
+            int columnReorderingFactor, int columnSkipFactor,
+            int newColumnFactor, int nonAsciiValueFactor,
+            boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace,
+            double columnConvertProb
+    ) {
+        this.columnConvertProb = columnConvertProb;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
         this.newColumnFactor = newColumnFactor;
@@ -453,7 +497,14 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                 Rnd threadRnd = new Rnd(random.nextLong(), random.nextLong());
                 startThread(port, threadPushFinished, failureCounter, threadRnd);
             }
+            Thread alterTableThread = null;
+            if (columnConvertProb > 0) {
+                alterTableThread = startAlterTableThread(threadPushFinished, failureCounter);
+            }
             threadPushFinished.await();
+            if (alterTableThread != null) {
+                alterTableThread.join();
+            }
             Assert.assertEquals(0, failureCounter.get());
 
             drainWalQueue();
@@ -494,6 +545,52 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             return columnIndexes;
         }
         return originalColumnIndexes;
+    }
+
+    private Thread startAlterTableThread(SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
+        Rnd rnd = new Rnd(random.nextLong(), random.nextLong());
+        Thread thread = new Thread(() -> {
+            int totalTestConversions = rnd.nextInt((int) (numOfLines * numOfTables * columnConvertProb));
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, 1)) {
+                while (totalTestConversions > 0 && threadPushFinished.getCount() > 0 && failureCounter.get() == 0) {
+                    CharSequence tableName = getTableName(rnd.nextInt(numOfTables));
+                    TableToken tableToken = engine.getTableTokenIfExists(tableName);
+                    if (tableToken != null) {
+                        try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                            int startColIndex = rnd.nextInt(meta.getColumnCount());
+                            for (int i = 0; i < meta.getColumnCount(); i++) {
+                                int colIndex = (startColIndex + i) % meta.getColumnCount();
+                                int type = meta.getColumnType(colIndex);
+                                if (type > 0 && FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta, colIndex)) {
+                                    int newType = changeColumnTypeTo(rnd, type);
+                                    try {
+                                        engine.execute(
+                                                "ALTER TABLE " + tableName + " ALTER COLUMN "
+                                                        + meta.getColumnName(colIndex) + " TYPE " + ColumnType.nameOf(newType),
+                                                executionContext
+                                        );
+                                        totalTestConversions--;
+                                    } catch (SqlException ex) {
+                                        if (!Chars.contains(ex.getFlyweightMessage(), "type is already")) {
+                                            throw ex;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        } catch (SqlException e) {
+                            LOG.error().$("Failed to alter table [e=").$((Throwable) e).I$();
+                            failureCounter.incrementAndGet();
+                        }
+                    }
+                    Os.sleep(10 + rnd.nextInt(100));
+                }
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        thread.start();
+        return thread;
     }
 
     private void startThread(int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter, Rnd rnd) {
