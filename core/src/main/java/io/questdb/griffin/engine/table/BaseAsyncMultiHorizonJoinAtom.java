@@ -202,7 +202,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 ownerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                 ownerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, state.getSlaveTsScale()));
-                for (int w = 0; w < workerCount; w++) {
+            }
+            // Per-worker flat lists use worker-major order so that element at
+            // index (slotId * slaveCount + slaveIndex) belongs to the correct worker+slave pair.
+            for (int w = 0; w < workerCount; w++) {
+                for (int s = 0; s < slaveCount; s++) {
+                    HorizonJoinSlaveState state = slaveStates.getQuick(s);
                     perWorkerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                     perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, state.getSlaveTsScale()));
                 }
@@ -215,12 +220,16 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             for (int s = 0; s < slaveCount; s++) {
                 if (perSlaveAsOfJoinKeyTypes != null && perSlaveAsOfJoinKeyTypes[s] != null) {
                     ownerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, perSlaveAsOfJoinKeyTypes[s], asOfValueTypes));
-                    for (int w = 0; w < workerCount; w++) {
-                        perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, perSlaveAsOfJoinKeyTypes[s], asOfValueTypes));
-                    }
                 } else {
                     ownerAsOfJoinMaps.add(null);
-                    for (int w = 0; w < workerCount; w++) {
+                }
+            }
+            // Worker-major order: index = slotId * slaveCount + slaveIndex
+            for (int w = 0; w < workerCount; w++) {
+                for (int s = 0; s < slaveCount; s++) {
+                    if (perSlaveAsOfJoinKeyTypes != null && perSlaveAsOfJoinKeyTypes[s] != null) {
+                        perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, perSlaveAsOfJoinKeyTypes[s], asOfValueTypes));
+                    } else {
                         perWorkerAsOfJoinMaps.add(null);
                     }
                 }
@@ -237,16 +246,21 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                             state.getMasterSymbolKeyColumnIndices(),
                             state.getSlaveSymbolKeyColumnIndices()
                     ));
-                    for (int w = 0; w < workerCount; w++) {
+                } else {
+                    ownerSymbolTranslatingRecords.add(null);
+                }
+            }
+            // Worker-major order: index = slotId * slaveCount + slaveIndex
+            for (int w = 0; w < workerCount; w++) {
+                for (int s = 0; s < slaveCount; s++) {
+                    HorizonJoinSlaveState state = slaveStates.getQuick(s);
+                    if (state.getMasterSymbolKeyColumnIndices() != null) {
                         perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
                                 state.getMasterColumnCount(),
                                 state.getMasterSymbolKeyColumnIndices(),
                                 state.getSlaveSymbolKeyColumnIndices()
                         ));
-                    }
-                } else {
-                    ownerSymbolTranslatingRecords.add(null);
-                    for (int w = 0; w < workerCount; w++) {
+                    } else {
                         perWorkerSymbolTranslatingRecords.add(null);
                     }
                 }

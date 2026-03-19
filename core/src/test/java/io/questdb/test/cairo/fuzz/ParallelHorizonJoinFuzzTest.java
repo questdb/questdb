@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -273,6 +274,130 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 false,
                 null
         );
+    }
+
+    // Verifies that per-worker x per-slave flat list indexing is correct
+    // in BaseAsyncMultiHorizonJoinAtom. Uses workerCount=3 and slaveCount=2
+    // with mixed keyed/non-keyed slaves so that the bug (slave-major construction
+    // vs worker-major access formula) produces null/non-null map mismatches.
+    @Test
+    public void testParallelMultiHorizonJoinWorkerSlaveIndexing() throws Exception {
+        final long[] offsetsMicros = {-1_000_000, 0, 1_000_000};
+
+        // Slave 0 is keyed (ON clause), slave 1 is non-keyed (no ON clause).
+        // With wrong indexing, some workers get null ASOF maps for the keyed slave
+        // and non-null maps for the non-keyed slave, producing wrong results.
+        String horizonQuery = """
+                SELECT h.offset AS h_offset, t.sym,
+                       count(p0.bid) AS cnt_bid0, max(p0.bid) AS max_bid0,
+                       count(p1.ask) AS cnt_ask1, max(p1.ask) AS max_ask1
+                FROM trades t
+                HORIZON JOIN prices0 AS p0 ON (t.sym = p0.sym)
+                HORIZON JOIN prices1 AS p1
+                    LIST (-1s, 0s, 1s) AS h
+                ORDER BY h_offset, t.sym
+                """;
+
+        // Reference query: per-offset ASOF JOINs.
+        StringBuilder ref = new StringBuilder();
+        ref.append("SELECT h_offset, sym, count(bid0) AS cnt_bid0, max(bid0) AS max_bid0,");
+        ref.append(" count(ask1) AS cnt_ask1, max(ask1) AS max_ask1 FROM (");
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                ref.append(" UNION ALL ");
+            }
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset, t.sym");
+            ref.append(", p0.bid AS bid0, p1.ask AS ask1");
+            ref.append(" FROM (SELECT * FROM (SELECT dateadd('u', ").append(offsetsMicros[i]);
+            ref.append(", ts) AS ts, sym FROM trades) TIMESTAMP(ts)) t");
+            ref.append(" ASOF JOIN prices0 p0 ON (t.sym = p0.sym)");
+            ref.append(" ASOF JOIN prices1 p1");
+        }
+        ref.append(") GROUP BY h_offset, sym ORDER BY h_offset, sym");
+        String referenceQuery = ref.toString();
+
+        assertMemoryLeak(() -> {
+            // 3 workers vs 2 slaves to trigger the indexing mismatch.
+            final WorkerPool pool = new WorkerPool(() -> 3);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // Force parallel execution regardless of randomized setUp() value.
+                        ((SqlExecutionContextImpl) sqlExecutionContext).setParallelHorizonJoinEnabled(true);
+
+                        engine.execute(
+                                """
+                                        CREATE TABLE trades (
+                                                ts TIMESTAMP,
+                                                sym SYMBOL
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades"
+                                        + "  SELECT '2020-01-01T00:05'::timestamp + (3_600_000 * x) AS ts,"
+                                        + "      rnd_symbol('A', 'B', 'C', 'D', 'E') AS sym"
+                                        + "  FROM long_sequence(" + ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+
+                        // Slave 0: keyed (ON clause), bid prices.
+                        engine.execute(
+                                """
+                                        CREATE TABLE prices0 (
+                                            ts TIMESTAMP,
+                                            sym SYMBOL CAPACITY 128,
+                                            bid DOUBLE
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO prices0"
+                                        + "  SELECT '2020-01-01'::timestamp + (360_000 * x) AS ts,"
+                                        + "      rnd_symbol('A', 'B', 'C', 'D', 'E') AS sym,"
+                                        + "      rnd_double() * 50.0 AS bid"
+                                        + "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+
+                        // Slave 1: non-keyed (no ON clause), ask prices.
+                        engine.execute(
+                                """
+                                        CREATE TABLE prices1 (
+                                            ts TIMESTAMP,
+                                            ask DOUBLE
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO prices1"
+                                        + "  SELECT '2020-01-01'::timestamp + (720_000 * x) AS ts,"
+                                        + "      rnd_double() * 200.0 + 100.0 AS ask"
+                                        + "  FROM long_sequence(" + 5 * ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+
+                        final StringSink horizonSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, horizonQuery, horizonSink);
+
+                        final StringSink referenceSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, referenceQuery, referenceSink);
+
+                        try {
+                            TestUtils.assertEquals(referenceSink, horizonSink);
+                        } catch (AssertionError e) {
+                            LOG.error().$("Multi HORIZON JOIN query: ").$(horizonQuery).$();
+                            LOG.error().$("Reference query: ").$(referenceQuery).$();
+                            throw e;
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private static long[] rangeOffsets(int fromSec, int toSec) {
