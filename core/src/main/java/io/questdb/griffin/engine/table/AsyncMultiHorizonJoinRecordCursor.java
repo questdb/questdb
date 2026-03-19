@@ -74,14 +74,14 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private final int slaveCount;
     private final RecordCursorFactory[] slaveFactories;
+    private final ObjList<TablePageFrameCursor> slaveFrameCursors;
     private final LongList[] slavePartitionCeilings;
     private final LongList[] slavePartitionTimestamps;
+    private final ObjList<SymbolTableSource> slaveSources;
     // Per-slave time frame cache data
     private final PageFrameAddressCache[] slaveTimeFrameAddressCaches;
     private final DirectIntList[] slaveTimeFramePartitionIndexes;
     private final LongList[] slaveTimeFrameRowCounts;
-    private final ObjList<TablePageFrameCursor> slaveFrameCursors;
-    private final ObjList<SymbolTableSource> slaveSources;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence;
@@ -329,8 +329,13 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         this.circuitBreaker = executionContext.getCircuitBreaker();
 
         // Open per-slave page frame cursors
-        for (int s = 0; s < slaveCount; s++) {
-            slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
+        try {
+            for (int s = 0; s < slaveCount; s++) {
+                slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
+            }
+        } catch (Throwable th) {
+            Misc.freeObjList(slaveFrameCursors);
+            throw th;
         }
 
         // Initialize symbol table source with master and all slave sources

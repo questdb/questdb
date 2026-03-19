@@ -62,13 +62,13 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
     private final VirtualRecord recordA;
     private final int slaveCount;
     private final RecordCursorFactory[] slaveFactories;
+    private final ObjList<TablePageFrameCursor> slaveFrameCursors;
     private final LongList[] slavePartitionCeilings;
     private final LongList[] slavePartitionTimestamps;
+    private final ObjList<SymbolTableSource> slaveSources;
     private final PageFrameAddressCache[] slaveTimeFrameAddressCaches;
     private final DirectIntList[] slaveTimeFramePartitionIndexes;
     private final LongList[] slaveTimeFrameRowCounts;
-    private final ObjList<TablePageFrameCursor> slaveFrameCursors;
-    private final ObjList<SymbolTableSource> slaveSources;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom> frameSequence;
     private boolean isExhausted;
@@ -278,8 +278,13 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
         this.frameSequence = frameSequence;
         this.executionContext = executionContext;
 
-        for (int s = 0; s < slaveCount; s++) {
-            slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
+        try {
+            for (int s = 0; s < slaveCount; s++) {
+                slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
+            }
+        } catch (Throwable th) {
+            Misc.freeObjList(slaveFrameCursors);
+            throw th;
         }
 
         // Initialize symbol table source with master and all slave sources
