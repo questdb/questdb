@@ -58,9 +58,10 @@ public class UpdateOperation extends AbstractOperation {
             @NotNull TableToken tableToken,
             int tableId,
             long tableVersion,
-            int tableNamePosition
+            int tableNamePosition,
+            @NotNull ObjList<CharSequence> updateColumnNames
     ) {
-        this(tableToken, tableId, tableVersion, tableNamePosition, null);
+        this(tableToken, tableId, tableVersion, tableNamePosition, null, updateColumnNames);
     }
 
     public UpdateOperation(
@@ -68,10 +69,12 @@ public class UpdateOperation extends AbstractOperation {
             int tableId,
             long tableVersion,
             int tableNamePosition,
-            RecordCursorFactory factory
+            RecordCursorFactory factory,
+            @NotNull ObjList<CharSequence> updateColumnNames
     ) {
         init(CMD_UPDATE_TABLE, TableWriterTask.getCommandName(CMD_UPDATE_TABLE), tableToken, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
+        copyUpdateColumnNames(updateColumnNames);
     }
 
     @Override
@@ -170,16 +173,16 @@ public class UpdateOperation extends AbstractOperation {
         circuitBreaker.statefulThrowExceptionIfTripped();
     }
 
-    @Override
-    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
-        super.withContext(sqlExecutionContext);
-        circuitBreaker = sqlExecutionContext.getSimpleCircuitBreaker();
-    }
-
-    public void withUpdateColumnNames(ObjList<CharSequence> columnNames) {
+    private void copyUpdateColumnNames(ObjList<CharSequence> columnNames) {
         updateColumnNames.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             updateColumnNames.add(Chars.toString(columnNames.getQuick(i)));
         }
+    }
+
+    @Override
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        super.withContext(sqlExecutionContext);
+        circuitBreaker = sqlExecutionContext.getSimpleCircuitBreaker();
     }
 }

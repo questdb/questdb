@@ -4519,18 +4519,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 updateQueryModel,
                 executionContext
         );
-        final ObjList<CharSequence> updateColumnNames = copyUpdateColumnNames(recordCursorFactory.getMetadata());
+        final RecordMetadata updateMetadata = recordCursorFactory.getMetadata();
+        final int updateColumnCount = updateMetadata.getColumnCount();
+        final ObjList<CharSequence> updateColumnNames = new ObjList<>(updateColumnCount);
+        for (int i = 0; i < updateColumnCount; i++) {
+            updateColumnNames.add(updateMetadata.getColumnName(i));
+        }
 
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-            final UpdateOperation updateOperation = new UpdateOperation(
+            return new UpdateOperation(
                     updateTableToken,
                     selectQueryModel.getTableId(),
                     selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
-                    recordCursorFactory
+                    recordCursorFactory,
+                    updateColumnNames
             );
-            updateOperation.withUpdateColumnNames(updateColumnNames);
-            return updateOperation;
         } else {
             recordCursorFactory.close();
 
@@ -4538,24 +4542,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
             }
 
-            final UpdateOperation updateOperation = new UpdateOperation(
+            return new UpdateOperation(
                     updateTableToken,
                     metadata.getTableId(),
                     metadata.getMetadataVersion(),
-                    lexer.getPosition()
+                    lexer.getPosition(),
+                    updateColumnNames
             );
-            updateOperation.withUpdateColumnNames(updateColumnNames);
-            return updateOperation;
         }
-    }
-
-    private ObjList<CharSequence> copyUpdateColumnNames(RecordMetadata metadata) {
-        final int columnCount = metadata.getColumnCount();
-        final ObjList<CharSequence> updateColumnNames = new ObjList<>(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            updateColumnNames.add(Chars.toString(metadata.getColumnName(i)));
-        }
-        return updateColumnNames;
     }
 
     private RecordCursorFactory generateUpdateFactory(
