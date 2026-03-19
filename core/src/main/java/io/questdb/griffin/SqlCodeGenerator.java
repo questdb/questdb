@@ -5769,6 +5769,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
         ObjList<HorizonJoinSlaveState> slaveStates = null;
+        boolean isSlaveFactoriesTransferred = false;
 
         try {
             // Validate master timestamp
@@ -6045,6 +6046,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 groupByFunctions = null;
                 final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
                 slaveStates = null;
+                isSlaveFactoriesTransferred = true;
 
                 if (keyTypesCopy.getColumnCount() == 0) {
                     return new MultiHorizonJoinNotKeyedRecordCursorFactory(
@@ -6111,6 +6113,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             groupByFunctions = null;
             perWorkerGroupByFunctions = null;
             slaveStates = null;
+            isSlaveFactoriesTransferred = true;
             compiledFilter = null;
             bindVarMemory = null;
             bindVarFunctions = null;
@@ -6205,13 +6208,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(bindVarFunctions);
             Misc.free(filter);
             if (slaveStates != null) {
+                // Free slave states that were already created, plus any remaining
+                // slave factories not yet wrapped in a HorizonJoinSlaveState.
                 Misc.freeObjList(slaveStates);
-            } else {
-                // Free all slave factories on error (not yet owned by slaveStates)
+                for (int s = slaveStates.size(), n = slaveFactories.size(); s < n; s++) {
+                    Misc.free(slaveFactories.getQuick(s));
+                }
+            } else if (!isSlaveFactoriesTransferred) {
+                // Ownership has not been transferred yet: free all slave factories.
                 for (int s = 0, n = slaveFactories.size(); s < n; s++) {
                     Misc.free(slaveFactories.getQuick(s));
                 }
             }
+            // When isSlaveFactoriesTransferred is true and slaveStates is null,
+            // the factory constructor owns the slave factories and its own catch
+            // block handles cleanup on error. Don't double-free.
             throw th;
         }
     }
