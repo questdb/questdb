@@ -159,13 +159,13 @@ public final class PostingIndexUtils {
      * Computes worst-case encoded size for a key with {@code count} values.
      * Used to pre-allocate encode buffers.
      */
-    public static int computeMaxEncodedSize(int count) {
+    public static long computeMaxEncodedSize(int count) {
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         // 2B blockCount + blockCount * (1B valueCount + 8B firstValue + 8B minDelta + 1B bitWidth)
         // + (count - blockCount) * 8 bytes worst case packed data
         // Each block's first value is in firstValues[], so total deltas = count - blockCount.
-        int totalDeltas = count - blockCount;
-        return 2 + blockCount * 18 + totalDeltas * 8;
+        long totalDeltas = count - blockCount;
+        return 2 + (long) blockCount * 18 + totalDeltas * 8;
     }
 
     /**

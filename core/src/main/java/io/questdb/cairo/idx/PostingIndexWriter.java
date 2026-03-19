@@ -186,26 +186,28 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void close() {
-        seal();
-        compactValueFile();
-
-        if (keyMem.isOpen()) {
-            keyMem.setSize(KEY_FILE_RESERVED);
-            Misc.free(keyMem);
-        }
-        if (valueMem.isOpen()) {
-            if (valueMemSize > 0) {
-                valueMem.setSize(valueMemSize);
+        try {
+            seal();
+            compactValueFile();
+        } finally {
+            if (keyMem.isOpen()) {
+                keyMem.setSize(KEY_FILE_RESERVED);
+                Misc.free(keyMem);
             }
-            Misc.free(valueMem);
-        }
+            if (valueMem.isOpen()) {
+                if (valueMemSize > 0) {
+                    valueMem.setSize(valueMemSize);
+                }
+                Misc.free(valueMem);
+            }
 
-        freeNativeBuffers();
-        keyCount = 0;
-        valueMemSize = 0;
-        genCount = 0;
-        hasPendingData = false;
-        activeKeyCount = 0;
+            freeNativeBuffers();
+            keyCount = 0;
+            valueMemSize = 0;
+            genCount = 0;
+            hasPendingData = false;
+            activeKeyCount = 0;
+        }
     }
 
     @Override
@@ -313,8 +315,8 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Estimate max per-key values to size buffers
         int maxPerKey = estimateMaxPerKey(gen0Addr, gen0KeyCount, gen0SiSize);
-        int perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, PostingIndexUtils.BLOCK_CAPACITY * genCount));
-        int maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
+        long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, PostingIndexUtils.BLOCK_CAPACITY * genCount));
+        long maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
         long bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
         int maxHeaderSize = Math.max(
                 PostingIndexUtils.strideBPHeaderSize(PostingIndexUtils.DENSE_STRIDE),
@@ -1624,7 +1626,9 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
 
-        if (genCount > MAX_GEN_COUNT) {
+        // Seal at >= MAX_GEN_COUNT (not >). Entry MAX_GEN_COUNT-1 (index 166)
+        // ends at page offset 4072. Entry 167 would overlap sequence_end at 4088.
+        if (genCount >= MAX_GEN_COUNT) {
             seal();
         }
     }
