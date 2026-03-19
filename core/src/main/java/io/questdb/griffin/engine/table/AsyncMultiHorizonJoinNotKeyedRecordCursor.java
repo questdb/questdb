@@ -282,20 +282,20 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             for (int s = 0; s < slaveCount; s++) {
                 slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
             }
+
+            // Initialize symbol table source with master and all slave sources
+            final MultiHorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
+            for (int s = 0; s < slaveCount; s++) {
+                slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
+            }
+            symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
+
+            recordA.of(atom.getOwnerMapValue());
+            Function.init(groupByFunctions, symbolTableSource, executionContext, null);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;
         }
-
-        // Initialize symbol table source with master and all slave sources
-        final MultiHorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
-        for (int s = 0; s < slaveCount; s++) {
-            slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
-        }
-        symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
-
-        recordA.of(atom.getOwnerMapValue());
-        Function.init(groupByFunctions, symbolTableSource, executionContext, null);
 
         isValueBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

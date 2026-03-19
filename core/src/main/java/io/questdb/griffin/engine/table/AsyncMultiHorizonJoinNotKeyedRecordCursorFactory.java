@@ -192,8 +192,8 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
-        for (RecordCursorFactory sf : slaveFactories) {
-            sink.child(sf);
+        for (int i = 0, n = slaveFactories.length; i < n; i++) {
+            sink.child(slaveFactories[i]);
         }
     }
 
@@ -223,22 +223,22 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final AsyncFilterContext filterCtx = atom.getFilterContext();
-        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
-        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-
-        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
-
+        PageFrameMemoryPool frameMemoryPool = null;
         try {
+            final AsyncFilterContext filterCtx = atom.getFilterContext();
+            final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+            final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+            final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+
+            frameMemoryPool = filterCtx.getMemoryPool(slotId);
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
@@ -300,7 +300,9 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     slotId
             );
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
+            if (frameMemoryPool != null) {
+                frameMemoryPool.releaseParquetBuffers();
+            }
             atom.release(slotId);
         }
     }
@@ -427,13 +429,13 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
-        final AsyncFilterContext filterCtx = atom.getFilterContext();
-        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
-
+        PageFrameMemoryPool frameMemoryPool = null;
         try {
+            final AsyncFilterContext filterCtx = atom.getFilterContext();
+            frameMemoryPool = filterCtx.getMemoryPool(slotId);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
@@ -458,7 +460,9 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     slotId
             );
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
+            if (frameMemoryPool != null) {
+                frameMemoryPool.releaseParquetBuffers();
+            }
             atom.release(slotId);
         }
     }
