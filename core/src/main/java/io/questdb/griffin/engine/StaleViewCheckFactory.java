@@ -93,11 +93,6 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursorFactory unwrapQueryProgress() {
-        return base.unwrapQueryProgress();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = viewTokens.length; i < n; i++) {
             var token = viewTokens[i];

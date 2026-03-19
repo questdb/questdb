@@ -115,10 +115,9 @@ public enum ParquetExportMode {
     }
 
     /**
-     * Strips QueryProgress and any transparent lifecycle wrappers around it
-     * to access the underlying data-producing factory.
+     * Unwraps a QueryProgress wrapper to access the underlying factory.
      */
     public static RecordCursorFactory unwrapFactory(RecordCursorFactory factory) {
-        return factory.unwrapQueryProgress();
+        return factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
     }
 }

@@ -137,21 +137,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    /**
-     * Strips QueryProgress and any transparent lifecycle wrappers around it,
-     * returning the underlying data-producing factory. Used by export paths
-     * to avoid QueryRegistry register/unregister side effects on cursors.
-     * <p>
-     * Transparent wrappers (e.g. StaleViewCheckFactory) should override this
-     * to delegate to their child.
-     *
-     * @return the factory without QueryProgress wrapping, or {@code this} if
-     * no QueryProgress is present
-     */
-    default RecordCursorFactory unwrapQueryProgress() {
-        return this;
-    }
-
     // to be used in combination with compiled filter
     @Nullable
     default ObjList<Function> getBindVarFunctions() {
