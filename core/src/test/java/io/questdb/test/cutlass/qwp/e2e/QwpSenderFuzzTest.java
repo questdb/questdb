@@ -100,6 +100,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private int numOfTables;
     private int numOfThreads;
     private Rnd random;
+    private int recvBufferSize = 65_536;
     private boolean sendSymbolsWithSpace = false;
     private LowerCaseCharSequenceObjHashMap<TableData> tables;
     private SOCountDownLatch threadPushFinished;
@@ -218,6 +219,13 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testLoadNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
         initFuzzParameters(-1, -1, -1, -1, false, false, false);
+        runTest();
+    }
+
+    @Test
+    public void testLoadSmallBuffer() throws Exception {
+        recvBufferSize = 2048;
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 20);
         runTest();
     }
 
@@ -588,7 +596,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                     assertTable(table, tableName);
                 }
             }
-        });
+        }, recvBufferSize);
 
         if (errorMsg != null) {
             Assert.fail(errorMsg);
