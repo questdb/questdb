@@ -296,6 +296,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     horizonJoinRecord,
                     value,
                     functionUpdater,
+                    circuitBreaker,
                     slotId
             );
         } finally {
@@ -313,6 +314,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             MultiHorizonJoinRecord horizonJoinRecord,
             SimpleMapValue value,
             GroupByFunctionsUpdater functionUpdater,
+            SqlExecutionCircuitBreaker circuitBreaker,
             int slotId
     ) {
         final ObjList<Record> matchedSlaveRecords = new ObjList<>(slaveCount);
@@ -327,6 +329,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         }
 
         while (horizonIterator.next()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -452,6 +455,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     horizonJoinRecord,
                     value,
                     functionUpdater,
+                    circuitBreaker,
                     slotId
             );
         } finally {

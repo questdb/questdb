@@ -369,6 +369,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     groupByMapFragment,
                     groupByMapSink,
                     functionUpdater,
+                    circuitBreaker,
                     slotId
             );
         } finally {
@@ -391,6 +392,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             GroupByMapFragment groupByMapFragment,
             RecordSink groupByMapSink,
             GroupByFunctionsUpdater functionUpdater,
+            SqlExecutionCircuitBreaker circuitBreaker,
             int slotId
     ) {
         atom.resetLocalStats(groupByMapFragment.slotId);
@@ -413,6 +415,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         }
 
         while (horizonIterator.next()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
@@ -550,6 +553,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                     groupByMapFragment,
                     groupByMapSink,
                     functionUpdater,
+                    circuitBreaker,
                     slotId
             );
         } finally {
