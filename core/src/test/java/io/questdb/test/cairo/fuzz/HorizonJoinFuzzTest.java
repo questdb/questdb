@@ -162,9 +162,146 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                 }
 
                 assertFuzzExecute(
-                        tradesInner, symbolEq, groupBySym,
-                        horizonAggregates, aggregates.toString(),
-                        aggregatedColumns, horizonClause, offsetsMicros
+                        tradesInner,
+                        symbolEq,
+                        groupBySym,
+                        horizonAggregates,
+                        aggregates.toString(),
+                        aggregatedColumns,
+                        horizonClause,
+                        offsetsMicros
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequence[] symbols = new CharSequence[rnd.nextInt(20) + 4];
+            for (int i = 0; i < symbols.length; i++) {
+                symbols[i] = "sym" + i;
+            }
+
+            long avgTradeSpread = generateTradeSpread(rnd);
+            int tradeSize = rnd.nextInt(100) + 1;
+            int duplicatePercentage = 30 + rnd.nextInt(71);
+
+            // Create 2-4 slave tables
+            int slaveCount = 2 + rnd.nextInt(3);
+            var perSlaveColumns = prepareMultiFuzzTables(
+                    rnd, tradeSize, avgTradeSpread, duplicatePercentage, symbols, slaveCount
+            );
+
+            if (convertToParquet) {
+                execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                for (int s = 0; s < slaveCount; s++) {
+                    execute("ALTER TABLE prices" + s + " CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                }
+            }
+
+            // Build aggregate expressions that span all slaves.
+            // Each slave has columns named val<slave>_<col>, e.g. val0_0, val1_0.
+            // Horizon aggregates reference them as p<slave>.val<slave>_<col>.
+            var horizonAggregates = new StringBuilder();
+            var referenceAggregates = new StringBuilder();
+            int aggIdx = 0;
+            for (int s = 0; s < slaveCount; s++) {
+                for (int c = 0; c < perSlaveColumns[s].length; c++) {
+                    if (aggIdx > 0) {
+                        horizonAggregates.append(", ");
+                        referenceAggregates.append(", ");
+                    }
+                    CharSequence func = AGGREGATE_FUNCTIONS[rnd.nextInt(AGGREGATE_FUNCTIONS.length)];
+                    horizonAggregates.append(func).append("(p").append(s).append('.').append(perSlaveColumns[s][c]).append(") agg").append(aggIdx);
+                    referenceAggregates.append(func).append('(').append(perSlaveColumns[s][c]).append(") agg").append(aggIdx);
+                    aggIdx++;
+                }
+            }
+
+            final Object[][] allOpts = new Object[][]{
+                    // left table - ts filter
+                    {false, true},
+                    // left table - symbol filter
+                    {false, true},
+                    // left table - value filter
+                    {false, true},
+                    // symbol eq (ON clause key)
+                    {false, true},
+                    // group by sym (keyed aggregation)
+                    {false, true},
+            };
+
+            final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
+            final Object[][] permutations;
+            if (RUN_ALL_PERMUTATIONS) {
+                permutations = allPermutations;
+            } else {
+                List<Object[]> allPermutationsList = Arrays.asList(allPermutations);
+                Collections.shuffle(allPermutationsList);
+                permutations = Arrays.copyOf(allPermutations, RUN_N_PERMUTATIONS);
+            }
+
+            for (Object[] permutation : permutations) {
+                boolean filterTs = (boolean) permutation[0];
+                boolean filterSymbol = (boolean) permutation[1];
+                boolean filterValue = (boolean) permutation[2];
+                boolean symbolEq = (boolean) permutation[3];
+                boolean groupBySym = (boolean) permutation[4];
+
+                if (groupBySym) {
+                    symbolEq = true;
+                }
+
+                var tradesInner = generateFuzzTradeTable(
+                        rnd, symbols, tradeSize, avgTradeSpread,
+                        filterTs, filterSymbol, filterValue, false
+                );
+
+                // Generate offsets
+                boolean useList = rnd.nextBoolean();
+                long[] offsetsMicros;
+                String horizonClause;
+                if (useList) {
+                    Set<Long> uniqueOffsets = new LinkedHashSet<>();
+                    int count = 1 + rnd.nextInt(5);
+                    while (uniqueOffsets.size() < count) {
+                        int sec = -5 + rnd.nextInt(11);
+                        uniqueOffsets.add(sec * 1_000_000L);
+                    }
+                    offsetsMicros = uniqueOffsets.stream().mapToLong(Long::longValue).sorted().toArray();
+                    StringBuilder clause = new StringBuilder("LIST (");
+                    for (int i = 0; i < offsetsMicros.length; i++) {
+                        if (i > 0) {
+                            clause.append(", ");
+                        }
+                        clause.append(offsetsMicros[i] / 1_000_000L).append('s');
+                    }
+                    clause.append(") AS h");
+                    horizonClause = clause.toString();
+                } else {
+                    int fromSec = -(rnd.nextInt(6));
+                    int stepSec = 1 + rnd.nextInt(3);
+                    int numSteps = 1 + rnd.nextInt(5);
+                    int toSec = fromSec + stepSec * numSteps;
+                    int count = numSteps + 1;
+                    offsetsMicros = new long[count];
+                    for (int i = 0; i < count; i++) {
+                        offsetsMicros[i] = (fromSec + (long) stepSec * i) * 1_000_000L;
+                    }
+                    horizonClause = "RANGE FROM " + fromSec + "s TO " + toSec + "s STEP " + stepSec + "s AS h";
+                }
+
+                assertMultiFuzzExecute(
+                        tradesInner,
+                        symbolEq,
+                        groupBySym,
+                        slaveCount,
+                        horizonAggregates,
+                        referenceAggregates,
+                        perSlaveColumns,
+                        horizonClause,
+                        offsetsMicros
                 );
             }
         });
@@ -259,6 +396,99 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             TestUtils.assertEquals(expectedSink, actualSink);
         } catch (AssertionError e) {
             LOG.error().$("HORIZON JOIN query: ").$(horizonQuery).$();
+            LOG.error().$("Reference query: ").$(referenceQuery).$();
+            throw e;
+        }
+    }
+
+    private void assertMultiFuzzExecute(
+            CharSequence tradesInner,
+            boolean symbolEq,
+            boolean groupBySym,
+            int slaveCount,
+            CharSequence horizonAggregates,
+            CharSequence referenceAggregates,
+            CharSequence[][] perSlaveColumns,
+            CharSequence horizonClause,
+            long[] offsetsMicros
+    ) throws SqlException {
+        // Build multi-slave HORIZON JOIN query
+        sink.clear();
+        sink.put("SELECT h.offset AS h_offset");
+        if (groupBySym) {
+            sink.put(", t.sym");
+        }
+        sink.put(", ").put(horizonAggregates)
+                .put(" FROM ").put(tradesInner).put(" AS t");
+        for (int s = 0; s < slaveCount; s++) {
+            sink.put(" HORIZON JOIN prices").put(s).put(" AS p").put(s);
+            if (symbolEq) {
+                sink.put(" ON (t.sym = p").put(s).put(".sym)");
+            }
+        }
+        sink.put(' ').put(horizonClause)
+                .put(" ORDER BY h_offset");
+        if (groupBySym) {
+            sink.put(", t.sym");
+        }
+        var horizonQuery = sink.toString();
+
+        // Build reference query: per offset, chain ASOF JOINs for all slaves
+        sink.clear();
+        sink.put("SELECT h_offset");
+        if (groupBySym) {
+            sink.put(", sym");
+        }
+        sink.put(", ").put(referenceAggregates).put(" FROM (");
+
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                sink.put(" UNION ALL ");
+            }
+            sink.put("SELECT cast(").put(offsetsMicros[i]).put(" AS long) AS h_offset");
+            if (groupBySym) {
+                sink.put(", t.sym");
+            }
+            // Select columns from all slaves
+            for (int s = 0; s < slaveCount; s++) {
+                for (CharSequence col : perSlaveColumns[s]) {
+                    sink.put(", p").put(s).put('.').put(col);
+                }
+            }
+            sink.put(" FROM (SELECT * FROM (SELECT dateadd('u', ")
+                    .put(offsetsMicros[i])
+                    .put(", ts) AS ts, id, sym, price FROM ")
+                    .put(tradesInner)
+                    .put(") TIMESTAMP(ts)) t");
+            for (int s = 0; s < slaveCount; s++) {
+                sink.put(" ASOF JOIN prices").put(s).put(" p").put(s);
+                if (symbolEq) {
+                    sink.put(" ON (t.sym = p").put(s).put(".sym)");
+                }
+            }
+        }
+
+        sink.put(") GROUP BY h_offset");
+        if (groupBySym) {
+            sink.put(", sym");
+        }
+        sink.put(" ORDER BY h_offset");
+        if (groupBySym) {
+            sink.put(", sym");
+        }
+        var referenceQuery = sink.toString();
+
+        // Execute and compare
+        final StringSink actualSink = new StringSink();
+        printSql(horizonQuery, actualSink);
+
+        final StringSink expectedSink = new StringSink();
+        printSql(referenceQuery, expectedSink);
+
+        try {
+            TestUtils.assertEquals(expectedSink, actualSink);
+        } catch (AssertionError e) {
+            LOG.error().$("Multi HORIZON JOIN query: ").$(horizonQuery).$();
             LOG.error().$("Reference query: ").$(referenceQuery).$();
             throw e;
         }
@@ -507,5 +737,166 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         }
 
         return aggregatedColumns;
+    }
+
+    /**
+     * Creates the trades table and N slave tables (prices0, prices1, ...).
+     * Each slave has its own set of aggregated columns named val{slave}_{col}.
+     * Returns perSlaveColumns[slave][col] with the column names.
+     */
+    private CharSequence[][] prepareMultiFuzzTables(
+            Rnd rnd,
+            int tradeSize,
+            long avgTradeSpread,
+            int duplicatePercentage,
+            CharSequence[] symbols,
+            int slaveCount
+    ) throws SqlException {
+        final CharSequence[] columnTypes = new CharSequence[]{"double", "float", "long"};
+
+        execute(
+                """
+                        CREATE TABLE trades (
+                            id int,
+                            sym symbol,
+                            price double,
+                            ts timestamp
+                        ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;
+                        """
+        );
+
+        // Per-slave: create table + fill with data
+        CharSequence[][] perSlaveColumns = new CharSequence[slaveCount][];
+        for (int s = 0; s < slaveCount; s++) {
+            int nCols = 1 + rnd.nextInt(3);
+            perSlaveColumns[s] = new CharSequence[nCols];
+            int[] colTypes = new int[nCols];
+            StringBuilder columnsCreation = new StringBuilder();
+            for (int c = 0; c < nCols; c++) {
+                perSlaveColumns[s][c] = "val" + s + "_" + c;
+                int colType = rnd.nextInt(columnTypes.length);
+                colTypes[c] = colType;
+                columnsCreation.append(perSlaveColumns[s][c]).append(' ').append(columnTypes[colType]).append(",\n");
+            }
+
+            execute(
+                    "CREATE TABLE prices" + s + " (\n" +
+                            "    id int,\n" +
+                            "    sym symbol,\n" +
+                            columnsCreation +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;"
+            );
+
+            // Build symbol and price frequency distributions (same approach as single-slave)
+            int[] symbolFrequencies = new int[symbols.length];
+            int symbolFrequencySum = 0;
+            for (int i = 0; i < symbolFrequencies.length; i++) {
+                int c2 = rnd.nextPositiveInt() % 100;
+                int freq = switch (c2 <= 2 ? 0 : c2 <= 4 ? 1 : 2) {
+                    case 0 -> rnd.nextPositiveInt() % 5;
+                    case 1 -> 100 + rnd.nextPositiveInt() % 5000;
+                    default -> 50 + rnd.nextPositiveInt() % 100;
+                };
+                symbolFrequencySum += freq;
+                symbolFrequencies[i] = symbolFrequencySum;
+            }
+
+            int[] priceFrequencies = new int[symbols.length];
+            int priceFrequencySum = 0;
+            for (int i = 0; i < priceFrequencies.length; i++) {
+                int c2 = rnd.nextPositiveInt() % 100;
+                int freq = switch (c2 <= 2 ? 0 : c2 <= 4 ? 1 : 2) {
+                    case 0 -> rnd.nextPositiveInt() % 5;
+                    case 1 -> 100 + rnd.nextPositiveInt() % 5000;
+                    default -> 50 + rnd.nextPositiveInt() % 100;
+                } * symbolFrequencies[i];
+                priceFrequencySum += freq;
+                priceFrequencies[i] = priceFrequencySum;
+            }
+
+            long tradeStart = MicrosTimestampDriver.INSTANCE.fromSeconds(rnd.nextLong(4_000_000_000L));
+            int avgPricePerTradeRatio = Math.min(Math.max(
+                    priceFrequencySum / (symbolFrequencySum * symbols.length), 1), 50);
+            int priceSize = tradeSize * avgPricePerTradeRatio;
+            long avgPriceSpread = avgTradeSpread / avgPricePerTradeRatio;
+            long ts = tradeStart - avgPriceSpread * rnd.nextLong(symbols.length * 10L);
+
+            try (TableWriter w = newOffPoolWriter("prices" + s)) {
+                CharSequence symbol = null;
+                for (int i = 0; i < priceSize; i++) {
+                    if (i == 0 || rnd.nextInt(100) < 100 - duplicatePercentage) {
+                        ts += (avgPriceSpread / symbols.length) + rnd.nextLong(1000);
+                        int symbolIdx = rnd.nextInt(priceFrequencySum);
+                        for (int j = 0; j < priceFrequencies.length; j++) {
+                            if (symbolIdx < priceFrequencies[j]) {
+                                symbol = symbols[j];
+                                break;
+                            }
+                        }
+                    }
+
+                    TableWriter.Row r = w.newRow(ts);
+                    r.putInt(0, i);
+                    r.putSym(1, symbol);
+                    for (int c = 0; c < nCols; c++) {
+                        switch (colTypes[c]) {
+                            case 0 -> r.putDouble(c + 2, rnd.nextLong(100));
+                            case 1 -> r.putFloat(c + 2, rnd.nextLong(100));
+                            case 2 -> r.putLong(c + 2, rnd.nextLong(100));
+                            default -> throw new IllegalStateException("Unexpected value: " + colTypes[c]);
+                        }
+                    }
+                    r.append();
+                }
+                w.commit();
+            }
+        }
+
+        // Fill trades table (same logic as single-slave prepareFuzzTables)
+        int[] symbolFrequencies = new int[symbols.length];
+        int symbolFrequencySum = 0;
+        for (int i = 0; i < symbolFrequencies.length; i++) {
+            int c = rnd.nextPositiveInt() % 100;
+            int freq = switch (c <= 2 ? 0 : c <= 4 ? 1 : 2) {
+                case 0 -> rnd.nextPositiveInt() % 5;
+                case 1 -> 100 + rnd.nextPositiveInt() % 5000;
+                default -> 50 + rnd.nextPositiveInt() % 100;
+            };
+            symbolFrequencySum += freq;
+            symbolFrequencies[i] = symbolFrequencySum;
+        }
+
+        long tradeStart = MicrosTimestampDriver.INSTANCE.fromSeconds(rnd.nextLong(4_000_000_000L));
+        long ts = tradeStart;
+        try (TableWriter w = newOffPoolWriter("trades")) {
+            CharSequence symbol = null;
+            for (int i = 0; i < tradeSize; i++) {
+                if (i == 0 || rnd.nextInt(100) < 100 - duplicatePercentage) {
+                    ts += rnd.nextPositiveLong() % (avgTradeSpread << 1);
+                    int symbolIdx = rnd.nextInt(symbolFrequencySum);
+                    for (int j = 0; j < symbolFrequencies.length; j++) {
+                        if (symbolIdx < symbolFrequencies[j]) {
+                            symbol = symbols[j];
+                            break;
+                        }
+                    }
+                }
+
+                TableWriter.Row r = w.newRow(ts);
+                r.putInt(0, i);
+                r.putSym(1, symbol);
+                r.putDouble(2, rnd.nextDouble() * 100);
+                r.append();
+            }
+            w.commit();
+        }
+
+        // Optionally make some symbols missing from slaves
+        if (rnd.nextBoolean()) {
+            symbols[rnd.nextPositiveInt() % symbols.length] = "sym_no_price";
+        }
+
+        return perSlaveColumns;
     }
 }
