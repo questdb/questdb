@@ -34,6 +34,9 @@ package io.questdb.cairo;
  */
 public interface DdlListener {
 
+    default void clear() {
+    }
+
     /**
      * Called when a column is added to a table. The enterprise implementation grants
      * owner permissions on the new column to the principal that created it.
