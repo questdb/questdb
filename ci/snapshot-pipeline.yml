@@ -16,6 +16,9 @@ stages:
       - job: BuildOnLinux
         displayName: "Build on Linux"
         pool: hetzner-incus
+        variables:
+          JAVA_HOME_17_X64: "/opt/graalvm"
+          JAVA_HOME: "/opt/graalvm"
         steps:
           - checkout: self
             fetchDepth: 1
