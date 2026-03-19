@@ -240,26 +240,26 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         runTest();
     }
 
-    private CharSequence addColumn(LineData line, int colIndex, QwpWebSocketSender sender) {
-        CharSequence colName = generateColumnName(colIndex, false);
-        CharSequence colValue = addColumnValue(colTypes[colIndex], colValueBases[colIndex], colName, sender);
+    private CharSequence addColumn(LineData line, int colIndex, QwpWebSocketSender sender, Rnd rnd) {
+        CharSequence colName = generateColumnName(colIndex, false, rnd);
+        CharSequence colValue = addColumnValue(colTypes[colIndex], colValueBases[colIndex], colName, sender, rnd);
         line.addColumn(colName, colValue);
         return colName;
     }
 
-    private String addColumnValue(short type, String valueBase, CharSequence colName, QwpWebSocketSender sender) {
+    private String addColumnValue(short type, String valueBase, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
         return switch (type) {
             case DOUBLE -> {
-                int d = random.nextInt(9);
+                int d = rnd.nextInt(9);
                 double value = Numbers.parseInt(valueBase) * Math.pow(10, valueBase.length()) + d;
                 sender.doubleColumn(colName, value);
                 yield valueBase + d + ".0";
             }
             case SYMBOL -> {
-                String postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                String postfix = Character.toString(shouldFuzz(nonAsciiValueFactor, rnd) ? nonAsciiChars[rnd.nextInt(nonAsciiChars.length)] : rnd.nextChar());
                 String base = valueBase;
-                if (sendSymbolsWithSpace && random.nextInt(SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR) == 0) {
-                    int spaceIndex = random.nextInt(base.length() - 1);
+                if (sendSymbolsWithSpace && rnd.nextInt(SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR) == 0) {
+                    int spaceIndex = rnd.nextInt(base.length() - 1);
                     base = base.substring(0, spaceIndex) + "  " + base.substring(spaceIndex);
                 }
                 String symVal = base + postfix;
@@ -267,7 +267,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                 yield symVal;
             }
             case STRING -> {
-                String postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                String postfix = Character.toString(shouldFuzz(nonAsciiValueFactor, rnd) ? nonAsciiChars[rnd.nextInt(nonAsciiChars.length)] : rnd.nextChar());
                 sender.stringColumn(colName, valueBase + postfix);
                 yield "\"" + valueBase + postfix + "\"";
             }
@@ -278,33 +278,33 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         };
     }
 
-    private void addNewColumn(LineData line, QwpWebSocketSender sender) {
-        if (shouldFuzz(newColumnFactor)) {
-            int extraColIndex = random.nextInt(colNameBases.length);
-            CharSequence colName = generateColumnName(extraColIndex, true);
-            CharSequence colValue = addColumnValue(colTypes[extraColIndex], colValueBases[extraColIndex], colName, sender);
+    private void addNewColumn(LineData line, QwpWebSocketSender sender, Rnd rnd) {
+        if (shouldFuzz(newColumnFactor, rnd)) {
+            int extraColIndex = rnd.nextInt(colNameBases.length);
+            CharSequence colName = generateColumnName(extraColIndex, true, rnd);
+            CharSequence colValue = addColumnValue(colTypes[extraColIndex], colValueBases[extraColIndex], colName, sender, rnd);
             line.addColumn(colName, colValue);
         }
     }
 
-    private void addNewSymbol(LineData line, QwpWebSocketSender sender) {
-        if (shouldFuzz(newColumnFactor)) {
-            int extraSymIndex = random.nextInt(symbolNameBases.length);
-            CharSequence symName = generateSymbolName(extraSymIndex, true);
-            CharSequence symValue = addSymbolValue(extraSymIndex, symName, sender);
+    private void addNewSymbol(LineData line, QwpWebSocketSender sender, Rnd rnd) {
+        if (shouldFuzz(newColumnFactor, rnd)) {
+            int extraSymIndex = rnd.nextInt(symbolNameBases.length);
+            CharSequence symName = generateSymbolName(extraSymIndex, true, rnd);
+            CharSequence symValue = addSymbolValue(extraSymIndex, symName, sender, rnd);
             line.addColumn(symName, symValue);
         }
     }
 
-    private CharSequence addSymbol(LineData line, int symIndex, QwpWebSocketSender sender) {
-        CharSequence symName = generateSymbolName(symIndex, false);
-        CharSequence symValue = addSymbolValue(symIndex, symName, sender);
+    private CharSequence addSymbol(LineData line, int symIndex, QwpWebSocketSender sender, Rnd rnd) {
+        CharSequence symName = generateSymbolName(symIndex, false, rnd);
+        CharSequence symValue = addSymbolValue(symIndex, symName, sender, rnd);
         line.addColumn(symName, symValue);
         return symName;
     }
 
-    private String addSymbolValue(int index, CharSequence colName, QwpWebSocketSender sender) {
-        return addColumnValue(SYMBOL, symbolValueBases[index], colName, sender);
+    private String addSymbolValue(int index, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
+        return addColumnValue(SYMBOL, symbolValueBases[index], colName, sender, rnd);
     }
 
     private void assertTable(TableData table, String tableName) {
@@ -337,39 +337,39 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private String generateColumnName(int index, boolean randomize) {
-        return generateName(colNameBases[index], randomize);
+    private String generateColumnName(int index, boolean randomize, Rnd rnd) {
+        return generateName(colNameBases[index], randomize, rnd);
     }
 
-    private LineData generateLine(CharSequence tableName, QwpWebSocketSender sender) {
+    private LineData generateLine(CharSequence tableName, QwpWebSocketSender sender, Rnd rnd) {
         LineData line = new LineData(timestampMicros.incrementAndGet());
         sender.table(tableName);
 
         if (exerciseSymbols) {
-            int[] symIndexes = getSymbolIndexes();
+            int[] symIndexes = getSymbolIndexes(rnd);
             for (int symIndex : symIndexes) {
-                addSymbol(line, symIndex, sender);
-                addNewSymbol(line, sender);
+                addSymbol(line, symIndex, sender, rnd);
+                addNewSymbol(line, sender, rnd);
             }
         }
-        int[] columnIndexes = getColumnIndexes();
+        int[] columnIndexes = getColumnIndexes(rnd);
         for (int colIndex : columnIndexes) {
-            addColumn(line, colIndex, sender);
-            addNewColumn(line, sender);
+            addColumn(line, colIndex, sender, rnd);
+            addNewColumn(line, sender, rnd);
         }
         sender.at(line.getTimestamp(), ChronoUnit.MICROS);
         return line;
     }
 
-    private String generateName(String[] names, boolean randomize) {
-        int caseIndex = diffCasesInColNames ? random.nextInt(names.length) : 0;
-        String postfix = randomize ? Integer.toString(random.nextInt(NEW_COLUMN_RANDOMIZE_FACTOR)) : "";
+    private String generateName(String[] names, boolean randomize, Rnd rnd) {
+        int caseIndex = diffCasesInColNames ? rnd.nextInt(names.length) : 0;
+        String postfix = randomize ? Integer.toString(rnd.nextInt(NEW_COLUMN_RANDOMIZE_FACTOR)) : "";
         return names[caseIndex] + postfix;
     }
 
-    private int[] generateOrdering(int numOfCols) {
+    private int[] generateOrdering(int numOfCols, Rnd rnd) {
         int[] columnOrdering = new int[numOfCols];
-        if (shouldFuzz(columnReorderingFactor)) {
+        if (shouldFuzz(columnReorderingFactor, rnd)) {
             List<Integer> indexes = new ArrayList<>();
             for (int i = 0; i < columnOrdering.length; i++) {
                 indexes.add(i);
@@ -386,30 +386,20 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         return columnOrdering;
     }
 
-    private String generateSymbolName(int index, boolean randomize) {
-        return generateName(symbolNameBases[index], randomize);
+    private String generateSymbolName(int index, boolean randomize, Rnd rnd) {
+        return generateName(symbolNameBases[index], randomize, rnd);
     }
 
-    private int[] getColumnIndexes() {
-        return skipColumns(generateOrdering(colNameBases.length));
-    }
-
-    private int[] getSymbolIndexes() {
-        return skipColumns(generateOrdering(symbolNameBases.length));
+    private int[] getColumnIndexes(Rnd rnd) {
+        return skipColumns(generateOrdering(colNameBases.length, rnd), rnd);
     }
 
     private String getTableName(int tableIndex) {
-        return getTableName(tableIndex, false);
+        return "weather" + tableIndex;
     }
 
-    private String getTableName(int tableIndex, boolean randomCase) {
-        String tableName;
-        if (randomCase) {
-            tableName = random.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
-        } else {
-            tableName = "weather";
-        }
-        return tableName + tableIndex;
+    private int[] getSymbolIndexes(Rnd rnd) {
+        return skipColumns(generateOrdering(symbolNameBases.length, rnd), rnd);
     }
 
     private void initFuzzParameters(
@@ -437,8 +427,9 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         tables = new LowerCaseCharSequenceObjHashMap<>();
     }
 
-    private CharSequence pickTableName() {
-        return getTableName(random.nextInt(numOfTables), true);
+    private CharSequence pickTableName(Rnd rnd) {
+        String tableName = rnd.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
+        return tableName + rnd.nextInt(numOfTables);
     }
 
     private void runTest() throws Exception {
@@ -454,7 +445,8 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             threadPushFinished.setCount(waitCount);
             AtomicInteger failureCounter = new AtomicInteger();
             for (int i = 0; i < numOfThreads; i++) {
-                startThread(port, threadPushFinished, failureCounter);
+                Rnd threadRnd = new Rnd(random.nextLong(), random.nextLong());
+                startThread(port, threadPushFinished, failureCounter, threadRnd);
             }
             threadPushFinished.await();
             Assert.assertEquals(0, failureCounter.get());
@@ -475,19 +467,19 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private boolean shouldFuzz(int fuzzFactor) {
-        return fuzzFactor > 0 && random.nextInt(fuzzFactor) == 0;
+    private boolean shouldFuzz(int fuzzFactor, Rnd rnd) {
+        return fuzzFactor > 0 && rnd.nextInt(fuzzFactor) == 0;
     }
 
-    private int[] skipColumns(int[] originalColumnIndexes) {
-        if (shouldFuzz(columnSkipFactor)) {
+    private int[] skipColumns(int[] originalColumnIndexes, Rnd rnd) {
+        if (shouldFuzz(columnSkipFactor, rnd)) {
             List<Integer> indexes = new ArrayList<>();
             for (int originalColumnIndex : originalColumnIndexes) {
                 indexes.add(originalColumnIndex);
             }
-            int numOfSkippedCols = random.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
+            int numOfSkippedCols = rnd.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
             for (int i = 0; i < numOfSkippedCols; i++) {
-                int skipIndex = random.nextInt(indexes.size());
+                int skipIndex = rnd.nextInt(indexes.size());
                 indexes.remove(skipIndex);
             }
             int[] columnIndexes = new int[indexes.size()];
@@ -499,14 +491,14 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         return originalColumnIndexes;
     }
 
-    private void startThread(int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
+    private void startThread(int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter, Rnd rnd) {
         new Thread(() -> {
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
                 long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
-                        CharSequence tableName = pickTableName();
-                        LineData line = generateLine(tableName, sender);
+                        CharSequence tableName = pickTableName(rnd);
+                        LineData line = generateLine(tableName, sender, rnd);
                         TableData table = tables.get(tableName);
                         table.addLine(line);
 
