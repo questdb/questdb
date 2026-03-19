@@ -313,9 +313,6 @@ class LateralJoinRewriter {
             if (jm.getJoinCriteria() != null && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth)) {
                 return false;
             }
-            if (jm.getNestedModel() != null && jm.getNestedModel().isCorrelatedAtDepth(depth)) {
-                return false;
-            }
         }
         return model.getUnionModel() == null;
     }
@@ -1693,8 +1690,85 @@ class LateralJoinRewriter {
             terminateHere(current, groupingCols, outerRefJoinModel, outer, outerToInnerAlias, depth);
         } else if (current.getJoinModels().size() > 1) {
             if (canPushThroughJoins(current, depth)) {
+                // Neumann-style push: handle each join model independently
                 compensateInnerJoins(current, outer, outerToInnerAlias, depth);
                 deepRewriteOuterRefsInNestedLaterals(current, outer, outerToInnerAlias, depth);
+
+                // Push delim into correlated join model subqueries (index > 0)
+                for (int ji = 1, jn = current.getJoinModels().size(); ji < jn; ji++) {
+                    QueryModel jm = current.getJoinModels().getQuick(ji);
+                    if (isLateralJoin(jm.getJoinType()) || jm.getNestedModel() == null) {
+                        continue;
+                    }
+                    boolean jmCorrelated = jm.getNestedModel().isCorrelatedAtDepth(depth);
+                    boolean needsDelimForJoinType = jm.getJoinType() == QueryModel.JOIN_LEFT_OUTER
+                            || jm.getJoinType() == QueryModel.JOIN_FULL_OUTER;
+
+                    if (jmCorrelated || needsDelimForJoinType) {
+                        // Clone __outer_ref and push into this subquery
+                        QueryModel clonedOuterRef = queryModelPool.next();
+                        clonedOuterRef.setNestedModel(outerRefJoinModel.getNestedModel());
+                        clonedOuterRef.setAlias(outerRefJoinModel.getAlias());
+                        clonedOuterRef.setJoinType(QueryModel.JOIN_CROSS);
+                        LowerCaseCharSequenceObjHashMap<CharSequence> srcMap = outerRefJoinModel.getColumnNameToAliasMap();
+                        LowerCaseCharSequenceObjHashMap<CharSequence> dstMap = clonedOuterRef.getColumnNameToAliasMap();
+                        ObjList<CharSequence> srcKeys = srcMap.keys();
+                        for (int sk = 0, skn = srcKeys.size(); sk < skn; sk++) {
+                            CharSequence key = srcKeys.getQuick(sk);
+                            dstMap.put(key, srcMap.get(key));
+                        }
+                        subGroupingCols.clear();
+                        for (int sg = 0, sgn = groupingCols.size(); sg < sgn; sg++) {
+                            subGroupingCols.add(ExpressionNode.deepClone(expressionNodePool, groupingCols.getQuick(sg)));
+                        }
+                        subCountColAliases.clear();
+                        pushDownOuterRefs(
+                                null, jm.getNestedModel(), subGroupingCols, outerToInnerAlias,
+                                outer, false, subCountColAliases, clonedOuterRef,
+                                jm, depth
+                        );
+
+                        // Add delim column alignment to join criteria.
+                        // Step 2 already added groupingCols to current's SELECT,
+                        // so we use those aliases for the main chain side.
+                        ExpressionNode alignCriteria = jm.getJoinCriteria();
+                        QueryModel jmTop = jm.getNestedModel();
+                        CharSequence jmAlias = jm.getAlias() != null ? jm.getAlias().token : null;
+                        for (int gc = 0, gcn = groupingCols.size(); gc < gcn; gc++) {
+                            ExpressionNode gcol = groupingCols.getQuick(gc);
+                            ExpressionNode gcolForSub = ExpressionNode.deepClone(expressionNodePool, gcol);
+                            CharSequence subAlias = ensureColumnInSelect(jmTop, gcolForSub, gcol.token);
+                            ExpressionNode gcolForMain = ExpressionNode.deepClone(expressionNodePool, gcol);
+                            CharSequence mainAlias = ensureColumnInSelect(current, gcolForMain, gcol.token);
+
+                            // Build: jm_alias.subAlias = mainAlias
+                            CharSequence qualifiedSubCol;
+                            if (jmAlias != null) {
+                                characterStore.newEntry();
+                                characterStore.put(jmAlias).put('.').put(subAlias);
+                                qualifiedSubCol = characterStore.toImmutable();
+                            } else {
+                                qualifiedSubCol = subAlias;
+                            }
+                            ExpressionNode subRef = expressionNodePool.next().of(
+                                    ExpressionNode.LITERAL, qualifiedSubCol, 0, 0
+                            );
+                            ExpressionNode mainRef = expressionNodePool.next().of(
+                                    ExpressionNode.LITERAL, mainAlias, 0, 0
+                            );
+                            ExpressionNode eq = createBinaryOp("=", subRef, mainRef);
+                            alignCriteria = alignCriteria == null ? eq : createBinaryOp("and", alignCriteria, eq);
+                        }
+                        jm.setJoinCriteria(alignCriteria);
+
+                        // If join had no criteria before, upgrade CROSS to INNER
+                        if (jm.getJoinType() == QueryModel.JOIN_CROSS) {
+                            jm.setJoinType(QueryModel.JOIN_INNER);
+                        }
+                    }
+                }
+
+                // Push delim into main chain (index 0)
                 pushDownOuterRefs(
                         current, current.getNestedModel(), groupingCols, outerToInnerAlias,
                         outer, isLeftJoin, countColAliases, outerRefJoinModel,
