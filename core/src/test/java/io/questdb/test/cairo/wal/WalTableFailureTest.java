@@ -55,6 +55,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -1118,6 +1119,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             try (WalWriter writer = engine.getWalWriter(tableName)) {
                 UpdateOperation updateOperation = new UpdateOperation(tableName, 1, 22, 1);
+                updateOperation.withUpdateColumnNames(new ObjList<>("x"));
                 updateOperation.withContext(sqlExecutionContext);
                 writer.apply(updateOperation);
                 Assert.fail();

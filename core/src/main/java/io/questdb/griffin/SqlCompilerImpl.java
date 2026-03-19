@@ -4519,15 +4519,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 updateQueryModel,
                 executionContext
         );
+        final ObjList<CharSequence> updateColumnNames = copyUpdateColumnNames(recordCursorFactory.getMetadata());
 
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-            return new UpdateOperation(
+            final UpdateOperation updateOperation = new UpdateOperation(
                     updateTableToken,
                     selectQueryModel.getTableId(),
                     selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
                     recordCursorFactory
             );
+            updateOperation.withUpdateColumnNames(updateColumnNames);
+            return updateOperation;
         } else {
             recordCursorFactory.close();
 
@@ -4535,13 +4538,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
             }
 
-            return new UpdateOperation(
+            final UpdateOperation updateOperation = new UpdateOperation(
                     updateTableToken,
                     metadata.getTableId(),
                     metadata.getMetadataVersion(),
                     lexer.getPosition()
             );
+            updateOperation.withUpdateColumnNames(updateColumnNames);
+            return updateOperation;
         }
+    }
+
+    private ObjList<CharSequence> copyUpdateColumnNames(RecordMetadata metadata) {
+        final int columnCount = metadata.getColumnCount();
+        final ObjList<CharSequence> updateColumnNames = new ObjList<>(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            updateColumnNames.add(Chars.toString(metadata.getColumnName(i)));
+        }
+        return updateColumnNames;
     }
 
     private RecordCursorFactory generateUpdateFactory(
