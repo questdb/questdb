@@ -288,11 +288,11 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
 
             processHorizonTimestamps(
-                    horizonIterator,
-                    record,
-                    baseRowId,
                     atom,
+                    horizonIterator,
                     slaveCount,
+                    baseRowId,
+                    record,
                     horizonJoinRecord,
                     value,
                     functionUpdater,
@@ -306,11 +306,11 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
     }
 
     private static void processHorizonTimestamps(
-            AsyncHorizonTimestampIterator horizonIterator,
-            PageFrameMemoryRecord masterRecord,
-            long baseRowId,
             AsyncMultiHorizonJoinNotKeyedAtom atom,
+            AsyncHorizonTimestampIterator horizonIterator,
             int slaveCount,
+            long baseRowId,
+            PageFrameMemoryRecord masterRecord,
             MultiHorizonJoinRecord horizonJoinRecord,
             SimpleMapValue value,
             GroupByFunctionsUpdater functionUpdater,
@@ -447,11 +447,11 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             processHorizonTimestamps(
-                    horizonIterator,
-                    record,
-                    baseRowId,
                     atom,
+                    horizonIterator,
                     slaveCount,
+                    baseRowId,
+                    record,
                     horizonJoinRecord,
                     value,
                     functionUpdater,
