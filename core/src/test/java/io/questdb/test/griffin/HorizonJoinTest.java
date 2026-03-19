@@ -4414,6 +4414,57 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiHorizonJoinArrayColumnWithNullSlave() throws Exception {
+        // Multi-slave counterpart of testHorizonJoinEmptySlaveWithArrayColumn.
+        // Verifies that accessing array elements on a null slave record returns NaN.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, arr DOUBLE[]) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 100)
+                            """
+            );
+            // bids is empty — ASOF JOIN will not find a match
+            execute(
+                    """
+                            INSERT INTO asks VALUES
+                                ('1970-01-01T00:00:00.500000Z', 'AX', 50.0)
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            avg\tavg1\tsum
+                            null\t50.0\t100.0
+                            """,
+                    """
+                            SELECT avg(b.arr[1]), avg(a.ask), sum(t.qty)
+                            FROM trades AS t
+                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMultiHorizonJoinBasic() throws Exception {
         // Two slaves with same ON key, LIST offsets
         assertMemoryLeak(() -> {
@@ -4816,6 +4867,131 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "ORDER BY k",
                     null,
                     true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinFilterPreservedOnParallelismDowngrade() throws Exception {
+        // Multi-slave counterpart of testHorizonJoinFilterPreservedOnParallelismDowngrade.
+        // When the multi-slave parallel path steals a filter but parallelism is
+        // downgraded (e.g., count_distinct(varchar)), the filter must still be applied.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE orders (order_sym SYMBOL, ts #TIMESTAMP, label VARCHAR, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (bid_sym SYMBOL, ts #TIMESTAMP, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ask_sym SYMBOL, ts #TIMESTAMP, ask DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO orders VALUES
+                                ('AAPL', '2000-01-01T00:00:01.000000Z', 'a1', 100),
+                                ('AAPL', '2000-01-01T00:00:02.000000Z', 'a2', 200),
+                                ('GOOG', '2000-01-01T00:00:03.000000Z', 'g1', 150)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO bids VALUES
+                                ('AAPL', '2000-01-01T00:00:00.500000Z', 100.0),
+                                ('AAPL', '2000-01-01T00:00:01.500000Z', 110.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO asks VALUES
+                                ('AAPL', '2000-01-01T00:00:00.500000Z', 101.0),
+                                ('AAPL', '2000-01-01T00:00:01.500000Z', 111.0)
+                            """
+            );
+
+            // concat() forces a Java filter, count_distinct(varchar) forces ST path.
+            // Only AAPL orders pass the filter.
+            assertQueryNoLeakCheck(
+                    """
+                            order_sym\tcount_distinct\tsum
+                            AAPL\t2\t300
+                            """,
+                    """
+                            SELECT t.order_sym, count_distinct(t.label), sum(t.qty)
+                            FROM orders AS t
+                            HORIZON JOIN bids AS b ON (t.order_sym = b.bid_sym)
+                            HORIZON JOIN asks AS a ON (t.order_sym = a.ask_sym)
+                                RANGE FROM 0s TO 0s STEP 1s AS h
+                            WHERE concat(t.order_sym, '_0') = 'AAPL_0'
+                            ORDER BY t.order_sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinHorizonTimestamp() throws Exception {
+        // Verifies that h.timestamp resolves correctly via buildMultiHorizonColumnMappings.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO bids VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO asks VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 101.0)
+                            """
+            );
+
+            // Use h.timestamp in the SELECT to verify it resolves
+            assertQueryNoLeakCheck(
+                    replaceExpectedMasterTimestamp(
+                            """
+                                    min\tmax\tavg_bid
+                                    2024-01-01T00:00:01.000000Z\t2024-01-01T00:00:01.000000Z\t100.0
+                                    """
+                    ),
+                    """
+                            SELECT min(h.timestamp), max(h.timestamp), avg(b.bid) AS avg_bid
+                            FROM trades AS t
+                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
                     true
             );
         });
@@ -5400,6 +5576,32 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     0,
                     "HORIZON JOIN requires offset configuration (RANGE or LIST)"
             );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinTimestampOverflow() throws Exception {
+        // Multi-slave counterpart of testHorizonJoinTimestampOverflow.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE bids (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE asks (ts TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)");
+
+            execute("INSERT INTO trades VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 100)");
+            execute("INSERT INTO bids VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 10)");
+            execute("INSERT INTO asks VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 20)");
+
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT avg(b.bid) " +
+                                "FROM trades AS t " +
+                                "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
+                                "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
+                                "LIST (0s, 9000000000000s) AS h"
+                );
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "overflow");
+            }
         });
     }
 
