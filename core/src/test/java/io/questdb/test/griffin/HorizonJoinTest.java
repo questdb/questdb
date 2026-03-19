@@ -46,7 +46,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     private final TestTimestampType rightTableTimestampType;
 
     public HorizonJoinTest() {
-        final Rnd rnd = TestUtils.generateRandom(LOG, 110807351224397L, 1773843497272L);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
         this.parallelHorizonJoinEnabled = rnd.nextBoolean();
@@ -5672,12 +5672,12 @@ public class HorizonJoinTest extends AbstractCairoTest {
         return parallelHorizonJoinEnabled ? "Async Horizon Join workers: 1" : "Horizon Join";
     }
 
-    private String getMultiHorizonJoinPlanType() {
-        return parallelHorizonJoinEnabled ? "Async Multi Horizon Join workers: 1" : "Multi Horizon Join";
-    }
-
     private long getMinutesDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 60_000_000L : 60_000_000_000L;
+    }
+
+    private String getMultiHorizonJoinPlanType() {
+        return parallelHorizonJoinEnabled ? "Async Multi Horizon Join workers: 1" : "Multi Horizon Join";
     }
 
     private long getSecondsDivisor() {
