@@ -774,6 +774,9 @@ class LateralJoinRewriter {
                 dstMap.put(key, srcMap.get(key));
             }
             current.addJoinModel(branchOuterRef);
+            if (branchOuterRef.getAlias() != null) {
+                current.addModelAliasIndex(branchOuterRef.getAlias(), current.getJoinModels().size() - 1);
+            }
 
             branchCorrelated.clear();
             branchNonCorrelated.clear();
@@ -2017,6 +2020,16 @@ class LateralJoinRewriter {
         }
     }
 
+    private static void registerDataSourceAlias(QueryModel parent, QueryModel dataSource, int index) {
+        ExpressionNode alias = dataSource.getAlias();
+        if (alias == null) {
+            alias = dataSource.getTableNameExpr();
+        }
+        if (alias != null) {
+            parent.addModelAliasIndex(alias, index);
+        }
+    }
+
     private void setupOuterRefDataSource(
             QueryModel outerRefSubquery,
             QueryModel outerModel,
@@ -2039,6 +2052,7 @@ class LateralJoinRewriter {
             QueryModel outerJm = outerModel.getJoinModels().getQuick(maxIndex);
             QueryModel outerRefBase = createOuterRefBase(outerJm);
             outerRefSubquery.setNestedModel(outerRefBase);
+            registerDataSourceAlias(outerRefSubquery, outerRefBase, 0);
             return;
         }
 
@@ -2047,6 +2061,7 @@ class LateralJoinRewriter {
             QueryModel outerRefBase = createOuterRefBase(outerJm);
             if (outerRefSubquery.getNestedModel() == null) {
                 outerRefSubquery.setNestedModel(outerRefBase);
+                registerDataSourceAlias(outerRefSubquery, outerRefBase, 0);
             } else {
                 if (outerJm.getJoinCriteria() != null) {
                     outerRefBase.setJoinType(outerJm.getJoinType());
@@ -2056,7 +2071,9 @@ class LateralJoinRewriter {
                 } else {
                     outerRefBase.setJoinType(QueryModel.JOIN_CROSS);
                 }
+                int jmIndex = outerRefSubquery.getJoinModels().size();
                 outerRefSubquery.getJoinModels().add(outerRefBase);
+                registerDataSourceAlias(outerRefSubquery, outerRefBase, jmIndex);
             }
         }
     }
@@ -2094,6 +2111,9 @@ class LateralJoinRewriter {
             int depth
     ) throws SqlException {
         current.getJoinModels().add(outerRefJoinModel);
+        if (outerRefJoinModel.getAlias() != null) {
+            current.addModelAliasIndex(outerRefJoinModel.getAlias(), current.getJoinModels().size() - 1);
+        }
         correlatedPreds.clear();
         extractCorrelatedFromInnerJoins(current, correlatedPreds, depth);
         for (int j = 0, m = correlatedPreds.size(); j < m; j++) {
