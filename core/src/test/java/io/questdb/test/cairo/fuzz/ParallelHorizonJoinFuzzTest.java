@@ -220,6 +220,61 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testParallelMultiHorizonJoinKeyed() throws Exception {
+        testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinNotKeyed() throws Exception {
+        testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                false,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinFiltered() throws Exception {
+        testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                "t.side = 'sell'"
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinFilteredWithBindVariables() throws Exception {
+        testParallelMultiHorizonJoin(
+                (sqlExecutionContext) -> {
+                    BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+                    bindVariableService.setStr("side", "sell");
+                },
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                "t.side = :side"
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinManyOffsets() throws Exception {
+        testParallelMultiHorizonJoin(
+                "LIST (-10s, -5s, -1s, 0s, 1s, 5s, 10s) AS h",
+                new long[]{-10_000_000, -5_000_000, -1_000_000, 0, 1_000_000, 5_000_000, 10_000_000},
+                true,
+                null
+        );
+    }
+
     private static long[] rangeOffsets(int fromSec, int toSec) {
         int count = (toSec - fromSec) + 1;
         long[] offsets = new long[count];
@@ -480,6 +535,185 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                             TestUtils.assertEquals(referenceSink, horizonSink);
                         } catch (AssertionError e) {
                             LOG.error().$("HORIZON JOIN query: ").$(horizonQuery).$();
+                            LOG.error().$("Reference query: ").$(referenceQuery).$();
+                            throw e;
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelMultiHorizonJoin(
+            String horizonClause,
+            long[] offsetsMicros,
+            boolean keyed,
+            String filter
+    ) throws Exception {
+        testParallelMultiHorizonJoin(null, horizonClause, offsetsMicros, keyed, filter);
+    }
+
+    private void testParallelMultiHorizonJoin(
+            BindVariablesInitializer initializer,
+            String horizonClause,
+            long[] offsetsMicros,
+            boolean keyed,
+            String filter
+    ) throws Exception {
+        // Randomize 2-4 slave tables
+        int slaveCount = 2 + rnd.nextInt(3);
+
+        // Build multi-slave HORIZON JOIN query
+        StringBuilder hq = new StringBuilder();
+        hq.append("SELECT h.offset AS h_offset");
+        if (keyed) {
+            hq.append(", t.sym");
+        }
+        for (int s = 0; s < slaveCount; s++) {
+            hq.append(", count(p").append(s).append(".bid) AS cnt_bid").append(s);
+            hq.append(", max(p").append(s).append(".ask) AS max_ask").append(s);
+        }
+        hq.append(" FROM trades t");
+        for (int s = 0; s < slaveCount; s++) {
+            hq.append(" HORIZON JOIN prices").append(s).append(" AS p").append(s);
+            if (keyed) {
+                hq.append(" ON (t.sym = p").append(s).append(".sym)");
+            }
+        }
+        hq.append(' ').append(horizonClause);
+        if (filter != null) {
+            hq.append(" WHERE ").append(filter);
+        }
+        hq.append(" ORDER BY h_offset");
+        if (keyed) {
+            hq.append(", t.sym");
+        }
+        String horizonQuery = hq.toString();
+
+        // Build reference query: per offset, chain ASOF JOINs for all slaves
+        String innerFilter = filter != null ? filter.replace("t.", "") : null;
+        StringBuilder ref = new StringBuilder();
+        ref.append("SELECT h_offset");
+        if (keyed) {
+            ref.append(", sym");
+        }
+        for (int s = 0; s < slaveCount; s++) {
+            ref.append(", count(bid").append(s).append(") AS cnt_bid").append(s);
+            ref.append(", max(ask").append(s).append(") AS max_ask").append(s);
+        }
+        ref.append(" FROM (");
+
+        for (int i = 0; i < offsetsMicros.length; i++) {
+            if (i > 0) {
+                ref.append(" UNION ALL ");
+            }
+            ref.append("SELECT CAST(").append(offsetsMicros[i]).append(" AS long) AS h_offset");
+            if (keyed) {
+                ref.append(", t.sym");
+            }
+            for (int s = 0; s < slaveCount; s++) {
+                ref.append(", p").append(s).append(".bid AS bid").append(s);
+                ref.append(", p").append(s).append(".ask AS ask").append(s);
+            }
+            ref.append(" FROM (SELECT * FROM (SELECT dateadd('u', ")
+                    .append(offsetsMicros[i])
+                    .append(", ts) AS ts, sym, side, price, amount FROM trades");
+            if (innerFilter != null) {
+                ref.append(" WHERE ").append(innerFilter);
+            }
+            ref.append(") TIMESTAMP(ts)) t");
+            for (int s = 0; s < slaveCount; s++) {
+                ref.append(" ASOF JOIN prices").append(s).append(" p").append(s);
+                if (keyed) {
+                    ref.append(" ON (t.sym = p").append(s).append(".sym)");
+                }
+            }
+        }
+
+        ref.append(") GROUP BY h_offset");
+        if (keyed) {
+            ref.append(", sym");
+        }
+        ref.append(" ORDER BY h_offset");
+        if (keyed) {
+            ref.append(", sym");
+        }
+        String referenceQuery = ref.toString();
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        if (initializer != null) {
+                            initializer.init(sqlExecutionContext);
+                        }
+
+                        engine.execute(
+                                """
+                                        CREATE TABLE IF NOT EXISTS trades (
+                                                ts TIMESTAMP,
+                                                sym SYMBOL,
+                                                side SYMBOL,
+                                                price DOUBLE,
+                                                amount DOUBLE
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades"
+                                        + "  SELECT "
+                                        + "      '2020-01-01T00:05'::timestamp + (3600000*x) + rnd_long(-200, 200, 0) as ts, "
+                                        + "      rnd_symbol_zipf(100, 2.0) AS sym, "
+                                        + "      rnd_symbol('buy', 'sell') as side, "
+                                        + "      rnd_double() * 20 + 10 AS price, "
+                                        + "      rnd_double() * 20 + 10 AS amount "
+                                        + "  FROM long_sequence(" + ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+
+                        for (int s = 0; s < slaveCount; s++) {
+                            engine.execute(
+                                    "CREATE TABLE prices" + s + " ("
+                                            + "    ts TIMESTAMP,"
+                                            + "    sym SYMBOL CAPACITY 1024,"
+                                            + "    bid DOUBLE,"
+                                            + "    ask DOUBLE"
+                                            + ") TIMESTAMP(ts) PARTITION BY HOUR;",
+                                    sqlExecutionContext
+                            );
+                            // Each slave gets independently generated data
+                            engine.execute(
+                                    "INSERT INTO prices" + s
+                                            + "  SELECT "
+                                            + "      '2020-01-01'::timestamp + (360000*x) + rnd_long(-200, 200, 0) as ts, "
+                                            + "      rnd_symbol_zipf(100, 2.0) as sym, "
+                                            + "      rnd_double() * 10.0 + 5.0 as bid, "
+                                            + "      rnd_double() * 10.0 + 5.0 as ask "
+                                            + "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
+                                    sqlExecutionContext
+                            );
+                        }
+
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            for (int s = 0; s < slaveCount; s++) {
+                                engine.execute("ALTER TABLE prices" + s + " CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            }
+                        }
+
+                        final StringSink horizonSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, horizonQuery, horizonSink);
+
+                        final StringSink referenceSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, referenceQuery, referenceSink);
+
+                        try {
+                            TestUtils.assertEquals(referenceSink, horizonSink);
+                        } catch (AssertionError e) {
+                            LOG.error().$("Multi HORIZON JOIN query: ").$(horizonQuery).$();
                             LOG.error().$("Reference query: ").$(referenceQuery).$();
                             throw e;
                         }

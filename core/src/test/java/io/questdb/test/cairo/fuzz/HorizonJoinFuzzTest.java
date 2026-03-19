@@ -189,9 +189,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
 
             // Create 2-4 slave tables
             int slaveCount = 2 + rnd.nextInt(3);
-            var perSlaveColumns = prepareMultiFuzzTables(
-                    rnd, tradeSize, avgTradeSpread, duplicatePercentage, symbols, slaveCount
-            );
+            var perSlaveColumns = prepareMultiFuzzTables(rnd, tradeSize, avgTradeSpread, duplicatePercentage, symbols, slaveCount);
 
             if (convertToParquet) {
                 execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
