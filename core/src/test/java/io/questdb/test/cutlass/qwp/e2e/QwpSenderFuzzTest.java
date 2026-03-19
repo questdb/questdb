@@ -90,6 +90,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
+    private int duplicatesFactor = -1;
     private volatile String errorMsg = null;
     private boolean exerciseSymbols = true;
     private int newColumnFactor = -1;
@@ -153,6 +154,13 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAllMixedSplitPart() throws Exception {
+        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
+        initFuzzParameters(-1, -1, -1, 10, -1, false, true, false, 0.05);
+        runTest();
+    }
+
+    @Test
     public void testCaseVariationReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, -1, -1, -1, true, true, false);
@@ -170,6 +178,27 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testCaseVariationReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, -1, -1, -1, true, true, true);
+        runTest();
+    }
+
+    @Test
+    public void testDuplicatesReorderingColumns() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, 0.05);
+        runTest();
+    }
+
+    @Test
+    public void testDuplicatesReorderingColumnsNoSymbols() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, -1, -1, -1, true, false, false, 0.05);
+        runTest();
+    }
+
+    @Test
+    public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, true, 0.05);
         runTest();
     }
 
@@ -244,6 +273,20 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testReorderingSkipDuplicateColumnsWithNonAscii() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, 0.05);
+        runTest();
+    }
+
+    @Test
+    public void testReorderingSkipDuplicateColumnsWithNonAsciiNoSymbols() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, 4, -1, 4, true, false, false, 0.05);
+        runTest();
+    }
+
+    @Test
     public void testReorderingSkipColumnsWithNonAscii() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, 4, -1, 4, true, true, false);
@@ -276,10 +319,11 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         };
     }
 
-    private void addColumn(LineData line, int colIndex, QwpWebSocketSender sender, Rnd rnd) {
+    private CharSequence addColumn(LineData line, int colIndex, QwpWebSocketSender sender, Rnd rnd) {
         CharSequence colName = generateColumnName(colIndex, false, rnd);
         CharSequence colValue = addColumnValue(colTypes[colIndex], colValueBases[colIndex], colName, sender, rnd);
         line.addColumn(colName, colValue);
+        return colName;
     }
 
     private String addColumnValue(short type, String valueBase, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
@@ -312,6 +356,20 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         };
     }
 
+    private void addDuplicateColumn(LineData line, int colIndex, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
+        if (shouldFuzz(duplicatesFactor, rnd)) {
+            CharSequence colValue = addColumnValue(colTypes[colIndex], colValueBases[colIndex], colName, sender, rnd);
+            line.addColumn(colName, colValue);
+        }
+    }
+
+    private void addDuplicateSymbol(LineData line, int symIndex, CharSequence symName, QwpWebSocketSender sender, Rnd rnd) {
+        if (shouldFuzz(duplicatesFactor, rnd)) {
+            CharSequence symValue = addSymbolValue(symIndex, symName, sender, rnd);
+            line.addColumn(symName, symValue);
+        }
+    }
+
     private void addNewColumn(LineData line, QwpWebSocketSender sender, Rnd rnd) {
         if (shouldFuzz(newColumnFactor, rnd)) {
             int extraColIndex = rnd.nextInt(colNameBases.length);
@@ -330,10 +388,11 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         }
     }
 
-    private void addSymbol(LineData line, int symIndex, QwpWebSocketSender sender, Rnd rnd) {
+    private CharSequence addSymbol(LineData line, int symIndex, QwpWebSocketSender sender, Rnd rnd) {
         CharSequence symName = generateSymbolName(symIndex, false, rnd);
         CharSequence symValue = addSymbolValue(symIndex, symName, sender, rnd);
         line.addColumn(symName, symValue);
+        return symName;
     }
 
     private String addSymbolValue(int index, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
@@ -386,13 +445,15 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         if (exerciseSymbols) {
             int[] symIndexes = getSymbolIndexes(rnd);
             for (int symIndex : symIndexes) {
-                addSymbol(line, symIndex, sender, rnd);
+                CharSequence symName = addSymbol(line, symIndex, sender, rnd);
+                addDuplicateSymbol(line, symIndex, symName, sender, rnd);
                 addNewSymbol(line, sender, rnd);
             }
         }
         int[] columnIndexes = getColumnIndexes(rnd);
         for (int colIndex : columnIndexes) {
-            addColumn(line, colIndex, sender, rnd);
+            CharSequence colName = addColumn(line, colIndex, sender, rnd);
+            addDuplicateColumn(line, colIndex, colName, sender, rnd);
             addNewColumn(line, sender, rnd);
         }
         sender.at(line.getTimestamp(), ChronoUnit.MICROS);
@@ -445,7 +506,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             int newColumnFactor, int nonAsciiValueFactor,
             boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace
     ) {
-        initFuzzParameters(columnReorderingFactor, columnSkipFactor, newColumnFactor,
+        initFuzzParameters(-1, columnReorderingFactor, columnSkipFactor, newColumnFactor,
                 nonAsciiValueFactor, diffCasesInColNames, exerciseSymbols, sendSymbolsWithSpace, 0);
     }
 
@@ -455,9 +516,20 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace,
             double columnConvertProb
     ) {
+        initFuzzParameters(-1, columnReorderingFactor, columnSkipFactor, newColumnFactor,
+                nonAsciiValueFactor, diffCasesInColNames, exerciseSymbols, sendSymbolsWithSpace, columnConvertProb);
+    }
+
+    private void initFuzzParameters(
+            int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor,
+            int newColumnFactor, int nonAsciiValueFactor,
+            boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace,
+            double columnConvertProb
+    ) {
         this.columnConvertProb = columnConvertProb;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
+        this.duplicatesFactor = duplicatesFactor;
         this.newColumnFactor = newColumnFactor;
         this.nonAsciiValueFactor = nonAsciiValueFactor;
         this.diffCasesInColNames = diffCasesInColNames;
