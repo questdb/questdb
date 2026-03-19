@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -57,12 +56,12 @@ public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoin
     public AsyncMultiHorizonJoinNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @NotNull HorizonJoinSlaveState[] slaveStates,
+            @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
             @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
             @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int valueCount,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,

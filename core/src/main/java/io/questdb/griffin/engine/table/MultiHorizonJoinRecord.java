@@ -35,6 +35,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -55,7 +56,7 @@ public class MultiHorizonJoinRecord implements Record {
     public static final int SOURCE_SLAVE_BASE = 2;
 
     private final BorrowedArray nullArray = new BorrowedArray();
-    private final Record[] slaveRecords;
+    private final ObjList<Record> slaveRecords;
     private int[] columnIndices;
     private int[] columnSources;
     private long horizonTimestamp;
@@ -63,7 +64,8 @@ public class MultiHorizonJoinRecord implements Record {
     private long offsetValue;
 
     public MultiHorizonJoinRecord(int slaveCount) {
-        this.slaveRecords = new Record[slaveCount];
+        this.slaveRecords = new ObjList<>(slaveCount);
+        this.slaveRecords.setPos(slaveCount);
     }
 
     @Override
@@ -335,11 +337,13 @@ public class MultiHorizonJoinRecord implements Record {
         this.columnIndices = columnIndices;
     }
 
-    public void of(Record masterRecord, long offsetValue, long horizonTimestamp, Record[] slaveRecords) {
+    public void of(Record masterRecord, long offsetValue, long horizonTimestamp, ObjList<Record> slaveRecords) {
         this.masterRecord = masterRecord;
         this.offsetValue = offsetValue;
         this.horizonTimestamp = horizonTimestamp;
-        System.arraycopy(slaveRecords, 0, this.slaveRecords, 0, this.slaveRecords.length);
+        for (int i = 0, n = this.slaveRecords.size(); i < n; i++) {
+            this.slaveRecords.setQuick(i, slaveRecords.getQuick(i));
+        }
     }
 
     private Record getSourceRecord(int col) {
@@ -351,6 +355,6 @@ public class MultiHorizonJoinRecord implements Record {
             return null;
         }
         // source >= SOURCE_SLAVE_BASE
-        return slaveRecords[source - SOURCE_SLAVE_BASE];
+        return slaveRecords.getQuick(source - SOURCE_SLAVE_BASE);
     }
 }

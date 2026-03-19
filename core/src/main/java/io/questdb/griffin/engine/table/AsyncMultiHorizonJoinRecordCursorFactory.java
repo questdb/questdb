@@ -61,7 +61,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -83,7 +82,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
     private final UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence;
     private final JoinRecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
-    private final LongList offsets;
+    private final long[] offsets;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory[] slaveFactories;
     private final int workerCount;
@@ -96,11 +95,11 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             @NotNull RecordMetadata metadata,
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
-            @NotNull HorizonJoinSlaveState[] slaveStates,
+            @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
             @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
             @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
@@ -128,9 +127,9 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
 
-            this.slaveFactories = new RecordCursorFactory[slaveStates.length];
-            for (int i = 0; i < slaveStates.length; i++) {
-                slaveFactories[i] = slaveStates[i].getFactory();
+            this.slaveFactories = new RecordCursorFactory[slaveStates.size()];
+            for (int i = 0; i < slaveStates.size(); i++) {
+                slaveFactories[i] = slaveStates.getQuick(i).getFactory();
             }
 
             final AsyncMultiHorizonJoinAtom atom = new AsyncMultiHorizonJoinAtom(
@@ -203,7 +202,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
     public void toPlan(PlanSink sink) {
         sink.type("Async Multi Horizon Join");
         sink.meta("workers").val(workerCount);
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.meta("slaves").val(slaveFactories.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.setMetadata(horizonJoinMetadata);
@@ -401,7 +400,8 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         }
 
         final boolean sharded = !groupByMapFragment.isNotSharded();
-        final Record[] matchedSlaveRecords = new Record[slaveCount];
+        final ObjList<Record> matchedSlaveRecords = new ObjList<>(slaveCount);
+        matchedSlaveRecords.setPos(slaveCount);
 
         // Reset all slave helpers for this frame
         for (int s = 0; s < slaveCount; s++) {
@@ -477,9 +477,9 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
 
                 if (matchRowId != Long.MIN_VALUE) {
                     helper.recordAt(matchRowId);
-                    matchedSlaveRecords[s] = helper.getRecord();
+                    matchedSlaveRecords.setQuick(s, helper.getRecord());
                 } else {
-                    matchedSlaveRecords[s] = null;
+                    matchedSlaveRecords.setQuick(s, null);
                 }
             }
 

@@ -60,7 +60,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -81,7 +80,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     private final JoinRecordMetadata horizonJoinMetadata;
     private final ObjList<Function> keyFunctions;
     private final RecordCursorFactory masterFactory;
-    private final LongList offsets;
+    private final long[] offsets;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory slaveFactory;
 
@@ -92,7 +91,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -188,7 +187,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", cursor.groupByFunctions);
@@ -224,7 +223,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private final RecordSink masterAsOfJoinMapSink;
         private final int masterTimestampColumnIndex;
         private final long masterTsScale;
-        private final LongList offsets;
+        private final long[] offsets;
         private final VirtualRecord recordA;
         private final VirtualRecord recordB;
         private final ObjList<Function> recordFunctions;
@@ -246,7 +245,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 ObjList<Function> keyFunctions,
                 @Transient BytecodeAssembler asm,
                 int masterTimestampColumnIndex,
-                LongList offsets,
+                long[] offsets,
                 @Transient ArrayColumnTypes keyTypes,
                 @Transient ArrayColumnTypes valueTypes,
                 @Nullable ColumnTypes asOfJoinKeyTypes,
@@ -425,7 +424,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();
-                final long offset = offsets.getQuick(offsetIdx);
+                final long offset = offsets[offsetIdx];
 
                 // Position master record at the correct row via random access
                 masterCursor.recordAt(masterCursor.getRecordB(), masterRowId);

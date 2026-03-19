@@ -56,7 +56,6 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -77,7 +76,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
     private final ObjList<GroupByFunction> groupByFunctions;
     private final JoinRecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
-    private final LongList offsets;
+    private final long[] offsets;
     private final RecordCursorFactory slaveFactory;
     private final SimpleMapValue value;
 
@@ -88,7 +87,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             int valueCount,
@@ -171,7 +170,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
@@ -200,7 +199,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         private final RecordSink masterAsOfJoinMapSink;
         private final int masterTimestampColumnIndex;
         private final long masterTsScale;
-        private final LongList offsets;
+        private final long[] offsets;
         private final VirtualRecord recordA;
         private final RecordSink slaveAsOfJoinMapSink;
         private final HorizonJoinTimeFrameHelper slaveTimeFrameHelper;
@@ -217,7 +216,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 ObjList<GroupByFunction> groupByFunctions,
                 @Transient BytecodeAssembler asm,
                 int masterTimestampColumnIndex,
-                LongList offsets,
+                long[] offsets,
                 @Nullable ColumnTypes asOfJoinKeyTypes,
                 @Nullable RecordSink masterAsOfJoinMapSink,
                 @Nullable RecordSink slaveAsOfJoinMapSink,
@@ -346,7 +345,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();
-                final long offset = offsets.getQuick(offsetIdx);
+                final long offset = offsets[offsetIdx];
 
                 // Position master record at the correct row via random access
                 masterCursor.recordAt(masterCursor.getRecordB(), masterRowId);

@@ -72,7 +72,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @NotNull RecordMetadata markoutMetadata,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,

@@ -1634,7 +1634,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Computes the array of offset values from HorizonJoinContext RANGE or LIST configuration.
      * Offsets are in microseconds (matching QuestDB's default timestamp precision).
      */
-    private LongList computeHorizonOffsets(HorizonJoinContext context, RecordMetadata masterMetadata) throws SqlException {
+    private long[] computeHorizonOffsets(HorizonJoinContext context, RecordMetadata masterMetadata) throws SqlException {
         final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
 
         if (context.getMode() == HorizonJoinContext.MODE_RANGE) {
@@ -1658,9 +1658,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         .put(", max=").put(maxOffsets)
                         .put(']');
             }
-            final LongList offsets = new LongList((int) count);
+            final long[] offsets = new long[(int) count];
             for (int i = 0; i < count; i++) {
-                offsets.add(from + i * step);
+                offsets[i] = from + i * step;
             }
             return offsets;
         } else if (context.getMode() == HorizonJoinContext.MODE_LIST) {
@@ -1673,15 +1673,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         .put(", max=").put(maxOffsets)
                         .put(']');
             }
-            final LongList offsets = new LongList(offsetExpressions.size());
+            final long[] offsets = new long[offsetExpressions.size()];
             for (int i = 0, n = offsetExpressions.size(); i < n; i++) {
                 ExpressionNode expr = offsetExpressions.getQuick(i);
                 long offsetValue = evalHorizonTimeValue(expr, timestampDriver);
                 // Validate monotonically increasing
-                if (offsets.size() > 0 && offsetValue <= offsets.getLast()) {
+                if (i > 0 && offsetValue <= offsets[i - 1]) {
                     throw SqlException.position(expr.position).put("LIST offsets must be monotonically increasing");
                 }
-                offsets.add(offsetValue);
+                offsets[i] = offsetValue;
             }
             return offsets;
         } else {
@@ -3474,7 +3474,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // Compute offsets from RANGE or LIST clause
-        final LongList offsets = computeHorizonOffsets(horizonContext, masterMetadata);
+        final long[] offsets = computeHorizonOffsets(horizonContext, masterMetadata);
 
         // Check if master factory supports page frames - required for parallel execution
         CompiledFilter compiledFilter = null;
@@ -5749,7 +5749,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<QueryModel> slaveModels,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final LongList offsets = computeHorizonOffsets(horizonContext, masterMetadata);
+        final long[] offsets = computeHorizonOffsets(horizonContext, masterMetadata);
         final int slaveCount = slaveFactories.size();
 
         CompiledFilter compiledFilter = null;
@@ -5768,7 +5768,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
-        HorizonJoinSlaveState[] slaveStates = null;
+        ObjList<HorizonJoinSlaveState> slaveStates = null;
 
         try {
             // Validate master timestamp
@@ -5911,7 +5911,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Process ASOF join keys and create HorizonJoinSlaveState for each slave
             final int masterTsType = masterMetadata.getTimestampType();
-            slaveStates = new HorizonJoinSlaveState[slaveCount];
+            slaveStates = new ObjList<>(slaveCount);
             ColumnTypes[] perSlaveAsOfJoinKeyTypes = new ColumnTypes[slaveCount];
             @SuppressWarnings("unchecked")
             Class<RecordSink>[] masterAsOfJoinMapSinkClasses = new Class[slaveCount];
@@ -6020,7 +6020,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 perSlaveAsOfJoinKeyTypes[s] = asOfJoinKeyTypes;
 
-                slaveStates[s] = new HorizonJoinSlaveState(
+                slaveStates.add(new HorizonJoinSlaveState(
                         slaveFactory,
                         perSlaveMasterTsScale,
                         perSlaveSlaveTsScale,
@@ -6028,7 +6028,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata.getColumnCount(),
                         masterSymbolKeyColumnIndices,
                         slaveSymbolKeyColumnIndices
-                );
+                ));
             }
 
             if (!supportsParallelism) {
@@ -6043,7 +6043,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 innerMetadata = null;
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 groupByFunctions = null;
-                final HorizonJoinSlaveState[] slaveStates0 = slaveStates;
+                final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
                 slaveStates = null;
 
                 if (keyTypesCopy.getColumnCount() == 0) {
@@ -6102,7 +6102,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final JoinRecordMetadata innerMetadata0 = innerMetadata;
             final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
             final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
-            final HorizonJoinSlaveState[] slaveStates0 = slaveStates;
+            final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
             final CompiledFilter compiledFilter0 = compiledFilter;
             final MemoryCARW bindVarMemory0 = bindVarMemory;
             final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
@@ -6205,9 +6205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(bindVarFunctions);
             Misc.free(filter);
             if (slaveStates != null) {
-                for (HorizonJoinSlaveState ss : slaveStates) {
-                    Misc.free(ss);
-                }
+                Misc.freeObjList(slaveStates);
             } else {
                 // Free all slave factories on error (not yet owned by slaveStates)
                 for (int s = 0, n = slaveFactories.size(); s < n; s++) {

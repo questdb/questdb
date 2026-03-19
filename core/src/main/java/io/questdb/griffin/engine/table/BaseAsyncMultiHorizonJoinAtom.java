@@ -77,18 +77,18 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final AsyncFilterContext filterCtx;
     protected final int masterTimestampColumnIndex;
     protected final long offsetCount;
-    protected final LongList offsets;
+    protected final long[] offsets;
     protected final GroupByAllocator ownerAllocator;
-    protected final Map[] ownerAsOfJoinMaps;
+    protected final ObjList<Map> ownerAsOfJoinMaps;
     protected final MultiHorizonJoinRecord ownerCombinedRecord;
     protected final GroupByFunctionsUpdater ownerFunctionUpdater;
     protected final ObjList<GroupByFunction> ownerGroupByFunctions;
     protected final AsyncHorizonTimestampIterator ownerHorizonIterator;
     protected final ObjList<RecordSink> ownerMasterAsOfJoinSinks;
     protected final ObjList<RecordSink> ownerSlaveAsOfJoinSinks;
-    protected final ConcurrentTimeFrameCursor[] ownerSlaveTimeFrameCursors;
-    protected final HorizonJoinTimeFrameHelper[] ownerSlaveTimeFrameHelpers;
-    protected final SymbolTranslatingRecord[] ownerSymbolTranslatingRecords;
+    protected final ObjList<ConcurrentTimeFrameCursor> ownerSlaveTimeFrameCursors;
+    protected final ObjList<HorizonJoinTimeFrameHelper> ownerSlaveTimeFrameHelpers;
+    protected final ObjList<SymbolTranslatingRecord> ownerSymbolTranslatingRecords;
     protected final long[] perSlaveMasterTsScales;
     protected final ObjList<GroupByAllocator> perWorkerAllocators;
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
@@ -109,12 +109,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected BaseAsyncMultiHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @NotNull HorizonJoinSlaveState[] slaveStates,
+            @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
             @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
             @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
             @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -127,15 +127,15 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
-        assert slaveStates.length > 0;
+        assert slaveStates.size() > 0;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
-        this.slaveCount = slaveStates.length;
+        this.slaveCount = slaveStates.size();
         this.workerCount = workerCount;
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
-        this.offsetCount = offsets.size();
+        this.offsetCount = offsets.length;
         this.horizonJoinSymbolTableSource = new MultiHorizonJoinSymbolTableSource(columnSources, columnIndexes, slaveCount);
 
         // Filter and memory pool resources (ownership transferred from caller)
@@ -164,7 +164,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             // Per-slave master timestamp scales and per-worker sinks
             this.perSlaveMasterTsScales = new long[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
-                perSlaveMasterTsScales[s] = slaveStates[s].getMasterTsScale();
+                perSlaveMasterTsScales[s] = slaveStates.getQuick(s).getMasterTsScale();
             }
             this.ownerMasterAsOfJoinSinks = new ObjList<>(slaveCount);
             this.ownerSlaveAsOfJoinSinks = new ObjList<>(slaveCount);
@@ -194,14 +194,14 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
             // Create time frame cursors from slave factories - one per worker + owner per slave
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
-            this.ownerSlaveTimeFrameCursors = new ConcurrentTimeFrameCursor[slaveCount];
-            this.ownerSlaveTimeFrameHelpers = new HorizonJoinTimeFrameHelper[slaveCount];
+            this.ownerSlaveTimeFrameCursors = new ObjList<>(slaveCount);
+            this.ownerSlaveTimeFrameHelpers = new ObjList<>(slaveCount);
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount * slaveCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount * slaveCount);
             for (int s = 0; s < slaveCount; s++) {
-                HorizonJoinSlaveState state = slaveStates[s];
-                ownerSlaveTimeFrameCursors[s] = state.getFactory().newTimeFrameCursor();
-                ownerSlaveTimeFrameHelpers[s] = new HorizonJoinTimeFrameHelper(lookahead, state.getSlaveTsScale());
+                HorizonJoinSlaveState state = slaveStates.getQuick(s);
+                ownerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
+                ownerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, state.getSlaveTsScale()));
                 for (int w = 0; w < workerCount; w++) {
                     perWorkerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                     perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, state.getSlaveTsScale()));
@@ -210,16 +210,16 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
             // Per-worker x per-slave ASOF maps
             final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
-            this.ownerAsOfJoinMaps = new Map[slaveCount];
+            this.ownerAsOfJoinMaps = new ObjList<>(slaveCount);
             this.perWorkerAsOfJoinMaps = new ObjList<>(workerCount * slaveCount);
             for (int s = 0; s < slaveCount; s++) {
                 if (perSlaveAsOfJoinKeyTypes != null && perSlaveAsOfJoinKeyTypes[s] != null) {
-                    ownerAsOfJoinMaps[s] = MapFactory.createUnorderedMap(configuration, perSlaveAsOfJoinKeyTypes[s], asOfValueTypes);
+                    ownerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, perSlaveAsOfJoinKeyTypes[s], asOfValueTypes));
                     for (int w = 0; w < workerCount; w++) {
                         perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, perSlaveAsOfJoinKeyTypes[s], asOfValueTypes));
                     }
                 } else {
-                    ownerAsOfJoinMaps[s] = null;
+                    ownerAsOfJoinMaps.add(null);
                     for (int w = 0; w < workerCount; w++) {
                         perWorkerAsOfJoinMaps.add(null);
                     }
@@ -227,16 +227,16 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             }
 
             // Per-worker x per-slave symbol translating records
-            this.ownerSymbolTranslatingRecords = new SymbolTranslatingRecord[slaveCount];
+            this.ownerSymbolTranslatingRecords = new ObjList<>(slaveCount);
             this.perWorkerSymbolTranslatingRecords = new ObjList<>(workerCount * slaveCount);
             for (int s = 0; s < slaveCount; s++) {
-                HorizonJoinSlaveState state = slaveStates[s];
+                HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 if (state.getMasterSymbolKeyColumnIndices() != null) {
-                    ownerSymbolTranslatingRecords[s] = new SymbolTranslatingRecord(
+                    ownerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
                             state.getMasterColumnCount(),
                             state.getMasterSymbolKeyColumnIndices(),
                             state.getSlaveSymbolKeyColumnIndices()
-                    );
+                    ));
                     for (int w = 0; w < workerCount; w++) {
                         perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(
                                 state.getMasterColumnCount(),
@@ -245,7 +245,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                         ));
                     }
                 } else {
-                    ownerSymbolTranslatingRecords[s] = null;
+                    ownerSymbolTranslatingRecords.add(null);
                     for (int w = 0; w < workerCount; w++) {
                         perWorkerSymbolTranslatingRecords.add(null);
                     }
@@ -315,24 +315,18 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         Misc.clearObjList(perWorkerAllocators);
 
         // Clear ASOF join maps (per-slave)
-        for (int s = 0; s < slaveCount; s++) {
-            Misc.free(ownerAsOfJoinMaps[s]);
-        }
+        Misc.freeObjListAndKeepObjects(ownerAsOfJoinMaps);
         Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
 
         // Clear filter context (memory pools, etc.)
         filterCtx.clear();
 
         // Clear symbol translating records (per-slave)
-        for (int s = 0; s < slaveCount; s++) {
-            Misc.clear(ownerSymbolTranslatingRecords[s]);
-        }
+        Misc.clearObjList(ownerSymbolTranslatingRecords);
         Misc.clearObjList(perWorkerSymbolTranslatingRecords);
 
         // Clear time frame cursors (per-slave)
-        for (int s = 0; s < slaveCount; s++) {
-            Misc.free(ownerSlaveTimeFrameCursors[s]);
-        }
+        Misc.freeObjListAndKeepObjects(ownerSlaveTimeFrameCursors);
         Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
 
         // Let subclass clear its resources
@@ -349,13 +343,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        for (int s = 0; s < slaveCount; s++) {
-            Misc.free(ownerAsOfJoinMaps[s]);
-        }
+        Misc.freeObjList(ownerAsOfJoinMaps);
         Misc.freeObjList(perWorkerAsOfJoinMaps);
-        for (int s = 0; s < slaveCount; s++) {
-            Misc.free(ownerSlaveTimeFrameCursors[s]);
-        }
+        Misc.freeObjList(ownerSlaveTimeFrameCursors);
         Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
         // Horizon timestamp iterators
         Misc.free(ownerHorizonIterator);
@@ -363,9 +353,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         // Filter and memory pool resources
         Misc.free(filterCtx);
         // Symbol translating records (per-slave)
-        for (int s = 0; s < slaveCount; s++) {
-            Misc.free(ownerSymbolTranslatingRecords[s]);
-        }
+        Misc.freeObjList(ownerSymbolTranslatingRecords);
         Misc.freeObjList(perWorkerSymbolTranslatingRecords);
 
         // Let subclass close its resources
@@ -374,7 +362,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     public Map getAsOfJoinMap(int slotId, int slaveIndex) {
         if (slotId == -1) {
-            return ownerAsOfJoinMaps[slaveIndex];
+            return ownerAsOfJoinMaps.getQuick(slaveIndex);
         }
         return perWorkerAsOfJoinMaps.getQuick(slotId * slaveCount + slaveIndex);
     }
@@ -418,7 +406,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     public Record getMasterKeyRecord(int slotId, int slaveIndex, Record masterRecord) {
         final SymbolTranslatingRecord translatingRecord;
         if (slotId == -1) {
-            translatingRecord = ownerSymbolTranslatingRecords[slaveIndex];
+            translatingRecord = ownerSymbolTranslatingRecords.getQuick(slaveIndex);
         } else {
             translatingRecord = perWorkerSymbolTranslatingRecords.getQuick(slotId * slaveCount + slaveIndex);
         }
@@ -441,7 +429,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
      * Get the offset value at the given index. Offsets are in master's scale.
      */
     public long getOffset(int index) {
-        return offsets.getQuick(index);
+        return offsets[index];
     }
 
     public long getOffsetCount() {
@@ -468,7 +456,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
      */
     public HorizonJoinTimeFrameHelper getSlaveTimeFrameHelper(int slotId, int slaveIndex) {
         if (slotId == -1) {
-            return ownerSlaveTimeFrameHelpers[slaveIndex];
+            return ownerSlaveTimeFrameHelpers.getQuick(slaveIndex);
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId * slaveCount + slaveIndex);
     }
@@ -529,8 +517,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             int frameCount
     ) throws SqlException {
         // Initialize owner cursor for this slave
-        int tsIndex = ownerSlaveTimeFrameCursors[slaveIndex].getTimestampIndex();
-        ownerSlaveTimeFrameCursors[slaveIndex].of(
+        int tsIndex = ownerSlaveTimeFrameCursors.getQuick(slaveIndex).getTimestampIndex();
+        ownerSlaveTimeFrameCursors.getQuick(slaveIndex).of(
                 slavePageFrameCursor,
                 slaveFrameAddressCache,
                 slaveFramePartitionIndexes,
@@ -540,7 +528,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 frameCount,
                 tsIndex
         );
-        ownerSlaveTimeFrameHelpers[slaveIndex].of(ownerSlaveTimeFrameCursors[slaveIndex]);
+        ownerSlaveTimeFrameHelpers.getQuick(slaveIndex).of(ownerSlaveTimeFrameCursors.getQuick(slaveIndex));
 
         // Initialize per-worker cursors for this slave
         for (int w = 0; w < workerCount; w++) {
@@ -560,8 +548,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         }
 
         // Initialize symbol translating records for this slave
-        if (ownerSymbolTranslatingRecords[slaveIndex] != null) {
-            ownerSymbolTranslatingRecords[slaveIndex].initSources(masterSymbolTableSource, slavePageFrameCursor);
+        if (ownerSymbolTranslatingRecords.getQuick(slaveIndex) != null) {
+            ownerSymbolTranslatingRecords.getQuick(slaveIndex).initSources(masterSymbolTableSource, slavePageFrameCursor);
             for (int w = 0; w < workerCount; w++) {
                 int idx = w * slaveCount + slaveIndex;
                 SymbolTranslatingRecord r = perWorkerSymbolTranslatingRecords.getQuick(idx);
@@ -572,8 +560,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         }
 
         // Reopen ASOF maps for this slave
-        if (ownerAsOfJoinMaps[slaveIndex] != null) {
-            ownerAsOfJoinMaps[slaveIndex].reopen();
+        if (ownerAsOfJoinMaps.getQuick(slaveIndex) != null) {
+            ownerAsOfJoinMaps.getQuick(slaveIndex).reopen();
         }
         for (int w = 0; w < workerCount; w++) {
             int idx = w * slaveCount + slaveIndex;
