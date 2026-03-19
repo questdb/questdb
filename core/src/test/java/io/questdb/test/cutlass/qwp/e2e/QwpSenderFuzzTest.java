@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
@@ -251,8 +252,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         return switch (type) {
             case DOUBLE -> {
                 int d = rnd.nextInt(9);
-                double value = Numbers.parseInt(valueBase) * Math.pow(10, valueBase.length()) + d;
-                sender.doubleColumn(colName, value);
+                sender.doubleColumn(colName, Numbers.parseInt(valueBase) * 10 + d);
                 yield valueBase + d + ".0";
             }
             case SYMBOL -> {
@@ -334,6 +334,11 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             } catch (AssertionError e) {
                 throw new AssertionError("Table: " + table.getName(), e);
             }
+        } catch (CairoException e) {
+            if (e.getFlyweightMessage().toString().contains("table does not exist")) {
+                Assert.fail("Table " + tableName + " does not exist but expected " + table.size() + " rows");
+            }
+            throw e;
         }
     }
 
