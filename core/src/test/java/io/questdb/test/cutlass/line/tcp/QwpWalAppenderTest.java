@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
@@ -131,7 +132,7 @@ public class QwpWalAppenderTest {
         assertEquals(QwpConstants.TYPE_UUID, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.UUID));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = CairoException.class)
     public void testMapQuestDBTypeToQwpUnsupported() {
         // IPV4 is not supported in QWP v1
         QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.IPv4);
@@ -213,7 +214,7 @@ public class QwpWalAppenderTest {
         assertEquals(ColumnType.UUID, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_UUID));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test(expected = CairoException.class)
     public void testMapQwpTypeToQuestDBUnknown() {
         QwpWalAppender.mapQwpTypeToQuestDB(0xFF);
     }
