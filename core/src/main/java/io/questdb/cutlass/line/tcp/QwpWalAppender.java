@@ -360,12 +360,20 @@ public class QwpWalAppender implements QuietCloseable {
             int timestampColumnInBlock,
             int columnCount,
             int rowCount,
-            TableUpdateDetails tud
-    ) throws QwpParseException, CommitFailedException {
+            TableUpdateDetails tud,
+            long metadataVersion
+    ) throws QwpParseException, CommitFailedException, MetadataChangedException {
         ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
         appender.beginColumnarWrite(rowCount);
 
         try {
+            // beginColumnarWrite may trigger a segment roll if the WAL writer
+            // detects a pending ALTER TABLE. Re-check metadata version to avoid
+            // writing with stale column types (e.g., SYMBOL after conversion to VARCHAR).
+            if (walWriter.getMetadataVersion() != metadataVersion) {
+                appender.cancelColumnarWrite();
+                throw MetadataChangedException.INSTANCE;
+            }
             long minTimestamp = Long.MAX_VALUE;
             long maxTimestamp = Long.MIN_VALUE;
             boolean outOfOrder = false;
@@ -756,6 +764,13 @@ public class QwpWalAppender implements QuietCloseable {
             tud.commitIfMaxUncommittedRowsCountReached();
         } catch (Throwable t) {
             appender.cancelColumnarWrite();
+            // A concurrent ALTER TABLE (e.g., ALTER COLUMN TYPE) can change metadata
+            // mid-write, causing failures like "symbol map reader is not available"
+            // when a SYMBOL column has been converted to VARCHAR. Detect this by
+            // comparing the metadata version and retry with fresh metadata.
+            if (walWriter.getMetadataVersion() != metadataVersion) {
+                throw MetadataChangedException.INSTANCE;
+            }
             throw t;
         }
     }
@@ -788,6 +803,7 @@ public class QwpWalAppender implements QuietCloseable {
         }
         TableRecordMetadata metadata = writer.getMetadata();
         int timestampIndex = tud.getTimestampIndex();
+        long metadataVersion = writer.getMetadataVersion();
 
         // Phase 1: Resolve column indices and create missing columns
         int timestampColumnInBlock = -1;
@@ -851,10 +867,17 @@ public class QwpWalAppender implements QuietCloseable {
             columnTypeMap[i] = columnType;
         }
 
+        // A concurrent ALTER TABLE (e.g., ALTER COLUMN TYPE) can change the
+        // writer's metadata version during Phase 1's addColumn calls. When that
+        // happens, column types resolved earlier in the loop are stale.
+        if (writer.getMetadataVersion() != metadataVersion) {
+            throw MetadataChangedException.INSTANCE;
+        }
+
         // Phase 2: Write data - always use columnar path
         // Writer is always a WalWriter in this context (QWP v1 only supports WAL tables)
         WalWriter walWriter = (WalWriter) writer;
-        appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
+        appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
     }
 
 }
