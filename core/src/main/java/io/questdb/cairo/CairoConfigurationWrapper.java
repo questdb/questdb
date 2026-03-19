@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -734,6 +734,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetDataPageSize() {
         return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return getDelegate().getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+    }
+
+    @Override
+    public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return getDelegate().getPartitionEncoderParquetO3RewriteUnusedRatio();
     }
 
     @Override

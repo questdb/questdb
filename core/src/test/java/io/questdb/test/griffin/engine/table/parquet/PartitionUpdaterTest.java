@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -73,7 +74,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                     Path path = new Path();
                     PartitionDescriptor descriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader(tableName);
-                    PartitionUpdater updater = new PartitionUpdater(ff)
+                    PartitionUpdater updater = new PartitionUpdater()
             ) {
                 // Initial partition dir created.
                 final TableToken table = engine.getTableTokenIfExists(tableName);
@@ -109,16 +110,21 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 final long parquetPartitionSize = ff.length(path.$());
 
                 // Update the partition, adding a row.
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(
                         path.$(),
-                        configuration.getWriterFileOpenOpts(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
                         parquetPartitionSize,
                         1,  // index of the timestamp column
-                        0, // uncompressed
+                        0L, // uncompressed
                         false,
                         false,
-                        0,
-                        0,
+                        0L,
+                        0L,
                         0.01
                 );
 

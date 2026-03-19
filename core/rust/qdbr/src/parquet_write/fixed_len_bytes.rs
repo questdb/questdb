@@ -87,6 +87,7 @@ pub fn bytes_to_page<const N: usize>(
         encode_plain(data, &mut buffer, null_value, &mut stats, bloom_hashes);
     }
 
+    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,
