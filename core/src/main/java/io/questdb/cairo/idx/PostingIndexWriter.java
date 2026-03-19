@@ -1777,13 +1777,22 @@ public class PostingIndexWriter implements IndexWriter {
         int byteOffset = (int) (bitOffset / 8);
         int bitShift = (int) (bitOffset % 8);
 
-        // Read-modify-write: OR the value bits into the existing bytes
-        int bytesNeeded = (bitShift + bitWidth + 7) / 8;
-        long shifted = value << bitShift;
-        for (int i = 0; i < bytesNeeded; i++) {
-            byte existing = Unsafe.getUnsafe().getByte(destAddr + byteOffset + i);
-            Unsafe.getUnsafe().putByte(destAddr + byteOffset + i, (byte) (existing | (byte) shifted));
-            shifted >>>= 8;
+        // Write value bits one byte at a time to handle cross-word boundaries
+        long remaining = value;
+        int bitsWritten = 0;
+        int curByte = byteOffset;
+        int curShift = bitShift;
+
+        while (bitsWritten < bitWidth) {
+            int bitsInThisByte = Math.min(8 - curShift, bitWidth - bitsWritten);
+            byte mask = (byte) ((1 << bitsInThisByte) - 1);
+            byte existing = Unsafe.getUnsafe().getByte(destAddr + curByte);
+            existing |= (byte) ((remaining & mask) << curShift);
+            Unsafe.getUnsafe().putByte(destAddr + curByte, existing);
+            remaining >>>= bitsInThisByte;
+            bitsWritten += bitsInThisByte;
+            curByte++;
+            curShift = 0;
         }
     }
 

@@ -184,37 +184,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         }
     }
 
-    /**
-     * Prefetches all generation data pages into the OS page cache.
-     * Call before a full scan to ensure sequential gen-major access
-     * pattern results in cache hits rather than page faults.
-     */
-    public void prefetchGenData() {
-        ensureGenLookup();
-        if (genCount == 0 || keyCount == 0) {
-            return;
-        }
-        // Touch each gen's data region sequentially (gen-major order)
-        // to bring pages into L3/page cache
-        long checksum = 0;
-        for (int g = 0; g < genCount; g++) {
-            long genFileOffset = genLookup.getGenFileOffset(g);
-            int genDataSize = genLookup.getGenDataSize(g);
-            if (genDataSize > 0) {
-                valueMem.extend(genFileOffset + genDataSize);
-                long addr = valueMem.addressOf(genFileOffset);
-                // Read one byte per 4KB page to trigger page-in
-                for (int off = 0; off < genDataSize; off += 4096) {
-                    checksum += Unsafe.getUnsafe().getByte(addr + off);
-                }
-            }
-        }
-        // Volatile store to prevent dead code elimination
-        if (checksum == Long.MIN_VALUE) {
-            throw new IllegalStateException("unreachable");
-        }
-    }
-
     @Override
     public void reloadConditionally() {
         // Check both pages for a higher sequence than cached

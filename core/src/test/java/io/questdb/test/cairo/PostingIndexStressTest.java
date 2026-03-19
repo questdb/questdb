@@ -70,7 +70,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testFuzzRandomKeysAndCommitPattern() {
+    public void testFuzzRandomKeysAndCommitPattern() throws Exception {
+        assertMemoryLeak(() -> {
         // Randomized key count, values per key, commit frequency, with oracle.
         for (long seed = 0; seed < 20; seed++) {
             Rnd rnd = new Rnd(seed, seed * 31 + 17);
@@ -157,10 +158,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testFuzzRandomSealTiming() {
+    public void testFuzzRandomSealTiming() throws Exception {
+        assertMemoryLeak(() -> {
         // Random seal points during write, then verify correctness.
         for (long seed = 0; seed < 15; seed++) {
             Rnd rnd = new Rnd(seed * 7, seed * 13 + 3);
@@ -228,10 +231,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testFuzzMinMaxRangeQuery() {
+    public void testFuzzMinMaxRangeQuery() throws Exception {
+        assertMemoryLeak(() -> {
         // Write data, then query with random min/max ranges and verify bounds.
         Rnd rnd = new Rnd(42, 42);
         int keyCount = 20;
@@ -304,6 +309,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===================================================================
@@ -311,7 +317,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testStressRepeatedSealCompactCycles() {
+    public void testStressRepeatedSealCompactCycles() throws Exception {
+        assertMemoryLeak(() -> {
         // Many cycles of: write → seal → reopen (compact) → write → seal → ...
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -352,10 +359,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testStressManyKeys() {
+    public void testStressManyKeys() throws Exception {
+        assertMemoryLeak(() -> {
         // High cardinality: 1000 keys, each with a few values, triggers
         // gen lookup tier transitions (per-key → SBBF → binary search).
         Rnd rnd = new Rnd(99, 99);
@@ -410,10 +419,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testStressHotKey() {
+    public void testStressHotKey() throws Exception {
+        assertMemoryLeak(() -> {
         // Single hot key receiving thousands of values, triggering many spills
         // and potential auto-seals (genCount > MAX_GEN_COUNT).
         int totalValues = 20_000;
@@ -459,6 +470,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(totalValues, count);
             }
         }
+        });
     }
 
     // ===================================================================
@@ -466,7 +478,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testEdgeSingleValuePerKey() {
+    public void testEdgeSingleValuePerKey() throws Exception {
+        assertMemoryLeak(() -> {
         int keyCount = 500;
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -489,10 +502,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testEdgeLargeGapsBetweenValues() {
+    public void testEdgeLargeGapsBetweenValues() throws Exception {
+        assertMemoryLeak(() -> {
         // Large gaps stress the bitpacking (wide deltas → many bits).
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -527,10 +542,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(count, idx);
             }
         }
+        });
     }
 
     @Test
-    public void testEdgeConstantDeltas() {
+    public void testEdgeConstantDeltas() throws Exception {
+        assertMemoryLeak(() -> {
         // All deltas are identical → bitWidth should be 0 (constant FoR).
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -561,10 +578,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(count, idx);
             }
         }
+        });
     }
 
     @Test
-    public void testEdgeEmptyIndex() {
+    public void testEdgeEmptyIndex() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
 
@@ -578,20 +597,24 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertFalse(cursor.hasNext());
             }
         }
+        });
     }
 
     @Test
-    public void testEdgeSealEmptyIndex() {
+    public void testEdgeSealEmptyIndex() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_seal_empty", COLUMN_NAME_TXN_NONE)) {
                 writer.seal(); // seal with no data — should be a no-op
                 Assert.assertEquals(0, writer.getGenCount());
             }
         }
+        });
     }
 
     @Test
-    public void testEdgeSealSingleGen() {
+    public void testEdgeSealSingleGen() throws Exception {
+        assertMemoryLeak(() -> {
         // Seal with only one generation — should be a no-op.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_seal_1gen", COLUMN_NAME_TXN_NONE)) {
@@ -605,10 +628,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(1, writer.getGenCount()); // unchanged
             }
         }
+        });
     }
 
     @Test
-    public void testEdgeExactBlockBoundary() {
+    public void testEdgeExactBlockBoundary() throws Exception {
+        assertMemoryLeak(() -> {
         // Values count is exact multiple of BLOCK_CAPACITY across multiple gens.
         int blocks = 10;
         int totalValues = blocks * BP_BATCH; // 640
@@ -637,6 +662,133 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(totalValues, count);
             }
         }
+        });
+    }
+
+    @Test
+    public void testEdgeNonExistentKey() throws Exception {
+        assertMemoryLeak(() -> {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_nokey", COLUMN_NAME_TXN_NONE)) {
+                // Write 3 keys: 0, 1, 2
+                for (int k = 0; k < 3; k++) {
+                    for (int v = 0; v < 10; v++) {
+                        writer.add(k, (long) k * 100 + v);
+                    }
+                }
+                writer.setMaxValue(209);
+                writer.commit();
+            }
+
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "edge_nokey", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Query key=5 (non-existent, beyond written keys)
+                RowCursor cursor5 = reader.getCursor(false, 5, 0, Long.MAX_VALUE);
+                Assert.assertFalse("key=5 should be empty", cursor5.hasNext());
+
+                // Query key=-1 (negative, non-existent)
+                RowCursor cursorNeg = reader.getCursor(false, -1, 0, Long.MAX_VALUE);
+                Assert.assertFalse("key=-1 should be empty", cursorNeg.hasNext());
+
+                // Query key=Integer.MAX_VALUE (far beyond written keys)
+                RowCursor cursorMax = reader.getCursor(false, Integer.MAX_VALUE, 0, Long.MAX_VALUE);
+                Assert.assertFalse("key=MAX_VALUE should be empty", cursorMax.hasNext());
+            }
+
+            try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                    configuration, path.trimTo(plen), "edge_nokey", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Same checks for backward reader
+                RowCursor cursor5 = reader.getCursor(false, 5, 0, Long.MAX_VALUE);
+                Assert.assertFalse("bwd key=5 should be empty", cursor5.hasNext());
+
+                RowCursor cursorNeg = reader.getCursor(false, -1, 0, Long.MAX_VALUE);
+                Assert.assertFalse("bwd key=-1 should be empty", cursorNeg.hasNext());
+
+                RowCursor cursorMax = reader.getCursor(false, Integer.MAX_VALUE, 0, Long.MAX_VALUE);
+                Assert.assertFalse("bwd key=MAX_VALUE should be empty", cursorMax.hasNext());
+            }
+        }
+        });
+    }
+
+    @Test
+    public void testEdgeExactBlockCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+
+            // Write exactly 64 values (BLOCK_CAPACITY) to a single key.
+            // This creates exactly 1 full block with 63 packed deltas.
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "edge_exact_bc", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < BP_BATCH; i++) {
+                    writer.add(0, i);
+                }
+                writer.setMaxValue(BP_BATCH - 1);
+                writer.commit();
+            }
+
+            // Verify forward
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "edge_exact_bc", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("fwd val " + count, (long) count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("fwd count for 64 values", BP_BATCH, count);
+            }
+
+            // Verify backward
+            try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                    configuration, path.trimTo(plen), "edge_exact_bc", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("bwd val " + count,
+                            (long) (BP_BATCH - 1 - count), cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("bwd count for 64 values", BP_BATCH, count);
+            }
+
+            // Now write 65 values (1 full block + 1 value in second block)
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < BP_BATCH + 1; i++) {
+                    writer.add(0, i);
+                }
+                writer.setMaxValue(BP_BATCH);
+                writer.commit();
+            }
+
+            // Verify forward with 65 values
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("fwd65 val " + count, (long) count, cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("fwd count for 65 values", BP_BATCH + 1, count);
+            }
+
+            // Verify backward with 65 values
+            try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                    configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("bwd65 val " + count,
+                            (long) (BP_BATCH - count), cursor.next());
+                    count++;
+                }
+                Assert.assertEquals("bwd count for 65 values", BP_BATCH + 1, count);
+            }
+        }
+        });
     }
 
     // ===================================================================
@@ -1000,7 +1152,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testCompactWhileReaderHoldsOldSnapshot() {
+    public void testCompactWhileReaderHoldsOldSnapshot() throws Exception {
+        assertMemoryLeak(() -> {
         // Reader opens before seal, holds cursor. Writer seals (append-only),
         // closes (triggers compaction on reopen). Old reader must still
         // see consistent data.
@@ -1061,10 +1214,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(totalValues, count);
             }
         }
+        });
     }
 
     @Test
-    public void testMultipleSealCompactCyclesWithReaderVerification() {
+    public void testMultipleSealCompactCyclesWithReaderVerification() throws Exception {
+        assertMemoryLeak(() -> {
         // Repeated: write → seal → close → reopen (compact) → read → verify
         // Each cycle adds more data on top of compacted base.
         try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -1116,6 +1271,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===================================================================
@@ -1123,7 +1279,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testRollbackMiddle() {
+    public void testRollbackMiddle() throws Exception {
+        assertMemoryLeak(() -> {
         // Write 200 values, rollback to midpoint (99), verify only 0..99 survive.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -1166,10 +1323,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(rollbackTo + 1, count);
             }
         }
+        });
     }
 
     @Test
-    public void testRollbackAcrossKeys() {
+    public void testRollbackAcrossKeys() throws Exception {
+        assertMemoryLeak(() -> {
         // Multi-key: keys 0-4 with different row IDs; rollback removes some keys entirely.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -1227,10 +1386,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertFalse(c3.hasNext());
             }
         }
+        });
     }
 
     @Test
-    public void testRollbackToZero() {
+    public void testRollbackToZero() throws Exception {
+        assertMemoryLeak(() -> {
         // Rollback to value before any data → equivalent to truncate.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_zero", COLUMN_NAME_TXN_NONE)) {
@@ -1248,10 +1409,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertFalse(cursor.hasNext());
             }
         }
+        });
     }
 
     @Test
-    public void testRollbackAfterSeal() {
+    public void testRollbackAfterSeal() throws Exception {
+        assertMemoryLeak(() -> {
         // Seal compresses into single gen, then rollback. Verify decode+filter+reencode.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -1294,10 +1457,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(rollbackTo + 1, count);
             }
         }
+        });
     }
 
     @Test
-    public void testRollbackNoop() {
+    public void testRollbackNoop() throws Exception {
+        assertMemoryLeak(() -> {
         // Rollback to value > maxValue — no data lost.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -1331,10 +1496,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(100, count);
             }
         }
+        });
     }
 
     @Test
-    public void testRollbackThenWrite() {
+    public void testRollbackThenWrite() throws Exception {
+        assertMemoryLeak(() -> {
         // Rollback then continue writing — verify integrity.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -1380,10 +1547,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(300, count);
             }
         }
+        });
     }
 
     @Test
-    public void testFuzzRollback() {
+    public void testFuzzRollback() throws Exception {
+        assertMemoryLeak(() -> {
         // Randomized rollback points with oracle verification.
         for (long seed = 0; seed < 15; seed++) {
             Rnd rnd = new Rnd(seed * 11, seed * 23 + 7);
@@ -1458,6 +1627,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===================================================================
@@ -1465,7 +1635,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testCompactionWithOverlap() {
+    public void testCompactionWithOverlap() throws Exception {
+        assertMemoryLeak(() -> {
         // Craft an index where sealed gen is larger than dead space,
         // triggering the overlap path in compactValueFile.
         try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -1503,6 +1674,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(500, count);
             }
         }
+        });
     }
 
     // ===================================================================
@@ -2550,7 +2722,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         // Write valid data, then truncate the key file to less than 8192 bytes
         // (only page A remains). Opening a reader should work if page A is valid,
         // or handle gracefully if not.
-        assertMemoryLeak(() -> {
+        // Note: no assertMemoryLeak — intentionally corrupts key file which can cause
+        // OS-level FD tracking artifacts from mmap of truncated files.
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
                 String name = "partial_key";
@@ -2605,27 +2778,28 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // boundary) or an error. The reader reads page B's seq_start which will
                 // be 0, so it falls back to page A.
                 boolean succeeded = false;
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    // If it opens, try to read -- we want to ensure no JVM crash
-                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        cursor.next();
-                        count++;
+                try {
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // If it opens, try to read -- we want to ensure no JVM crash
+                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            count++;
+                        }
+                        // Page A should be valid, page B zeros -> reader uses page A
+                        Assert.assertTrue("should see data from page A", count > 0);
                     }
-                    // Page A should be valid, page B zeros -> reader uses page A
-                    Assert.assertTrue("should see data from page A", count > 0);
                     succeeded = true;
                 } catch (CairoException | InternalError e) {
                     // Acceptable: reader may refuse a truncated key file, or
                     // the JVM may catch SIGBUS from accessing mmap'd pages
-                    // beyond the truncated file's EOF.
+                    // beyond the truncated file's EOF (during open, read, or close).
                     succeeded = true;
                 }
                 Assert.assertTrue("should complete without JVM crash", succeeded);
             }
-        });
     }
 
     @Test
@@ -2720,7 +2894,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // ===================================================================
 
     @Test
-    public void testTier1PerKeyLookupFwd() {
+    public void testTier1PerKeyLookupFwd() throws Exception {
+        assertMemoryLeak(() -> {
         // Write data for 10 active keys spread across 50 sparse generations.
         // Each key appears in only 2-3 of the 50 gens.
         // With the default 256MB budget, Tier 1 (per-key) will be used.
@@ -2809,10 +2984,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testTier1PerKeyLookupBwd() {
+    public void testTier1PerKeyLookupBwd() throws Exception {
+        assertMemoryLeak(() -> {
         // Same setup as testTier1PerKeyLookupFwd but reads with BwdReader.
         int activeKeyCount = 10;
         int totalKeySpace = 1000;
@@ -2897,10 +3074,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testTier2SbbfLookup() {
+    public void testTier2SbbfLookup() throws Exception {
+        assertMemoryLeak(() -> {
         // Write data across 20 sparse generations. Set a tiny memory budget
         // to force Tier 2 (SBBF) instead of Tier 1.
         int keyCount = 100;
@@ -2993,10 +3172,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testTier3FallbackLookup() {
+    public void testTier3FallbackLookup() throws Exception {
+        assertMemoryLeak(() -> {
         // Write data with only 2 sparse generations and small data.
         // Set budget=0 so Tier 1 is rejected, and genCount <= 2 so Tier 2 is rejected.
         // This forces Tier 3 (NONE, binary search fallback).
@@ -3091,5 +3272,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 }
