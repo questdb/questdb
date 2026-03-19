@@ -566,9 +566,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         Misc.free(frameSequence);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        for (RecordCursorFactory sf : slaveFactories) {
-            Misc.free(sf);
-        }
+        Misc.free(slaveFactories);
         Misc.free(horizonJoinMetadata);
         Misc.freeObjList(recordFunctions);
     }

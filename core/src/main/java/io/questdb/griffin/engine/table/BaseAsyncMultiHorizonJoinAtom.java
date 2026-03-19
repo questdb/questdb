@@ -94,9 +94,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
     protected final ObjList<MultiHorizonJoinRecord> perWorkerCombinedRecords;
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
-    // Pre-allocated per-worker lists for matched slave records (avoids allocations on the data path)
-    private final ObjList<Record> ownerMatchedSlaveRecords;
-    private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
     protected final PerWorkerLocks perWorkerLocks;
@@ -108,6 +105,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final int slaveCount;
     protected final int workerCount;
     private final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+    // Pre-allocated per-worker lists for matched slave records (avoids allocations on the data path)
+    private final ObjList<Record> ownerMatchedSlaveRecords;
+    private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
 
     protected BaseAsyncMultiHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -423,13 +423,6 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         return perWorkerCombinedRecords.getQuick(slotId);
     }
 
-    public ObjList<Record> getMatchedSlaveRecords(int slotId) {
-        if (slotId == -1) {
-            return ownerMatchedSlaveRecords;
-        }
-        return perWorkerMatchedSlaveRecords.getQuick(slotId);
-    }
-
     public RecordSink getMasterAsOfJoinSink(int slotId, int slaveIndex) {
         if (slotId == -1) {
             return ownerMasterAsOfJoinSinks.getQuick(slaveIndex);
@@ -457,6 +450,13 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     public long getMasterTimestampScale(int slaveIndex) {
         return perSlaveMasterTsScales[slaveIndex];
+    }
+
+    public ObjList<Record> getMatchedSlaveRecords(int slotId) {
+        if (slotId == -1) {
+            return ownerMatchedSlaveRecords;
+        }
+        return perWorkerMatchedSlaveRecords.getQuick(slotId);
     }
 
     /**

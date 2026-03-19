@@ -468,9 +468,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         Misc.free(frameSequence);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        for (RecordCursorFactory sf : slaveFactories) {
-            Misc.free(sf);
-        }
+        Misc.free(slaveFactories);
         Misc.free(horizonJoinMetadata);
         Misc.freeObjListAndClear(groupByFunctions);
     }
