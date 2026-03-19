@@ -2841,7 +2841,7 @@ mod tests {
         columns: Vec<Column>,
     ) -> Vec<u8> {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let partition = Partition { table: "test_table".to_string(), columns };
+        let partition = Partition { table: "test_table".to_string(), columns, column_structure_version: -1 };
         ParquetWriter::new(&mut buf)
             .with_statistics(true)
             .with_raw_array_encoding(true)

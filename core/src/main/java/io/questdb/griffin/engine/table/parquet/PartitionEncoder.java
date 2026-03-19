@@ -61,7 +61,8 @@ public class PartitionEncoder {
             int version,
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            int columnStructureVersion
     ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
@@ -145,7 +146,8 @@ public class PartitionEncoder {
                     version,
                     bloomFilterColumnIndexesPtr,
                     bloomFilterColumnCount,
-                    bloomFilterFpp
+                    bloomFilterFpp,
+                    descriptor.getColumnStructureVersion()
             );
         } finally {
             descriptor.clear();
@@ -157,6 +159,7 @@ public class PartitionEncoder {
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
         descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
+        descriptor.columnStructureVersion = tableReader.getTxFile().getColumnStructureVersion();
         final TableReaderMetadata metadata = tableReader.getMetadata();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
@@ -182,6 +185,7 @@ public class PartitionEncoder {
         assert partitionSize != 0;
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
         descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
+        descriptor.columnStructureVersion = tableReader.getTxFile().getColumnStructureVersion();
 
         final TableReaderMetadata metadata = tableReader.getMetadata();
         final int columnCount = metadata.getColumnCount();
@@ -292,7 +296,8 @@ public class PartitionEncoder {
             int version,
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            int columnStructureVersion
     ) throws CairoException;
 
     static {

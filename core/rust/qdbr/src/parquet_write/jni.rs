@@ -82,6 +82,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             col_data_len,
             0, // row_count = 0 for schema-only
             timestamp_index,
+            -1,
         )?;
         parquet_updater.set_target_schema(&partition)
     };
@@ -326,6 +327,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             col_data_len,
             row_count,
             timestamp_index,
+            -1,
         )?;
         parquet_updater.replace_row_group(&partition, row_group_id)
     };
@@ -380,6 +382,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             col_data_len,
             row_count,
             timestamp_index,
+            -1,
         )?;
         parquet_updater.insert_row_group(&partition, position)
     };
@@ -424,6 +427,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_indexes: *const jint,
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
+    column_structure_version: jint,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -436,6 +440,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_data_len,
             row_count,
             timestamp_index,
+            column_structure_version,
         )?;
 
         let dest_path = unsafe {
@@ -526,6 +531,7 @@ fn create_partition_descriptor(
     col_data_len: jlong,
     row_count: jlong,
     timestamp_index: jint,
+    column_structure_version: i32,
 ) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
@@ -598,7 +604,7 @@ fn create_partition_descriptor(
     }
     .to_string();
 
-    let partition = Partition { table, columns };
+    let partition = Partition { table, columns, column_structure_version };
     Ok(partition)
 }
 
@@ -745,6 +751,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_indexes: *const jint,
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
+    column_structure_version: jint,
 ) -> *mut StreamingParquetWriter {
     let create = || -> ParquetResult<StreamingParquetWriter> {
         let partition_template = create_partition_template(
@@ -754,6 +761,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_meta_data,
             timestamp_index,
             timestamp_descending,
+            column_structure_version,
         )?;
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
@@ -863,6 +871,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let mut new_partition = Partition {
                 table: String::new(),
                 columns: encoder.partition.columns.clone(),
+                column_structure_version: encoder.partition.column_structure_version,
             };
             update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
             encoder.pending_partitions.push(new_partition);
@@ -1051,6 +1060,7 @@ fn create_partition_template(
     col_meta_data_ptr: *const i64,
     timestamp_index: jint,
     timestamp_descending: jboolean,
+    column_structure_version: i32,
 ) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
@@ -1121,7 +1131,7 @@ fn create_partition_template(
         seen[id] = true;
     }
 
-    Ok(Partition { table: String::new(), columns })
+    Ok(Partition { table: String::new(), columns, column_structure_version })
 }
 
 fn update_partition_data(
@@ -1260,6 +1270,7 @@ fn convert_row_group_buffers_to_partition(
     let mut new_partition = Partition {
         table: String::new(),
         columns: Vec::with_capacity(partition_template.columns.len()),
+        column_structure_version: partition_template.column_structure_version,
     };
     let column_bufs = row_group_bufs.column_buffers();
 

@@ -36,6 +36,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -219,6 +220,9 @@ public class ConvertOperatorImpl implements Closeable {
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 if (asyncProcessingErrorCount.get() == 0) {
+                    if (tableWriter.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                        continue;
+                    }
                     try {
                         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);

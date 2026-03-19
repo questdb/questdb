@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -43,6 +44,9 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         for (int i = 0, n = columnIndexes.size(); i < n; i++) {
             int colIdx = columnIndexes.getQuick(i);
             columnMapping.addColumn(colIdx, readerMetadata.getWriterIndex(colIdx));
+        }
+        if (readerMetadata instanceof TableReaderMetadata) {
+            columnMapping.setWriterIndexToDenseIndex(((TableReaderMetadata) readerMetadata).getWriterIndexToDenseIndexMap());
         }
     }
 

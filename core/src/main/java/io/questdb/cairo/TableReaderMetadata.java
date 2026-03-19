@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -49,6 +50,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private final IntIntHashMap writerIndexToDenseIndex = new IntIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -151,6 +153,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
         }
+    }
+
+    public IntIntHashMap getWriterIndexToDenseIndexMap() {
+        return writerIndexToDenseIndex;
     }
 
     public int getDenseSymbolIndex(int columnIndex) {
@@ -313,6 +319,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
+        this.writerIndexToDenseIndex.clear();
 
         TableUtils.buildColumnListFromMetadataFile(mem, columnCount, columnOrderList);
         this.columnNameIndexMap.clear();
@@ -348,6 +355,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         )
                 );
                 int denseIndex = columnMetadata.size() - 1;
+                writerIndexToDenseIndex.put(writerIndex, denseIndex);
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
                     throw validationException(mem).put("Duplicate column [name=").put(name).put("] at ").put(i);
                 }
@@ -357,6 +365,28 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             }
         }
         this.columnCount = columnMetadata.size();
+
+        // Map historical (replaced/deleted) writer indexes to their current dense column index.
+        // This is needed so parquet partitions written with old writer indexes can be mapped
+        // to the current column layout after ALTER COLUMN TYPE operations.
+        for (int rawSlot = 0; rawSlot < columnCount; rawSlot++) {
+            if (writerIndexToDenseIndex.keyIndex(rawSlot) < 0) {
+                continue; // already mapped (live column)
+            }
+            int columnType = TableUtils.getColumnType(mem, rawSlot);
+            if (columnType < 0) {
+                // Deleted column — find its position via replacingIndex
+                int replacingIdx = TableUtils.getReplacingColumnIndex(mem, rawSlot);
+                int position = replacingIdx > -1 ? replacingIdx : rawSlot;
+                // Find the dense index of the live column at this position
+                for (int d = 0, dc = columnMetadata.size(); d < dc; d++) {
+                    if (((TableReaderMetadataColumn) columnMetadata.getQuick(d)).getStableIndex() == position) {
+                        writerIndexToDenseIndex.put(rawSlot, d);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     public void updateTableToken(TableToken tableToken) {

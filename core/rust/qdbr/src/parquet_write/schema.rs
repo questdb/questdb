@@ -418,6 +418,7 @@ impl Column {
 pub struct Partition {
     pub table: String,
     pub columns: Vec<Column>,
+    pub column_structure_version: i32,
 }
 
 pub fn to_parquet_schema(
@@ -469,6 +470,8 @@ pub fn to_parquet_schema(
             ascii,
         });
     }
+
+    qdb_meta.column_structure_version = partition.column_structure_version;
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);

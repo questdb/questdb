@@ -2800,6 +2800,84 @@ public class ParquetWriteTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAlterColumnTypeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with INT column across two partitions.
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (10, '2020-01-02T00:00:00.000Z'),
+                            (20, '2020-01-02T06:00:00.000Z'),
+                            (30, '2020-01-02T12:00:00.000Z'),
+                            (40, '2020-01-02T18:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Convert the first partition to parquet, keep the second native.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Verify partition formats (use getPartitionFormatFromMetadata
+            // which reads the txFile directly, rather than the openPartitionInfo cache).
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // ALTER COLUMN TYPE: INT -> LONG.
+            // ConvertOperatorImpl skips parquet partitions, so only the native
+            // partition undergoes file-level conversion.
+            execute("ALTER TABLE x ALTER COLUMN x TYPE LONG");
+            drainWalQueue();
+
+            // The parquet partition was written with the old INT writer index.
+            // openParquet() finds it via the dense-index fallback and currently
+            // leaves it as NULL (data conversion deferred to follow-up).
+            // The native partition is fully converted to LONG.
+            assertSql(
+                    """
+                            x\tts
+                            null\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            null\t2020-01-01T12:00:00.000000Z
+                            null\t2020-01-01T18:00:00.000000Z
+                            10\t2020-01-02T00:00:00.000000Z
+                            20\t2020-01-02T06:00:00.000000Z
+                            30\t2020-01-02T12:00:00.000000Z
+                            40\t2020-01-02T18:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // Verify the parquet partition is still parquet (not rewritten).
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(
+                        "partition 0 format after ALTER COLUMN TYPE",
+                        PartitionFormat.PARQUET,
+                        reader.getPartitionFormatFromMetadata(0)
+                );
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+        });
+    }
+
     private static int countPartitionDirs(File tableDir, String prefix) {
         String[] dirs = tableDir.list((dir, name) -> name.startsWith(prefix));
         return dirs != null ? dirs.length : 0;

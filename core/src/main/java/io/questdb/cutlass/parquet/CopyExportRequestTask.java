@@ -621,7 +621,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     parquetVersion,
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
-                    fpp
+                    fpp,
+                    -1
             );
         }
 
@@ -743,22 +744,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            switch (ColumnType.tagOf(columnType)) {
+            return switch (ColumnType.tagOf(columnType)) {
                 // Types using Simd<i64, 8> or Simd<f64, 8>
-                case ColumnType.LONG:
-                case ColumnType.DOUBLE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                    return 8;
+                case ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
-                case ColumnType.INT:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                    return 4;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
                 // All other types use scalar paths - no SIMD alignment required
-                default:
-                    return 1;
-            }
+                default -> 1;
+            };
         }
 
         /**
