@@ -2963,6 +2963,286 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLateralWithCorrelatedJoinModelSubqueries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_a (oid INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_b (oid INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t_outer VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t_a VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t_b VALUES
+                    (1, 100, '2024-01-01T00:10:00.000000Z'),
+                    (2, 200, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // Both sides of the JOIN inside the lateral subquery have correlated references
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\tqty
+                            1\t10\t100
+                            1\t20\t100
+                            2\t30\t200
+                            """,
+                    """
+                            SELECT o.id, sub.val, sub.qty
+                            FROM t_outer o
+                            JOIN LATERAL (
+                                SELECT a.val, b.qty
+                                FROM (SELECT val FROM t_a WHERE t_a.oid = o.id) a
+                                CROSS JOIN (SELECT qty FROM t_b WHERE t_b.oid = o.id) b
+                            ) sub ON true
+                            ORDER BY o.id, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testLateralWithCorrelatedLeftJoinCriteria() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_left (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_right (id INT, ref_id INT, info STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t_outer VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t_left VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z'),
+                    (3, 30, '2024-01-01T02:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t_right VALUES
+                    (1, 1, 'info_a', '2024-01-01T00:10:00.000000Z'),
+                    (2, 2, 'info_b', '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // LEFT JOIN ON condition has a correlated reference
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\tinfo
+                            1\t10\tinfo_a
+                            2\t20\tinfo_b
+                            """,
+                    """
+                            SELECT o.id, sub.val, sub.info
+                            FROM t_outer o
+                            JOIN LATERAL (
+                                SELECT l.val, r.info
+                                FROM t_left l
+                                LEFT JOIN t_right r ON l.id = r.ref_id AND r.id = o.id
+                                WHERE l.id = o.id
+                            ) sub ON true
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testLateralWithUnionAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_data (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t_outer VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t_data VALUES
+                    (1, 10, 'A', '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, 'A', '2024-01-01T00:20:00.000000Z'),
+                    (1, 30, 'A', '2024-01-01T00:30:00.000000Z'),
+                    (1, 40, 'B', '2024-01-01T00:40:00.000000Z'),
+                    (1, 50, 'B', '2024-01-01T00:50:00.000000Z'),
+                    (2, 60, 'A', '2024-01-01T01:10:00.000000Z'),
+                    (2, 70, 'B', '2024-01-01T01:20:00.000000Z'),
+                    (2, 80, 'B', '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // UNION branches with LIMIT
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t40
+                            2\t60
+                            2\t70
+                            """,
+                    """
+                            SELECT o.id, sub.val
+                            FROM t_outer o
+                            JOIN LATERAL (
+                                SELECT val FROM t_data WHERE oid = o.id AND src = 'A' ORDER BY val LIMIT 1
+                                UNION ALL
+                                SELECT val FROM t_data WHERE oid = o.id AND src = 'B' ORDER BY val LIMIT 1
+                            ) sub ON true
+                            ORDER BY o.id, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testLateralWithUnionOnNonJoinLayer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t_data (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t_outer VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t_data VALUES
+                    (1, 10, 'A', '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, 'B', '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, 'A', '2024-01-01T01:10:00.000000Z'),
+                    (2, 40, 'B', '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // UNION on a non-join layer (wrapped in a SELECT)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t20
+                            2\t30
+                            2\t40
+                            """,
+                    """
+                            SELECT o.id, sub.val
+                            FROM t_outer o
+                            JOIN LATERAL (
+                                SELECT val FROM (
+                                    SELECT val FROM t_data WHERE oid = o.id AND src = 'A'
+                                    UNION ALL
+                                    SELECT val FROM t_data WHERE oid = o.id AND src = 'B'
+                                )
+                            ) sub ON true
+                            ORDER BY o.id, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // UNION branch with deeper nesting: correlated ref inside a subquery within a UNION branch
+    @Test
+    public void testLateralWithUnionDeepNesting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (x INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (1, 100, '2024-01-01T00:10:00.000000Z'),
+                    (2, 200, '2024-01-01T01:10:00.000000Z'),
+                    (2, 300, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tval
+                            1\t30
+                            1\t100
+                            2\t30
+                            2\t500
+                            """,
+                    """
+                            SELECT t1.x, sub.val FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT sum(a) AS val FROM t2 WHERE t2.x = t1.x
+                                UNION ALL
+                                SELECT s FROM (
+                                    SELECT sum(b) AS s FROM t3 WHERE t3.x = t1.x
+                                ) nested_sub
+                            ) sub
+                            ORDER BY t1.x, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // UNION branch with aggregate at deeper nesting level
+    @Test
+    public void testLateralWithUnionDeepAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (x INT, b INT, cat STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (1, 100, 'A', '2024-01-01T00:10:00.000000Z'),
+                    (1, 200, 'B', '2024-01-01T00:20:00.000000Z'),
+                    (2, 300, 'A', '2024-01-01T01:10:00.000000Z'),
+                    (2, 400, 'A', '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tval
+                            1\t10
+                            1\t200
+                            2\t20
+                            2\t700
+                            """,
+                    """
+                            SELECT t1.x, sub.val FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT a AS val FROM t2 WHERE t2.x = t1.x
+                                UNION ALL
+                                SELECT total FROM (
+                                    SELECT sum(b) AS total FROM t3 WHERE t3.x = t1.x GROUP BY cat
+                                ) agg WHERE agg.total > 100
+                            ) sub
+                            ORDER BY t1.x, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

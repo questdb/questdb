@@ -127,7 +127,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjList<LowerCaseCharSequenceHashSet> correlatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
+    private final IntHashSet decorrelatedDepths = new IntHashSet();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
@@ -574,6 +576,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
         columnAliasRefCounts.clear();
+        decorrelatedDepths.clear();
+        Misc.clearObjList(correlatedColumns);
+        correlatedColumns.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -756,6 +761,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getConstWhereClause() {
         return constWhereClause;
+    }
+
+    public ObjList<LowerCaseCharSequenceHashSet> getCorrelatedColumns() {
+        return correlatedColumns;
     }
 
     public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
@@ -1134,6 +1143,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return cacheable;
     }
 
+    public boolean isCorrelatedAtDepth(int depth) {
+        if (nestedModel != null) {
+            if (nestedModel.isCorrelatedAtDepth(depth)) {
+                return true;
+            }
+        }
+
+        for (int i = 1, j = joinModels.size(); i < j; i++) {
+            QueryModel m = joinModels.get(i);
+            if (m != null) {
+                if (m.isCorrelatedAtDepth(depth)) {
+                    return true;
+                }
+            }
+        }
+
+        if (unionModel != null) {
+            if (unionModel.isCorrelatedAtDepth(depth)) {
+                return true;
+            }
+        }
+        return decorrelatedDepths.contains(depth);
+    }
+
     public boolean isCteModel() {
         return isCteModel;
     }
@@ -1185,6 +1218,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
+    }
+
+    public void makeCorrelatedAtDepth(int depth) {
+        decorrelatedDepths.add(depth);
     }
 
     /**
