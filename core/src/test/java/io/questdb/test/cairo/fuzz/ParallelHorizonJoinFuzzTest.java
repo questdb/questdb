@@ -221,26 +221,6 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelMultiHorizonJoinKeyed() throws Exception {
-        testParallelMultiHorizonJoin(
-                "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2),
-                true,
-                null
-        );
-    }
-
-    @Test
-    public void testParallelMultiHorizonJoinNotKeyed() throws Exception {
-        testParallelMultiHorizonJoin(
-                "RANGE FROM -2s TO 2s STEP 1s AS h",
-                rangeOffsets(-2, 2),
-                false,
-                null
-        );
-    }
-
-    @Test
     public void testParallelMultiHorizonJoinFiltered() throws Exception {
         testParallelMultiHorizonJoin(
                 "RANGE FROM -2s TO 2s STEP 1s AS h",
@@ -266,11 +246,31 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMultiHorizonJoinKeyed() throws Exception {
+        testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                null
+        );
+    }
+
+    @Test
     public void testParallelMultiHorizonJoinManyOffsets() throws Exception {
         testParallelMultiHorizonJoin(
                 "LIST (-10s, -5s, -1s, 0s, 1s, 5s, 10s) AS h",
                 new long[]{-10_000_000, -5_000_000, -1_000_000, 0, 1_000_000, 5_000_000, 10_000_000},
                 true,
+                null
+        );
+    }
+
+    @Test
+    public void testParallelMultiHorizonJoinNotKeyed() throws Exception {
+        testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                false,
                 null
         );
     }
