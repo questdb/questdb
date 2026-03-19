@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.std.ObjList;
 
 /**
  * Symbol table source for multi-slave HORIZON JOIN queries that routes symbol table
@@ -34,13 +35,14 @@ import io.questdb.cairo.sql.SymbolTableSource;
 class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
     private final int[] columnIndices;
     private final int[] columnSources;
-    private final SymbolTableSource[] slaveSources;
+    private final ObjList<SymbolTableSource> slaveSources;
     private SymbolTableSource masterSource;
 
     MultiHorizonJoinSymbolTableSource(int[] columnSources, int[] columnIndices, int slaveCount) {
         this.columnSources = columnSources;
         this.columnIndices = columnIndices;
-        this.slaveSources = new SymbolTableSource[slaveCount];
+        this.slaveSources = new ObjList<>(slaveCount);
+        this.slaveSources.setPos(slaveCount);
     }
 
     @Override
@@ -51,7 +53,7 @@ class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
             return masterSource.getSymbolTable(sourceColumnIndex);
         }
         if (source >= MultiHorizonJoinRecord.SOURCE_SLAVE_BASE) {
-            SymbolTableSource slaveSource = slaveSources[source - MultiHorizonJoinRecord.SOURCE_SLAVE_BASE];
+            SymbolTableSource slaveSource = slaveSources.getQuick(source - MultiHorizonJoinRecord.SOURCE_SLAVE_BASE);
             return slaveSource != null ? slaveSource.getSymbolTable(sourceColumnIndex) : null;
         }
         return null;
@@ -65,14 +67,16 @@ class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
             return masterSource.newSymbolTable(sourceColumnIndex);
         }
         if (source >= MultiHorizonJoinRecord.SOURCE_SLAVE_BASE) {
-            SymbolTableSource slaveSource = slaveSources[source - MultiHorizonJoinRecord.SOURCE_SLAVE_BASE];
+            SymbolTableSource slaveSource = slaveSources.getQuick(source - MultiHorizonJoinRecord.SOURCE_SLAVE_BASE);
             return slaveSource != null ? slaveSource.newSymbolTable(sourceColumnIndex) : null;
         }
         return null;
     }
 
-    void of(SymbolTableSource masterSource, SymbolTableSource[] slaveSources) {
+    void of(SymbolTableSource masterSource, ObjList<SymbolTableSource> slaveSources) {
         this.masterSource = masterSource;
-        System.arraycopy(slaveSources, 0, this.slaveSources, 0, this.slaveSources.length);
+        for (int i = 0, n = this.slaveSources.size(); i < n; i++) {
+            this.slaveSources.setQuick(i, slaveSources.getQuick(i));
+        }
     }
 }

@@ -80,6 +80,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private final PageFrameAddressCache[] slaveTimeFrameAddressCaches;
     private final DirectIntList[] slaveTimeFramePartitionIndexes;
     private final LongList[] slaveTimeFrameRowCounts;
+    private final ObjList<TablePageFrameCursor> slaveFrameCursors;
+    private final ObjList<SymbolTableSource> slaveSources;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence;
@@ -87,7 +89,6 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private MapRecordCursor mapCursor;
-    private TablePageFrameCursor[] slaveFrameCursors;
 
     public AsyncMultiHorizonJoinRecordCursor(
             CairoEngine engine,
@@ -102,6 +103,10 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             this.recordFunctions = recordFunctions;
             this.slaveFactories = slaveFactories;
             this.slaveCount = slaveFactories.length;
+            this.slaveFrameCursors = new ObjList<>(slaveCount);
+            this.slaveFrameCursors.setPos(slaveCount);
+            this.slaveSources = new ObjList<>(slaveCount);
+            this.slaveSources.setPos(slaveCount);
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
 
@@ -140,10 +145,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 }
             } finally {
                 mapCursor = Misc.free(mapCursor);
-                if (slaveFrameCursors != null) {
-                    for (int s = 0; s < slaveCount; s++) {
-                        slaveFrameCursors[s] = Misc.free(slaveFrameCursors[s]);
-                    }
+                for (int s = 0; s < slaveCount; s++) {
+                    slaveFrameCursors.setQuick(s, Misc.free(slaveFrameCursors.getQuick(s)));
                 }
                 for (int s = 0; s < slaveCount; s++) {
                     Misc.free(slaveTimeFrameAddressCaches[s]);
@@ -252,16 +255,15 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         if (!isSlaveTimeFrameCacheBuilt) {
             final AsyncMultiHorizonJoinAtom atom = frameSequence.getAtom();
             final SymbolTableSource masterSource = frameSequence.getSymbolTableSource();
-            final SymbolTableSource[] slaveSources = new SymbolTableSource[slaveCount];
 
             for (int s = 0; s < slaveCount; s++) {
                 int frameCount = initializeSlaveTimeFrameCache(s);
-                populatePartitionTimestamps(slaveFrameCursors[s], slavePartitionTimestamps[s], slavePartitionCeilings[s]);
+                populatePartitionTimestamps(slaveFrameCursors.getQuick(s), slavePartitionTimestamps[s], slavePartitionCeilings[s]);
                 try {
                     atom.initSlaveTimeFrameCursors(
                             s,
                             masterSource,
-                            slaveFrameCursors[s],
+                            slaveFrameCursors.getQuick(s),
                             slaveTimeFrameAddressCaches[s],
                             slaveTimeFramePartitionIndexes[s],
                             slaveTimeFrameRowCounts[s],
@@ -272,7 +274,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 } catch (SqlException e) {
                     throw CairoException.nonCritical().put(e.getFlyweightMessage());
                 }
-                slaveSources[s] = slaveFrameCursors[s];
+                slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
 
             // Initialize group by functions after all slaves are set up
@@ -288,7 +290,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
 
     private int initializeSlaveTimeFrameCache(int slaveIndex) {
         RecordMetadata slaveMetadata = slaveFactories[slaveIndex].getMetadata();
-        TablePageFrameCursor cursor = slaveFrameCursors[slaveIndex];
+        TablePageFrameCursor cursor = slaveFrameCursors.getQuick(slaveIndex);
         PageFrameAddressCache cache = slaveTimeFrameAddressCaches[slaveIndex];
         DirectIntList partIndexes = slaveTimeFramePartitionIndexes[slaveIndex];
         LongList rowCounts = slaveTimeFrameRowCounts[slaveIndex];
@@ -327,16 +329,14 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         this.circuitBreaker = executionContext.getCircuitBreaker();
 
         // Open per-slave page frame cursors
-        this.slaveFrameCursors = new TablePageFrameCursor[slaveCount];
         for (int s = 0; s < slaveCount; s++) {
-            slaveFrameCursors[s] = (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC);
+            slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
         }
 
         // Initialize symbol table source with master and all slave sources
         final MultiHorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
-        final SymbolTableSource[] slaveSources = new SymbolTableSource[slaveCount];
         for (int s = 0; s < slaveCount; s++) {
-            slaveSources[s] = slaveFrameCursors[s];
+            slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
         }
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
         Function.init(recordFunctions, symbolTableSource, executionContext, null);

@@ -85,8 +85,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final ObjList<GroupByFunction> ownerGroupByFunctions;
     protected final AsyncHorizonTimestampIterator ownerHorizonIterator;
     protected final ObjList<RecordSink> ownerMasterAsOfJoinSinks;
-    protected final ConcurrentTimeFrameCursor[] ownerSlaveTimeFrameCursors;
     protected final ObjList<RecordSink> ownerSlaveAsOfJoinSinks;
+    protected final ConcurrentTimeFrameCursor[] ownerSlaveTimeFrameCursors;
     protected final HorizonJoinTimeFrameHelper[] ownerSlaveTimeFrameHelpers;
     protected final SymbolTranslatingRecord[] ownerSymbolTranslatingRecords;
     protected final long[] perSlaveMasterTsScales;
@@ -491,7 +491,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     public void initGroupByFunctions(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSource,
-            SymbolTableSource[] slaveSources
+            ObjList<SymbolTableSource> slaveSources
     ) throws SqlException {
         horizonJoinSymbolTableSource.of(masterSource, slaveSources);
         for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {

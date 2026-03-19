@@ -67,13 +67,14 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
     private final PageFrameAddressCache[] slaveTimeFrameAddressCaches;
     private final DirectIntList[] slaveTimeFramePartitionIndexes;
     private final LongList[] slaveTimeFrameRowCounts;
+    private final ObjList<TablePageFrameCursor> slaveFrameCursors;
+    private final ObjList<SymbolTableSource> slaveSources;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncMultiHorizonJoinNotKeyedAtom> frameSequence;
     private boolean isExhausted;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private boolean isValueBuilt;
-    private TablePageFrameCursor[] slaveFrameCursors;
 
     public AsyncMultiHorizonJoinNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
@@ -84,6 +85,10 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
             this.groupByFunctions = groupByFunctions;
             this.slaveFactories = slaveFactories;
             this.slaveCount = slaveFactories.length;
+            this.slaveFrameCursors = new ObjList<>(slaveCount);
+            this.slaveFrameCursors.setPos(slaveCount);
+            this.slaveSources = new ObjList<>(slaveCount);
+            this.slaveSources.setPos(slaveCount);
             this.recordA = new VirtualRecord(groupByFunctions);
 
             this.slaveTimeFrameAddressCaches = new PageFrameAddressCache[slaveCount];
@@ -122,10 +127,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 }
             } finally {
                 Misc.clearObjList(groupByFunctions);
-                if (slaveFrameCursors != null) {
-                    for (int s = 0; s < slaveCount; s++) {
-                        slaveFrameCursors[s] = Misc.free(slaveFrameCursors[s]);
-                    }
+                for (int s = 0; s < slaveCount; s++) {
+                    slaveFrameCursors.setQuick(s, Misc.free(slaveFrameCursors.getQuick(s)));
                 }
                 for (int s = 0; s < slaveCount; s++) {
                     Misc.free(slaveTimeFrameAddressCaches[s]);
@@ -187,16 +190,15 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
         if (!isSlaveTimeFrameCacheBuilt) {
             final AsyncMultiHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();
             final SymbolTableSource masterSource = frameSequence.getSymbolTableSource();
-            final SymbolTableSource[] slaveSources = new SymbolTableSource[slaveCount];
 
             for (int s = 0; s < slaveCount; s++) {
                 int frameCount = initializeSlaveTimeFrameCache(s);
-                populatePartitionTimestamps(slaveFrameCursors[s], slavePartitionTimestamps[s], slavePartitionCeilings[s]);
+                populatePartitionTimestamps(slaveFrameCursors.getQuick(s), slavePartitionTimestamps[s], slavePartitionCeilings[s]);
                 try {
                     atom.initSlaveTimeFrameCursors(
                             s,
                             masterSource,
-                            slaveFrameCursors[s],
+                            slaveFrameCursors.getQuick(s),
                             slaveTimeFrameAddressCaches[s],
                             slaveTimeFramePartitionIndexes[s],
                             slaveTimeFrameRowCounts[s],
@@ -207,7 +209,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 } catch (SqlException e) {
                     throw CairoException.nonCritical().put(e.getFlyweightMessage());
                 }
-                slaveSources[s] = slaveFrameCursors[s];
+                slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
 
             try {
@@ -247,7 +249,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
 
     private int initializeSlaveTimeFrameCache(int slaveIndex) {
         RecordMetadata slaveMetadata = slaveFactories[slaveIndex].getMetadata();
-        TablePageFrameCursor cursor = slaveFrameCursors[slaveIndex];
+        TablePageFrameCursor cursor = slaveFrameCursors.getQuick(slaveIndex);
         PageFrameAddressCache cache = slaveTimeFrameAddressCaches[slaveIndex];
         DirectIntList partIndexes = slaveTimeFramePartitionIndexes[slaveIndex];
         LongList rowCounts = slaveTimeFrameRowCounts[slaveIndex];
@@ -276,16 +278,14 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
         this.frameSequence = frameSequence;
         this.executionContext = executionContext;
 
-        this.slaveFrameCursors = new TablePageFrameCursor[slaveCount];
         for (int s = 0; s < slaveCount; s++) {
-            slaveFrameCursors[s] = (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC);
+            slaveFrameCursors.setQuick(s, (TablePageFrameCursor) slaveFactories[s].getPageFrameCursor(executionContext, ORDER_ASC));
         }
 
         // Initialize symbol table source with master and all slave sources
         final MultiHorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
-        final SymbolTableSource[] slaveSources = new SymbolTableSource[slaveCount];
         for (int s = 0; s < slaveCount; s++) {
-            slaveSources[s] = slaveFrameCursors[s];
+            slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
         }
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
 

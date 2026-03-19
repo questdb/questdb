@@ -198,7 +198,7 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
     public void initGroupByFunctions(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSource,
-            SymbolTableSource[] slaveSources
+            ObjList<SymbolTableSource> slaveSources
     ) throws SqlException {
         super.initGroupByFunctions(executionContext, masterSource, slaveSources);
 

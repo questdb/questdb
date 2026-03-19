@@ -215,6 +215,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         private final ObjList<RecordSink> slaveAsOfJoinMapSinks;
         private final int slaveCount;
         private final HorizonJoinSlaveState[] slaveStates;
+        private final ObjList<SymbolTableSource> slaveSymbolSources;
         private final SymbolTranslatingRecord[] symbolTranslatingRecords;
         private final HorizonJoinTimeFrameHelper[] timeFrameHelpers;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -249,6 +250,8 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.offsets = offsets;
             this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.length;
+            this.slaveSymbolSources = new ObjList<>(slaveCount);
+            this.slaveSymbolSources.setPos(slaveCount);
             this.matchedSlaveRecords = new Record[slaveCount];
             this.masterAsOfJoinMapSinks = masterAsOfJoinMapSinks;
             this.slaveAsOfJoinMapSinks = slaveAsOfJoinMapSinks;
@@ -491,10 +494,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.masterCursor = masterCursor;
 
             // Initialize each slave's time frame helper and symbol translating record
-            SymbolTableSource[] slaveSymbolSources = new SymbolTableSource[slaveCount];
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers[s].of(slaveCursors[s]);
-                slaveSymbolSources[s] = slaveCursors[s];
+                slaveSymbolSources.setQuick(s, slaveCursors[s]);
                 if (symbolTranslatingRecords[s] != null) {
                     symbolTranslatingRecords[s].initSources(masterCursor, slaveCursors[s]);
                 }
