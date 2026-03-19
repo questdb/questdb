@@ -1,6 +1,7 @@
 mod column_chunk;
 mod compression;
 mod file;
+pub mod footer_cache;
 pub mod indexes;
 pub(crate) mod page;
 mod row_group;

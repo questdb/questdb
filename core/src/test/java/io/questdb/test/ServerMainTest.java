@@ -1080,7 +1080,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.copier.chunked\tQDB_CAIRO_SQL_COPIER_CHUNKED\ttrue\tdefault\tfalse\ttrue\n" +
                                     "cairo.checkpoint.recovery.threadpool.min\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MIN\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.checkpoint.recovery.rebuild.column.indexes\tQDB_CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "cairo.checkpoint.recovery.threadpool.max\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX\t12\tdefault\tfalse\tfalse"
+                                    "cairo.checkpoint.recovery.threadpool.max\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX\t12\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES\t1073741824\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 

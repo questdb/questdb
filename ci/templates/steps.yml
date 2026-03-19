@@ -13,9 +13,9 @@ steps:
     condition: |
       and(
         eq(variables['os'], 'Linux'),
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
@@ -26,8 +26,8 @@ steps:
     displayName: "Install JDK and Maven"
     condition: |
       or(
-        eq(variables['poolName'], 'hetzner-docker'),
-        eq(variables['poolName'], 'hetzner-docker-zfs')
+        eq(variables['poolName'], 'hetzner-incus'),
+        eq(variables['poolName'], 'hetzner-incus-zfs')
       )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
@@ -37,7 +37,7 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      eq(variables['poolName'], 'hetzner-docker-arm')
+      eq(variables['poolName'], 'hetzner-incus-arm')
   - bash: |
       JAVA_PATH="/opt/graalvm"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
@@ -56,9 +56,9 @@ steps:
     condition: |
       and(
         ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - task: Cache@2
     displayName: "Cache .m2/repository"
@@ -68,9 +68,9 @@ steps:
       path: $(MAVEN_CACHE_FOLDER)
     condition: |
       and(
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - task: Cache@2
     displayName: "Cache .cargo/registry"
@@ -84,9 +84,9 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        ne(variables['poolName'], 'hetzner-docker'),
-        ne(variables['poolName'], 'hetzner-docker-arm'),
-        ne(variables['poolName'], 'hetzner-docker-zfs')
+        ne(variables['poolName'], 'hetzner-incus'),
+        ne(variables['poolName'], 'hetzner-incus-arm'),
+        ne(variables['poolName'], 'hetzner-incus-zfs')
       )
   - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
@@ -168,6 +168,14 @@ steps:
       and(
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
+  - bash: find . -name '*.profraw' -delete
+    displayName: "Clean stale profraw files"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: Maven@3
     displayName: "Pre-build for Coverage"
@@ -280,15 +288,25 @@ steps:
       set -eux
       export PATH=$LLVM_TOOLS_PATH:$PATH
       # List profraw files for debugging purposes
-      find . -name '*.profraw'
-      mapfile -t PROFRAW_FILES < <(find core -type f \( -name 'questdbr-cargo-test*.profraw' -o -name 'questdbr-junit*.profraw' \) | sort)
-      if [ ${#PROFRAW_FILES[@]} -eq 0 ]; then
-        echo "LLVM profiling files not found"
+      find . -name \*.profraw
+      PROFRAW="core/questdbr-junit.profraw"
+      if [ ! -f "$PROFRAW" ]; then
+        echo "LLVM profiling file not found: $PROFRAW"
         exit -1
       fi
-      printf 'Merging profile files:\n%s\n' "${PROFRAW_FILES[@]}"
-      llvm-profdata merge -sparse -o $(testset).profdata "${PROFRAW_FILES[@]}"
-    displayName: "Create partial Rust coverage report in LLVM format"
+      llvm-profdata merge -sparse -o $(testset).profdata "$PROFRAW"
+
+      IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
+      OBJECTS="--object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so"
+
+      llvm-cov export \
+        --format=lcov \
+        --ignore-filename-regex="$IGNORE_RE" \
+        $OBJECTS \
+        --instr-profile=$(testset).profdata \
+        > $(testset).lcov
+      echo "Generated $(testset).lcov"
+    displayName: "Create partial Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -296,7 +314,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload partial Rust coverage report"
+    displayName: "Upload partial Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -304,43 +322,5 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
     inputs:
-      pathToPublish: $(Build.SourcesDirectory)/$(testset).profdata
-      artifactName: rust-llvm-coverage
-  - bash: |
-      set -eux
-      RUST_TEST_TARGET_DIR=core/target/rust-maven-plugin/qdbr/debug
-      mkdir -p rust-coverage-binaries/deps
-      if [ ! -d "$RUST_TEST_TARGET_DIR/deps" ]; then
-        echo "Rust test deps directory not found: $RUST_TEST_TARGET_DIR/deps"
-        exit 1
-      fi
-      cp "$RUST_TEST_TARGET_DIR/libquestdbr.so" rust-coverage-binaries/
-      # Include all Rust test binaries (unit + integration) so llvm-cov can map all counters.
-      mapfile -d '' -t RUST_TEST_BINARIES < <(find "$RUST_TEST_TARGET_DIR/deps" -maxdepth 1 -type f -executable ! -name '*.so' ! -name '*.dylib' ! -name '*.dll' -print0 | sort -z)
-      if [ ${#RUST_TEST_BINARIES[@]} -eq 0 ]; then
-        echo "No Rust test binaries found in $RUST_TEST_TARGET_DIR/deps"
-        exit 1
-      fi
-      for rust_test_binary in "${RUST_TEST_BINARIES[@]}"; do
-        cp "$rust_test_binary" rust-coverage-binaries/deps/
-      done
-      ls -al rust-coverage-binaries
-      ls -al rust-coverage-binaries/deps
-    displayName: "Prepare Rust binaries for upload"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage-griffin-root'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-  - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust binaries needed to merge coverage files"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage-griffin-root'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).lcov
       artifactName: rust-llvm-coverage

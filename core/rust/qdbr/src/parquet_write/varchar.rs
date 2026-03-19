@@ -560,7 +560,6 @@ mod tests {
             row_group_size: None,
             data_page_size: None,
             raw_array_encoding: false,
-            bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: 0.05,
         }
     }
