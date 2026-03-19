@@ -320,11 +320,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // Fall back to positional index so the lookup in openParquet() works.
             columnIdToParquetIdx.put(id < 0 ? i : id, i);
         }
-
-        parquetColumns.reopen();
-        parquetColumns.clear();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
     }
 
     private void openParquet(int frameIndex) {
@@ -333,6 +328,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetDecoder.of(frameDecoder);
             buildColumnIdMap(parquetDecoder.metadata());
         }
+
+        parquetColumns.reopen();
+        parquetColumns.clear();
+        final int parquetColumnCount = parquetDecoder.metadata().getColumnCount();
+        fromParquetColumnIndexes.clear();
+        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
         final int readParquetColumnCount = columnMapping.getColumnCount();
@@ -358,6 +359,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetDecoder.of(frameDecoder);
             buildColumnIdMap(parquetDecoder.metadata());
         }
+
+        parquetColumns.reopen();
+        parquetColumns.clear();
+        final int parquetColumnCount = parquetDecoder.metadata().getColumnCount();
+        fromParquetColumnIndexes.clear();
+        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
         final int readParquetColumnCount = columnMapping.getColumnCount();
