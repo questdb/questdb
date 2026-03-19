@@ -101,7 +101,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private int numOfTables;
     private int numOfThreads;
     private Rnd random;
-    private int recvBufferSize = 2048;
+    private int recvBufferSize = 4096;
     private boolean sendSymbolsWithSpace = false;
     private LowerCaseCharSequenceObjHashMap<TableData> tables;
     private SOCountDownLatch threadPushFinished;
