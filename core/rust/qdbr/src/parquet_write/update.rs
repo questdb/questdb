@@ -579,11 +579,11 @@ impl ParquetUpdater {
             ));
         }
 
-        // Read existing raw bytes.
+        // Read existing raw bytes, reusing the buffer across copies.
         let raw_len = (rg_end - rg_start) as usize;
-        let mut raw_bytes = vec![0u8; raw_len];
+        self.copy_buffer.resize(raw_len, 0);
         self.reader.seek(SeekFrom::Start(rg_start))?;
-        self.reader.read_exact(&mut raw_bytes)?;
+        self.reader.read_exact(&mut self.copy_buffer)?;
 
         self.parquet_file.ensure_started().map_err(|s| {
             ParquetError::with_descr(
@@ -618,7 +618,7 @@ impl ParquetUpdater {
 
         // Generate null column chunk bytes for missing columns.
         // Null column bytes are appended after the existing raw data.
-        let null_chunk_offset_base = new_offset + raw_bytes.len() as u64;
+        let null_chunk_offset_base = new_offset + raw_len as u64;
         let mut null_bytes_buf: Vec<u8> = Vec::new();
         let mut null_thrift_cols: Vec<(usize, ColumnChunk)> = Vec::new();
 
@@ -714,11 +714,10 @@ impl ParquetUpdater {
         };
 
         // Concatenate existing + null bytes and write as one raw row group.
-        let mut combined_bytes = raw_bytes;
-        combined_bytes.extend_from_slice(&null_bytes_buf);
+        self.copy_buffer.extend_from_slice(&null_bytes_buf);
 
         self.parquet_file
-            .write_raw_row_group(&combined_bytes, thrift_rg)
+            .write_raw_row_group(&self.copy_buffer, thrift_rg)
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),

@@ -1169,6 +1169,220 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3AfterAddColumnRewriteMode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, s, ts) VALUES
+                            (1, 'a', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', '2020-01-01T06:00:00.000Z'),
+                            (3, 'a', '2020-01-01T12:00:00.000Z'),
+                            (4, 'c', '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, s, ts) VALUES (100, 'd', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Add a new column after converting to Parquet.
+            // The Parquet file has 3 columns (x, s, ts), the table now has 4 (x, s, ts, y).
+            execute("ALTER TABLE x ADD COLUMN y DOUBLE");
+            drainWalQueue();
+
+            // O3 insert into the parquet partition.
+            // Single row group → always REWRITE. Original rows get NULL for y.
+            execute(
+                    """
+                            INSERT INTO x(x, s, y, ts) VALUES
+                            (5, 'b', 1.5, '2020-01-01T03:00:00.000Z'),
+                            (6, 'a', 2.5, '2020-01-01T09:00:00.000Z'),
+                            (7, 'c', 3.5, '2020-01-01T15:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertSql(
+                    """
+                            x\ts\tts\ty
+                            1\ta\t2020-01-01T00:00:00.000000Z\tnull
+                            5\tb\t2020-01-01T03:00:00.000000Z\t1.5
+                            2\tb\t2020-01-01T06:00:00.000000Z\tnull
+                            6\ta\t2020-01-01T09:00:00.000000Z\t2.5
+                            3\ta\t2020-01-01T12:00:00.000000Z\tnull
+                            7\tc\t2020-01-01T15:00:00.000000Z\t3.5
+                            4\tc\t2020-01-01T18:00:00.000000Z\tnull
+                            100\td\t2020-01-02T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testO3AfterAddColumnSingleRowPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (1, '2020-01-01T12:00:00.000Z')");
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN y DOUBLE");
+            drainWalQueue();
+
+            // O3 insert into the single-row parquet partition.
+            execute("INSERT INTO x(x, y, ts) VALUES (2, 1.5, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertSql(
+                    """
+                            x\tts\ty
+                            2\t2020-01-01T06:00:00.000000Z\t1.5
+                            1\t2020-01-01T12:00:00.000000Z\tnull
+                            100\t2020-01-02T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testO3AfterAddDedupKeyColumn() throws Exception {
+        // Reproduces: dedup key column added after parquet partition exists.
+        // O3 merge into that partition enters the dedup code path, where
+        // the new column is a dedup key but is missing from the parquet
+        // file (decodeIdx == -1), causing an assertion failure or crash.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            // Second partition keeps 2020-01-01 as a non-active partition.
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Add a new column and make it a dedup key.
+            // Parquet file has (x, ts); table now has (x, ts, y).
+            execute("ALTER TABLE x ADD COLUMN y INT");
+            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts, y)");
+            drainWalQueue();
+
+            // O3 insert with timestamps that duplicate existing rows.
+            // Triggers dedup merge, which iterates dedup key columns.
+            // Column y is a dedup key but does not exist in the parquet file.
+            execute(
+                    """
+                            INSERT INTO x(x, y, ts) VALUES
+                            (5, 10, '2020-01-01T00:00:00.000Z'),
+                            (6, 20, '2020-01-01T06:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            // Old rows have y=NULL, new rows have y=10/20.
+            // Dedup keys (ts, y) differ, so all rows are kept.
+            assertSql(
+                    """
+                            x\tts\ty
+                            1\t2020-01-01T00:00:00.000000Z\tnull
+                            5\t2020-01-01T00:00:00.000000Z\t10
+                            2\t2020-01-01T06:00:00.000000Z\tnull
+                            6\t2020-01-01T06:00:00.000000Z\t20
+                            3\t2020-01-01T12:00:00.000000Z\tnull
+                            4\t2020-01-01T18:00:00.000000Z\tnull
+                            100\t2020-01-02T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testO3MergeAfterDropAllNonTimestampColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b DOUBLE, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 1.1, '2020-01-01T00:00:00.000Z'),
+                            (2, 2.2, '2020-01-01T06:00:00.000Z'),
+                            (3, 3.3, '2020-01-01T12:00:00.000Z'),
+                            (4, 4.4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, b, ts) VALUES (100, 99.9, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Drop all non-timestamp columns.
+            execute("ALTER TABLE x DROP COLUMN a");
+            execute("ALTER TABLE x DROP COLUMN b");
+            drainWalQueue();
+
+            // O3 insert into the parquet partition — only the timestamp column remains.
+            execute("INSERT INTO x(ts) VALUES ('2020-01-01T03:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertSql(
+                    """
+                            ts
+                            2020-01-01T00:00:00.000000Z
+                            2020-01-01T03:00:00.000000Z
+                            2020-01-01T06:00:00.000000Z
+                            2020-01-01T12:00:00.000000Z
+                            2020-01-01T18:00:00.000000Z
+                            2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testO3MergeAfterDropColumnWrongTimestampIndex() throws Exception {
         // Two rounds of O3 merge exercise the wrong-timestamp-index bug.
         // Round 1: DROP COLUMN 'a' (before ts) + ADD COLUMN 'b' causes
@@ -1273,133 +1487,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             110\t2020-01-01T10:00:00.000000Z\tnull
                             120\t2020-01-01T11:00:00.000000Z\tnull
                             9999\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testO3AfterAddColumnRewriteMode() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(x, s, ts) VALUES
-                            (1, 'a', '2020-01-01T00:00:00.000Z'),
-                            (2, 'b', '2020-01-01T06:00:00.000Z'),
-                            (3, 'a', '2020-01-01T12:00:00.000Z'),
-                            (4, 'c', '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(x, s, ts) VALUES (100, 'd', '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // Add a new column after converting to Parquet.
-            // The Parquet file has 3 columns (x, s, ts), the table now has 4 (x, s, ts, y).
-            execute("ALTER TABLE x ADD COLUMN y DOUBLE");
-            drainWalQueue();
-
-            // O3 insert into the parquet partition.
-            // Single row group → always REWRITE. Original rows get NULL for y.
-            execute(
-                    """
-                            INSERT INTO x(x, s, y, ts) VALUES
-                            (5, 'b', 1.5, '2020-01-01T03:00:00.000Z'),
-                            (6, 'a', 2.5, '2020-01-01T09:00:00.000Z'),
-                            (7, 'c', 3.5, '2020-01-01T15:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-
-            assertSql(
-                    """
-                            x\ts\tts\ty
-                            1\ta\t2020-01-01T00:00:00.000000Z\tnull
-                            5\tb\t2020-01-01T03:00:00.000000Z\t1.5
-                            2\tb\t2020-01-01T06:00:00.000000Z\tnull
-                            6\ta\t2020-01-01T09:00:00.000000Z\t2.5
-                            3\ta\t2020-01-01T12:00:00.000000Z\tnull
-                            7\tc\t2020-01-01T15:00:00.000000Z\t3.5
-                            4\tc\t2020-01-01T18:00:00.000000Z\tnull
-                            100\td\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testO3AfterAddDedupKeyColumn() throws Exception {
-        // Reproduces: dedup key column added after parquet partition exists.
-        // O3 merge into that partition enters the dedup code path, where
-        // the new column is a dedup key but is missing from the parquet
-        // file (decodeIdx == -1), causing an assertion failure or crash.
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (x INT, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(x, ts) VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T06:00:00.000Z'),
-                            (3, '2020-01-01T12:00:00.000Z'),
-                            (4, '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            // Second partition keeps 2020-01-01 as a non-active partition.
-            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // Add a new column and make it a dedup key.
-            // Parquet file has (x, ts); table now has (x, ts, y).
-            execute("ALTER TABLE x ADD COLUMN y INT");
-            execute("ALTER TABLE x DEDUP ENABLE UPSERT KEYS(ts, y)");
-            drainWalQueue();
-
-            // O3 insert with timestamps that duplicate existing rows.
-            // Triggers dedup merge, which iterates dedup key columns.
-            // Column y is a dedup key but does not exist in the parquet file.
-            execute(
-                    """
-                            INSERT INTO x(x, y, ts) VALUES
-                            (5, 10, '2020-01-01T00:00:00.000Z'),
-                            (6, 20, '2020-01-01T06:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-
-            // Old rows have y=NULL, new rows have y=10/20.
-            // Dedup keys (ts, y) differ, so all rows are kept.
-            assertSql(
-                    """
-                            x\tts\ty
-                            1\t2020-01-01T00:00:00.000000Z\tnull
-                            5\t2020-01-01T00:00:00.000000Z\t10
-                            2\t2020-01-01T06:00:00.000000Z\tnull
-                            6\t2020-01-01T06:00:00.000000Z\t20
-                            3\t2020-01-01T12:00:00.000000Z\tnull
-                            4\t2020-01-01T18:00:00.000000Z\tnull
-                            100\t2020-01-02T00:00:00.000000Z\tnull
                             """,
                     "SELECT * FROM x"
             );
