@@ -55,6 +55,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -114,15 +115,17 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, 4, -1, false, true, false);
+        initLoadParameters(15 + random.nextInt(100), 5 + random.nextInt(5),
+                2 + random.nextInt(Os.isWindows() ? 5 : 20), 1 + random.nextInt(4),
+                random.nextInt(75));
+        initFuzzParameters(-1, 1, 1 + random.nextInt(3), -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testAddColumnsNoSymbols() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, 4, -1, false, false, false);
+        initFuzzParameters(-1, -1, 4, -1, false, false, false, 0.05);
         runTest();
     }
 
@@ -136,21 +139,21 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testAllMixed() throws Exception {
         initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 5, 10, 5, true, true, true);
+        initFuzzParameters(3, 4, 5, 10, 5, true, true, true, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixedNoSymbols() throws Exception {
         initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 5, 10, 5, true, false, true);
+        initFuzzParameters(3, 4, 5, 10, 5, true, false, true, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixedSingleTable() throws Exception {
         initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
-        initFuzzParameters(4, 5, 10, 5, true, true, true);
+        initFuzzParameters(3, 4, 5, 10, 5, true, true, true, 0.05);
         runTest();
     }
 
@@ -218,7 +221,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testLoadNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
-        initFuzzParameters(-1, -1, -1, -1, false, false, false);
+        initFuzzParameters(-1, -1, -1, -1, false, false, false, 0.05);
         runTest();
     }
 
@@ -253,14 +256,14 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, false, true, false);
+        initFuzzParameters(4, -1, -1, -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingColumnsNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, false, false, false);
+        initFuzzParameters(4, -1, -1, -1, false, false, false, 0.05);
         runTest();
     }
 
@@ -593,6 +596,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                 String tableName = getTableName(i);
                 TableData table = tables.get(tableName);
                 if (table.size() > 0) {
+                    engine.awaitTable(tableName, 30, TimeUnit.SECONDS);
                     assertTable(table, tableName);
                 }
             }
