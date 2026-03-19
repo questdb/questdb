@@ -331,9 +331,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
         if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
             parquetDecoder.of(frameDecoder);
+            buildColumnIdMap(parquetDecoder.metadata());
         }
-        final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        buildColumnIdMap(parquetMetadata);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
         final int readParquetColumnCount = columnMapping.getColumnCount();
@@ -357,9 +356,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
         if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
             parquetDecoder.of(frameDecoder);
+            buildColumnIdMap(parquetDecoder.metadata());
         }
-        final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        buildColumnIdMap(parquetMetadata);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
         final int readParquetColumnCount = columnMapping.getColumnCount();

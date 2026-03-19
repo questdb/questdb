@@ -62,7 +62,7 @@ public class FuzzConvertPartitionToNativeOperation implements FuzzTransactionOpe
             String sql = String.format("ALTER TABLE %s CONVERT PARTITION TO NATIVE WHERE %s > '%s' AND %s < '%s'",
                     TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName()),
                     tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp - 86400000000L),
+                    Micros.toUSecString(cutoffTimestamp - 86_400_000_000L),
                     tsColumnName,
                     Micros.toUSecString(cutoffTimestamp)
             );

@@ -315,8 +315,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rgMin = rowGroupStatBuffers.getMinValueLong(0);
                         rgMax = rowGroupStatBuffers.getMaxValueLong(0);
                     } else {
-                        rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampIndex);
-                        rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampIndex);
+                        rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampParquetIdx);
+                        rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampParquetIdx);
                     }
                     final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(rg);
                     O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
@@ -500,8 +500,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriterMetadata,
                         parquetColumns,
                         rowGroupBuffers,
-                    isRewrite
-            );} catch (Throwable e) {
+                        isRewrite
+                );
+            } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
                     Path newPath = Path.getThreadLocal2(pathToTable);

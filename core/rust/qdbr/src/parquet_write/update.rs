@@ -670,9 +670,22 @@ impl ParquetUpdater {
             merged_cols[target_pos] = Some(thrift_col);
         }
 
-        // Collect into final column list, skipping any gaps (shouldn't happen
-        // if the caller provided correct null_columns).
-        let all_columns: Vec<ColumnChunk> = merged_cols.into_iter().flatten().collect();
+        // Collect into final column list; every slot must be filled.
+        let all_columns: Vec<ColumnChunk> = merged_cols
+            .into_iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                slot.ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "copy_row_group_with_null_columns: merged column slot {} is empty \
+                         (target schema has {} columns)",
+                        i,
+                        target_col_count
+                    )
+                })
+            })
+            .collect::<ParquetResult<Vec<_>>>()?;
 
         let total_byte_size: i64 = all_columns
             .iter()
@@ -892,8 +905,8 @@ fn generate_null_column_chunk_bytes(
         page_data.push(0x00); // bit_width = 0 (empty dictionary)
     }
 
-    // Build column path_in_schema.
-    let path = vec![field_info.name.clone()];
+    // Build column path_in_schema (full root-to-leaf path for nested types).
+    let path = collect_leaf_path(parquet_field);
 
     // Determine the parquet physical type.
     let (thrift_type, _type_length) = match parquet_field {
@@ -1015,6 +1028,30 @@ fn generate_null_column_chunk_bytes(
     };
 
     Ok((chunk_bytes, column_chunk))
+}
+
+/// Collects the full root-to-leaf path for `path_in_schema`.
+/// For primitive types this is `["col_name"]`.
+/// For nested LIST groups (arrays) this walks down to the leaf,
+/// e.g. `["col_name", "list", "element"]`.
+fn collect_leaf_path(parquet_type: &ParquetType) -> Vec<String> {
+    let mut path = Vec::new();
+    let mut current = parquet_type;
+    loop {
+        let info = current.get_field_info();
+        path.push(info.name.clone());
+        match current {
+            ParquetType::PrimitiveType(_) => break,
+            ParquetType::GroupType { fields, .. } => {
+                if let Some(child) = fields.first() {
+                    current = child;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    path
 }
 
 /// Generates page data for an Optional column where all rows are NULL.

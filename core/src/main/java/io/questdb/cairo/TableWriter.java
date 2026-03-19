@@ -4354,19 +4354,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkO3Errors();
     }
 
-    private int copyOverwrite(Path to) {
-        int res = ff.copy(other.$(), to.$());
-        if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
-            // Windows throws an error the destination file already exists, other platforms do not
-            if (!ff.removeQuiet(to.$())) {
-                // If the file is open, return here so that errno is 5 in the error message
-                return -1;
-            }
-            return ff.copy(other.$(), to.$());
-        }
-        return res;
-    }
-
     /**
      * Copies or rebuilds bitmap index files for indexed symbol columns from the
      * old partition directory ({@code path}) to the new one ({@code other}).
@@ -4445,6 +4432,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
+    }
+
+    private int copyOverwrite(Path to) {
+        int res = ff.copy(other.$(), to.$());
+        if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
+            // Windows throws an error the destination file already exists, other platforms do not
+            if (!ff.removeQuiet(to.$())) {
+                // If the file is open, return here so that errno is 5 in the error message
+                return -1;
+            }
+            return ff.copy(other.$(), to.$());
+        }
+        return res;
     }
 
     /**
@@ -6650,16 +6650,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     } else {
                         final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
-                        final boolean parquetRewrite = Numbers.decodeHighInt(flags) != 0;
                         if (parquetFileSize > -1) {
-                            if (parquetRewrite) {
-                                // Rewrite: new parquet file is in a new txn-named directory.
-                                // Bump the partition name txn and queue old dir for removal.
-                                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
-                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
-                            } else {
-                                txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
-                            }
+                            // partitionMutates is true here, so this is a native
+                            // partition that was mutated in place and then encoded
+                            // back to parquet.
+                            txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);

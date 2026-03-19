@@ -1618,8 +1618,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             // of when the column was added.
             final boolean hasVersionRecord = versionRecordIndex > -1;
             final long colTopPartTs = columnVersionReader.getColumnTopPartitionTimestamp(writerIndex);
-            final boolean colTopPartTsOk = colTopPartTs <= partitionTimestamp;
-            if (columnRowCount > 0 && (hasVersionRecord || colTopPartTsOk)) {
+            final boolean isColTopPartTsOk = colTopPartTs <= partitionTimestamp;
+            if (columnRowCount > 0 && (hasVersionRecord || isColTopPartTsOk)) {
                 if (partitionFormat == PartitionFormat.NATIVE) {
                     final int columnType = metadata.getColumnType(columnIndex);
 
