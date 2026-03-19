@@ -317,8 +317,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             SqlExecutionCircuitBreaker circuitBreaker,
             int slotId
     ) {
-        final ObjList<Record> matchedSlaveRecords = new ObjList<>(slaveCount);
-        matchedSlaveRecords.setPos(slaveCount);
+        final ObjList<Record> matchedSlaveRecords = atom.getMatchedSlaveRecords(slotId);
 
         for (int s = 0; s < slaveCount; s++) {
             atom.getSlaveTimeFrameHelper(slotId, s).toTop();

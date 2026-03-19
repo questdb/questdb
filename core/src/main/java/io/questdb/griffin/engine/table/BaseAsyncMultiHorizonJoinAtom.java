@@ -94,6 +94,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final ObjList<Map> perWorkerAsOfJoinMaps;
     protected final ObjList<MultiHorizonJoinRecord> perWorkerCombinedRecords;
     protected final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
+    // Pre-allocated per-worker lists for matched slave records (avoids allocations on the data path)
+    private final ObjList<Record> ownerMatchedSlaveRecords;
+    private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
     protected final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     protected final ObjList<AsyncHorizonTimestampIterator> perWorkerHorizonIterators;
     protected final PerWorkerLocks perWorkerLocks;
@@ -304,6 +307,16 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 perWorkerCombinedRecords.add(record);
             }
 
+            // Per-worker matched slave record lists (shared across slaves, avoids per-frame allocation)
+            this.ownerMatchedSlaveRecords = new ObjList<>(slaveCount);
+            ownerMatchedSlaveRecords.setPos(slaveCount);
+            this.perWorkerMatchedSlaveRecords = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                ObjList<Record> list = new ObjList<>(slaveCount);
+                list.setPos(slaveCount);
+                perWorkerMatchedSlaveRecords.add(list);
+            }
+
             // Per-worker horizon timestamp iterators (shared across slaves)
             this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
             this.perWorkerHorizonIterators = new ObjList<>(workerCount);
@@ -408,6 +421,13 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             return ownerCombinedRecord;
         }
         return perWorkerCombinedRecords.getQuick(slotId);
+    }
+
+    public ObjList<Record> getMatchedSlaveRecords(int slotId) {
+        if (slotId == -1) {
+            return ownerMatchedSlaveRecords;
+        }
+        return perWorkerMatchedSlaveRecords.getQuick(slotId);
     }
 
     public RecordSink getMasterAsOfJoinSink(int slotId, int slaveIndex) {

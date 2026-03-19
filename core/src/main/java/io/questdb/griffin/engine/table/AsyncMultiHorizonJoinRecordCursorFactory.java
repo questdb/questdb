@@ -402,8 +402,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         }
 
         final boolean sharded = !groupByMapFragment.isNotSharded();
-        final ObjList<Record> matchedSlaveRecords = new ObjList<>(slaveCount);
-        matchedSlaveRecords.setPos(slaveCount);
+        final ObjList<Record> matchedSlaveRecords = atom.getMatchedSlaveRecords(slotId);
 
         // Reset all slave helpers for this frame
         for (int s = 0; s < slaveCount; s++) {
