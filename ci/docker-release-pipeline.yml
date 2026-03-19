@@ -19,16 +19,13 @@ schedules:
 variables:
   SKIP_VALIDATION: 'false'  # Set to 'true' to skip validation
 
-pool:
-  vmImage: 'ubuntu-20.04'
+pool: hetzner-incus
 
 jobs:
   - job: RunOn
     displayName: "Build and push docker"
 
-    pool:
-      name: "Azure Pipelines"
-      vmImage: "ubuntu-latest"
+    pool: hetzner-incus
 
     timeoutInMinutes: 60
 
@@ -49,19 +46,18 @@ jobs:
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
       - task: CmdLine@2
-        displayName: Install Trivy vulnerability scanner
+        displayName: Check that trivy is installed and present in PATH
         inputs:
-          script: |
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh -o /tmp/install-trivy.sh
-            sh /tmp/install-trivy.sh -b /usr/local/bin
+          script: which trivy && trivy version
 
       - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
         inputs:
           script: |
-            wget https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/latest/download/preflight-linux-amd64 -O /usr/local/bin/preflight
-            chmod +x /usr/local/bin/preflight
+            sudo wget https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/latest/download/preflight-linux-amd64 -O /usr/local/bin/preflight
+            sudo chmod +x /usr/local/bin/preflight
             which preflight
+            preflight version
 
       - task: Docker@2
         inputs:
