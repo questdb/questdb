@@ -4456,18 +4456,30 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade 1 (ts=1s): bid ASOF = 100.0, ask ASOF = 101.0
             //   Trade 2 (ts=2s): bid ASOF = 150.0, ask ASOF = 151.0
             // avg(bid) = (100+150)/2 = 125, avg(ask) = (101+151)/2 = 126
+            String sql = """
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                    HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                        LIST (0) AS h
+                    """;
+
+            StringSink planSink = new StringSink();
+            try (
+                    RecordCursorFactory planFactory = select("EXPLAIN " + sql);
+                    RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+            ) {
+                CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
+            }
+            TestUtils.assertContains(planSink, getMultiHorizonJoinPlanType());
+            TestUtils.assertContains(planSink, "slaves: 2");
+
             assertQueryNoLeakCheck(
                     """
                             avg_bid\tavg_ask
                             125.0\t126.0
                             """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
+                    sql,
                     null,
                     false,
                     true
@@ -4509,18 +4521,30 @@ public class HorizonJoinTest extends AbstractCairoTest {
             //   Trade at 1s: bid ASOF = 100.0, ask ASOF = 101.0
             //   Trade at 2s: bid ASOF = 150.0, ask ASOF = 151.0
             // avg(bid) = 125, avg(ask) = 126
+            String sql = """
+                    SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                    FROM trades AS t
+                    HORIZON JOIN bids AS b
+                    HORIZON JOIN asks AS a
+                        LIST (0) AS h
+                    """;
+
+            StringSink planSink = new StringSink();
+            try (
+                    RecordCursorFactory planFactory = select("EXPLAIN " + sql);
+                    RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+            ) {
+                CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
+            }
+            TestUtils.assertContains(planSink, getMultiHorizonJoinPlanType());
+            TestUtils.assertContains(planSink, "slaves: 2");
+
             assertQueryNoLeakCheck(
                     """
                             avg_bid\tavg_ask
                             125.0\t126.0
                             """,
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades AS t
-                            HORIZON JOIN bids AS b
-                            HORIZON JOIN asks AS a
-                                LIST (0) AS h
-                            """,
+                    sql,
                     null,
                     false,
                     true
@@ -5646,6 +5670,10 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     private String getHorizonJoinPlanType() {
         return parallelHorizonJoinEnabled ? "Async Horizon Join workers: 1" : "Horizon Join";
+    }
+
+    private String getMultiHorizonJoinPlanType() {
+        return parallelHorizonJoinEnabled ? "Async Multi Horizon Join workers: 1" : "Multi Horizon Join";
     }
 
     private long getMinutesDivisor() {
