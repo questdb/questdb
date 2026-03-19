@@ -112,6 +112,10 @@ public final class Files {
         return -1;
     }
 
+    public static int closeDetached(int osFd) {
+        return close0(osFd);
+    }
+
     public static int copy(LPSZ from, LPSZ to) {
         return copy(from.ptr(), to.ptr());
     }
