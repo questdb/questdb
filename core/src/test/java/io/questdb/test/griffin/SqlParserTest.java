@@ -6078,7 +6078,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) AS h",
                 81,
-                "'range' or 'list' expected",
+                "unexpected token [AS]",
                 modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
                 modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
         );
