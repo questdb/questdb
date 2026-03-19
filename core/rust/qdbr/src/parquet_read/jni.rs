@@ -763,3 +763,105 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 ) -> usize {
     offset_of!(ColumnChunkStats, max_value_size)
 }
+
+// -----------------------------------------------------------------------
+// decode_row_group_jit JNI entry point
+// -----------------------------------------------------------------------
+
+use crate::parquet_read::jit_decode::{decode_row_group_jit, JitColumnRequest};
+use crate::parquet_jit::multi::CompiledPageKernel;
+use crate::parquet_jit::{JitPhysicalType, PipelineResult};
+
+fn physical_type_from_jni(v: i32) -> Option<JitPhysicalType> {
+    match v {
+        0 => Some(JitPhysicalType::Int32),
+        1 => Some(JitPhysicalType::Int64),
+        2 => Some(JitPhysicalType::Float),
+        3 => Some(JitPhysicalType::Double),
+        4 => Some(JitPhysicalType::Int8),
+        5 => Some(JitPhysicalType::Int16),
+        6 => Some(JitPhysicalType::Int128),
+        7 => Some(JitPhysicalType::Int256),
+        _ => None,
+    }
+}
+
+/// Decode a row group using the fused JIT pipeline.
+///
+/// `col_requests_ptr` points to a flat array of
+/// `(column_index: i32, physical_type: i32, filter_lo: i64, filter_hi: i64)`
+/// tuples. Each tuple is 24 bytes (4+4+8+8, but we read as 3 i64s for alignment).
+///
+/// Actually, to keep it simple, use a packed format:
+/// Per column: [column_index: i32, physical_type: i32, filter_lo: i64, filter_hi: i64]
+/// = 24 bytes per column. But for alignment, pad to 32 bytes:
+/// [column_index: i32, physical_type: i32, pad: i64, filter_lo: i64, filter_hi: i64]
+///
+/// Simpler: use 5 × i64 per column = 40 bytes:
+/// [column_index, physical_type, _reserved, filter_lo, filter_hi]
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroupJit(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder_ptr: i64,
+    decode_ctx_ptr: i64,
+    row_group_index: i32,
+    kernel_ptr: i64,
+    col_count: i32,
+    col_requests_ptr: i64, // flat array: [col_idx: i32, phys_type: i32, flo: i64, fhi: i64] × col_count
+    result_ptr: i64,
+) -> i32 {
+    if decoder_ptr == 0 || decode_ctx_ptr == 0 || kernel_ptr == 0
+        || col_requests_ptr == 0 || result_ptr == 0 || col_count <= 0
+    {
+        return -1;
+    }
+
+    let decoder = unsafe { &*(decoder_ptr as *const ParquetDecoder) };
+    let ctx = unsafe { &mut *(decode_ctx_ptr as *mut DecodeContext) };
+    let kernel = unsafe { &*(kernel_ptr as *const CompiledPageKernel) };
+    let result = unsafe { &mut *(result_ptr as *mut PipelineResult) };
+
+    // Parse column requests. Each entry is 24 bytes:
+    // [col_idx: i32, phys_type: i32, filter_lo: i64, filter_hi: i64]
+    let n = col_count as usize;
+    let raw = unsafe {
+        std::slice::from_raw_parts(col_requests_ptr as *const u8, n * 24)
+    };
+    let mut requests = Vec::with_capacity(n);
+    for i in 0..n {
+        let base = i * 24;
+        let col_idx = i32::from_ne_bytes(raw[base..base + 4].try_into().unwrap()) as usize;
+        let phys = i32::from_ne_bytes(raw[base + 4..base + 8].try_into().unwrap());
+        let flo = i64::from_ne_bytes(raw[base + 8..base + 16].try_into().unwrap());
+        let fhi = i64::from_ne_bytes(raw[base + 16..base + 24].try_into().unwrap());
+        let Some(physical_type) = physical_type_from_jni(phys) else {
+            return -2;
+        };
+        requests.push(JitColumnRequest {
+            column_index: col_idx,
+            physical_type,
+            filter_lo: flo,
+            filter_hi: fhi,
+        });
+    }
+
+    match unsafe {
+        decode_row_group_jit(
+            ctx,
+            &decoder.metadata,
+            row_group_index as usize,
+            &requests,
+            kernel,
+            kernel.spec(),
+            result,
+            None, // aggregate mode only for now
+        )
+    } {
+        Ok(()) => 0,
+        Err(mut err) => {
+            err.add_context("error in decodeRowGroupJit");
+            err.into_cairo_exception().throw::<i32>(&mut env)
+        }
+    }
+}

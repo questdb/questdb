@@ -386,6 +386,122 @@ public class PartitionDecoder implements QuietCloseable {
             int timestampIndex
     ) throws CairoException;
 
+    /**
+     * Execute a previously generated JIT pipeline on raw page values.
+     *
+     * @param pipelinePtr opaque handle from {@link #generatePipeline}
+     * @param valuesData  native address of PLAIN-encoded values
+     * @param nullBitmap  native address of 1-byte-per-row null bitmap (0 if none)
+     * @param rowCount    number of rows to process
+     * @param filterLo    filter constant (lower bound or exact match value)
+     * @param filterHi    upper bound for BETWEEN filter (unused otherwise)
+     * @param resultPtr   native address of a PipelineResult struct
+     * @return 0 on success
+     */
+    public static native int executePipeline(
+            long pipelinePtr,
+            long valuesData,
+            long nullBitmap,
+            int rowCount,
+            long filterLo,
+            long filterHi,
+            long resultPtr
+    );
+
+    /**
+     * Free a JIT pipeline handle obtained from {@link #generatePipeline}.
+     */
+    public static native void freePipeline(long pipelinePtr);
+
+    /**
+     * Generate (or retrieve from cache) a JIT pipeline for the given combination.
+     *
+     * @param encoding     0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=BYTE_STREAM_SPLIT
+     * @param physicalType 0=INT32, 1=INT64, 2=FLOAT, 3=DOUBLE
+     * @param filterOp     0=NONE, 1=EQ, 2=NE, 3=LT, 4=LE, 5=GT, 6=GE, 7=BETWEEN, 8=IS_NULL, 9=IS_NOT_NULL
+     * @param aggregateOp  0=COUNT, 1=SUM, 2=MIN, 3=MAX
+     * @return opaque pipeline handle, or 0 if the combination is unsupported
+     */
+    public static native long generatePipeline(
+            int encoding,
+            int physicalType,
+            int filterOp,
+            int aggregateOp
+    );
+
+    public static native long pipelineResultCountOffset();
+
+    public static native long pipelineResultHasValueOffset();
+
+    public static native long pipelineResultSize();
+
+    public static native long pipelineResultValueF64Offset();
+
+    public static native long pipelineResultValueI64Offset();
+
+    // ---- Page kernel JNI (decode_row_group_jit) ----
+
+    /**
+     * Generate a page-level JIT kernel. Same spec format as generateMultiPipeline.
+     *
+     * @return opaque handle or 0 on error
+     */
+    public static native long generatePageKernel(
+            int colCount,
+            long colSpecsPtr,
+            int filterCombine,
+            int outputMode
+    );
+
+    /**
+     * Execute a page-level JIT kernel.
+     *
+     * @param kernelPtr pointer from generatePageKernel
+     * @param ctxPtr    native address of a MultiPageContext struct
+     * @return 0 on success
+     */
+    public static native int executePageKernel(long kernelPtr, long ctxPtr);
+
+    /**
+     * Release a page kernel handle.
+     */
+    public static native void freePageKernel(long kernelPtr);
+
+    /**
+     * @return byte size of MultiPageContext struct
+     */
+    public static native long pageContextSize();
+
+    /**
+     * @return byte size of a single PageColumnSlot
+     */
+    public static native long pageColumnSlotSize();
+
+    /**
+     * Decode a row group using the fused JIT pipeline.
+     * <p>
+     * colRequestsPtr points to a flat array of 24-byte entries:
+     * [colIndex: int, physType: int, filterLo: long, filterHi: long] × colCount
+     *
+     * @param decoderPtr     ParquetDecoder handle from create()
+     * @param decodeCtxPtr   DecodeContext handle from createDecodeContext()
+     * @param rowGroupIndex  row group to decode
+     * @param kernelPtr      page kernel handle from generatePageKernel()
+     * @param colCount       number of columns
+     * @param colRequestsPtr native array of column request descriptors
+     * @param resultPtr      PipelineResult accumulator
+     * @return 0 on success
+     */
+    public static native int decodeRowGroupJit(
+            long decoderPtr,
+            long decodeCtxPtr,
+            int rowGroupIndex,
+            long kernelPtr,
+            int colCount,
+            long colRequestsPtr,
+            long resultPtr
+    );
+
     private static native long readRowGroupStats(
             long decoderPtr,
             long statBuffersPtr,

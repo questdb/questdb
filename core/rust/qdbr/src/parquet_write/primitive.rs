@@ -9,7 +9,7 @@ use crate::parquet_write::util::{
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
-use parquet2::encoding::delta_bitpacked::encode;
+use parquet2::encoding::delta_bitpacked::{encode, encode_i32};
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
@@ -364,7 +364,11 @@ where
         integer
     });
     let mut buffer = vec![];
-    encode(iterator, &mut buffer);
+    if size_of::<P>() <= 4 {
+        encode_i32(iterator, &mut buffer);
+    } else {
+        encode(iterator, &mut buffer);
+    }
     buffer
 }
 
@@ -403,7 +407,11 @@ where
         integer
     });
     let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
-    encode(iterator, &mut buffer);
+    if size_of::<P>() <= 4 {
+        encode_i32(iterator, &mut buffer);
+    } else {
+        encode(iterator, &mut buffer);
+    }
     buffer
 }
 
@@ -542,7 +550,7 @@ impl SimdEncodable for i32 {
             .filter(|&&x| x != nulls::INT)
             .map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
-        encode(iterator, buffer);
+        encode_i32(iterator, buffer);
         true
     }
 }
