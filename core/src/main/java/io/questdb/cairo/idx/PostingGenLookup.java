@@ -63,7 +63,8 @@ class PostingGenLookup implements Closeable {
     private long genIndicesAddr;   // totalEntries × 4B native
     private long posInGenAddr;     // totalEntries × 4B native
     private int totalEntries;
-    private long tier1AllocSize;   // total bytes allocated for tier 1
+    private long tier1KeyOffsetsSize; // actual alloc size for keyOffsetsAddr
+    private long tier1EntriesSize;    // actual alloc size for genIndicesAddr/posInGenAddr
 
     // Tier 2: per-gen SBBF on native memory
     private long[] sbbfAddrs;      // [genCount] native address per gen's SBBF
@@ -321,72 +322,93 @@ class PostingGenLookup implements Closeable {
     }
 
     private void buildTier1(MemoryMR keyMem, MemoryMR valueMem, int kc, int genCount) {
-        // Pass 1: count entries per key across all sparse gens
-        int[] counts = new int[kc];
-        for (int g = 0; g < genCount; g++) {
-            if (genKeyCounts[g] >= 0) {
-                continue; // dense gen
-            }
-            int activeKeyCount = -genKeyCounts[g];
-            long genFileOffset = genFileOffsets[g];
-            int genDataSize = genDataSizes[g];
-            valueMem.extend(genFileOffset + genDataSize);
-            long genAddr = valueMem.addressOf(genFileOffset);
-            for (int i = 0; i < activeKeyCount; i++) {
-                int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                if (key < kc) {
-                    counts[key]++;
+        // Pass 1: count entries per key across all sparse gens (native scratch buffer)
+        long countsSize = (long) kc * Integer.BYTES;
+        long countsAddr = Unsafe.malloc(countsSize, MemoryTag.NATIVE_INDEX_READER);
+        Unsafe.getUnsafe().setMemory(countsAddr, countsSize, (byte) 0);
+        try {
+            for (int g = 0; g < genCount; g++) {
+                if (genKeyCounts[g] >= 0) {
+                    continue; // dense gen
+                }
+                int activeKeyCount = -genKeyCounts[g];
+                long genFileOffset = genFileOffsets[g];
+                int genDataSize = genDataSizes[g];
+                valueMem.extend(genFileOffset + genDataSize);
+                long genAddr = valueMem.addressOf(genFileOffset);
+                for (int i = 0; i < activeKeyCount; i++) {
+                    int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
+                    if (key < kc) {
+                        int prev = Unsafe.getUnsafe().getInt(countsAddr + (long) key * Integer.BYTES);
+                        Unsafe.getUnsafe().putInt(countsAddr + (long) key * Integer.BYTES, prev + 1);
+                    }
                 }
             }
-        }
 
-        // Build prefix sums
-        int total = 0;
-        for (int k = 0; k < kc; k++) {
-            int c = counts[k];
-            counts[k] = total;
-            total += c;
-        }
-
-        if (total == 0) {
-            tier = TIER_NONE;
-            return;
-        }
-
-        // Allocate off-heap CSR arrays
-        long keyOffsetsSize = (long) (kc + 1) * Integer.BYTES;
-        long entriesSize = (long) total * Integer.BYTES;
-        keyOffsetsAddr = Unsafe.malloc(keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
-        genIndicesAddr = Unsafe.malloc(entriesSize, MemoryTag.NATIVE_INDEX_READER);
-        posInGenAddr = Unsafe.malloc(entriesSize, MemoryTag.NATIVE_INDEX_READER);
-        totalEntries = total;
-        tier1AllocSize = keyOffsetsSize + entriesSize * 2;
-
-        // Write prefix sums to off-heap
-        for (int k = 0; k < kc; k++) {
-            Unsafe.getUnsafe().putInt(keyOffsetsAddr + (long) k * Integer.BYTES, counts[k]);
-        }
-        Unsafe.getUnsafe().putInt(keyOffsetsAddr + (long) kc * Integer.BYTES, total);
-
-        // Pass 2: fill entries
-        int[] writePos = counts; // reuse as write position tracker (already holds prefix sums)
-        for (int g = 0; g < genCount; g++) {
-            if (genKeyCounts[g] >= 0) {
-                continue;
+            // Build prefix sums
+            int total = 0;
+            for (int k = 0; k < kc; k++) {
+                int c = Unsafe.getUnsafe().getInt(countsAddr + (long) k * Integer.BYTES);
+                Unsafe.getUnsafe().putInt(countsAddr + (long) k * Integer.BYTES, total);
+                total += c;
             }
-            int activeKeyCount = -genKeyCounts[g];
-            long genAddr = valueMem.addressOf(genFileOffsets[g]);
-            for (int i = 0; i < activeKeyCount; i++) {
-                int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                if (key < kc) {
-                    int pos = writePos[key]++;
-                    Unsafe.getUnsafe().putInt(genIndicesAddr + (long) pos * Integer.BYTES, g);
-                    Unsafe.getUnsafe().putInt(posInGenAddr + (long) pos * Integer.BYTES, i);
+
+            if (total == 0) {
+                tier = TIER_NONE;
+                return;
+            }
+
+            // Allocate off-heap CSR arrays with safe partial-failure handling
+            long keyOffsetsSize = (long) (kc + 1) * Integer.BYTES;
+            long entriesSize = (long) total * Integer.BYTES;
+            keyOffsetsAddr = Unsafe.malloc(keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                genIndicesAddr = Unsafe.malloc(entriesSize, MemoryTag.NATIVE_INDEX_READER);
+                try {
+                    posInGenAddr = Unsafe.malloc(entriesSize, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(genIndicesAddr, entriesSize, MemoryTag.NATIVE_INDEX_READER);
+                    genIndicesAddr = 0;
+                    throw e;
+                }
+            } catch (Throwable e) {
+                Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+                keyOffsetsAddr = 0;
+                throw e;
+            }
+            totalEntries = total;
+            tier1KeyOffsetsSize = keyOffsetsSize;
+            tier1EntriesSize = entriesSize;
+
+            // Write prefix sums to off-heap
+            for (int k = 0; k < kc; k++) {
+                Unsafe.getUnsafe().putInt(keyOffsetsAddr + (long) k * Integer.BYTES,
+                        Unsafe.getUnsafe().getInt(countsAddr + (long) k * Integer.BYTES));
+            }
+            Unsafe.getUnsafe().putInt(keyOffsetsAddr + (long) kc * Integer.BYTES, total);
+
+            // Pass 2: fill entries (reuse countsAddr as write position tracker)
+            for (int g = 0; g < genCount; g++) {
+                if (genKeyCounts[g] >= 0) {
+                    continue;
+                }
+                int activeKeyCount = -genKeyCounts[g];
+                long genAddr = valueMem.addressOf(genFileOffsets[g]);
+                for (int i = 0; i < activeKeyCount; i++) {
+                    int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
+                    if (key < kc) {
+                        int pos = Unsafe.getUnsafe().getInt(countsAddr + (long) key * Integer.BYTES);
+                        Unsafe.getUnsafe().putInt(countsAddr + (long) key * Integer.BYTES, pos + 1);
+                        Unsafe.getUnsafe().putInt(genIndicesAddr + (long) pos * Integer.BYTES, g);
+                        Unsafe.getUnsafe().putInt(posInGenAddr + (long) pos * Integer.BYTES, i);
+                    }
                 }
             }
-        }
 
-        tier = TIER_PER_KEY;
+            tier = TIER_PER_KEY;
+        } finally {
+            Unsafe.free(countsAddr, countsSize, MemoryTag.NATIVE_INDEX_READER);
+        }
     }
 
     private void buildTier2(MemoryMR valueMem, int genCount, int sparseGenCount) {
@@ -441,16 +463,15 @@ class PostingGenLookup implements Closeable {
 
     private void freeTier1() {
         if (keyOffsetsAddr != 0) {
-            long keyOffsetsSize = (long) (keyCount + 1) * Integer.BYTES;
-            long entriesSize = (long) totalEntries * Integer.BYTES;
-            Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.free(genIndicesAddr, entriesSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.free(posInGenAddr, entriesSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.free(keyOffsetsAddr, tier1KeyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.free(genIndicesAddr, tier1EntriesSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.free(posInGenAddr, tier1EntriesSize, MemoryTag.NATIVE_INDEX_READER);
             keyOffsetsAddr = 0;
             genIndicesAddr = 0;
             posInGenAddr = 0;
             totalEntries = 0;
-            tier1AllocSize = 0;
+            tier1KeyOffsetsSize = 0;
+            tier1EntriesSize = 0;
         }
     }
 

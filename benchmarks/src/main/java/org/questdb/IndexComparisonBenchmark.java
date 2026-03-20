@@ -64,32 +64,53 @@ public class IndexComparisonBenchmark {
         String tmpDir = System.getProperty("java.io.tmpdir");
         CairoConfiguration config = new DefaultCairoConfiguration(tmpDir);
 
+        // Optional: pass scenario filter as args (e.g., "S1" "S6,S7")
+        Set<String> scenarioFilter = new HashSet<>();
+        for (String arg : args) {
+            scenarioFilter.addAll(Arrays.asList(arg.split(",")));
+        }
+
+        Format[] formats = Format.values();
         List<ScenarioResult> results = new ArrayList<>();
 
-        // S1: High cardinality — 5M keys × 4 v/k, random, single commit
-        results.add(runScenario(config, tmpDir, "S1: 5M keys x 4 v/k",
-                5_000_000, 20_000_000, 20_000_000, // commitInterval = totalRows = single commit
-                () -> buildShuffled(20_000_000, 5_000_000)));
+        if (shouldRun(scenarioFilter, "S1"))
+            results.add(runScenario(config, tmpDir, "S1: 5M keys x 4 v/k",
+                    5_000_000, 20_000_000, 20_000_000,
+                    () -> buildShuffled(20_000_000, 5_000_000), formats));
 
-        // S2: Market data — 512 keys × 7168 v/k, round-robin, 56 commits
-        results.add(runScenario(config, tmpDir, "S2: 512 keys x 7K v/k (56 commits)",
-                512, 3_670_016, 65_536,
-                () -> buildRoundRobin(3_670_016, 512)));
+        if (shouldRun(scenarioFilter, "S2"))
+            results.add(runScenario(config, tmpDir, "S2: 512 keys x 7K v/k (56 commits)",
+                    512, 3_670_016, 65_536,
+                    () -> buildRoundRobin(3_670_016, 512), formats));
 
-        // S3: Streaming — 50K keys, 2% active, 500 commits
-        results.add(runStreamingScenario(config, tmpDir));
+        if (shouldRun(scenarioFilter, "S3"))
+            results.add(runStreamingScenario(config, tmpDir, formats));
 
-        // S4: Dense instruments — 8K keys × 10K v/k, round-robin
-        results.add(runScenario(config, tmpDir, "S4: 8K keys x 10K v/k",
-                8_000, 80_000_000, 80_000_000,
-                () -> buildRoundRobin(80_000_000, 8_000)));
+        if (shouldRun(scenarioFilter, "S4"))
+            results.add(runScenario(config, tmpDir, "S4: 8K keys x 10K v/k",
+                    8_000, 80_000_000, 80_000_000,
+                    () -> buildRoundRobin(80_000_000, 8_000), formats));
 
-        // S5: Zipfian — 1K keys, 10M rows
-        results.add(runScenario(config, tmpDir, "S5: 1K keys, 10M rows, Zipfian",
-                1_000, 10_000_000, 10_000_000,
-                () -> buildZipfian(10_000_000, 1_000)));
+        if (shouldRun(scenarioFilter, "S5"))
+            results.add(runScenario(config, tmpDir, "S5: 1K keys, 10M rows, Zipfian",
+                    1_000, 10_000_000, 10_000_000,
+                    () -> buildZipfian(10_000_000, 1_000), formats));
+
+        if (shouldRun(scenarioFilter, "S6"))
+            results.add(runScenario(config, tmpDir, "S6: 2M keys x 6 v/k",
+                    2_000_000, 12_000_000, 12_000_000,
+                    () -> buildShuffled(12_000_000, 2_000_000), formats));
+
+        if (shouldRun(scenarioFilter, "S7"))
+            results.add(runScenario(config, tmpDir, "S7: 10M keys x 4 v/k",
+                    10_000_000, 40_000_000, 40_000_000,
+                    () -> buildShuffled(40_000_000, 10_000_000), formats));
 
         printSummary(results);
+    }
+
+    private static boolean shouldRun(Set<String> filter, String scenario) {
+        return filter.isEmpty() || filter.stream().anyMatch(scenario::startsWith);
     }
 
     // ========================= Generic scenario runner =========================
@@ -97,7 +118,7 @@ public class IndexComparisonBenchmark {
     private static ScenarioResult runScenario(
             CairoConfiguration config, String tmpDir,
             String name, int keyCount, int totalRows, int commitInterval,
-            KeyAssignmentBuilder assignmentBuilder
+            KeyAssignmentBuilder assignmentBuilder, Format[] formats
     ) {
         System.out.printf("%n=== %s ===%n", name);
         System.out.printf("    %,d keys, %,d rows, commit every %,d rows%n", keyCount, totalRows, commitInterval);
@@ -115,7 +136,7 @@ public class IndexComparisonBenchmark {
         result.name = name;
         result.totalRows = totalRows;
 
-        for (Format fmt : Format.values()) {
+        for (Format fmt : formats) {
             String dir = tmpDir + File.separator + "cmp_" + fmt + "_" + System.nanoTime();
             new File(dir).mkdirs();
             try {
@@ -208,13 +229,14 @@ public class IndexComparisonBenchmark {
                 m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
             }
             case POSTING -> {
-                initPosting(config, dir);
+                CairoConfiguration fmtConfig = configForFormat(config, fmt);
+                initPosting(fmtConfig, dir);
 
                 int commitCount = 0;
                 long wt0 = System.nanoTime();
                 PostingIndexWriter writer;
                 try (Path path = new Path().of(dir)) {
-                    writer = new PostingIndexWriter(config);
+                    writer = new PostingIndexWriter(fmtConfig);
                     writer.of(path, "test", COL_TXN, false);
                     for (int i = 0; i < totalRows; i++) {
                         writer.add(keys[i], i);
@@ -234,9 +256,9 @@ public class IndexComparisonBenchmark {
                 // Unsealed
                 long unsealedSize = getDirectorySize(dir);
                 m.sizeUnsealedMB = unsealedSize / (1024.0 * 1024.0);
-                m.readPointUnsealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanUnsealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeUnsealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
+                m.readPointUnsealedMs = measureRead(fmtConfig, dir, fmt, pointKeys);
+                m.readScanUnsealedMs = measureScan(fmtConfig, dir, fmt, keyCount);
+                m.readRangeUnsealedMs = measureRange(fmtConfig, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
 
                 // Seal + compact (close triggers both)
                 writer.close();
@@ -245,9 +267,9 @@ public class IndexComparisonBenchmark {
                 m.bPerValSealed = (double) sealedSize / totalRows;
 
                 // Sealed reads
-                m.readPointSealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanSealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
+                m.readPointSealedMs = measureRead(fmtConfig, dir, fmt, pointKeys);
+                m.readScanSealedMs = measureScan(fmtConfig, dir, fmt, keyCount);
+                m.readRangeSealedMs = measureRange(fmtConfig, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
             }
         }
         return m;
@@ -255,7 +277,7 @@ public class IndexComparisonBenchmark {
 
     // ========================= Streaming scenario (custom commit pattern) =========================
 
-    private static ScenarioResult runStreamingScenario(CairoConfiguration config, String tmpDir) {
+    private static ScenarioResult runStreamingScenario(CairoConfiguration config, String tmpDir, Format[] formats) {
         int keyCount = 50_000;
         int commits = 500;
         int activePerCommit = 1_000; // 2%
@@ -289,7 +311,7 @@ public class IndexComparisonBenchmark {
         result.name = "S3: Streaming (50K, 500 commits)";
         result.totalRows = totalRows;
 
-        for (Format fmt : Format.values()) {
+        for (Format fmt : formats) {
             String dir = tmpDir + File.separator + "cmp_st_" + fmt + "_" + System.nanoTime();
             new File(dir).mkdirs();
             try {
@@ -365,11 +387,12 @@ public class IndexComparisonBenchmark {
                 m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
             }
             case POSTING -> {
-                initPosting(config, dir);
+                CairoConfiguration fmtConfig = configForFormat(config, fmt);
+                initPosting(fmtConfig, dir);
                 long wt0 = System.nanoTime();
                 PostingIndexWriter writer;
                 try (Path path = new Path().of(dir)) {
-                    writer = new PostingIndexWriter(config);
+                    writer = new PostingIndexWriter(fmtConfig);
                     writer.of(path, "test", COL_TXN, false);
                     int rowId = 0;
                     for (int c = 0; c < commits; c++) {
@@ -382,16 +405,16 @@ public class IndexComparisonBenchmark {
                 m.writeTotalMs = (System.nanoTime() - wt0) / 1e6;
                 m.writePerCommitMs = m.writeTotalMs / commits;
                 m.sizeUnsealedMB = getDirectorySize(dir) / (1024.0 * 1024.0);
-                m.readPointUnsealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanUnsealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeUnsealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
+                m.readPointUnsealedMs = measureRead(fmtConfig, dir, fmt, pointKeys);
+                m.readScanUnsealedMs = measureScan(fmtConfig, dir, fmt, keyCount);
+                m.readRangeUnsealedMs = measureRange(fmtConfig, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
                 writer.close(); // seal + compact
                 long sealedSize = getDirectorySize(dir);
                 m.sizeSealedMB = sealedSize / (1024.0 * 1024.0);
                 m.bPerValSealed = (double) sealedSize / totalRows;
-                m.readPointSealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanSealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
+                m.readPointSealedMs = measureRead(fmtConfig, dir, fmt, pointKeys);
+                m.readScanSealedMs = measureScan(fmtConfig, dir, fmt, keyCount);
+                m.readRangeSealedMs = measureRange(fmtConfig, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
             }
         }
         return m;
@@ -475,6 +498,10 @@ public class IndexComparisonBenchmark {
         }
     }
 
+    private static CairoConfiguration configForFormat(CairoConfiguration base, Format fmt) {
+        return base;
+    }
+
     private static BitmapIndexReader openReader(CairoConfiguration config, Path path, Format fmt) {
         return switch (fmt) {
             case LEGACY -> new BitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
@@ -553,7 +580,7 @@ public class IndexComparisonBenchmark {
     // ========================= Output =========================
 
     private static void printFormatLine(Format fmt, Metrics m) {
-        System.out.printf("    %-8s  size: %6.1f/%6.1f MB (unsealed/sealed)  B/val: %4.1f  write: %6.0f ms  " +
+        System.out.printf("    %-16s size: %6.1f/%6.1f MB (unsealed/sealed)  B/val: %4.1f  write: %6.0f ms  " +
                         "point: %5.1f/%5.1f  scan: %6.1f/%6.1f  range: %5.1f/%5.1f ms%n",
                 fmt, m.sizeUnsealedMB, m.sizeSealedMB, m.bPerValSealed, m.writeTotalMs,
                 m.readPointUnsealedMs, m.readPointSealedMs,
@@ -562,172 +589,58 @@ public class IndexComparisonBenchmark {
     }
 
     private static void printSummary(List<ScenarioResult> results) {
+        if (results.isEmpty()) return;
+        // Derive formats from what was actually run
+        Format[] formats = results.get(0).metrics.keySet().stream()
+                .sorted(Comparator.comparingInt(Enum::ordinal))
+                .toArray(Format[]::new);
+
         System.out.printf("%n%n");
-        System.out.println("=".repeat(140));
+        System.out.println("=".repeat(160));
         System.out.println("SUMMARY");
-        System.out.println("=".repeat(140));
+        System.out.println("=".repeat(160));
 
         // Header
         System.out.printf("%n%-38s", "");
-        System.out.printf(" %15s %15s %15s", "Legacy", "FSST", "Posting");
+        for (Format f : formats) {
+            System.out.printf(" %15s", f);
+        }
         System.out.println();
 
-        // Size sealed
-        System.out.printf("%n--- Size Sealed (MB) ---%n");
-        double[] sizeGeo = new double[Format.values().length];
-        Arrays.fill(sizeGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            double legacySize = r.metrics.get(Format.LEGACY).sizeSealedMB;
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f MB  ", m.sizeSealedMB);
-                sizeGeo[f.ordinal()] *= m.sizeSealedMB;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", sizeGeo, results.size(), "MB");
-
-        // Size unsealed
-        System.out.printf("%n--- Size Unsealed (MB) ---%n");
-        double[] sizeUGeo = new double[Format.values().length];
-        Arrays.fill(sizeUGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f MB  ", m.sizeUnsealedMB);
-                sizeUGeo[f.ordinal()] *= m.sizeUnsealedMB;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", sizeUGeo, results.size(), "MB");
-
-        // B/val sealed
-        System.out.printf("%n--- Bytes/Value (sealed) ---%n");
-        double[] bvGeo = new double[Format.values().length];
-        Arrays.fill(bvGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f     ", m.bPerValSealed);
-                bvGeo[f.ordinal()] *= m.bPerValSealed;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", bvGeo, results.size(), "   ");
-
-        // Write total
-        System.out.printf("%n--- Write Total (ms) ---%n");
-        double[] wtGeo = new double[Format.values().length];
-        Arrays.fill(wtGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.0f ms  ", m.writeTotalMs);
-                wtGeo[f.ordinal()] *= m.writeTotalMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", wtGeo, results.size(), "ms");
-
-        // Read point sealed
-        System.out.printf("%n--- Read Point Queries Sealed (ms) ---%n");
-        double[] rpGeo = new double[Format.values().length];
-        Arrays.fill(rpGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f ms  ", m.readPointSealedMs);
-                rpGeo[f.ordinal()] *= m.readPointSealedMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", rpGeo, results.size(), "ms");
-
-        // Read point unsealed
-        System.out.printf("%n--- Read Point Queries Unsealed (ms) ---%n");
-        double[] rpuGeo = new double[Format.values().length];
-        Arrays.fill(rpuGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f ms  ", m.readPointUnsealedMs);
-                rpuGeo[f.ordinal()] *= m.readPointUnsealedMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", rpuGeo, results.size(), "ms");
-
-        // Full scan sealed
-        System.out.printf("%n--- Full Scan Sealed (ms) ---%n");
-        double[] fsGeo = new double[Format.values().length];
-        Arrays.fill(fsGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f ms  ", m.readScanSealedMs);
-                fsGeo[f.ordinal()] *= m.readScanSealedMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", fsGeo, results.size(), "ms");
-
-        // Full scan unsealed
-        System.out.printf("%n--- Full Scan Unsealed (ms) ---%n");
-        double[] fsuGeo = new double[Format.values().length];
-        Arrays.fill(fsuGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f ms  ", m.readScanUnsealedMs);
-                fsuGeo[f.ordinal()] *= m.readScanUnsealedMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", fsuGeo, results.size(), "ms");
-
-        // Range scan sealed
-        System.out.printf("%n--- Range Scan Sealed (ms) ---%n");
-        double[] rgGeo = new double[Format.values().length];
-        Arrays.fill(rgGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f ms  ", m.readRangeSealedMs);
-                rgGeo[f.ordinal()] *= m.readRangeSealedMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", rgGeo, results.size(), "ms");
-
-        // Range scan unsealed
-        System.out.printf("%n--- Range Scan Unsealed (ms) ---%n");
-        double[] rguGeo = new double[Format.values().length];
-        Arrays.fill(rguGeo, 1.0);
-        for (ScenarioResult r : results) {
-            System.out.printf("  %-36s", r.name);
-            for (Format f : Format.values()) {
-                Metrics m = r.metrics.get(f);
-                System.out.printf(" %10.1f ms  ", m.readRangeUnsealedMs);
-                rguGeo[f.ordinal()] *= m.readRangeUnsealedMs;
-            }
-            System.out.println();
-        }
-        printGeoMean("  Geomean", rguGeo, results.size(), "ms");
+        printMetricSection(results, formats, "Size Sealed (MB)", "MB", m -> m.sizeSealedMB);
+        printMetricSection(results, formats, "Size Unsealed (MB)", "MB", m -> m.sizeUnsealedMB);
+        printMetricSection(results, formats, "Bytes/Value (sealed)", "   ", m -> m.bPerValSealed);
+        printMetricSection(results, formats, "Write Total (ms)", "ms", m -> m.writeTotalMs);
+        printMetricSection(results, formats, "Point Sealed (ms)", "ms", m -> m.readPointSealedMs);
+        printMetricSection(results, formats, "Point Unsealed (ms)", "ms", m -> m.readPointUnsealedMs);
+        printMetricSection(results, formats, "Scan Sealed (ms)", "ms", m -> m.readScanSealedMs);
+        printMetricSection(results, formats, "Scan Unsealed (ms)", "ms", m -> m.readScanUnsealedMs);
+        printMetricSection(results, formats, "Range Sealed (ms)", "ms", m -> m.readRangeSealedMs);
+        printMetricSection(results, formats, "Range Unsealed (ms)", "ms", m -> m.readRangeUnsealedMs);
     }
 
-    private static void printGeoMean(String label, double[] products, int n, String unit) {
-        System.out.printf("%-38s", label);
-        for (double p : products) {
-            System.out.printf(" %10.1f %s ", Math.pow(p, 1.0 / n), unit);
+    interface MetricExtractor {
+        double extract(Metrics m);
+    }
+
+    private static void printMetricSection(List<ScenarioResult> results, Format[] formats,
+                                            String title, String unit, MetricExtractor extractor) {
+        System.out.printf("%n--- %s ---%n", title);
+        double[] geo = new double[formats.length];
+        Arrays.fill(geo, 1.0);
+        for (ScenarioResult r : results) {
+            System.out.printf("  %-36s", r.name);
+            for (int i = 0; i < formats.length; i++) {
+                Metrics m = r.metrics.get(formats[i]);
+                double val = extractor.extract(m);
+                System.out.printf(" %10.1f %s ", val, unit);
+                geo[i] *= val;
+            }
+            System.out.println();
+        }
+        System.out.printf("%-38s", "  Geomean");
+        for (int i = 0; i < formats.length; i++) {
+            System.out.printf(" %10.1f %s ", Math.pow(geo[i], 1.0 / results.size()), unit);
         }
         System.out.println();
     }

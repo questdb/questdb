@@ -61,7 +61,8 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
     // ===== BP Tests =====
 
     @Test
-    public void testBPComparisonWithLegacy() {
+    public void testBPComparisonWithLegacy() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             int valueCount = 10000;
             long[] values = new long[valueCount];
@@ -115,6 +116,7 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals("Mismatch at index " + i, legacyValues.getQuick(i), bpValues.getQuick(i));
             }
         }
+        });
     }
 
     @Test

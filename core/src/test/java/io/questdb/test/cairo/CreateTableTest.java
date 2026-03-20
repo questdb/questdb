@@ -668,6 +668,36 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostingIndexInsertAndQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+
+            try (TableReader r = engine.getReader("t")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+
+            // Verify all rows are readable
+            assertSql("""
+                    count
+                    6
+                    """, "SELECT count() FROM t");
+        });
+    }
+
+    @Test
     public void testCreateTableWithSymbolIndexType() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (s symbol index type legacy, ts timestamp) timestamp(ts)");

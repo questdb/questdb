@@ -173,12 +173,71 @@ static void unpack_all_values(const uint8_t *src, int32_t value_count,
     unpack_all_scalar(src, value_count, bit_width, min_value, dest);
 }
 
+// ============= Unpack from arbitrary start index =============
+
+static void unpack_from_scalar(const uint8_t *src, int32_t start_index, int32_t value_count,
+                                int32_t bit_width, int64_t min_value, int64_t *dest) {
+    uint64_t mask = (bit_width == 64) ? ~0ULL : (1ULL << bit_width) - 1;
+
+    // Seek to the byte containing the first value's bits
+    int64_t bit_pos = (int64_t)start_index * bit_width;
+    int src_offset = (int)(bit_pos / 8);
+    int skip_bits = (int)(bit_pos % 8);
+
+    uint64_t buffer = 0;
+    int buffer_bits = 0;
+
+    // Pre-fill buffer past skip bits
+    while (buffer_bits < skip_bits + bit_width) {
+        buffer |= (static_cast<uint64_t>(src[src_offset]) << buffer_bits);
+        buffer_bits += 8;
+        src_offset++;
+    }
+    buffer >>= skip_bits;
+    buffer_bits -= skip_bits;
+
+    for (int i = 0; i < value_count; i++) {
+        while (buffer_bits < bit_width) {
+            buffer |= (static_cast<uint64_t>(src[src_offset]) << buffer_bits);
+            buffer_bits += 8;
+            src_offset++;
+        }
+        dest[i] = min_value + static_cast<int64_t>(buffer & mask);
+        buffer >>= bit_width;
+        buffer_bits -= bit_width;
+    }
+}
+
+static void unpack_values_from(const uint8_t *src, int32_t start_index, int32_t value_count,
+                                int32_t bit_width, int64_t min_value, int64_t *dest) {
+#if HAS_X86_64
+    if (HAS_AVX2) {
+        // For byte-aligned widths, offset the source pointer and use AVX2
+        switch (bit_width) {
+            case 8:
+                unpack_8bit_avx2(src + start_index, value_count, min_value, dest);
+                return;
+            case 16:
+                unpack_16bit_avx2(src + start_index * 2, value_count, min_value, dest);
+                return;
+            case 32:
+                unpack_32bit_avx2(src + start_index * 4, value_count, min_value, dest);
+                return;
+            default:
+                break;
+        }
+    }
+#endif
+    // For non-aligned widths, use scalar with bit-level seeking
+    unpack_from_scalar(src, start_index, value_count, bit_width, min_value, dest);
+}
+
 // ============= JNI Exports =============
 
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_io_questdb_cairo_idx_PostingsIndexNative_packValues0(
+Java_io_questdb_cairo_idx_PostingIndexNative_packValues0(
         JNIEnv * /*env*/,
         jclass /*cl*/,
         jlong valuesAddr,
@@ -197,7 +256,7 @@ Java_io_questdb_cairo_idx_PostingsIndexNative_packValues0(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_cairo_idx_PostingsIndexNative_unpackAllValues0(
+Java_io_questdb_cairo_idx_PostingIndexNative_unpackAllValues0(
         JNIEnv * /*env*/,
         jclass /*cl*/,
         jlong srcAddr,
@@ -213,6 +272,31 @@ Java_io_questdb_cairo_idx_PostingsIndexNative_unpackAllValues0(
         minValue,
         reinterpret_cast<int64_t *>(destAddr)
     );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_idx_PostingIndexNative_unpackValuesFrom0(
+        JNIEnv *env,
+        jclass /*cl*/,
+        jlong srcAddr,
+        jint startIndex,
+        jint valueCount,
+        jint bitWidth,
+        jlong minValue,
+        jlongArray destArray
+) {
+    auto *dest = reinterpret_cast<int64_t *>(
+        env->GetPrimitiveArrayCritical(destArray, nullptr));
+    if (dest == nullptr) return;
+    unpack_values_from(
+        reinterpret_cast<const uint8_t *>(srcAddr),
+        startIndex,
+        valueCount,
+        bitWidth,
+        minValue,
+        dest
+    );
+    env->ReleasePrimitiveArrayCritical(destArray, dest, 0);
 }
 
 } // extern "C"

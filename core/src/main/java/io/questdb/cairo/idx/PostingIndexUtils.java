@@ -32,25 +32,69 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Constants and encoding/decoding utilities for Delta + FoR64 BitPacking (BP) bitmap index.
+ * Constants and encoding/decoding utilities for the Posting index sealed format.
+ *
+ * <h2>Sealed stride encoding</h2>
+ *
+ * At seal time the writer groups keys into strides of {@link #DENSE_STRIDE} (256)
+ * consecutive keys and independently encodes each stride using the smaller of two
+ * modes:
+ *
+ * <h3>Delta mode ({@link #STRIDE_MODE_DELTA}, 0x00) — per-key delta + FoR</h3>
+ *
+ * Each key's sorted row-ID list is encoded independently:
+ * <ol>
+ *   <li>Delta-encode: compute successive differences.</li>
+ *   <li>Split deltas into blocks of {@link #BLOCK_CAPACITY} (64).</li>
+ *   <li>Per block: subtract min-delta (Frame of Reference), bitpack the residuals.</li>
+ * </ol>
+ * This exploits per-key regularity. Round-robin or periodic distributions produce
+ * constant deltas (bitWidth=0), so delta mode compresses them to near zero.
+ * The cost is per-key metadata: ~20 B of block headers per key regardless of how
+ * few values the key holds.
  * <p>
- * Combines delta encoding with Frame-of-Reference compression using 64-tuple blocks.
- * For sorted postings: delta → split into blocks of 64 → per-block FoR bitpacking.
- * <p>
- * Per-key encoded data layout:
+ * <b>Wins when values/key is high</b> (≥ ~10) — the per-key overhead is amortised
+ * and tight per-key delta distributions keep bitwidths low.
+ *
+ * <h3>Flat mode ({@link #STRIDE_MODE_FLAT}, 0x01) — stride-wide FoR</h3>
+ *
+ * All values across all 256 keys in the stride are packed into a single contiguous
+ * bitpacked array with one shared base value and one bitwidth:
  * <pre>
- * blockCount           : 2B
+ *   packed_value[i] = (row_id[i] - baseValue)   // bitWidth bits each
+ * </pre>
+ * A prefix-count array maps each key to its slice of the flat array, enabling O(1)
+ * random access per key. No delta encoding step — just raw FoR.
+ * <p>
+ * <b>Wins when values/key is low</b> (≤ ~8) — avoids the per-key metadata overhead
+ * that dominates delta mode at low cardinality. The bitwidth is determined by the
+ * full row-ID range within the stride, which is typically wider than per-key delta
+ * ranges, so each value takes more bits. But eliminating per-key headers more than
+ * compensates.
+ * <p>
+ * When a flat-mode bitwidth happens to land on 8, 16, or 32, the reader decodes via
+ * native AVX2 ({@link BitpackUtils#unpackValuesFrom}), which provides ~5–10× higher
+ * throughput than the Java scalar path. This is opportunistic — the writer never
+ * inflates the bitwidth to reach an aligned boundary.
+ *
+ * <h3>Mode selection</h3>
+ *
+ * The seal path trial-encodes both modes and picks whichever produces fewer bytes.
+ * The threshold is purely size-based; there is no speed-vs-size trade-off knob.
+ *
+ * <h2>Per-key delta-encoded data layout</h2>
+ * <pre>
+ * blockCount           : 4B
  * valueCounts[]        : blockCount × 1B  (1–64 per block)
  * firstValues[]        : blockCount × 8B  (first absolute value per block)
  * minDeltas[]          : blockCount × 8B  (FoR reference per block)
  * bitWidths[]          : blockCount × 1B
  * packedBlock[0..n-1]  : variable size bitpacked residuals
  * </pre>
- * <p>
- * Key File Layout (.bk) — double-buffered 4KB metadata pages (v2):
+ *
+ * <h2>Key file layout (.bk) — double-buffered 4 KB metadata pages</h2>
  * <pre>
- * Page A: [0, 4096)
- * Page B: [4096, 8192)
+ * Page A: [0, 4096)    Page B: [4096, 8192)
  *
  * Each page:
  *   [0-7]       sequence_start (8B)
@@ -61,66 +105,58 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *   [32-35]     genCount (4B)
  *   [36-39]     formatVersion (4B)
  *   [40-63]     reserved (24B)
- *   [64-4087]   gen dir: up to 167 entries × 24B = 4008B
+ *   [64-4087]   gen dir: up to 167 entries × 24B
  *   [4088-4095] sequence_end (8B) — must equal sequence_start for valid page
  * </pre>
- * <p>
- * Value File Layout (.bv):
+ *
+ * <h2>Dense generation (sealed) — stride-indexed</h2>
  * <pre>
- * [Generation 0 data]
- * [Generation 1 data]
+ * [stride_index: (strideCount + 1) × 4B — byte offset per stride block]
+ * [stride block 0]   (delta or flat mode, chosen per stride)
+ * [stride block 1]
  * ...
  * </pre>
- * <p>
- * Generation Format (one per commit, covers all keys):
- * <p>
- * Dense format (genKeyCount >= 0 in directory, used by seal) — stride-indexed:
+ *
+ * <h3>Delta mode stride layout</h3>
  * <pre>
- * [stride_index: (strideCount + 1) × 4B — byte offset of each stride block]
- * [stride block 0:  (BP mode or Packed mode, chosen per-stride)]
- * [stride block 1: ...]
- * ...
- * [stride block N-1: last stride may have fewer keys]
- * </pre>
- * where strideCount = ceil(keyCount / DENSE_STRIDE), ks = keys in stride.
- * <p>
- * Each stride block uses one of two modes:
- * <pre>
- * BP mode (mode=0x00):
  *   [mode: 1B = 0x00]
- *   [reserved: 1B = 0x00]
+ *   [reserved: 1B]
+ *   [padding: 2B]
  *   [counts:  ks × 4B — value count per key]
  *   [offsets: (ks + 1) × 4B — prefix-sum data offsets, sentinel at end]
- *   [BP-encoded data for each key]
+ *   [delta-encoded data for each key]
+ * </pre>
  *
- * Packed mode (mode=0x01):
+ * <h3>Flat mode stride layout</h3>
+ * <pre>
  *   [mode: 1B = 0x01]
  *   [bitWidth: 1B]
  *   [padding: 2B]
- *   [baseValue: 8B — per-stride minimum value, subtracted before packing]
- *   [prefixCounts: (ks + 1) × 4B — cumulative value count (prefix sum)]
- *   [packed data: totalValues × bitWidth bits, contiguous bit-packed (value - baseValue)]
+ *   [baseValue: 8B]
+ *   [prefixCounts: (ks + 1) × 4B — cumulative value count]
+ *   [packed data: totalValues × bitWidth bits, contiguous]
  * </pre>
- * At seal time, each stride independently chooses the smaller encoding.
- * Sparse format (genKeyCount < 0 in directory, |genKeyCount| = active keys, used by commit):
+ *
+ * <h2>Sparse generation (commit-time)</h2>
  * <pre>
- * [keyIds:  activeKeyCount × 4B — sorted ascending, for binary search]
- * [counts:  activeKeyCount × 4B — indexed by position in keyIds]
- * [offsets: activeKeyCount × 4B — indexed by position in keyIds]
- * [Key data...]
+ * [keyIds:  activeKeyCount × 4B — sorted ascending]
+ * [counts:  activeKeyCount × 4B]
+ * [offsets: activeKeyCount × 4B]
+ * [delta-encoded data per key]
  * </pre>
  */
 public final class PostingIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
     public static final int DENSE_STRIDE = 256;
+    public static final int PACKED_BATCH_SIZE = 256;
 
-    // Stride block mode constants
-    public static final byte STRIDE_MODE_BP = 0;
-    public static final byte STRIDE_MODE_PACKED = 1;
+    // Stride block mode constants — see class javadoc for when each mode wins
+    public static final byte STRIDE_MODE_DELTA = 0;
+    public static final byte STRIDE_MODE_FLAT = 1;
     public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
-    public static final int STRIDE_PACKED_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
-    public static final int STRIDE_PACKED_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
+    public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
+    public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
 
     // Double-buffered 4KB metadata pages (v2 format)
     public static final int PAGE_SIZE = 4096;
@@ -161,15 +197,15 @@ public final class PostingIndexUtils {
      */
     public static long computeMaxEncodedSize(int count) {
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
-        // 2B blockCount + blockCount * (1B valueCount + 8B firstValue + 8B minDelta + 1B bitWidth)
+        // 4B blockCount + blockCount * (1B valueCount + 8B firstValue + 8B minDelta + 1B bitWidth)
         // + (count - blockCount) * 8 bytes worst case packed data
         // Each block's first value is in firstValues[], so total deltas = count - blockCount.
         long totalDeltas = count - blockCount;
-        return 2 + (long) blockCount * 18 + totalDeltas * 8;
+        return 4 + (long) blockCount * 18 + totalDeltas * 8;
     }
 
     /**
-     * Decodes all values for a key from BP-encoded data.
+     * Decodes all values for a key from delta-encoded data.
      * Allocates temporary arrays per call — use the overload with DecodeContext
      * on hot paths to avoid allocations.
      *
@@ -178,8 +214,8 @@ public final class PostingIndexUtils {
      * @param dest       destination array (must have room for totalCount values)
      */
     public static void decodeKey(long srcAddr, int totalCount, long[] dest) {
-        int blockCount = Unsafe.getUnsafe().getShort(srcAddr) & 0xFFFF;
-        long pos = srcAddr + 2;
+        int blockCount = Unsafe.getUnsafe().getInt(srcAddr);
+        long pos = srcAddr + 4;
 
         // Read valueCounts[]
         int[] valueCounts = new int[blockCount];
@@ -239,7 +275,7 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Decodes all values for a key from BP-encoded data into a Java array,
+     * Decodes all values for a key from delta-encoded data into a Java array,
      * using pre-allocated workspace arrays from the provided context.
      *
      * @param srcAddr    address of the encoded data for this key
@@ -248,8 +284,8 @@ public final class PostingIndexUtils {
      * @param ctx        reusable decode context (call ensureCapacity first)
      */
     public static void decodeKey(long srcAddr, int totalCount, long[] dest, DecodeContext ctx) {
-        int blockCount = Unsafe.getUnsafe().getShort(srcAddr) & 0xFFFF;
-        long pos = srcAddr + 2;
+        int blockCount = Unsafe.getUnsafe().getInt(srcAddr);
+        long pos = srcAddr + 4;
 
         ctx.ensureCapacity(blockCount);
         int[] valueCounts = ctx.valueCounts;
@@ -305,7 +341,7 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Decodes all values for a key from BP-encoded data directly into native memory,
+     * Decodes all values for a key from delta-encoded data directly into native memory,
      * using pre-allocated workspace arrays from the provided context.
      *
      * @param srcAddr    address of the encoded data for this key
@@ -314,8 +350,8 @@ public final class PostingIndexUtils {
      * @param ctx        reusable decode context (call ensureCapacity first)
      */
     public static void decodeKeyToNative(long srcAddr, int totalCount, long destAddr, DecodeContext ctx) {
-        int blockCount = Unsafe.getUnsafe().getShort(srcAddr) & 0xFFFF;
-        long pos = srcAddr + 2;
+        int blockCount = Unsafe.getUnsafe().getInt(srcAddr);
+        long pos = srcAddr + 4;
 
         ctx.ensureCapacity(blockCount);
         int[] valueCounts = ctx.valueCounts;
@@ -399,8 +435,8 @@ public final class PostingIndexUtils {
      */
     public static int encodeKey(long[] values, int count, long destAddr, EncodeContext ctx) {
         if (count == 0) {
-            Unsafe.getUnsafe().putShort(destAddr, (short) 0);
-            return 2;
+            Unsafe.getUnsafe().putInt(destAddr, 0);
+            return 4;
         }
 
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
@@ -450,9 +486,9 @@ public final class PostingIndexUtils {
         // Write encoded data
         long pos = destAddr;
 
-        // blockCount (2B)
-        Unsafe.getUnsafe().putShort(pos, (short) blockCount);
-        pos += 2;
+        // blockCount (4B)
+        Unsafe.getUnsafe().putInt(pos, blockCount);
+        pos += 4;
 
         // valueCounts[] (blockCount × 1B)
         for (int b = 0; b < blockCount; b++) {
@@ -520,8 +556,8 @@ public final class PostingIndexUtils {
      */
     public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx) {
         if (count == 0) {
-            Unsafe.getUnsafe().putShort(destAddr, (short) 0);
-            return 2;
+            Unsafe.getUnsafe().putInt(destAddr, 0);
+            return 4;
         }
 
         // Fast path: single block (count <= BLOCK_CAPACITY) — avoid per-block loops
@@ -577,8 +613,8 @@ public final class PostingIndexUtils {
         // Write encoded data
         long pos = destAddr;
 
-        Unsafe.getUnsafe().putShort(pos, (short) blockCount);
-        pos += 2;
+        Unsafe.getUnsafe().putInt(pos, blockCount);
+        pos += 4;
 
         for (int b = 0; b < blockCount; b++) {
             Unsafe.getUnsafe().putByte(pos + b, (byte) valueCounts[b]);
@@ -660,10 +696,10 @@ public final class PostingIndexUtils {
         long range = maxD - minD;
         int bitWidth = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
 
-        // Write: blockCount(2B) + valueCount(1B) + firstValue(8B) + minDelta(8B) + bitWidth(1B) + packedData
+        // Write: blockCount(4B) + valueCount(1B) + firstValue(8B) + minDelta(8B) + bitWidth(1B) + packedData
         long pos = destAddr;
-        Unsafe.getUnsafe().putShort(pos, (short) 1);
-        pos += 2;
+        Unsafe.getUnsafe().putInt(pos, 1);
+        pos += 4;
         Unsafe.getUnsafe().putByte(pos, (byte) count);
         pos += 1;
         Unsafe.getUnsafe().putLong(pos, firstValue);
@@ -792,25 +828,17 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Size of a BP-mode stride block header: mode prefix + counts + prefix-sum offsets.
+     * Size of a delta-mode stride block header: mode prefix + counts + prefix-sum offsets.
      */
-    public static int strideBPHeaderSize(int keysInStride) {
+    public static int strideDeltaHeaderSize(int keysInStride) {
         return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
     }
 
     /**
-     * Size of a Packed-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
+     * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
      */
-    public static int stridePackedHeaderSize(int keysInStride) {
-        return STRIDE_PACKED_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Size of the per-generation dense header: counts + offsets for all keys.
-     * Only used by legacy flat dense format — stride-indexed format uses stride blocks instead.
-     */
-    public static int genHeaderSize(int keyCount) {
-        return keyCount * Integer.BYTES * 2;
+    public static int strideFlatHeaderSize(int keysInStride) {
+        return STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
     }
 
     /**
@@ -839,21 +867,6 @@ public final class PostingIndexUtils {
             }
         }
         return -(lo + 1);
-    }
-
-    /**
-     * Linear scan for a key ID starting from a hint position in a sorted keyIds array.
-     * For sequential ascending key access, the hint advances forward yielding O(1) amortized per key.
-     *
-     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
-     */
-    public static int scanKeyIdFromHint(long keyIdsAddr, int activeKeyCount, int key, int startPos) {
-        for (int i = startPos; i < activeKeyCount; i++) {
-            int k = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) i * Integer.BYTES);
-            if (k == key) return i;
-            if (k > key) return -(i + 1);
-        }
-        return -(activeKeyCount + 1);
     }
 
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {

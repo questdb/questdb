@@ -27,21 +27,17 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 /**
- * Backward reader for Delta + FoR64 BitPacking (BP) bitmap index.
+ * Backward reader for Delta + FoR64 BitPacking bitmap index.
  * <p>
  * Iterates generations in reverse, blocks within each generation in reverse,
  * and values within each block in reverse — producing values in descending order.
  * Uses PostingGenLookup for tiered gen-to-key mapping with cached metadata.
  */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
-    private static final Log LOG = LogFactory.getLog(PostingIndexBwdReader.class);
-
     private final Cursor cursor = new Cursor();
 
     public PostingIndexBwdReader(
@@ -71,9 +67,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     }
 
     private class Cursor implements RowCursor {
-        private final long[] blockBuffer = new long[PostingIndexUtils.BLOCK_CAPACITY];
+        private final long[] blockBuffer = new long[PostingIndexUtils.PACKED_BATCH_SIZE];
         private final long[] blockDeltas = new long[PostingIndexUtils.BLOCK_CAPACITY];
-        protected long next;
+        private long next;
         private int blockBufferPos;
         private int currentGen;
         private int encodedBlockCount;
@@ -88,13 +84,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long[] minDeltas = new long[256];
         private int[] bitWidths = new int[256];
         private long[] blockPackedAddrs = new long[256];
-        // Packed mode batch state (for count > BLOCK_CAPACITY)
-        private boolean packedMode;
-        private int packedBitWidth;
-        private long packedBaseValue;
-        private long packedDataBase;
-        private int packedStartIdx; // start index of remaining values (going backwards)
-        private int packedRemaining;
+        // Flat mode batch state (for count > BLOCK_CAPACITY)
+        private boolean flatMode;
+        private int flatBitWidth;
+        private long flatBaseValue;
+        private long flatDataBase;
+        private int flatStartIdx; // start index of remaining values (going backwards)
+        private int flatRemaining;
         // Tier 1 per-key lookup state (reverse iteration)
         private int lookupPos;
         private int lookupEnd;
@@ -122,9 +118,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
-                // Packed mode: decode previous batch if remaining
-                if (packedMode && packedRemaining > 0) {
-                    decodeNextPackedBatchReverse();
+                // Flat mode: decode previous batch if remaining
+                if (flatMode && flatRemaining > 0) {
+                    decodeNextFlatBatchReverse();
                     continue;
                 }
 
@@ -252,7 +248,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
                 // SBBF says "maybe" — fall back to binary search within this gen
                 loadSparseGenWithBinarySearch(currentGen);
-                if (encodedBlockCount > 0 || packedMode) {
+                if (encodedBlockCount > 0 || flatMode) {
                     return true;
                 }
                 currentGen--;
@@ -282,7 +278,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
                 // Binary search in sparse gen
                 loadSparseGenWithBinarySearch(currentGen);
-                if (encodedBlockCount > 0 || packedMode) {
+                if (encodedBlockCount > 0 || flatMode) {
                     return true;
                 }
                 currentGen--;
@@ -316,15 +312,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             blockBufferPos = count - 1; // start from last value
         }
 
-        private void decodeNextPackedBatchReverse() {
-            int batch = Math.min(packedRemaining, PostingIndexUtils.BLOCK_CAPACITY);
+        private void decodeNextFlatBatchReverse() {
+            int batch = Math.min(flatRemaining, PostingIndexUtils.PACKED_BATCH_SIZE);
             // Unpack from the end of remaining values
-            int batchStart = packedStartIdx - batch;
-            for (int i = 0; i < batch; i++) {
-                blockBuffer[i] = BitpackUtils.unpackValue(packedDataBase, batchStart + i, packedBitWidth, packedBaseValue);
-            }
-            packedStartIdx = batchStart;
-            packedRemaining -= batch;
+            int batchStart = flatStartIdx - batch;
+            BitpackUtils.unpackValuesFrom(flatDataBase, batchStart, batch, flatBitWidth, flatBaseValue, blockBuffer);
+            flatStartIdx = batchStart;
+            flatRemaining -= batch;
             blockBufferPos = batch - 1;
         }
 
@@ -354,7 +348,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            this.packedMode = false;
+            this.flatMode = false;
 
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
@@ -364,10 +358,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-            if (mode == PostingIndexUtils.STRIDE_MODE_PACKED) {
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
                 int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_PACKED_BASE_OFFSET);
-                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_PACKED_PREFIX_COUNTS_OFFSET;
+                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
                 int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                 int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startCount;
 
@@ -378,34 +372,32 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     return;
                 }
 
-                int packedHeaderSize = PostingIndexUtils.stridePackedHeaderSize(ks);
-                long dataAddr = strideAddr + packedHeaderSize;
+                int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+                long dataAddr = strideAddr + flatHeaderSize;
 
-                this.packedMode = true;
-                this.packedBitWidth = bitWidth;
-                this.packedBaseValue = baseValue;
-                this.packedDataBase = dataAddr;
+                this.flatMode = true;
+                this.flatBitWidth = bitWidth;
+                this.flatBaseValue = baseValue;
+                this.flatDataBase = dataAddr;
                 this.encodedBlockCount = 0;
                 this.currentBlock = -1;
 
-                int batch = Math.min(count, PostingIndexUtils.BLOCK_CAPACITY);
+                int batch = Math.min(count, PostingIndexUtils.PACKED_BATCH_SIZE);
                 int batchStart = startCount + count - batch;
-                for (int i = 0; i < batch; i++) {
-                    blockBuffer[i] = BitpackUtils.unpackValue(dataAddr, batchStart + i, bitWidth, baseValue);
-                }
+                BitpackUtils.unpackValuesFrom(dataAddr, batchStart, batch, bitWidth, baseValue, blockBuffer);
                 this.blockBufferPos = batch - 1;
-                this.packedStartIdx = batchStart;
-                this.packedRemaining = count - batch;
+                this.flatStartIdx = batchStart;
+                this.flatRemaining = count - batch;
                 return;
             }
 
-            // BP mode
+            // Delta mode
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             int totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-            int bpHeaderSize = PostingIndexUtils.strideBPHeaderSize(ks);
-            long encodedAddr = strideAddr + bpHeaderSize + dataOffset;
+            int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+            long encodedAddr = strideAddr + deltaHeaderSize + dataOffset;
 
             if (totalValueCount == 0) {
                 this.encodedBlockCount = 0;
@@ -414,7 +406,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            readBPBlockMetadata(encodedAddr);
+            readDeltaBlockMetadata(encodedAddr);
         }
 
         /**
@@ -430,7 +422,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            this.packedMode = false;
+            this.flatMode = false;
 
             int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
@@ -446,7 +438,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            readBPBlockMetadata(encodedAddr);
+            readDeltaBlockMetadata(encodedAddr);
         }
 
         private void loadSparseGenWithBinarySearch(int gen) {
@@ -466,7 +458,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            this.packedMode = false;
+            this.flatMode = false;
 
             int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
@@ -482,13 +474,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            readBPBlockMetadata(encodedAddr);
+            readDeltaBlockMetadata(encodedAddr);
         }
 
-        private void readBPBlockMetadata(long encodedAddr) {
+        private void readDeltaBlockMetadata(long encodedAddr) {
             long pos = encodedAddr;
-            this.encodedBlockCount = Unsafe.getUnsafe().getShort(pos) & 0xFFFF;
-            pos += 2;
+            this.encodedBlockCount = Unsafe.getUnsafe().getInt(pos);
+            pos += 4;
 
             ensureMetadataCapacity(encodedBlockCount);
 

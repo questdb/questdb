@@ -484,6 +484,10 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();

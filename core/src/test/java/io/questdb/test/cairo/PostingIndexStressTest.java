@@ -3274,4 +3274,56 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         }
         });
     }
+
+    @Test
+    public void testStreamingScenarioWithIncrementalSeal() throws Exception {
+        // Reproduces the benchmark S3 streaming scenario that triggers
+        // sealIncremental -> encodeDirtyStride -> mergeKeyValues crash.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "streaming_seal";
+                int keyCount = 50_000;
+                int commits = 500;
+                double activityRatio = 0.02;
+                int activePerCommit = (int) (keyCount * activityRatio); // 1000
+                int valsPerActive = 10;
+
+                Rnd rnd = new Rnd(12345, 67890);
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    int rowId = 0;
+                    for (int c = 0; c < commits; c++) {
+                        // Pick activePerCommit random keys
+                        int[] pool = new int[keyCount];
+                        for (int i = 0; i < keyCount; i++) pool[i] = i;
+                        for (int i = 0; i < activePerCommit; i++) {
+                            int j = i + rnd.nextPositiveInt() % (keyCount - i);
+                            int tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+                        }
+                        int[] activeKeys = java.util.Arrays.copyOf(pool, activePerCommit);
+                        java.util.Arrays.sort(activeKeys);
+
+                        for (int key : activeKeys) {
+                            for (int v = 0; v < valsPerActive; v++) {
+                                writer.add(key, rowId++);
+                            }
+                        }
+                        writer.setMaxValue(rowId - 1);
+                        writer.commit();
+                    }
+                } // close triggers seal
+
+                // Verify data is readable
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        count++;
+                    }
+                    Assert.assertTrue("should have some values for key 0", count > 0);
+                }
+            }
+        });
+    }
 }

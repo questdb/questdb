@@ -107,6 +107,16 @@ public final class PostingIndexNative {
         BitpackUtils.unpackAllValues(srcAddr, valueCount, bitWidth, minValue, dest);
     }
 
+    /**
+     * Unpacks values from bit-packed data starting at an arbitrary index,
+     * writing directly into a Java long[] array via GetPrimitiveArrayCritical
+     * (zero-copy). Uses AVX2 for byte-aligned widths (8/16/32-bit).
+     */
+    public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount,
+                                         int bitWidth, long minValue, long[] dest) {
+        unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, dest);
+    }
+
     private static void packValuesNativeFallback(long valuesAddr, int count, long minValue,
                                                   int bitWidth, long destAddr) {
         long buffer = 0;
@@ -156,4 +166,7 @@ public final class PostingIndexNative {
 
     private static native void unpackAllValues0(long srcAddr, int valueCount, int bitWidth,
                                                  long minValue, long destAddr);
+
+    private static native void unpackValuesFrom0(long srcAddr, int startIndex, int valueCount,
+                                                   int bitWidth, long minValue, long[] dest);
 }

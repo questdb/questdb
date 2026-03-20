@@ -164,7 +164,7 @@ public final class BitpackUtils {
      * Calculates the packed data size in bytes for a block.
      */
     public static int packedDataSize(int valueCount, int bitWidth) {
-        return (valueCount * bitWidth + 7) / 8;
+        return (int) (((long) valueCount * bitWidth + 7) / 8);
     }
 
     /**
@@ -216,11 +216,17 @@ public final class BitpackUtils {
 
     /**
      * Batch-unpacks values from bit-packed data starting at an arbitrary index.
-     * More efficient than calling unpackValue N times because it reads bytes
-     * sequentially with a sliding buffer instead of recomputing offsets per value.
+     * Uses native AVX2 path when available for byte-aligned widths (8/16/32-bit),
+     * falling back to Java scalar for non-aligned widths.
      */
     public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount, int bitWidth, long minValue, long[] dest) {
         if (valueCount == 0) {
+            return;
+        }
+        // Dispatch to native for byte-aligned widths where AVX2 gives a real
+        // speedup. Uses GetPrimitiveArrayCritical for zero-copy into the Java array.
+        if (PostingIndexNative.isNativeAvailable() && (bitWidth == 8 || bitWidth == 16 || bitWidth == 32)) {
+            PostingIndexNative.unpackValuesFrom(srcAddr, startIndex, valueCount, bitWidth, minValue, dest);
             return;
         }
         long mask = (1L << bitWidth) - 1;
@@ -257,7 +263,6 @@ public final class BitpackUtils {
         for (int i = 0; i < valueCount; i++) {
             if (bufferBits < bitWidth) {
                 if (bufferBits == 0 && srcOffset + 8 <= totalBytes) {
-                    // Fast path: buffer is empty and at least 8 bytes remain
                     buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
                     bufferBits = 64;
                     srcOffset += 8;

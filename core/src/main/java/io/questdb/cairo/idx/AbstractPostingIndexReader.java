@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -44,6 +46,7 @@ import io.questdb.std.str.Path;
  */
 public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
+    private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
     protected final PostingGenLookup genLookup = new PostingGenLookup();
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
@@ -187,6 +190,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     @Override
     public void reloadConditionally() {
         // Check both pages for a higher sequence than cached
+        Unsafe.getUnsafe().loadFence();
         long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
         long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
         long maxSeq = Math.max(seqA, seqB);
@@ -301,6 +305,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             // Page was mid-write -- try the other page
         }
         // Both pages torn -- should not happen in normal operation
+        LOG.error().$("both metadata pages torn, falling back to empty index").$();
         this.keyFileSequence = 0;
         this.valueMemSize = 0;
         this.keyCount = 0;
