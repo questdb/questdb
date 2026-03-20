@@ -610,7 +610,11 @@ impl ParquetUpdater {
         let offset_delta = new_offset as i64 - rg_start as i64;
 
         // Build adjusted thrift metadata for existing columns.
-        let mut existing_thrift_cols: Vec<ColumnChunk> = old_rg.clone().into_thrift().columns;
+        let mut existing_thrift_cols: Vec<ColumnChunk> = old_rg
+            .columns()
+            .iter()
+            .map(|c| c.column_chunk().clone())
+            .collect();
         for col_chunk in &mut existing_thrift_cols {
             if let Some(ref mut meta) = col_chunk.meta_data {
                 meta.data_page_offset += offset_delta;

@@ -68,6 +68,11 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    // High bit set on the column type signals the Rust parquet encoder that the
+    // symbol column contains no nulls, so it can emit an all-ones RLE run for
+    // definition levels instead of checking each row.  This is a write-time hint
+    // only — it does NOT change the parquet schema Repetition (always Optional).
+    private static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
     private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
             new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
     public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
@@ -279,7 +284,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // all-ones RLE run for definition levels. It does NOT change
                         // the parquet schema Repetition — symbols are always Optional.
                         if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
-                            colType |= Integer.MIN_VALUE;
+                            colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
                         final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
                         schemaDesc.addColumn(
@@ -1619,7 +1624,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // High bit = no-null hint for def level encoding, not schema Repetition.
                         encodeColumnType = columnType;
                         if (!symbolMapWriter.getNullFlag()) {
-                            encodeColumnType |= Integer.MIN_VALUE;
+                            encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
                     } catch (Throwable th) {
                         Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
@@ -2378,7 +2383,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
                             if (!symbolMapWriter.getNullFlag()) {
-                                encodeColumnType |= Integer.MIN_VALUE;
+                                encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                             }
                             chunkDescriptor.addColumn(
                                     columnName,

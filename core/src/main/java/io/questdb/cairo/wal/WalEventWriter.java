@@ -515,6 +515,9 @@ class WalEventWriter implements Closeable {
     ) {
         // Jump back to the start of the last event and write the -1 sentinel
         // so that appendData finds it at the expected position.
+        // NB: if appendData() throws, the event file is left in a partially
+        // rewritten state. This is acceptable because the exception will
+        // close the WalWriter and the segment will not be used for writing anymore
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
 
