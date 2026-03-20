@@ -105,6 +105,9 @@ public class TestOs {
             if (marker != null) {
                 try {
                     String markerPath = marker.toURI().getPath();
+                    if (Os.isWindows() && markerPath.charAt(0) == '/') {
+                        markerPath = markerPath.substring(1);
+                    }
                     int idx = markerPath.indexOf("/target/");
                     if (idx >= 0) {
                         String sourcesPath = markerPath.substring(0, idx);
