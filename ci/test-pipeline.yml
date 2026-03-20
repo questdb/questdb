@@ -288,8 +288,14 @@ stages:
               git fetch origin $(System.PullRequest.targetBranchName)
               git diff origin/$(System.PullRequest.targetBranchName)..HEAD > pr.diff
 
+              COVER_CHECKER_JAR="$(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar"
+              if [ ! -f "$COVER_CHECKER_JAR" ]; then
+                curl -fsSL -o "$COVER_CHECKER_JAR" \
+                  "https://github.com/questdb/questdb/releases/download/tools/cover-checker-1.5.0-all.jar"
+              fi
+
               $JAVA_HOME_17_X64/bin/java -jar \
-                $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                "$COVER_CHECKER_JAR" \
                 -dt file -d pr.diff \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
