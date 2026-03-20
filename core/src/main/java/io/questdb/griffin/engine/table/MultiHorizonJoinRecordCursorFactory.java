@@ -395,6 +395,11 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             }
         }
 
+        /**
+         * Iterates all horizon timestamps and performs per-slave ASOF lookups using
+         * adaptive backward/forward scanning (see AsyncMultiHorizonJoinRecordCursorFactory
+         * for the detailed strategy description). Aggregates results into dataMap.
+         */
         private void buildMap() {
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();

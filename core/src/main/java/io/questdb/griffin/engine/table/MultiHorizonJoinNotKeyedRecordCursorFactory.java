@@ -345,6 +345,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             isExhausted = false;
         }
 
+        /**
+         * Iterates all horizon timestamps and performs per-slave ASOF lookups using
+         * adaptive backward/forward scanning (see AsyncMultiHorizonJoinNotKeyedRecordCursorFactory
+         * for the detailed strategy description). Aggregates results into a single value.
+         */
         private void buildValue() {
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();

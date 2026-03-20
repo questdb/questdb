@@ -382,8 +382,25 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
 
     /**
      * Process all horizon timestamps in sorted order, performing ASOF lookups
-     * on each slave for each tuple. Uses per-slave adaptive backward/forward
-     * scan strategy matching the single-slave implementation.
+     * on each slave for each (horizonTs, masterRowIdx, offsetIdx) tuple.
+     * <p>
+     * For keyed ASOF JOINs, each slave adaptively chooses between two strategies:
+     * <p>
+     * 1. <b>Backward-only mode</b> (default): when the ASOF position changes, clear the
+     * key cache and reset the backward watermark. Each position change costs ~K backward
+     * scan rows for K distinct keys. Wins when K is small.
+     * <p>
+     * 2. <b>Forward scan mode</b>: forward-scan all slave rows between consecutive ASOF
+     * positions, populating the key map. Cost = O(gap). Wins when K is large or rare keys
+     * cause deep backward scans.
+     * <p>
+     * Each slave starts in backward-only mode per frame. The algorithm switches to forward
+     * scan mode for the remainder of the frame when either: (a) backward scan cost at a
+     * position exceeds gap * SWITCH_FACTOR (relative check, within a partition), or
+     * (b) backward scan cost exceeds BWD_SCAN_ABSOLUTE_THRESHOLD (absolute check, handles
+     * cross-partition boundaries where the relative check cannot trigger).
+     * <p>
+     * For non-keyed slaves, the ASOF position is used directly without key matching.
      */
     private static void processHorizonTimestamps(
             AsyncMultiHorizonJoinAtom atom,

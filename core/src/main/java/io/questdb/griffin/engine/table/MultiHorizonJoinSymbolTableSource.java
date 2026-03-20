@@ -56,6 +56,9 @@ class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
             SymbolTableSource slaveSource = slaveSources.getQuick(source - MultiHorizonJoinRecord.SOURCE_SLAVE_BASE);
             return slaveSource != null ? slaveSource.getSymbolTable(sourceColumnIndex) : null;
         }
+        // SOURCE_SEQUENCE columns (offset, timestamp) are non-symbol types,
+        // so symbol table lookups should never reach here in practice.
+        assert source == MultiHorizonJoinRecord.SOURCE_SEQUENCE;
         return null;
     }
 
@@ -70,6 +73,9 @@ class MultiHorizonJoinSymbolTableSource implements SymbolTableSource {
             SymbolTableSource slaveSource = slaveSources.getQuick(source - MultiHorizonJoinRecord.SOURCE_SLAVE_BASE);
             return slaveSource != null ? slaveSource.newSymbolTable(sourceColumnIndex) : null;
         }
+        // SOURCE_SEQUENCE columns (offset, timestamp) are non-symbol types,
+        // so symbol table lookups should never reach here in practice.
+        assert source == MultiHorizonJoinRecord.SOURCE_SEQUENCE;
         return null;
     }
 
