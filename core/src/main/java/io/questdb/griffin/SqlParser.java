@@ -2016,14 +2016,17 @@ public class SqlParser {
                     .put(']');
         }
 
-        // Parse optional index type and/or capacity
+        // Parse optional index type and/or capacity: INDEX(col TYPE POSTING) or INDEX(col CAPACITY n)
         byte indexType = IndexType.BITMAP;
         int indexValueBlockSize = configuration.getIndexValueBlockSize();
-        CharSequence tok = tok(lexer, "index type, 'capacity' or ')'");
-        // Try shorthand: INDEX(col POSTING)
-        byte directType = IndexType.valueOf(tok);
-        if (directType != IndexType.NONE && !isCapacityKeyword(tok)) {
-            indexType = directType;
+        CharSequence tok = tok(lexer, "'type', 'capacity' or ')'");
+        if (isTypeKeyword(tok)) {
+            int typePosition = lexer.getPosition();
+            tok = tok(lexer, "index type name");
+            indexType = IndexType.valueOf(tok);
+            if (indexType == IndexType.NONE) {
+                throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
+            }
             tok = tok(lexer, "'capacity' or ')'");
         }
         if (isCapacityKeyword(tok)) {
@@ -2058,17 +2061,9 @@ public class SqlParser {
             return tok;
         }
 
-        // Parse optional index type: INDEX POSTING or INDEX TYPE POSTING
+        // Parse optional index type: INDEX TYPE POSTING
         byte indexType = IndexType.BITMAP;
-        // First, try the shorthand: INDEX <typename>
-        byte directType = IndexType.valueOf(tok);
-        if (directType != IndexType.NONE && !isTypeKeyword(tok)) {
-            indexType = directType;
-            if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
-                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
-                return tok;
-            }
-        } else if (isTypeKeyword(tok)) {
+        if (isTypeKeyword(tok)) {
             tok = tok(lexer, "index type name");
             int typePosition = lexer.lastTokenPosition();
             indexType = IndexType.valueOf(tok);

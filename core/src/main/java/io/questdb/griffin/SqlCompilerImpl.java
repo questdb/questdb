@@ -1961,12 +1961,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {
-                        // Accept both ADD INDEX TYPE POSTING and ADD INDEX POSTING
+                        // ADD INDEX TYPE POSTING
                         if (isTypeKeyword(tok)) {
                             tok = expectToken(lexer, "index type name");
-                        }
-                        byte parsedType = IndexType.valueOf(tok);
-                        if (parsedType != IndexType.NONE) {
+                            byte parsedType = IndexType.valueOf(tok);
+                            if (parsedType == IndexType.NONE) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                            }
                             indexType = parsedType;
                             tok = SqlUtil.fetchNext(lexer);
                         }
@@ -2341,12 +2342,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         byte indexType = IndexType.BITMAP;
 
                         if (tok != null && !isSemicolon(tok)) {
-                            // Accept both ADD INDEX TYPE POSTING and ADD INDEX POSTING
+                            // ADD INDEX TYPE POSTING
                             if (isTypeKeyword(tok)) {
                                 tok = expectToken(lexer, "index type name");
-                            }
-                            byte parsedType = IndexType.valueOf(tok);
-                            if (parsedType != IndexType.NONE) {
+                                byte parsedType = IndexType.valueOf(tok);
+                                if (parsedType == IndexType.NONE) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                                }
                                 indexType = parsedType;
                                 tok = SqlUtil.fetchNext(lexer);
                             }
