@@ -92,7 +92,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * packedBlock[0..n-1]  : variable size bitpacked residuals
  * </pre>
  *
- * <h2>Key file layout (.bk) — double-buffered 4 KB metadata pages</h2>
+ * <h2>Key file layout (.pk) — double-buffered 4 KB metadata pages</h2>
  * <pre>
  * Page A: [0, 4096)    Page B: [4096, 8192)
  *
@@ -871,7 +871,7 @@ public final class PostingIndexUtils {
     }
 
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".bk");
+        path.concat(name).put(".pk");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnNameTxn);
         }
@@ -879,7 +879,7 @@ public final class PostingIndexUtils {
     }
 
     public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".bv");
+        path.concat(name).put(".pv");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnNameTxn);
         }

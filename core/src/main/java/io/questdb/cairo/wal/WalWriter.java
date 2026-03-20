@@ -1915,7 +1915,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, byte indexType, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
             int existingType = metadata.getColumnType(columnIndex);
@@ -2108,7 +2108,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int newType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 SecurityContext securityContext
@@ -2137,7 +2137,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     newType,
                                     symbolCapacity,
                                     symbolCacheFlag,
-                                    isIndexed ? IndexType.SYMBOL : IndexType.NONE,
+                                    indexType,
                                     indexValueBlockCapacity
                             );
                             path.trimTo(pathSize).slash().put(segmentId);

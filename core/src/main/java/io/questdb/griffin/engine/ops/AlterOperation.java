@@ -29,7 +29,6 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -687,7 +686,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
         long flags = extraInfo.get(lParam++);
         byte indexType = (byte) (flags & INDEX_TYPE_MASK);
-        boolean isIndexed = IndexType.isIndexed(indexType);
         boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
         assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
         int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
@@ -699,7 +697,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     newType,
                     symbolCapacity,
                     symbolCacheFlag,
-                    isIndexed,
+                    indexType,
                     indexValueBlockCapacity,
                     false,
                     securityContext

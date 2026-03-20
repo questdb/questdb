@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -70,7 +69,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             SecurityContext securityContext
@@ -80,7 +79,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed ? IndexType.SYMBOL : IndexType.NONE,
+                indexType,
                 indexValueBlockCapacity
         );
     }

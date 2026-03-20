@@ -1020,7 +1020,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             SecurityContext securityContext
@@ -1087,7 +1087,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     newType,
                     symbolCapacity,
                     symbolCacheFlag,
-                    isIndexed ? IndexType.SYMBOL : IndexType.NONE,
+                    indexType,
                     indexValueBlockCapacity,
                     isDedupKey,
                     columnNameTxn,
@@ -1107,9 +1107,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // write index if necessary or remove the old one
             // index must be created before column is initialised because
             // it uses the primary column object as a temporary tool
-            if (isIndexed) {
+            if (IndexType.isIndexed(indexType)) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                writeIndex(columnName, indexValueBlockCapacity, IndexType.SYMBOL, columnIndex, indexer);
+                writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
                 // add / remove indexers
                 indexers.extendAndSet(columnIndex, indexer);
                 populateDenseIndexerList();

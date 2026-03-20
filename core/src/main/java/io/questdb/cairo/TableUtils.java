@@ -197,14 +197,12 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
-    // Index type is stored in 3 bits, split across bits 0-1 and bit 4 to avoid
-    // collision with SYMBOL_CACHE (bit 2) and DEDUP_KEY (bit 3).
-    // This encoding is backward-compatible: old tables with META_FLAG_BIT_INDEXED=1
-    // and bit 4 unset decode as IndexType.SYMBOL (1).
-    static final int META_FLAG_INDEX_TYPE_MASK_LO = 0x03; // bits 0-1: lower 2 bits of index type
+    // Index type values 0-3 fit in 2 bits (bits 0-1). No split encoding needed.
+    // Backward-compatible: old tables with META_FLAG_BIT_INDEXED=1 decode as
+    // IndexType.SYMBOL (1).
+    static final int META_FLAG_INDEX_TYPE_MASK_LO = 0x03; // bits 0-1: index type
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
-    static final int META_FLAG_INDEX_TYPE_BIT_HI = 1 << 4; // bit 4: upper bit of index type
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -2244,18 +2242,18 @@ public final class TableUtils {
 
     /**
      * Decodes the index type from the column flags long.
-     * Index type is stored split: lower 2 bits in positions 0-1, upper bit in position 4.
+     * Index type occupies bits 0-1 (values 0-3).
      */
     static byte decodeIndexTypeFlags(long flags) {
-        return (byte) ((flags & META_FLAG_INDEX_TYPE_MASK_LO) | ((flags & META_FLAG_INDEX_TYPE_BIT_HI) >> 2));
+        return (byte) (flags & META_FLAG_INDEX_TYPE_MASK_LO);
     }
 
     /**
      * Encodes the index type into flag bits for storage.
-     * Lower 2 bits go to positions 0-1, upper bit goes to position 4.
+     * Index type occupies bits 0-1 (values 0-3).
      */
     static long encodeIndexTypeFlags(byte indexType) {
-        return (indexType & 0x03) | ((indexType & 0x04) << 2);
+        return indexType & META_FLAG_INDEX_TYPE_MASK_LO;
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {

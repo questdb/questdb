@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -811,21 +812,21 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("timestamp", ColumnType.INT, 0, false, false, 0, false, null);
+                writer.changeColumnType("timestamp", ColumnType.INT, 0, false, IndexType.NONE, 0, false, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column is the designated timestamp");
             }
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("d", ColumnType.DOUBLE, 0, false, false, 0, false, null);
+                writer.changeColumnType("d", ColumnType.DOUBLE, 0, false, IndexType.NONE, 0, false, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, new type is the same as existing");
             }
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("ik", ColumnType.GEOBYTE, 0, false, false, 0, false, null);
+                writer.changeColumnType("ik", ColumnType.GEOBYTE, 0, false, IndexType.NONE, 0, false, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
@@ -880,7 +881,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("non_existing", ColumnType.INT, 0, false, false, 0, false, null);
+                writer.changeColumnType("non_existing", ColumnType.INT, 0, false, IndexType.NONE, 0, false, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column does not exist");
@@ -1283,7 +1284,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
 
             try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("col", toType, 0, false, false, 0, false, null);
+                writer.changeColumnType("col", toType, 0, false, IndexType.NONE, 0, false, null);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");

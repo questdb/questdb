@@ -115,7 +115,7 @@ public interface MetadataService {
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             SecurityContext securityContext

@@ -355,6 +355,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
+                    // TODO: sequencer metadata format does not store index type;
+                    //  this assumes SYMBOL for all indexed symbol columns.
+                    //  Storing the actual index type requires a schema format change.
                     columnMetadata.add(new TableColumnMetadata(name, type, IndexType.SYMBOL, 1024, true, null));
                 } else {
                     columnMetadata.add(new TableColumnMetadata(name, type));

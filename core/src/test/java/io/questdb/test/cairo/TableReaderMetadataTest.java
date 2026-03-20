@@ -175,11 +175,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "timestamp:" + ColumnType.nameOf(timestampType) + "\n" +
                 "bool2:BOOLEAN\n";
         assertThat(expected,
-                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
-                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, IndexType.NONE, 0, false, null),
                 w -> w.removeColumn("bool"),
                 w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, IndexType.NONE, 0, false, false, null),
-                w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
+                w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, null)
         );
     }
 
@@ -199,8 +199,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
                 long structVersion;
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                    writer.changeColumnType("int", ColumnType.LONG, 0, false, false, 0, false, null);
-                    writer.changeColumnType("sym", ColumnType.VARCHAR, 0, false, false, 0, false, null);
+                    writer.changeColumnType("int", ColumnType.LONG, 0, false, IndexType.NONE, 0, false, null);
+                    writer.changeColumnType("sym", ColumnType.VARCHAR, 0, false, IndexType.NONE, 0, false, null);
                     writer.removeColumn("bool");
                     writer.addColumn("bool2", ColumnType.BOOLEAN, 0, false, IndexType.NONE, 0, false, false, null);
                     structVersion = writer.getMetadataVersion();
@@ -234,8 +234,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         int initialColumnCount = expected.split("\n").length;
         assertThat(expected,
                 initialColumnCount + 2,
-                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
-                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null)
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, IndexType.NONE, 0, false, null)
         );
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -150,6 +151,47 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        if (IndexType.isIndexed(indexType) && indexType != IndexType.SYMBOL) {
+            // Non-legacy index type: remove its specific files
+            path.trimTo(pathTrimToPartition);
+            if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                return true;
+            }
+            path.trimTo(pathTrimToPartition);
+            if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
+                return true;
+            }
+        }
+        // Always try legacy .k/.v (may remain after DROP INDEX or index type change)
+        path.trimTo(pathTrimToPartition);
+        if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
+            return true;
+        }
+        path.trimTo(pathTrimToPartition);
+        return couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
+    }
+
+    private boolean existsIndexFile(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        if (IndexType.isIndexed(indexType) && indexType != IndexType.SYMBOL) {
+            path.trimTo(pathTrimToPartition);
+            if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                return true;
+            }
+            path.trimTo(pathTrimToPartition);
+            if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
+                return true;
+            }
+        }
+        // Always check legacy .k/.v
+        path.trimTo(pathTrimToPartition);
+        if (ff.exists(BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
+            return true;
+        }
+        path.trimTo(pathTrimToPartition);
+        return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
+    }
+
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
@@ -251,12 +293,11 @@ public class ColumnPurgeOperator implements Closeable {
                             // In the case of symbol root files, we need to check if .k and .v files exist in table root.
                             // In the case of symbol files in partition, we need to check if .k and .v files exist in partition
                             // that can be index files after index drop SQL.
+                            byte idxType = task.getIndexType();
                             if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                if (!ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                    if (!ff.exists(BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                        completedRowIds.add(updateRowId);
-                                        continue;
-                                    }
+                                if (!existsIndexFile(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                                    completedRowIds.add(updateRowId);
+                                    continue;
                                 }
                             }
                         } else {
@@ -333,8 +374,9 @@ public class ColumnPurgeOperator implements Closeable {
                         }
                     }
 
-                    // Check if it's a symbol, try to remove .k and .v files in the partition
+                    // Check if it's a symbol, try to remove index files in the partition
                     if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
+                        byte idxType = task.getIndexType();
                         if (isSymbolRootFiles) {
                             path.trimTo(pathTrimToPartition);
                             if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
@@ -362,16 +404,10 @@ public class ColumnPurgeOperator implements Closeable {
                                 continue;
                             }
                         } else {
-                            // Always try to remove partition-level .k/.v files for symbol columns.
-                            // After DROP INDEX, indexType is NONE but old index files still need cleanup.
-                            path.trimTo(pathTrimToPartition);
-                            if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
-                                allDone = false;
-                                continue;
-                            }
-
-                            path.trimTo(pathTrimToPartition);
-                            if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
+                            // Remove partition-level index files. Use IndexFactory for the known
+                            // type; always try legacy .k/.v as well (old index files may remain
+                            // after DROP INDEX when indexType is NONE).
+                            if (couldNotRemoveIndexFiles(idxType, columnName, columnVersion, pathTrimToPartition)) {
                                 allDone = false;
                                 continue;
                             }
