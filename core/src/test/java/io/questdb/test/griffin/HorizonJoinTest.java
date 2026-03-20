@@ -1217,6 +1217,129 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinNotKeyedAdaptiveScanSwitch() throws Exception {
+        // Not-keyed counterpart of testHorizonJoinKeyedAdaptiveScanSwitch.
+        // No GROUP BY keys, so the not-keyed factory (single output row) is used.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('u', (x - 1)::int, '2024-01-01T00:00:00.000000Z'),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(20_000)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:00.001500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.003000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.004500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.006000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.007500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.009000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.010500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.012000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.013500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.015000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.016500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.018000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.019500Z', 'A', 1.0)
+                            """
+            );
+
+            // avg across all symbols: 7 A trades at 1.0 + 6 RARE at 100.0
+            // = (7*1.0 + 6*100.0) / 13 = 607/13 ≈ 46.692...
+            assertQueryNoLeakCheck(
+                    """
+                            avg_price
+                            46.69230769230769
+                            """,
+                    """
+                            SELECT avg(p.price) AS avg_price
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedAdaptiveScanSwitchCrossPartition() throws Exception {
+        // Not-keyed counterpart of testHorizonJoinKeyedAdaptiveScanSwitchCrossPartition.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 64);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, Long.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, Long.MAX_VALUE);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('s', ((x - 1) % 500)::int, dateadd('h', ((x - 1) / 500)::int, '2024-01-01T00:00:00.000000Z')),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(1500)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T00:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T01:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T01:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T02:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T02:08:00.000000Z', 'RARE', 1.0)
+                            """
+            );
+
+            // avg across all: 3 A at 1.0 + 3 RARE at 100.0 = 303/6 = 50.5
+            assertQueryNoLeakCheck(
+                    """
+                            avg_price
+                            50.5
+                            """,
+                    """
+                            SELECT avg(p.price) AS avg_price
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinNotKeyedAllColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -5518,6 +5641,158 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "LIST (0) AS h",
                     56,
                     "horizon join cannot be combined with other joins"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinNotKeyedAdaptiveScanSwitch() throws Exception {
+        // Multi-slave not-keyed counterpart of testHorizonJoinKeyedAdaptiveScanSwitch.
+        // No GROUP BY keys → not-keyed factory (single output row).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE volumes (ts #TIMESTAMP, sym SYMBOL, vol DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('u', (x - 1)::int, '2024-01-01T00:00:00.000000Z'),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(20_000)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO volumes
+                            SELECT dateadd('u', (x - 1)::int, '2024-01-01T00:00:00.000000Z'),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 500.0 ELSE 10.0 END
+                            FROM long_sequence(20_000)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:00.001500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.003000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.004500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.006000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.007500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.009000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.010500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.012000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.013500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.015000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.016500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.018000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.019500Z', 'A', 1.0)
+                            """
+            );
+
+            // avg price: (7*1.0 + 6*100.0) / 13 = 607/13 ≈ 46.692...
+            // avg vol: (7*10.0 + 6*500.0) / 13 = 3070/13 ≈ 236.153...
+            assertQueryNoLeakCheck(
+                    """
+                            avg_price\tavg_vol
+                            46.69230769230769\t236.15384615384616
+                            """,
+                    """
+                            SELECT avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            HORIZON JOIN volumes AS v ON (t.sym = v.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinNotKeyedAdaptiveScanSwitchCrossPartition() throws Exception {
+        // Multi-slave not-keyed counterpart of testHorizonJoinKeyedAdaptiveScanSwitchCrossPartition.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 64);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, Long.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, Long.MAX_VALUE);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE volumes (ts #TIMESTAMP, sym SYMBOL, vol DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('s', ((x - 1) % 500)::int, dateadd('h', ((x - 1) / 500)::int, '2024-01-01T00:00:00.000000Z')),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(1500)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO volumes
+                            SELECT dateadd('s', ((x - 1) % 500)::int, dateadd('h', ((x - 1) / 500)::int, '2024-01-01T00:00:00.000000Z')),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 500.0 ELSE 10.0 END
+                            FROM long_sequence(1500)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T00:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T01:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T01:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T02:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T02:08:00.000000Z', 'RARE', 1.0)
+                            """
+            );
+
+            // avg price: (3*1.0 + 3*100.0) / 6 = 303/6 = 50.5
+            // avg vol: (3*10.0 + 3*500.0) / 6 = 1530/6 = 255.0
+            assertQueryNoLeakCheck(
+                    """
+                            avg_price\tavg_vol
+                            50.5\t255.0
+                            """,
+                    """
+                            SELECT avg(p.price) AS avg_price, avg(v.vol) AS avg_vol
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            HORIZON JOIN volumes AS v ON (t.sym = v.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
             );
         });
     }
