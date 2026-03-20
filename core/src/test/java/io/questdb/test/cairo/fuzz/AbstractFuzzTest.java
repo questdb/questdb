@@ -307,6 +307,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
@@ -319,7 +321,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.setFuzzProbabilities(
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
                 replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, dropParquetEncodingProb
         );
     }
