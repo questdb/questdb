@@ -215,7 +215,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return WatchRegistry.UNREGISTERED;
         }
     }; // no-op
-    protected @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private volatile Runnable recentWriteTrackerHydrationCallback;
@@ -2252,6 +2252,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected void clearDdlListener() {
+        ddlListener.clear();
     }
 
     protected @NotNull MatViewGraph createMatViewGraph() {

@@ -67,12 +67,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
-    protected final CairoEngine engine;
+    private final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected WorkerPoolManager workerPoolManager;
+    private WorkerPoolManager workerPoolManager;
     private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
