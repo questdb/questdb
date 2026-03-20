@@ -6100,26 +6100,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata
             );
 
-            // Transfer ownership
-            final JoinRecordMetadata innerMetadata0 = innerMetadata;
-            final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
-            final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
-            final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
-            final CompiledFilter compiledFilter0 = compiledFilter;
-            final MemoryCARW bindVarMemory0 = bindVarMemory;
-            final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
-            final Function filter0 = filter;
-            innerMetadata = null;
-            groupByFunctions = null;
-            perWorkerGroupByFunctions = null;
-            slaveStates = null;
-            isSlaveFactoriesTransferred = true;
-            compiledFilter = null;
-            bindVarMemory = null;
-            bindVarFunctions = null;
-            filter = null;
-
             if (keyTypesCopy.getColumnCount() == 0) {
+                // Transfer ownership to the factory constructor.
+                final JoinRecordMetadata innerMetadata0 = innerMetadata;
+                final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+                final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+                final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
+                innerMetadata = null;
+                groupByFunctions = null;
+                perWorkerGroupByFunctions = null;
+                slaveStates = null;
+                isSlaveFactoriesTransferred = true;
+                final CompiledFilter compiledFilter0 = compiledFilter;
+                final MemoryCARW bindVarMemory0 = bindVarMemory;
+                final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+                final Function filter0 = filter;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                filter = null;
+
                 return new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         asm,
@@ -6149,12 +6149,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            // These calls may throw, so ownership transfer must happen after them.
             final ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
                     executionContext,
                     parentModel.getColumns(),
                     tempInnerProjectionFunctions,
                     workerCount,
-                    innerMetadata0
+                    innerMetadata
             );
             final ObjList<ObjList<Function>> perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
                     tempInnerProjectionFunctions,
@@ -6162,6 +6163,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerInnerProjectionFunctions,
                     GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
             );
+
+            // Transfer ownership to the factory constructor.
+            final JoinRecordMetadata innerMetadata0 = innerMetadata;
+            final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+            final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+            final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
+            innerMetadata = null;
+            groupByFunctions = null;
+            perWorkerGroupByFunctions = null;
+            slaveStates = null;
+            isSlaveFactoriesTransferred = true;
+            final CompiledFilter compiledFilter0 = compiledFilter;
+            final MemoryCARW bindVarMemory0 = bindVarMemory;
+            final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+            final Function filter0 = filter;
+            compiledFilter = null;
+            bindVarMemory = null;
+            bindVarFunctions = null;
+            filter = null;
 
             return new AsyncMultiHorizonJoinRecordCursorFactory(
                     configuration,
