@@ -203,7 +203,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         sink.type("Async Multi Horizon Join");
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsets.length);
-        sink.meta("slaves").val(slaveFactories.length);
+        sink.meta("tables").val(slaveFactories.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());

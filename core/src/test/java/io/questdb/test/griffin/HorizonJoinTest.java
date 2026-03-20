@@ -4646,7 +4646,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
             }
             TestUtils.assertContains(planSink, getMultiHorizonJoinPlanType());
-            TestUtils.assertContains(planSink, "slaves: 2");
+            TestUtils.assertContains(planSink, "tables: 2");
 
             assertQueryNoLeakCheck(
                     """
@@ -4711,7 +4711,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
             }
             TestUtils.assertContains(planSink, getMultiHorizonJoinPlanType());
-            TestUtils.assertContains(planSink, "slaves: 2");
+            TestUtils.assertContains(planSink, "tables: 2");
 
             assertQueryNoLeakCheck(
                     """

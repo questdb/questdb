@@ -158,7 +158,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
     public void toPlan(PlanSink sink) {
         sink.type("Multi Horizon Join");
         sink.meta("offsets").val(offsets.length);
-        sink.meta("slaves").val(slaveStates.size());
+        sink.meta("tables").val(slaveStates.size());
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
