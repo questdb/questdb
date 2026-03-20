@@ -127,7 +127,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final ObjList<LowerCaseCharSequenceHashSet> correlatedColumns = new ObjList<>();
+    private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet decorrelatedDepths = new IntHashSet();
     private final IntHashSet dependencies = new IntHashSet();
@@ -763,7 +763,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return constWhereClause;
     }
 
-    public ObjList<LowerCaseCharSequenceHashSet> getCorrelatedColumns() {
+    public ObjList<LowerCaseCharSequenceIntHashMap> getCorrelatedColumns() {
         return correlatedColumns;
     }
 
