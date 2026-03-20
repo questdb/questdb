@@ -2113,6 +2113,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // was created).  columnTop == rowGroupSize, so the native
                                     // dedup code treats all parquet values as NULL and will
                                     // not dereference the data pointer.
+                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
                                     DedupColumnCommitAddresses.setColAddressValues(addr, 0);
                                 }
                                 final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
@@ -2126,6 +2127,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             rowGroupBuffers.getChunkDataSize(decodeIdx)
                                     );
                                 } else {
+                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
                                     DedupColumnCommitAddresses.setColAddressValues(addr, 0, 0, 0);
                                 }
                                 MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));

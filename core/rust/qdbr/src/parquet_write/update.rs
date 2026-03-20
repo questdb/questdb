@@ -292,7 +292,7 @@ impl ParquetUpdater {
         partition: &Partition,
         row_group_id: i32,
     ) -> ParquetResult<()> {
-        self.ensure_schema_matches_columns(partition);
+        self.ensure_schema_matches_columns(partition)?;
         let row_count = partition
             .columns
             .first()
@@ -358,7 +358,7 @@ impl ParquetUpdater {
     }
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
-        self.ensure_schema_matches_columns(partition);
+        self.ensure_schema_matches_columns(partition)?;
         let row_count = partition
             .columns
             .first()
@@ -557,6 +557,13 @@ impl ParquetUpdater {
         rg_index: i32,
         null_columns: &[(usize, ColumnType)],
     ) -> ParquetResult<()> {
+        if rg_index < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group_with_null_columns: negative rg_index: {}",
+                rg_index
+            ));
+        }
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
             return Err(fmt_err!(
@@ -821,19 +828,20 @@ impl ParquetUpdater {
     /// New files always write symbols as Optional (see `column_type_to_parquet_type`
     /// in schema.rs). The `Column::not_null_hint` flag is only a write-time hint for
     /// the encoder to emit a fast all-ones RLE run for definition levels.
-    fn ensure_schema_matches_columns(&mut self, partition: &Partition) {
+    fn ensure_schema_matches_columns(&mut self, partition: &Partition) -> ParquetResult<()> {
         if self.symbol_schema_checked || !self.is_rewrite {
-            return;
+            return Ok(());
         }
         self.symbol_schema_checked = true;
         let fields = self.parquet_file.schema().fields();
-        debug_assert_eq!(
-            partition.columns.len(),
-            fields.len(),
-            "column count ({}) != schema field count ({})",
-            partition.columns.len(),
-            fields.len()
-        );
+        if partition.columns.len() != fields.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "ensure_schema_matches_columns: column count ({}) != schema field count ({})",
+                partition.columns.len(),
+                fields.len()
+            ));
+        }
         let needs_update = partition
             .columns
             .iter()
@@ -844,7 +852,7 @@ impl ParquetUpdater {
                     && field.get_field_info().repetition == Repetition::Required
             });
         if !needs_update {
-            return;
+            return Ok(());
         }
         let mut new_fields: Vec<ParquetType> = fields.to_vec();
         for (col, field) in partition.columns.iter().zip(new_fields.iter_mut()) {
@@ -857,6 +865,7 @@ impl ParquetUpdater {
         let schema =
             SchemaDescriptor::new(self.parquet_file.schema().name().to_string(), new_fields);
         self.parquet_file.set_schema(schema);
+        Ok(())
     }
 
     fn row_group_options(&self) -> WriteOptions {
