@@ -35,6 +35,7 @@
 #   --warmup=N               Warmup rows
 #   --report=N               Report interval
 #   --no-warmup              Skip warmup
+#   --no-drop                Don't drop/recreate the table (for parallel clients)
 #
 
 set -e
@@ -197,19 +198,19 @@ case "$1" in
         fi
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-alloc-profile-${PROTOCOL}.collapsed"
+        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-alloc-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with allocation profiling..."
-        echo "Output: $PROFILE_OUTPUT (collapsed stacks format)"
+        echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
-        java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,collapsed" \
+        java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,jfr" \
              -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
-        echo "Profile saved to: $PROFILE_OUTPUT"
-        echo ""
-        echo "Top allocation sites:"
-        sort -t' ' -k2 -rn "$PROFILE_OUTPUT" | head -30
+        echo "Allocation profile saved to: $PROFILE_OUTPUT"
+        echo "View with: jfr print $PROFILE_OUTPUT | head -100"
+        echo "Or open in JDK Mission Control (jmc)"
+        echo "Or convert to flamegraph: $ASYNC_PROFILER_HOME/bin/asprof --jfrstackdepth 512 convert $PROFILE_OUTPUT -o ilp-alloc-flame.html"
         ;;
 
     cpu)
@@ -535,6 +536,7 @@ case "$1" in
         echo "  --warmup=N               Warmup rows (default: 100000)"
         echo "  --report=N               Report progress every N rows (default: 1000000)"
         echo "  --no-warmup              Skip warmup phase"
+        echo "  --no-drop                Don't drop/recreate the table (for parallel clients)"
         echo ""
         echo "Examples:"
         echo "  Terminal 1: $0 server"
