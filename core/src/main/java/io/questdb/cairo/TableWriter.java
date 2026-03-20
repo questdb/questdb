@@ -2990,7 +2990,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return SWITCH_OK;
         } catch (CairoException e) {
-            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
             }
             throw e;

@@ -2361,6 +2361,129 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionChangeDetectorNoChange() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 100;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                long partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+                long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                long metadataVersion = reader.getMetadataVersion();
+
+                PartitionChangeDetector detector = new PartitionChangeDetector();
+                detector.of(reader, partitionTimestamp, partitionNameTxn, reader.getMetadata(), metadataVersion);
+
+                Assert.assertFalse(detector.hasChanged());
+                detector.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionChangeDetectorMetadataVersionChange() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 100;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                long partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+                long partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                long metadataVersion = reader.getMetadataVersion();
+
+                PartitionChangeDetector detector = new PartitionChangeDetector();
+                detector.of(reader, partitionTimestamp, partitionNameTxn, reader.getMetadata(), metadataVersion);
+
+                // Add a column to change metadata version
+                try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                    writer.addColumn("newCol", ColumnType.INT);
+                }
+
+                Assert.assertTrue(detector.hasChanged());
+                detector.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionChangeDetectorPartitionNameTxnMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 100;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                long partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+                long metadataVersion = reader.getMetadataVersion();
+
+                // Use a wrong expectedPartitionNameTxn to simulate a stale snapshot
+                long wrongNameTxn = 999L;
+                PartitionChangeDetector detector = new PartitionChangeDetector();
+                detector.of(reader, partitionTimestamp, wrongNameTxn, reader.getMetadata(), metadataVersion);
+
+                Assert.assertTrue(detector.hasChanged());
+                detector.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionChangeDetectorPartitionGone() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 100;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, PRODUCT)) {
+                long metadataVersion = reader.getMetadataVersion();
+
+                // Use a partition timestamp that does not exist
+                long nonExistentPartitionTs = timestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+                PartitionChangeDetector detector = new PartitionChangeDetector();
+                detector.of(reader, nonExistentPartitionTs, 0, reader.getMetadata(), metadataVersion);
+
+                // getPartitionIndexByTimestamp returns < 0 for missing partition
+                Assert.assertTrue(detector.hasChanged());
+                detector.clear();
+            }
+        });
+    }
+
+    @Test
     public void testRemoveColumnAfterTimestamp() throws Exception {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)

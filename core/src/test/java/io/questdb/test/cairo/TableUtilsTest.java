@@ -27,8 +27,12 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -278,6 +282,78 @@ public class TableUtilsTest extends AbstractTest {
             Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testCheckTtlHoursExactBoundary() {
+        // Partition 2024-01-01, ceiling is 2024-01-02T00:00:00Z.
+        // maxTimestamp exactly 24h after ceiling => TTL of 24h is met.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723); // 2024-01-01
+        long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        long maxTimestamp = partitionCeiling + driver.fromHours(24);
+
+        Assert.assertTrue(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 24));
+        // one microsecond before the boundary — TTL not yet met
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp - 1, 24));
+    }
+
+    @Test
+    public void testCheckTtlHoursNotExpired() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723);
+        long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        // maxTimestamp only 1h after ceiling, TTL is 48h
+        long maxTimestamp = partitionCeiling + driver.fromHours(1);
+
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 48));
+    }
+
+    @Test
+    public void testCheckTtlMonthsBoundary() {
+        // Negative TTL means months. -3 => 3 months.
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.MONTH);
+        // 2024-01-01 partition, ceiling is 2024-02-01
+        long partitionTimestamp = driver.fromDays(19_723);
+        long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        // 3 months after ceiling: 2024-05-01
+        long maxTimestamp = partitionCeiling + driver.fromDays(90);
+
+        Assert.assertTrue(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, -3));
+        // 2 months after ceiling: not enough for 3-month TTL
+        long maxTimestamp2Months = partitionCeiling + driver.fromDays(59);
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp2Months, -3));
+    }
+
+    @Test(expected = AssertionError.class)
+    public void testCheckTtlRejectsZero() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.DAY);
+        long partitionTimestamp = driver.fromDays(19_723);
+        long maxTimestamp = partitionTimestamp + driver.fromHours(100);
+
+        TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 0);
+    }
+
+    @Test
+    public void testCheckTtlSmallHourValue() {
+        // TTL of 1 hour with HOUR partitioning
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF);
+        txReader.initPartitionBy(ColumnType.TIMESTAMP, PartitionBy.HOUR);
+        long partitionTimestamp = driver.fromHours(473_352); // some hour
+        long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
+        long maxTimestamp = partitionCeiling + driver.fromHours(1);
+
+        Assert.assertTrue(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
+        Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp - 1, 1));
     }
 
     private void testIsValidColumnName(char c, boolean expected) {
