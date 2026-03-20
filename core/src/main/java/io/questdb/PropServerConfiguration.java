@@ -1933,7 +1933,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterDispatchLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Math.min(queryWorkers, 32));
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
-            final boolean defaultParallelSqlEnabled = queryWorkers > 0;
+            final boolean defaultParallelSqlEnabled = queryWorkers > 0 && cpuAvailable >= 4;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelTopKEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, defaultParallelSqlEnabled);
             this.sqlHorizonJoinMaxOffsets = getInt(properties, env, PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 10_000);
