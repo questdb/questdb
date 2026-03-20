@@ -122,7 +122,7 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
 
     if FILL_NULLS && row_lo > 0 {
         let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level as u32)?;
-        slicer.skip(non_null_skipped);
+        slicer.skip(non_null_skipped)?;
         current_row = row_lo;
     }
 
@@ -186,7 +186,7 @@ fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const R
 
             if skip_count > 0 {
                 let non_null_skipped = levels_iter.skip_rows(skip_count, max_def_level as u32)?;
-                slicer.skip(non_null_skipped);
+                slicer.skip(non_null_skipped)?;
                 if FILL_NULLS {
                     append_array_nulls(&mut buffers.aux_vec, &buffers.data_vec, skip_count)?;
                 }
@@ -273,7 +273,7 @@ fn decode_array_rows_1d<T: DataPageSlicer>(
 ) -> ParquetResult<()> {
     if row_lo > 0 {
         let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level)?;
-        slicer.skip(non_null_skipped);
+        slicer.skip(non_null_skipped)?;
     }
 
     let target_rows = row_hi - row_lo;
@@ -323,7 +323,7 @@ fn decode_array_rows_2d<T: DataPageSlicer>(
 ) -> ParquetResult<()> {
     if row_lo > 0 {
         let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level)?;
-        slicer.skip(non_null_skipped);
+        slicer.skip(non_null_skipped)?;
     }
 
     let target_rows = row_hi - row_lo;
@@ -603,7 +603,7 @@ fn decode_array_rows_generic<T: DataPageSlicer>(
 ) -> ParquetResult<()> {
     if row_lo > 0 {
         let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level)?;
-        slicer.skip(non_null_skipped);
+        slicer.skip(non_null_skipped)?;
     }
 
     let target_rows = row_hi - row_lo;

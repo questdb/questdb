@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
@@ -39,6 +40,9 @@ public class CreateTableColumnModel implements Mutable {
     private int indexValueBlockSize;
     private boolean indexedFlag;
     private boolean isCast;
+    private int parquetCompression = -1;
+    private int parquetCompressionLevel = -1;
+    private int parquetEncoding = -1;
     private boolean symbolCacheFlag;
     private int symbolCapacity = -1;
 
@@ -57,6 +61,9 @@ public class CreateTableColumnModel implements Mutable {
         indexValueBlockSize = 0;
         indexedFlag = false;
         isCast = false;
+        parquetCompression = -1;
+        parquetCompressionLevel = -1;
+        parquetEncoding = -1;
         symbolCacheFlag = false;
         symbolCapacity = -1;
     }
@@ -83,6 +90,35 @@ public class CreateTableColumnModel implements Mutable {
 
     public int getIndexValueBlockSize() {
         return indexValueBlockSize;
+    }
+
+    public int getParquetCompression() {
+        return parquetCompression;
+    }
+
+    public int getParquetCompressionLevel() {
+        return parquetCompressionLevel;
+    }
+
+    public int getParquetEncoding() {
+        return parquetEncoding;
+    }
+
+    public int getParquetEncodingConfig() {
+        if (parquetEncoding < 0 && parquetCompression < 0) {
+            return 0;
+        }
+        // In packed form, compression is shifted +1 (0=default, 1=uncompressed, 2=snappy, etc.)
+        // to distinguish "not set" from "explicitly uncompressed".
+        int packedCompression = parquetCompression >= 0 ? parquetCompression + 1 : 0;
+        // Level is also shifted +1 (0=not set, 1=level 0, 2=level 1, etc.)
+        // to distinguish "not set" from "level 0" (e.g., gzip store mode).
+        int packedLevel = parquetCompressionLevel >= 0 ? parquetCompressionLevel + 1 : 0;
+        return TableUtils.packParquetConfig(
+                Math.max(parquetEncoding, 0),
+                packedCompression,
+                packedLevel
+        );
     }
 
     public boolean getSymbolCacheFlag() {
@@ -127,6 +163,18 @@ public class CreateTableColumnModel implements Mutable {
 
     public void setIsDedupKey() {
         dedupKeyFlag = true;
+    }
+
+    public void setParquetCompression(int parquetCompression) {
+        this.parquetCompression = parquetCompression;
+    }
+
+    public void setParquetCompressionLevel(int parquetCompressionLevel) {
+        this.parquetCompressionLevel = parquetCompressionLevel;
+    }
+
+    public void setParquetEncoding(int parquetEncoding) {
+        this.parquetEncoding = parquetEncoding;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {

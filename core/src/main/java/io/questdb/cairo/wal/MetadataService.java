@@ -134,6 +134,18 @@ public interface MetadataService {
 
     void disableDeduplication();
 
+    /**
+     * Resets per-column Parquet encoding and/or compression settings to defaults.
+     * {@code dropFlags} is a bitmask: bit 0 resets the encoding, bit 1 resets
+     * the compression. When both components are reset, the packed config becomes 0
+     * (fully default). This method commits any pending transaction before modifying
+     * the column metadata.
+     *
+     * @param columnName name of the column whose Parquet settings to reset
+     * @param dropFlags  bitmask — 1 = drop encoding, 2 = drop compression, 3 = drop both
+     */
+    void dropColumnParquetEncoding(CharSequence columnName, int dropFlags);
+
     void dropIndex(@NotNull CharSequence columnName);
 
     /**
@@ -176,6 +188,18 @@ public interface MetadataService {
     void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
+
+    /**
+     * Sets the per-column Parquet encoding configuration. The config is a packed
+     * 32-bit value produced by {@code TableUtils.packParquetConfig(encoding, compression, level)}
+     * with layout: bits 0-7 encoding id, bits 8-15 compression codec, bits 16-23
+     * compression level, bit 24 explicit flag. This method commits any pending
+     * transaction before modifying the column metadata.
+     *
+     * @param columnName            name of the column to configure
+     * @param parquetEncodingConfig packed encoding/compression config
+     */
+    void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig);
 
     /**
      * Sets refresh type and settings for materialized view.

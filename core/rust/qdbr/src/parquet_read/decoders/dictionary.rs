@@ -44,7 +44,7 @@ impl VarDictDecoder for BaseVarDictDecoder<'_> {
 }
 
 impl<'a> BaseVarDictDecoder<'a> {
-    pub fn try_new(dict_page: &'a DictPage<'a>, is_utf8: bool) -> ParquetResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage<'a>) -> ParquetResult<Self> {
         let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
         let mut offset = 0usize;
         let dict_data = &dict_page.buffer;
@@ -71,13 +71,6 @@ impl<'a> BaseVarDictDecoder<'a> {
             }
 
             let str_slice = &dict_data[offset..offset + str_len];
-            if is_utf8 && std::str::from_utf8(str_slice).is_err() {
-                return Err(fmt_err!(
-                    Layout,
-                    "dictionary value {i} ({str_slice:?}) is not valid utf8"
-                ));
-            }
-
             dict_values.push(str_slice);
             offset += str_len;
             total_key_len += str_len;
