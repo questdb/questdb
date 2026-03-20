@@ -97,6 +97,7 @@ public class FuzzRunner {
     private double colRenameProb;
     private double colTypeChangeProb;
     private double dataAddProb;
+    private double dropParquetEncodingProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
@@ -115,6 +116,7 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
+    private double setParquetEncodingProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
@@ -501,7 +503,9 @@ public class FuzzRunner {
                 queryProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion()
+                (int) sequencerMetadata.getMetadataVersion(),
+                setParquetEncodingProb,
+                dropParquetEncodingProb
         );
     }
 
@@ -656,6 +660,50 @@ public class FuzzRunner {
             double symbolAccessValidationProb,
             double queryProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                queryProb,
+                0.0,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double dropParquetEncodingProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -675,6 +723,8 @@ public class FuzzRunner {
         this.replaceInsertProb = replaceInsertProb;
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
+        this.setParquetEncodingProb = setParquetEncodingProb;
+        this.dropParquetEncodingProb = dropParquetEncodingProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {

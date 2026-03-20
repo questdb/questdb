@@ -381,10 +381,6 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
 
         Ok(())
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -615,7 +611,6 @@ mod tests {
         decoder.push().unwrap();
         decoder.push().unwrap();
         decoder.push().unwrap();
-        assert!(decoder.result().is_ok());
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 3);
@@ -643,7 +638,6 @@ mod tests {
         let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
         decoder.reserve(4).unwrap();
         decoder.push_slice(4).unwrap();
-        assert!(decoder.result().is_ok());
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 4);
@@ -730,7 +724,6 @@ mod tests {
         decoder.reserve(2).unwrap();
         decoder.skip(2).unwrap();
         decoder.push_slice(2).unwrap();
-        assert!(decoder.result().is_ok());
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 2);
@@ -768,7 +761,6 @@ mod tests {
 
         let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
         decoder.skip(3).unwrap();
-        assert!(decoder.result().is_ok());
         assert_eq!(buffers.aux_vec.len(), 0);
     }
 
@@ -937,7 +929,6 @@ mod tests {
         let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
         decoder.reserve(100).unwrap();
         decoder.push_slice(100).unwrap();
-        assert!(decoder.result().is_ok());
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 100);
@@ -1057,7 +1048,6 @@ mod tests {
         let mut decoder = DeltaLAVarcharSliceDecoder::try_new(&data, &mut buffers, true).unwrap();
         decoder.reserve(150).unwrap();
         decoder.push_slice(150).unwrap();
-        assert!(decoder.result().is_ok());
 
         let entries = read_aux_entries(&buffers);
         assert_eq!(entries.len(), 150);

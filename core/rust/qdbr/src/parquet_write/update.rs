@@ -21,10 +21,17 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::allocator::QdbAllocator;
+use crate::parquet::error::{
+    fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
+};
+use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+use crate::parquet_write::file::{create_row_group, WriteOptions};
+use crate::parquet_write::schema::to_compressions;
+use crate::parquet_write::schema::{to_encodings, Partition};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
-
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::uleb128;
 use parquet2::metadata::{FileMetaData, KeyValue, SchemaDescriptor, SortingColumn};
@@ -109,6 +116,7 @@ pub struct ParquetUpdater {
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
     bloom_filter_columns: HashSet<usize>,
+    min_compression_ratio: f64,
     copy_buffer: Vec<u8>,
     file_metadata: FileMetaData,
     accumulated_unused_bytes: u64,
@@ -135,6 +143,7 @@ impl ParquetUpdater {
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
         bloom_filter_fpp: f64,
+        min_compression_ratio: f64,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -275,6 +284,7 @@ impl ParquetUpdater {
             row_group_size,
             data_page_size,
             bloom_filter_columns,
+            min_compression_ratio,
             copy_buffer: Vec::new(),
             file_metadata,
             accumulated_unused_bytes,
@@ -306,6 +316,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             &self.bloom_filter_columns,
             false,
         )?;
@@ -372,6 +383,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             &self.bloom_filter_columns,
             false,
         )?;
@@ -881,6 +893,7 @@ impl ParquetUpdater {
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
+            min_compression_ratio: self.min_compression_ratio,
         }
     }
 }
@@ -1134,16 +1147,19 @@ mod tests {
     use std::io::Write;
     use std::ptr::null;
 
-    use crate::parquet_write::file::{
-        create_row_group, ParquetWriter, WriteOptions, DEFAULT_BLOOM_FILTER_FPP,
+    use crate::parquet_write::file::DEFAULT_BLOOM_FILTER_FPP;
+    use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
+    use crate::parquet_write::schema::{
+        to_compressions, to_encodings, to_parquet_schema, Column, Partition,
     };
-    use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
+    use parquet2::compression::Compression;
     use parquet2::read::read_metadata_with_size;
     use parquet2::write;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+    use tempfile::NamedTempFile;
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {
@@ -1168,6 +1184,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -1218,6 +1235,7 @@ mod tests {
             data_page_size: None,
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         };
         let bloom_filter_columns = HashSet::new();
 
@@ -1234,6 +1252,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             &bloom_filter_columns,
             false,
         )?;
@@ -1245,6 +1264,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             &bloom_filter_columns,
             false,
         )?;
@@ -1309,6 +1329,146 @@ mod tests {
         Ok(())
     }
 
+    /// Write an initial compressed parquet file to a temp file and return it.
+    fn write_initial_zstd_file() -> Result<(NamedTempFile, Partition), Box<dyn Error>> {
+        let col1 = [1i32, 2, i32::MIN, 3];
+        let col2 = [0.5f32, 0.001, f32::nan(), 3.15];
+        let col1_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1);
+        let col2_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2);
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_w, col2_w].to_vec(),
+        };
+
+        let tmp = NamedTempFile::new()?;
+        let file = tmp.reopen()?;
+        ParquetWriter::new(file)
+            .with_compression(CompressionOptions::Zstd(None))
+            .finish(partition)?;
+
+        // Build the partition for appending (same schema, fresh data).
+        let col1_extra = [4, 5, i32::MIN];
+        let col2_extra = [f32::nan(), 3.13, std::f32::consts::PI];
+        let col1_extra_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_extra);
+        let col2_extra_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_extra);
+        let new_partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_extra_w, col2_extra_w].to_vec(),
+        };
+
+        Ok((tmp, new_partition))
+    }
+
+    #[test]
+    fn test_updater_with_min_compression_ratio() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+
+        // --- Case 1: very high min_compression_ratio forces fallback to uncompressed ---
+        {
+            let (tmp, new_partition) = write_initial_zstd_file()?;
+            let file_len = tmp.as_file().metadata()?.len();
+            let reader = tmp.reopen()?;
+            let alloc_state = TestAllocatorState::new();
+
+            let writer = tmp.reopen()?;
+            let mut updater = super::ParquetUpdater::new(
+                alloc_state.allocator(),
+                reader,
+                file_len,
+                writer,
+                file_len,                       // write_file_size: update (append) mode
+                None,                           // sorting_columns
+                true,                           // write_statistics
+                false,                          // raw_array_encoding
+                CompressionOptions::Zstd(None), // compression
+                None,                           // row_group_size
+                None,                           // data_page_size
+                DEFAULT_BLOOM_FILTER_FPP,       // bloom_filter_fpp
+                100.0,                          // min_compression_ratio (impossibly high)
+            )?;
+
+            updater.insert_row_group(&new_partition, 1)?;
+            updater.end(None)?;
+
+            // Read back metadata and check the appended row group (index 1).
+            let verify_file = tmp.reopen()?;
+            let verify_len = verify_file.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut &verify_file, verify_len)?;
+            assert_eq!(metadata.row_groups.len(), 2, "expected 2 row groups");
+
+            // The appended row group should have fallen back to Uncompressed
+            // because the ratio threshold (100.0) is impossibly high.
+            let appended_rg = &metadata.row_groups[1];
+            for col in appended_rg.columns() {
+                assert_eq!(
+                    col.compression(),
+                    Compression::Uncompressed,
+                    "expected uncompressed fallback for column {:?}",
+                    col.descriptor().path_in_schema,
+                );
+            }
+
+            // Original row group should still be Zstd (it was written before
+            // the updater applied its ratio check).
+            let original_rg = &metadata.row_groups[0];
+            for col in original_rg.columns() {
+                assert_eq!(
+                    col.compression(),
+                    Compression::Zstd,
+                    "original row group column should remain Zstd",
+                );
+            }
+        }
+
+        // --- Case 2: low min_compression_ratio keeps compressed output ---
+        {
+            let (tmp, new_partition) = write_initial_zstd_file()?;
+            let file_len = tmp.as_file().metadata()?.len();
+            let reader = tmp.reopen()?;
+            let alloc_state = TestAllocatorState::new();
+
+            let writer = tmp.reopen()?;
+            let mut updater = super::ParquetUpdater::new(
+                alloc_state.allocator(),
+                reader,
+                file_len,
+                writer,
+                file_len, // write_file_size: update (append) mode
+                None,
+                true,
+                false,
+                CompressionOptions::Zstd(None),
+                None,
+                None,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.5, // min_compression_ratio: ratio check active but easily met
+            )?;
+
+            updater.insert_row_group(&new_partition, 1)?;
+            updater.end(None)?;
+
+            let verify_file = tmp.reopen()?;
+            let verify_len = verify_file.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut &verify_file, verify_len)?;
+            assert_eq!(metadata.row_groups.len(), 2);
+
+            // The appended row group should keep Zstd because the ratio
+            // threshold (0.5) is trivially satisfied — it only requires
+            // uncompressed/compressed >= 0.5.
+            let appended_rg = &metadata.row_groups[1];
+            for col in appended_rg.columns() {
+                assert_eq!(
+                    col.compression(),
+                    Compression::Zstd,
+                    "expected Zstd compression to be kept for column {:?}",
+                    col.descriptor().path_in_schema,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// After copy_row_group with a non-zero offset shift, the bloom filter
     /// on the last column must still be readable and contain the original
     /// values. This requires either copying the bloom bytes into the new
@@ -1353,6 +1513,7 @@ mod tests {
             data_page_size: None,
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         };
 
         let options = write::WriteOptions {
@@ -1361,6 +1522,7 @@ mod tests {
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
+        let compressions_rg0 = to_compressions(&partition_rg0);
         let (rg0, bloom0) = create_row_group(
             &partition_rg0,
             0,
@@ -1368,9 +1530,11 @@ mod tests {
             schema.fields(),
             &encodings,
             foptions,
+            &compressions_rg0,
             &bloom_cols,
             false,
         )?;
+        let compressions_rg1 = to_compressions(&partition_rg1);
         let (rg1, bloom1) = create_row_group(
             &partition_rg1,
             0,
@@ -1378,6 +1542,7 @@ mod tests {
             schema.fields(),
             &encodings,
             foptions,
+            &compressions_rg1,
             &bloom_cols,
             false,
         )?;
@@ -1467,6 +1632,7 @@ mod tests {
                 make_column("col1", ColumnTypeTag::Float.into_type(), &col1_new),
             ],
         };
+        let compressions_new = to_compressions(&partition_new);
         let (rg_new, bloom_new) = create_row_group(
             &partition_new,
             0,
@@ -1474,6 +1640,7 @@ mod tests {
             schema.fields(),
             &to_encodings(&partition_new),
             foptions,
+            &compressions_new,
             &bloom_cols,
             false,
         )?;
