@@ -382,7 +382,8 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
                 case COMPRESSION_GZIP:
                     // GZIP actually uses levels 0-9, where 0=fastest, 9=best compression
                     if (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL) {
-                        throw SqlException.$(compressionLevelPos, "GZIP compression level must be between 0 and 9");
+                        throw SqlException.$(compressionLevelPos, "GZIP compression level must be between ")
+                                .put(GZIP_MIN_COMPRESSION_LEVEL).put(" and ").put(GZIP_MAX_COMPRESSION_LEVEL);
                     }
                     break;
                 case COMPRESSION_BROTLI:

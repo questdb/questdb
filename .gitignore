@@ -52,9 +52,6 @@ core/src/test/resources/io/questdb/bin/windows-x86-64/
 core/src/main/bin/darwin-aarch64/
 core/src/main/bin/darwin-x86-64/
 
-# CI tool binaries — downloaded at build time
-ci/cover-checker-*.jar
-
 # pgwire compatibility tests - build artifacts
 compat/src/test/rust-tokio/target/
 compat/src/test/rust-tokio/Cargo.lock

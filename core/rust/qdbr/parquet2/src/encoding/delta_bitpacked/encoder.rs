@@ -37,11 +37,11 @@ pub fn encode<I: Iterator<Item = i64>>(mut iterator: I, buffer: &mut Vec<u8>) {
         let mut max_delta = i64::MIN;
         let mut num_bits = 0;
         for (i, integer) in (0..128).zip(&mut iterator) {
-            let delta = integer - prev;
+            let delta = integer.wrapping_sub(prev);
             min_delta = min_delta.min(delta);
             max_delta = max_delta.max(delta);
 
-            num_bits = 64 - (max_delta - min_delta).leading_zeros();
+            num_bits = 64 - (max_delta.wrapping_sub(min_delta)).leading_zeros();
             values[i] = delta;
             prev = integer;
         }
@@ -50,7 +50,7 @@ pub fn encode<I: Iterator<Item = i64>>(mut iterator: I, buffer: &mut Vec<u8>) {
         let values = &values[..consumed];
 
         values.iter().zip(deltas.iter_mut()).for_each(|(v, delta)| {
-            *delta = (v - min_delta) as u64;
+            *delta = (v.wrapping_sub(min_delta)) as u64;
         });
 
         // <min delta> <list of bitwidths of miniblocks> <miniblocks>
