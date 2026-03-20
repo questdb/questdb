@@ -68,14 +68,14 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
+            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
     // High bit set on the column type signals the Rust parquet encoder that the
     // symbol column contains no nulls, so it can emit an all-ones RLE run for
     // definition levels instead of checking each row.  This is a write-time hint
     // only — it does NOT change the parquet schema Repetition (always Optional).
     private static final int PARQUET_SYMBOL_NOT_NULL_HINT = Integer.MIN_VALUE;
-    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
-            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
 
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
