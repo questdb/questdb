@@ -62,6 +62,11 @@ find_jars() {
     SLF4J_JAR=$(find "$HOME/.m2/repository/org/slf4j/slf4j-api" -name "slf4j-api-*.jar" \
                 ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
                 2>/dev/null | sort -V | tail -1)
+
+    # Find PostgreSQL JDBC driver JAR (for table setup via PgWire)
+    PG_JAR=$(find "$HOME/.m2/repository/org/postgresql/postgresql" -name "postgresql-*.jar" \
+             ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
+             2>/dev/null | sort -V | tail -1)
 }
 
 # Check if JARs exist
@@ -173,7 +178,7 @@ case "$1" in
         done
 
         echo "Running ILP test client..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" $DEBUG_FLAG \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" $DEBUG_FLAG \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "${CLIENT_ARGS[@]}"
         ;;
@@ -197,7 +202,7 @@ case "$1" in
         echo "Output: $PROFILE_OUTPUT (collapsed stacks format)"
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,collapsed" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -226,7 +231,7 @@ case "$1" in
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=cpu,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -256,7 +261,7 @@ case "$1" in
         echo "This captures time spent waiting (I/O, locks, sleep) in addition to CPU time."
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=wall,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -286,7 +291,7 @@ case "$1" in
         echo "This captures thread contention on synchronized blocks and locks."
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=lock,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -321,7 +326,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -361,7 +366,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -400,7 +405,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -440,7 +445,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -464,7 +469,7 @@ case "$1" in
         echo "Output: $JFR_OUTPUT"
         echo ""
         java -XX:StartFlightRecording=filename="$JFR_OUTPUT",settings=profile \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -485,7 +490,7 @@ case "$1" in
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
-            java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+            java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
                  io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
                  --protocol="$protocol" "$@"
             echo ""
