@@ -38,6 +38,10 @@ public interface TableStructure {
 
     int getIndexBlockCapacity(int columnIndex);
 
+    default int getParquetEncodingConfig(int columnIndex) {
+        return 0;
+    }
+
     default MatViewDefinition getMatViewDefinition() {
         return null;
     }

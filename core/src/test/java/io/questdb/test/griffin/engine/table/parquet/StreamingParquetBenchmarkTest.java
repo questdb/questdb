@@ -358,7 +358,8 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         PARQUET_VERSION,
                         0,
                         0,
-                        0
+                        0,
+                        0.0
                 );
 
                 try {

@@ -76,6 +76,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getParquetEncodingConfig(int columnIndex) {
+        return getColumnMetadata(columnIndex).getParquetEncodingConfig();
+    }
+
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -156,21 +161,21 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             assert name != null;
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);
-            columnMetadata.add(
-                    new WriterTableColumnMetadata(
-                            nameStr,
-                            type,
-                            TableUtils.isColumnIndexed(metaMem, i),
-                            TableUtils.getIndexBlockCapacity(metaMem, i),
-                            true,
-                            null,
-                            i,
-                            TableUtils.getSymbolCapacity(metaMem, i),
-                            TableUtils.isColumnDedupKey(metaMem, i),
-                            TableUtils.getReplacingColumnIndex(metaMem, i),
-                            TableUtils.isSymbolCached(metaMem, i)
-                    )
+            WriterTableColumnMetadata colMeta = new WriterTableColumnMetadata(
+                    nameStr,
+                    type,
+                    TableUtils.isColumnIndexed(metaMem, i),
+                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                    true,
+                    null,
+                    i,
+                    TableUtils.getSymbolCapacity(metaMem, i),
+                    TableUtils.isColumnDedupKey(metaMem, i),
+                    TableUtils.getReplacingColumnIndex(metaMem, i),
+                    TableUtils.isSymbolCached(metaMem, i)
             );
+            colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, i));
+            columnMetadata.add(colMeta);
             if (type > -1) {
                 columnNameIndexMap.put(nameStr, i);
                 if (ColumnType.isSymbol(type)) {
@@ -278,6 +283,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.getReplacingIndex(),
                 oldMeta.isSymbolCacheFlag()
         );
+        newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
         columnMetadata.set(columnIndex, newColumnMetadata);
     }
 

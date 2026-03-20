@@ -31,6 +31,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -385,6 +387,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     if (ColumnType.isSymbol(model.getColumnType())) {
                         symbolClauseToSink(sink, model);
                     }
+                    parquetClauseToSink(sink, model);
                 }
             }
             sink.putAscii(')');
@@ -408,6 +411,31 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     private static boolean isIPv4Cast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
+    }
+
+    private static void parquetClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
+        int encoding = model.getParquetEncoding();
+        int compression = model.getParquetCompression();
+        if (encoding < 0 && compression < 0) {
+            return;
+        }
+        sink.putAscii(" parquet(");
+        if (encoding >= 0) {
+            sink.put(ParquetEncoding.getEncodingName(encoding));
+        } else {
+            sink.putAscii("default");
+        }
+        if (compression >= 0) {
+            sink.putAscii(", ");
+            sink.put(ParquetCompression.getCompressionName(compression));
+            int level = model.getParquetCompressionLevel();
+            if (level >= 0) {
+                sink.putAscii('(');
+                sink.put(level);
+                sink.putAscii(')');
+            }
+        }
+        sink.putAscii(')');
     }
 
     private static void symbolClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {

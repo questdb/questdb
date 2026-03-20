@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,6 +42,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
@@ -246,6 +249,26 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     // INDEX CAPACITY value
                     sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                 }
+            }
+
+            int parquetConfig = column.getParquetEncodingConfig();
+            if (TableUtils.isParquetConfigExplicit(parquetConfig)) {
+                int encoding = TableUtils.getParquetConfigEncoding(parquetConfig);
+                int compression = TableUtils.getParquetConfigCompression(parquetConfig);
+                int level = TableUtils.getParquetConfigCompressionLevel(parquetConfig);
+                sink.putAscii(" PARQUET(");
+                if (encoding > 0) {
+                    sink.put(ParquetEncoding.getEncodingName(encoding));
+                } else {
+                    sink.putAscii("default");
+                }
+                if (compression > 0) {
+                    sink.putAscii(", ").put(ParquetCompression.getCompressionName(compression - 1));
+                    if (level > 0) {
+                        sink.putAscii('(').put(level - 1).putAscii(')');
+                    }
+                }
+                sink.putAscii(')');
             }
         }
 
