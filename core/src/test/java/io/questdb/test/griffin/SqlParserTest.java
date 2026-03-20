@@ -3172,28 +3172,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexTypeLegacy() throws SqlException {
-        // LEGACY is an alias for SYMBOL index type
+    public void testCreateTableInPlaceIndexTypeBitmap() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
                         "t TIMESTAMP," +
                         " x SYMBOL capacity 128 cache index capacity 256) timestamp(t)",
                 "create table x (" +
                         "t TIMESTAMP, " +
-                        "x SYMBOL index type legacy) " +
+                        "x SYMBOL index type bitmap) " +
                         "timestamp(t)"
         );
     }
 
     @Test
-    public void testCreateTableInPlaceIndexTypeLegacyWithCapacity() throws SqlException {
+    public void testCreateTableInPlaceIndexTypeBitmapWithCapacity() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
                         "t TIMESTAMP," +
                         " x SYMBOL capacity 128 cache index capacity 64) timestamp(t)",
                 "create table x (" +
                         "t TIMESTAMP, " +
-                        "x SYMBOL index type legacy capacity 64) " +
+                        "x SYMBOL index type bitmap capacity 64) " +
                         "timestamp(t)"
         );
     }
@@ -3206,7 +3205,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "x SYMBOL index type posting capacity 64) " +
                         "timestamp(t)",
                 57,
-                "CAPACITY is only supported for SYMBOL (legacy) index type"
+                "CAPACITY is only supported for BITMAP index type"
         );
     }
 

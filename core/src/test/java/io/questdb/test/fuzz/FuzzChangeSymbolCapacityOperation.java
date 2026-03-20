@@ -85,7 +85,7 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
                 wApi.getMetadata().getTableId()
         );
         builder.addColumnToList(columName, 0, ColumnType.SYMBOL, symbolCapacity, tempRnd.nextBoolean(),
-                tempRnd.nextBoolean() ? IndexType.SYMBOL : IndexType.NONE, tempRnd.nextInt(), false);
+                tempRnd.nextBoolean() ? IndexType.BITMAP : IndexType.NONE, tempRnd.nextInt(), false);
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)) {
             alterOp.withSqlStatement(

@@ -700,13 +700,13 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableWithSymbolIndexType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (s symbol index type legacy, ts timestamp) timestamp(ts)");
+            execute("create table tab (s symbol index type bitmap, ts timestamp) timestamp(ts)");
             assertSql("s\tts\n", "select * from tab");
             try (TableReader r = engine.getReader("tab")) {
                 TableReaderMetadata metadata = r.getMetadata();
                 int colIndex = metadata.getColumnIndex("s");
                 assertTrue(metadata.isColumnIndexed(colIndex));
-                assertEquals(IndexType.SYMBOL, metadata.getColumnIndexType(colIndex));
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(colIndex));
             }
         });
     }
@@ -721,7 +721,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 TableReaderMetadata metadata = r.getMetadata();
                 int colIndex = metadata.getColumnIndex("s");
                 assertTrue(metadata.isColumnIndexed(colIndex));
-                assertEquals(IndexType.SYMBOL, metadata.getColumnIndexType(colIndex));
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(colIndex));
             }
         });
     }

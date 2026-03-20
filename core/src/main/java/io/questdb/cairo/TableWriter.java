@@ -5847,19 +5847,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                     linkFile(
                             ff,
-                            keyFileName(IndexType.SYMBOL, path.trimTo(pathSize), columnName, symbolTableNameTxn),
-                            keyFileName(IndexType.SYMBOL, other.trimTo(pathSize), newName, newColumnNameTxn)
+                            keyFileName(IndexType.BITMAP, path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                            keyFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn)
                     );
                     linkFile(
                             ff,
-                            valueFileName(IndexType.SYMBOL, path.trimTo(pathSize), columnName, symbolTableNameTxn),
-                            valueFileName(IndexType.SYMBOL, other.trimTo(pathSize), newName, newColumnNameTxn)
+                            valueFileName(IndexType.BITMAP, path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                            valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn)
                     );
                 } catch (Throwable e) {
                     ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    ff.removeQuiet(keyFileName(IndexType.SYMBOL, other.trimTo(pathSize), newName, newColumnNameTxn));
-                    ff.removeQuiet(valueFileName(IndexType.SYMBOL, other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(keyFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn));
                     throw e;
                 }
                 purgingOperator.add(columnIndex, columnName, columnType, indexType, symbolTableNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
@@ -9561,8 +9561,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             removeFileOrLog(ff, offsetFileName(path.trimTo(pathSize), name, columnNameTxn));
             removeFileOrLog(ff, charFileName(path.trimTo(pathSize), name, columnNameTxn));
-            removeFileOrLog(ff, keyFileName(IndexType.SYMBOL, path.trimTo(pathSize), name, columnNameTxn));
-            removeFileOrLog(ff, valueFileName(IndexType.SYMBOL, path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, keyFileName(IndexType.BITMAP, path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, valueFileName(IndexType.BITMAP, path.trimTo(pathSize), name, columnNameTxn));
         } finally {
             path.trimTo(pathSize);
         }

@@ -152,7 +152,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        if (IndexType.isIndexed(indexType) && indexType != IndexType.SYMBOL) {
+        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
             // Non-legacy index type: remove its specific files
             path.trimTo(pathTrimToPartition);
             if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
@@ -173,7 +173,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean existsIndexFile(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        if (IndexType.isIndexed(indexType) && indexType != IndexType.SYMBOL) {
+        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
             path.trimTo(pathTrimToPartition);
             if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
                 return true;

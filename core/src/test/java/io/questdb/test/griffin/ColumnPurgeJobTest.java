@@ -1142,7 +1142,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     ) throws NumericException {
         ColumnPurgeTask tsk = new ColumnPurgeTask();
         TimestampDriver timestampDriver = timestampType.getDriver();
-        tsk.of(tblName, colName, tableId, 0, columnType, IndexType.SYMBOL, timestampDriver.getTimestampType(), PartitionBy.NONE, updateTxn, new LongList());
+        tsk.of(tblName, colName, tableId, 0, columnType, IndexType.BITMAP, timestampDriver.getTimestampType(), PartitionBy.NONE, updateTxn, new LongList());
         tsk.appendColumnInfo(columnVersion, timestampDriver.parseFloorLiteral(partitionTs), partitionNameTxn);
         return tsk;
     }

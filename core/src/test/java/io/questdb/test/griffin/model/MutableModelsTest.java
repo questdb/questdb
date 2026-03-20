@@ -79,7 +79,7 @@ public class MutableModelsTest {
         model.setColumnNamePos(10);
         model.setColumnType(ColumnType.STRING);
         model.setCastType(ColumnType.INT, 20);
-        model.setIndexType(IndexType.SYMBOL, 30, 256);
+        model.setIndexType(IndexType.BITMAP, 30, 256);
         model.setIsDedupKey();
         model.setSymbolCacheFlag(true);
         model.setSymbolCapacity(1024);

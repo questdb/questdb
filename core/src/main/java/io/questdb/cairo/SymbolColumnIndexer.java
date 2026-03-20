@@ -48,7 +48,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private volatile long sequence = 0L;
 
     public SymbolColumnIndexer(CairoConfiguration configuration) {
-        this(configuration, IndexType.SYMBOL);
+        this(configuration, IndexType.BITMAP);
     }
 
     public SymbolColumnIndexer(CairoConfiguration configuration, byte indexType) {

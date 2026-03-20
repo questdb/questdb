@@ -501,7 +501,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applyAddIndex(MetadataService svc) {
         final CharSequence columnName = activeExtraStrInfo.getStrA(0);
         try {
-            byte indexType = extraInfo.size() > 1 ? (byte) extraInfo.get(1) : IndexType.SYMBOL;
+            byte indexType = extraInfo.size() > 1 ? (byte) extraInfo.get(1) : IndexType.BITMAP;
             svc.addIndex(columnName, (int) extraInfo.get(0), indexType);
         } catch (CairoException e) {
             // augment exception with table position

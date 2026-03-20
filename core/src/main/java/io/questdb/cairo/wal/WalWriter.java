@@ -1032,8 +1032,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
         // Symbol map files always use SYMBOL format (.k/.v)
-        IndexFactory.keyFileName(IndexType.SYMBOL, tempPath, columnName, columnNameTxn);
-        IndexFactory.keyFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.keyFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn);
+        IndexFactory.keyFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link key file [from=").$(tempPath)
@@ -1048,8 +1048,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
         // Symbol map files always use SYMBOL format (.k/.v)
-        IndexFactory.valueFileName(IndexType.SYMBOL, tempPath, columnName, columnNameTxn);
-        IndexFactory.valueFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.valueFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link value file [from=").$(tempPath)
@@ -1404,11 +1404,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         // Symbol map files always use SYMBOL format (.k/.v)
         path.trimTo(rootLen);
-        IndexFactory.valueFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
-        IndexFactory.keyFileName(IndexType.SYMBOL, path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.keyFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);

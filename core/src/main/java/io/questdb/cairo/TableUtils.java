@@ -199,7 +199,7 @@ public final class TableUtils {
     static final int META_FLAG_BIT_INDEXED = 1;
     // Index type values 0-3 fit in 2 bits (bits 0-1). No split encoding needed.
     // Backward-compatible: old tables with META_FLAG_BIT_INDEXED=1 decode as
-    // IndexType.SYMBOL (1).
+    // IndexType.BITMAP (1).
     static final int META_FLAG_INDEX_TYPE_MASK_LO = 0x03; // bits 0-1: index type
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;

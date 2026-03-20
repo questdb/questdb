@@ -60,7 +60,7 @@ public interface FrameColumnTypePool {
                 columnTxn,
                 columnType,
                 indexBlockCapacity,
-                indexBlockCapacity > 0 ? IndexType.SYMBOL : IndexType.NONE,
+                indexBlockCapacity > 0 ? IndexType.BITMAP : IndexType.NONE,
                 columnTop,
                 columnIndex,
                 init,

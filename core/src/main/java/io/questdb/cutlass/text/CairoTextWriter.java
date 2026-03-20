@@ -534,7 +534,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
         @Override
         public byte getIndexType(int columnIndex) {
-            return types.getQuick(columnIndex).isIndexed() ? IndexType.SYMBOL : IndexType.NONE;
+            return types.getQuick(columnIndex).isIndexed() ? IndexType.BITMAP : IndexType.NONE;
         }
 
         @Override

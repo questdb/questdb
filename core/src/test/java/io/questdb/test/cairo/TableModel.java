@@ -161,7 +161,7 @@ public class TableModel implements TableStructure {
     @Override
     public byte getIndexType(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED
-                ? IndexType.SYMBOL : IndexType.NONE;
+                ? IndexType.BITMAP : IndexType.NONE;
     }
 
     @Override

@@ -43,7 +43,7 @@ public class IndexBuilder extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
     private final CairoConfiguration configuration;
     private final MemoryMAR ddlMem;
-    private byte indexType = IndexType.SYMBOL;
+    private byte indexType = IndexType.BITMAP;
     private SymbolColumnIndexer indexer;
 
     public IndexBuilder(CairoConfiguration configuration) {

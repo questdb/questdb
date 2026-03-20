@@ -252,7 +252,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
                 if (column.isIndexed()) {
                     byte idxType = column.getIndexType();
-                    if (idxType == IndexType.SYMBOL) {
+                    if (idxType == IndexType.BITMAP) {
                         sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                     } else {
                         sink.putAscii(" INDEX TYPE ").putAscii(IndexType.nameOf(idxType));

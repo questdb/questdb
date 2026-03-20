@@ -860,7 +860,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
             boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
-            indexType = indexed ? IndexType.SYMBOL : IndexType.NONE;
+            indexType = indexed ? IndexType.BITMAP : IndexType.NONE;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
             }
@@ -1954,14 +1954,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     final int indexValueBlockSize;
                     final boolean sizeInferred;
-                    byte indexType = IndexType.SYMBOL;
+                    byte indexType = IndexType.BITMAP;
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || isSemicolon(tok)) {
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {
-                        // Try to parse an index type name
+                        // Accept both ADD INDEX TYPE POSTING and ADD INDEX POSTING
+                        if (isTypeKeyword(tok)) {
+                            tok = expectToken(lexer, "index type name");
+                        }
                         byte parsedType = IndexType.valueOf(tok);
                         if (parsedType != IndexType.NONE) {
                             indexType = parsedType;
@@ -1974,8 +1977,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             if (!SqlKeywords.isCapacityKeyword(tok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
                             }
-                            if (indexType != IndexType.SYMBOL) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for SYMBOL (legacy) index type");
+                            if (indexType != IndexType.BITMAP) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
                             }
                             tok = expectToken(lexer, "index capacity value");
                             try {
@@ -2335,10 +2338,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
                         int indexValueCapacity = -1;
-                        byte indexType = IndexType.SYMBOL;
+                        byte indexType = IndexType.BITMAP;
 
                         if (tok != null && !isSemicolon(tok)) {
-                            // Try to parse an index type name
+                            // Accept both ADD INDEX TYPE POSTING and ADD INDEX POSTING
+                            if (isTypeKeyword(tok)) {
+                                tok = expectToken(lexer, "index type name");
+                            }
                             byte parsedType = IndexType.valueOf(tok);
                             if (parsedType != IndexType.NONE) {
                                 indexType = parsedType;
@@ -2349,8 +2355,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 if (!isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
                                 }
-                                if (indexType != IndexType.SYMBOL) {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for SYMBOL (legacy) index type");
+                                if (indexType != IndexType.BITMAP) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
                                 }
                                 tok = expectToken(lexer, "capacity value");
                                 try {

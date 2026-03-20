@@ -571,7 +571,7 @@ public class FuzzTransactionGenerator {
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         int newType = generateNewColumnType(rnd);
-        byte indexType = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9 ? IndexType.SYMBOL : IndexType.NONE;
+        byte indexType = newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9 ? IndexType.BITMAP : IndexType.NONE;
         int indexValueBlockCapacity = 256;
         boolean symbolTableStatic = rnd.nextBoolean();
 

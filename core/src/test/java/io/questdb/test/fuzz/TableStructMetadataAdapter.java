@@ -119,7 +119,7 @@ public class TableStructMetadataAdapter implements TableStructure {
 
     @Override
     public byte getIndexType(int columnIndex) {
-        return ColumnType.isSymbol(metadata.getColumnType(columnIndex)) ? IndexType.SYMBOL : IndexType.NONE;
+        return ColumnType.isSymbol(metadata.getColumnType(columnIndex)) ? IndexType.BITMAP : IndexType.NONE;
     }
 
     @Override

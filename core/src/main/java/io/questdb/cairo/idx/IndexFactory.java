@@ -56,7 +56,7 @@ public final class IndexFactory {
      */
     public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
-            case IndexType.SYMBOL -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING -> PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.FSST -> FSSTBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
@@ -75,7 +75,7 @@ public final class IndexFactory {
      */
     public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
-            case IndexType.SYMBOL -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING -> PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.FSST -> FSSTBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
@@ -93,7 +93,7 @@ public final class IndexFactory {
      */
     public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
         switch (indexType) {
-            case IndexType.SYMBOL -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
+            case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
             case IndexType.POSTING -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
             case IndexType.FSST -> FSSTBitmapIndexWriter.initKeyMemory(keyMem, FSSTBitmapIndexUtils.DEFAULT_BLOCK_VALUES);
             case IndexType.NONE -> throw CairoException.critical(0)
@@ -128,7 +128,7 @@ public final class IndexFactory {
             long columnTop
     ) {
         return switch (indexType) {
-            case IndexType.SYMBOL -> direction == BitmapIndexReader.DIR_FORWARD
+            case IndexType.BITMAP -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.POSTING -> direction == BitmapIndexReader.DIR_FORWARD
@@ -158,7 +158,7 @@ public final class IndexFactory {
      */
     public static IndexWriter createWriter(byte indexType, CairoConfiguration configuration) {
         return switch (indexType) {
-            case IndexType.SYMBOL -> new BitmapIndexWriter(configuration);
+            case IndexType.BITMAP -> new BitmapIndexWriter(configuration);
             case IndexType.POSTING -> new PostingIndexWriter(configuration);
             case IndexType.FSST -> new FSSTBitmapIndexWriter(configuration);
             case IndexType.NONE -> throw CairoException.critical(0)

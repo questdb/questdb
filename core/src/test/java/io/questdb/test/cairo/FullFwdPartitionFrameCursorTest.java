@@ -2031,7 +2031,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.SYMBOL, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2092,7 +2092,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ColumnType.SYMBOL,
                             Numbers.ceilPow2(N),
                             true,
-                            IndexType.SYMBOL,
+                            IndexType.BITMAP,
                             Numbers.ceilPow2(N / 4),
                             false
                     );
@@ -2126,7 +2126,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.SYMBOL, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2266,7 +2266,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertNoIndex(cursor, record);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.SYMBOL, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2357,7 +2357,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
 
-                writer.addIndex("a", configuration.getIndexValueBlockSize(), IndexType.SYMBOL);
+                writer.addIndex("a", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
 
                 populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
                 writer.commit();
@@ -2470,7 +2470,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                writer.addIndex("a", configuration.getIndexValueBlockSize(), IndexType.SYMBOL);
+                writer.addIndex("a", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
             }
 
             // check that each symbol in table exists in index as well

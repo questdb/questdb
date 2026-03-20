@@ -1694,7 +1694,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public byte getIndexType(int columnIndex) {
             return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0
-                    ? IndexType.SYMBOL : IndexType.NONE;
+                    ? IndexType.BITMAP : IndexType.NONE;
         }
 
         @Override

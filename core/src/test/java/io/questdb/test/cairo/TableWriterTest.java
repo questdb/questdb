@@ -711,7 +711,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.SYMBOL, 1024, false);
+                    writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.BITMAP, 1024, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
@@ -752,7 +752,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, IndexType.SYMBOL, 0, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, IndexType.BITMAP, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
@@ -1994,8 +1994,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024, IndexType.SYMBOL);
-            w.addIndex("sym2", 1024, IndexType.SYMBOL);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
@@ -3647,7 +3647,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.SYMBOL);
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -3668,7 +3668,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // another attempt to create index
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.SYMBOL);
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
             }
         });
     }
@@ -4126,8 +4126,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024, IndexType.SYMBOL);
-            w.addIndex("sym2", 1024, IndexType.SYMBOL);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));

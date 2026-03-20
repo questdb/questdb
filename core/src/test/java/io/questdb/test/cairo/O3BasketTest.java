@@ -64,7 +64,7 @@ public class O3BasketTest extends AbstractTest {
         }
 
         for (int i = 0; i < indexerCount; i++) {
-            Assert.assertNotNull(basket.nextIndexer(IndexType.SYMBOL));
+            Assert.assertNotNull(basket.nextIndexer(IndexType.BITMAP));
         }
     }
 }

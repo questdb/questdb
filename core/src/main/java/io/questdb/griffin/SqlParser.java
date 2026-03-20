@@ -2017,7 +2017,7 @@ public class SqlParser {
         }
 
         // Parse optional index type and/or capacity
-        byte indexType = IndexType.SYMBOL;
+        byte indexType = IndexType.BITMAP;
         int indexValueBlockSize = configuration.getIndexValueBlockSize();
         CharSequence tok = tok(lexer, "index type, 'capacity' or ')'");
         // Try shorthand: INDEX(col POSTING)
@@ -2027,9 +2027,9 @@ public class SqlParser {
             tok = tok(lexer, "'capacity' or ')'");
         }
         if (isCapacityKeyword(tok)) {
-            if (indexType != IndexType.SYMBOL) {
+            if (indexType != IndexType.BITMAP) {
                 throw SqlException.position(lexer.lastTokenPosition())
-                        .put("CAPACITY is only supported for SYMBOL (legacy) index type");
+                        .put("CAPACITY is only supported for BITMAP index type");
             }
             int errorPosition = lexer.getPosition();
             indexValueBlockSize = expectInt(lexer);
@@ -2054,12 +2054,12 @@ public class SqlParser {
         int indexColumnPosition = lexer.lastTokenPosition();
 
         if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
-            model.setIndexType(IndexType.SYMBOL, indexColumnPosition, configuration.getIndexValueBlockSize());
+            model.setIndexType(IndexType.BITMAP, indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
 
         // Parse optional index type: INDEX POSTING or INDEX TYPE POSTING
-        byte indexType = IndexType.SYMBOL;
+        byte indexType = IndexType.BITMAP;
         // First, try the shorthand: INDEX <typename>
         byte directType = IndexType.valueOf(tok);
         if (directType != IndexType.NONE && !isTypeKeyword(tok)) {
@@ -2085,9 +2085,9 @@ public class SqlParser {
         expectTok(lexer, tok, "capacity");
 
         // CAPACITY only makes sense for SYMBOL index type
-        if (indexType != IndexType.SYMBOL) {
+        if (indexType != IndexType.BITMAP) {
             throw SqlException.position(lexer.lastTokenPosition())
-                    .put("CAPACITY is only supported for SYMBOL (legacy) index type");
+                    .put("CAPACITY is only supported for BITMAP index type");
         }
 
         int errorPosition = lexer.getPosition();

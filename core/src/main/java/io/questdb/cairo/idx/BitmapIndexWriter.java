@@ -181,7 +181,7 @@ public class BitmapIndexWriter implements IndexWriter {
 
     @Override
     public byte getIndexType() {
-        return IndexType.SYMBOL;
+        return IndexType.BITMAP;
     }
 
     public int getKeyCount() {

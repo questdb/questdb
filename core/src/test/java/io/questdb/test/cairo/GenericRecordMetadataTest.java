@@ -42,7 +42,7 @@ public class GenericRecordMetadataTest {
     public void testBaseInterfaceDefaults() {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, IndexType.SYMBOL, 1024, true, null));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.SYMBOL, IndexType.BITMAP, 1024, true, null));
         metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
         metadata.setTimestampIndex(2);
 

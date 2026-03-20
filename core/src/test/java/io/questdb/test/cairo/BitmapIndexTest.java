@@ -758,7 +758,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         ColumnType.SYMBOL,
                         Numbers.ceilPow2(N),
                         true,
-                        IndexType.SYMBOL,
+                        IndexType.BITMAP,
                         indexBlockCapacity,
                         false
                 );

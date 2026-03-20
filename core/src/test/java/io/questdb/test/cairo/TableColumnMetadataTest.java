@@ -33,7 +33,7 @@ import org.junit.Test;
 public class TableColumnMetadataTest {
     @Test
     public void testHasIndex() {
-        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, IndexType.SYMBOL, 0, true, null);
+        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, IndexType.BITMAP, 0, true, null);
         Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
         Assert.assertTrue(metadata.isIndexed());
         Assert.assertTrue(metadata.isSymbolTableStatic());

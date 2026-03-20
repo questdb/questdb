@@ -49,9 +49,9 @@ public final class IndexType {
      */
     public static final byte POSTING = 2;
     /**
-     * Symbol index (original BitmapIndex for SYMBOL columns).
+     * Bitmap index (original BitmapIndex for SYMBOL columns).
      */
-    public static final byte SYMBOL = 1;
+    public static final byte BITMAP = 1;
 
     private IndexType() {
         // Utility class, no instances
@@ -76,7 +76,7 @@ public final class IndexType {
     public static String nameOf(byte indexType) {
         return switch (indexType) {
             case NONE -> "NONE";
-            case SYMBOL -> "SYMBOL";
+            case BITMAP -> "BITMAP";
             case POSTING -> "POSTING";
             case FSST -> "FSST";
             default -> "UNKNOWN(" + indexType + ")";
@@ -93,9 +93,8 @@ public final class IndexType {
         if (name == null || name.isEmpty()) {
             return NONE;
         }
-        // Case-insensitive comparison
-        if (Chars.equalsIgnoreCase(name, "SYMBOL") || Chars.equalsIgnoreCase(name, "LEGACY")) {
-            return SYMBOL;
+        if (Chars.equalsIgnoreCase(name, "BITMAP")) {
+            return BITMAP;
         }
         if (Chars.equalsIgnoreCase(name, "POSTING")) {
             return POSTING;

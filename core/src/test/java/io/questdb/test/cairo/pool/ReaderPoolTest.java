@@ -292,7 +292,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 columnTypeChanged = false;
                                 columnRenamed = false;
                             } else if (prob >= 90 && !columnsAdded) {
-                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, IndexType.SYMBOL, 256, false);
+                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, IndexType.BITMAP, 256, false);
                                 writer.addColumn("int2", ColumnType.INT);
                                 writer.addColumn("bool2", ColumnType.BOOLEAN);
                                 columnsAdded = true;
