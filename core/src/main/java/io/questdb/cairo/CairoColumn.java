@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
@@ -38,6 +40,7 @@ public class CairoColumn implements Sinkable {
     private byte indexType;
     private long metadataVersion;
     private CharSequence name;
+    private int parquetEncodingConfig;
     private int position;
     private boolean symbolCached;
     private int symbolCapacity;
@@ -55,6 +58,7 @@ public class CairoColumn implements Sinkable {
         target.indexType = this.indexType;
         target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
+        target.parquetEncodingConfig = this.parquetEncodingConfig;
         target.position = this.position;
         target.symbolCached = this.symbolCached;
         target.symbolCapacity = this.symbolCapacity;
@@ -73,6 +77,10 @@ public class CairoColumn implements Sinkable {
 
     public CharSequence getName() {
         return name;
+    }
+
+    public int getParquetEncodingConfig() {
+        return parquetEncodingConfig;
     }
 
     public int getPosition() {
@@ -131,6 +139,10 @@ public class CairoColumn implements Sinkable {
         this.name = name;
     }
 
+    public void setParquetEncodingConfig(int parquetEncodingConfig) {
+        this.parquetEncodingConfig = parquetEncodingConfig;
+    }
+
     public void setPosition(int position) {
         this.position = position;
     }
@@ -168,6 +180,26 @@ public class CairoColumn implements Sinkable {
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
         sink.put("indexType=").put(IndexType.nameOf(getIndexType())).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
+        int config = getParquetEncodingConfig();
+        if (config == 0) {
+            sink.put("parquetEncoding=Default, parquetCompression=Default, ");
+        } else {
+            int encoding = TableUtils.getParquetConfigEncoding(config);
+            int compression = TableUtils.getParquetConfigCompression(config);
+            int level = TableUtils.getParquetConfigCompressionLevel(config);
+            sink.put("parquetEncoding=");
+            sink.put(encoding == 0 ? "Default" : ParquetEncoding.getEncodingName(encoding));
+            sink.put(", parquetCompression=");
+            if (compression == 0) {
+                sink.put("Default");
+            } else {
+                sink.put(ParquetCompression.getCompressionName(compression - 1));
+                if (level > 0) {
+                    sink.put(' ').put(level - 1);
+                }
+            }
+            sink.put(", ");
+        }
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
 }

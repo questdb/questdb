@@ -331,22 +331,22 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
             if (columnType > -1) {
                 String colName = Chars.toString(name);
-                columnMetadata.add(
-                        new TableReaderMetadataColumn(
-                                colName,
-                                columnType,
-                                TableUtils.getColumnIndexType(mem, writerIndex),
-                                TableUtils.getIndexBlockCapacity(mem, writerIndex),
-                                true,
-                                null,
-                                writerIndex,
-                                TableUtils.isColumnDedupKey(mem, writerIndex),
-                                denseSymbolIndex,
-                                stableIndex,
-                                TableUtils.isSymbolCached(mem, writerIndex),
-                                TableUtils.getSymbolCapacity(mem, writerIndex)
-                        )
+                TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
+                        colName,
+                        columnType,
+                        TableUtils.getColumnIndexType(mem, writerIndex),
+                        TableUtils.getIndexBlockCapacity(mem, writerIndex),
+                        true,
+                        null,
+                        writerIndex,
+                        TableUtils.isColumnDedupKey(mem, writerIndex),
+                        denseSymbolIndex,
+                        stableIndex,
+                        TableUtils.isSymbolCached(mem, writerIndex),
+                        TableUtils.getSymbolCapacity(mem, writerIndex)
                 );
+                colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
+                columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
                     throw validationException(mem).put("Duplicate column [name=").put(name).put("] at ").put(i);

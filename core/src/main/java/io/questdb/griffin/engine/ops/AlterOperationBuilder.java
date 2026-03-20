@@ -205,6 +205,16 @@ public class AlterOperationBuilder implements Mutable {
         this.extraInfo.add(columnNamePosition);
     }
 
+    public AlterOperationBuilder ofDropParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int dropFlags) {
+        this.command = DROP_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(dropFlags);
+        return this;
+    }
+
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
@@ -297,6 +307,16 @@ public class AlterOperationBuilder implements Mutable {
         this.tableToken = tableToken;
         this.extraInfo.add(maxUncommittedRows);
         this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int parquetEncodingConfig) {
+        this.command = SET_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(parquetEncodingConfig);
         return this;
     }
 
