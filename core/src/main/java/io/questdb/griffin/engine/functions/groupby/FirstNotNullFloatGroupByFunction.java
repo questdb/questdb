@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,15 +38,22 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Float.BYTES;
+            long offset = 0;
             for (; ptr < hi; ptr += Float.BYTES) {
                 float value = Unsafe.getUnsafe().getFloat(ptr);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putFloat(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putFloat(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
@@ -73,6 +74,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
+    public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
+    public final static short DROP_PARQUET_ENCODING = SET_PARQUET_ENCODING + 1; // 27
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -96,30 +99,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static AlterOperation deepCloneOf(AlterOperation other) {
-        LongList extraInfo = new LongList(other.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
-        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
-        }
-
-        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
-        alterOperation.command = other.command;
-        alterOperation.tableToken = other.tableToken;
-        alterOperation.tableNamePosition = other.tableNamePosition;
-
-        if (other.activeExtraStrInfo == other.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
-        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
-
-        return alterOperation;
-    }
-
     public static long getFlags(boolean indexed, boolean dedupKey) {
         long flags = 0;
         if (indexed) {
@@ -135,7 +114,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     //     "structural changes" doesn't cover is as "add column" is supported
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        final QueryRegistry queryRegistry = sqlExecutionContext != null ? getCairoEngine().getQueryRegistry() : null;
         keepMatViewsValid = false;
         long queryId = -1;
         try {
@@ -228,6 +207,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_MAT_VIEW_REFRESH:
                     setMatViewRefresh(svc);
                     break;
+                case SET_PARQUET_ENCODING:
+                    setParquetEncoding(svc);
+                    break;
+                case DROP_PARQUET_ENCODING:
+                    dropParquetEncoding(svc);
+                    break;
                 default:
                     LOG.error()
                             .$("invalid alter table command [code=").$(command)
@@ -268,6 +253,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.clear();
         keepMatViewsValid = false;
         clearCommandCorrelationId();
+    }
+
+    public AlterOperation deepClone() {
+        final LongList extraInfo = new LongList(this.extraInfo);
+        final ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.activeExtraStrInfo.size());
+        for (int i = 0, n = this.activeExtraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.activeExtraStrInfo.getStrA(i)));
+        }
+
+        final AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
+        alterOperation.command = this.command;
+        alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
+        alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
+        return alterOperation;
     }
 
     @Override
@@ -326,6 +325,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    @Override
     public boolean isForceWalBypass() {
         return command == FORCE_DROP_PARTITION;
     }
@@ -505,12 +505,26 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void applyConvertPartition(MetadataService svc, boolean toParquet) {
-        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
-        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+        // Check if we have bloom filter options (only for toParquet conversion)
+        // Data layout with bloom filter: extraInfo = [ts1, pos1, ts2, pos2, ..., fpp_bits], extraStrInfo = [bloomFilterColumns]
+        // Data layout without bloom filter: extraInfo = [ts1, pos1, ts2, pos2, ...], extraStrInfo = []
+        CharSequence bloomFilterColumns = null;
+        double fpp = Double.NaN;
+        int partitionCount;
+
+        if (toParquet && activeExtraStrInfo.size() > 0) {
+            bloomFilterColumns = activeExtraStrInfo.getStrA(0);
+            fpp = Double.longBitsToDouble(extraInfo.getQuick(extraInfo.size() - 1));
+            partitionCount = (extraInfo.size() - 1) / 2;
+        } else {
+            partitionCount = extraInfo.size() / 2;
+        }
+
+        for (int i = 0; i < partitionCount; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             final boolean result;
             if (toParquet) {
-                result = svc.convertPartitionNativeToParquet(partitionTimestamp);
+                result = svc.convertPartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, fpp);
             } else {
                 result = svc.convertPartitionParquetToNative(partitionTimestamp);
             }
@@ -547,7 +561,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropColumn(MetadataService svc) {
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            svc.removeColumn(activeExtraStrInfo.getStrA(i));
+            removeColumn(svc, activeExtraStrInfo.getStrA(i));
         }
     }
 
@@ -682,9 +696,31 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
+    private void dropParquetEncoding(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid drop parquet encoding alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int dropFlags = (int) extraInfo.get(0);
+        svc.dropColumnParquetEncoding(columnName, dropFlags);
+    }
+
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    }
+
+    private CairoEngine getCairoEngine() {
+        assert sqlExecutionContext != null;
+        return sqlExecutionContext.getCairoEngine();
+    }
+
+    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
+    private void removeColumn(MetadataService svc, CharSequence columnName) {
+        svc.removeColumn(columnName, securityContext);
     }
 
     private void setMatViewRefresh(MetadataService svc) {
@@ -733,11 +769,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    private void setParquetEncoding(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid set parquet encoding alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int parquetEncodingConfig = (int) extraInfo.get(0);
+        svc.setColumnParquetEncoding(columnName, parquetEncodingConfig);
+    }
+
     private void squashPartitions(MetadataService svc) {
         svc.squashPartitions();
     }
 
-    interface CharSequenceList extends Mutable {
+    private interface CharSequenceList extends Mutable {
         CharSequence getStrA(int i);
 
         CharSequence getStrB(int i);

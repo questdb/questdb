@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -216,6 +216,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelReadParquetEnabled();
 
+    boolean isParquetRowGroupPruningEnabled();
+
     boolean isParallelTopKEnabled();
 
     boolean isParallelHorizonJoinEnabled();
@@ -275,6 +277,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
 
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
+
+    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -242,7 +242,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q7",
                         "SELECT AdvEngineID, COUNT(*) AS c FROM hits WHERE AdvEngineID <> 0 GROUP BY AdvEngineID ORDER BY c DESC;",
                         """
-                                Radix sort light
+                                Encode sort light
                                   keys: [c desc]
                                     Async JIT Group By workers: 1
                                       keys: [AdvEngineID]

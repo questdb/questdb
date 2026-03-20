@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -812,6 +812,154 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             A\t5\t2\tnull
                             B\t0\t1\tnull
                             B\t5\t1\tnull
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedAdaptiveScanSwitch() throws Exception {
+        // Tests that the adaptive backward-to-forward scan switch produces correct results.
+        // Slave has a rare key ("RARE") that appears only once at the beginning.
+        // Master alternates between common ("A") and rare keys with gaps > MIN_GAP (1,024).
+        // After several expensive backward scans for the rare key, the algorithm
+        // switches to forward scan mode for the rest of the frame.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // 20,000 price rows: RARE at row 0, A everywhere else.
+            // Timestamps 1us apart so row IDs map directly to microsecond offsets.
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('u', (x - 1)::int, '2024-01-01T00:00:00.000000Z'),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(20_000)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            // 13 trades alternating A/RARE, spaced 1,500us apart.
+            // Gap between ASOF positions ~ 1,500 rows (above MIN_GAP=1,024).
+            // RARE key triggers deep backward scans that eventually cause
+            // the adaptive switch to forward scan mode.
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:00.001500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.003000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.004500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.006000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.007500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.009000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.010500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.012000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.013500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.015000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.016500Z', 'A', 1.0),
+                                ('2024-01-01T00:00:00.018000Z', 'RARE', 1.0),
+                                ('2024-01-01T00:00:00.019500Z', 'A', 1.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tn\tavg_price
+                            A\t7\t1.0
+                            RARE\t6\t100.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedAdaptiveScanSwitchCrossPartition() throws Exception {
+        // Tests the absolute threshold path that triggers the adaptive switch
+        // when ASOF positions cross partition boundaries. When prevAsOfRowId and
+        // asOfRowId are in different partitions, the gap overestimates (>=2^44),
+        // so the relative check (bwdScanCost > gap * SWITCH_FACTOR) won't trigger.
+        // The absolute threshold (bwdScanCost > BWD_SCAN_ABSOLUTE_THRESHOLD) handles
+        // this case.
+        assertMemoryLeak(() -> {
+            // Set a low absolute threshold so it triggers with modest backward scan cost.
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 64);
+            // Set high min gap and switch factor so the relative check won't trigger.
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, Long.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, Long.MAX_VALUE);
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // 500 price rows per hour across 3 hours (1,500 total).
+            // RARE key appears only once at the very beginning; A everywhere else.
+            // Timestamps 1s apart within each hour partition.
+            execute(
+                    """
+                            INSERT INTO prices
+                            SELECT dateadd('s', ((x - 1) % 500)::int, dateadd('h', ((x - 1) / 500)::int, '2024-01-01T00:00:00.000000Z')),
+                                   CASE WHEN x = 1 THEN 'RARE' ELSE 'A' END,
+                                   CASE WHEN x = 1 THEN 100.0 ELSE 1.0 END
+                            FROM long_sequence(1500)
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            // Trades span across partition boundaries.
+            // The RARE key lookups trigger expensive backward scans that accumulate
+            // cost across partitions, eventually exceeding the absolute threshold.
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T00:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T01:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T01:08:00.000000Z', 'RARE', 1.0),
+                                ('2024-01-01T02:04:00.000000Z', 'A', 1.0),
+                                ('2024-01-01T02:08:00.000000Z', 'RARE', 1.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym " +
+                    "ORDER BY t.sym";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tn\tavg_price
+                            A\t3\t1.0
+                            RARE\t3\t100.0
                             """,
                     sql,
                     null,
@@ -3188,7 +3336,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // Verify the query plan
             assertPlanNoLeakCheck(
                     sql,
-                    "Radix sort light\n" +
+                    "Encode sort light\n" +
                             "  keys: [sec_offs]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sec_offs,avg]\n" +

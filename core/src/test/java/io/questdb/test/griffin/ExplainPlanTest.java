@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -405,7 +405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango", commonPart1 + "arr1[1:1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango", commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango", commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango", commonPart1 + "ARRAY[a,a]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango", commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango", commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
@@ -505,7 +505,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a
-                            Sort light
+                            Encode sort light
                               keys: [ts, i]
                                 PageFrame
                                     Row forward scan
@@ -704,6 +704,66 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantReassociationBindVariable() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where d + $1 + 4 > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+$0::double+4
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsAddition() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where d + 1 + 4 > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
+        assertPlan(
+                "create table tab (l long, ts timestamp);",
+                "select * from tab where l & 3 & 5 > 0",
+                """
+                        Async Filter workers: 1
+                          filter: 0<l&1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsCommutativePattern() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where 4 + (d + 1) > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
     public void testCountOfColumnsVectorized() throws Exception {
         assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
                 VirtualRecord
@@ -845,7 +905,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc", """
-                    Sort
+                    Encode sort
                       keys: [ts desc]
                         SelectedRecord
                             Cross Join
@@ -1284,7 +1344,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         Except
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -1305,7 +1365,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts desc]
                         Except
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -1324,7 +1384,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testExplainCreateMatView() throws Exception {
         assertPlan("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal", "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day", """
                 Create materialized view: test
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         Async Group By workers: 1
                           keys: [ts,k]
@@ -1376,7 +1436,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       where id = 'XXX'\s
                       sample by 15m ALIGN to CALENDAR
                     """, """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         GroupBy vectorized: false
                           keys: [ts,id]
@@ -1895,6 +1955,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
                 SelectedRecord
                     Async JIT Group By workers: 1
+                      vectorized: false
                       values: [last(timestamp),last(price)]
                       filter: symbol='BTC-USD'
                         PageFrame
@@ -1911,7 +1972,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
             assertPlanNoLeakCheck("select s, count() from trips where s is not null order by count desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [count desc]
                         GroupBy vectorized: false
                           keys: [s]
@@ -3093,6 +3154,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed11() throws Exception {
         assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
                   filter: null
                     PageFrame
@@ -3105,6 +3167,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed12() throws Exception {
         assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42", """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
                   filter: 42<i
                     PageFrame
@@ -3130,6 +3193,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan("create table a (i int, d double)", "select min(d), max(d*d) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [min(d),max(d*d)]
                   filter: null
                     PageFrame
@@ -3142,6 +3206,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(d+1) from a", """
                 Async Group By workers: 1
+                  vectorized: false
                   values: [max(d+1)]
                   filter: null
                     PageFrame
@@ -3165,6 +3230,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan("create table a (i int, d double)", "select first(10), last(d), avg(10), min(10), max(10) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [first(10),last(d),avg(10),min(10),max(10)]
                   filter: null
                     PageFrame
@@ -3177,6 +3243,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(i) from a where i < 10", """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [max(i)]
                   filter: i<10
                     PageFrame
@@ -3786,7 +3853,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         Intersect
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -3807,7 +3874,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts desc]
                         Intersect
                             Limit value: 10 skip-rows: 0 take-rows: 0
@@ -3865,7 +3932,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     limit 10""";
             assertPlanNoLeakCheck(sql, """
                     Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                        Sort
+                        Encode sort
                           keys: [bits desc]
                             VirtualRecord
                               functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
@@ -4696,7 +4763,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a
-                            Sort light
+                            Encode sort light
                               keys: [ts, i]
                                 PageFrame
                                     Row forward scan
@@ -4879,6 +4946,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: tab
                     """);
+        });
+    }
+
+    @Test
+    public void testNoArgMixedConstAndRuntimeExprInJoin() throws Exception {
+        // When constWhereClause mixes compile-time false with a runtime expression,
+        // the optimizer keeps the compile-time false in constWhereClause and the
+        // code generator folds it to Empty table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP)");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()",
+                    """
+                            SelectedRecord
+                                Empty table
+                            """);
         });
     }
 
@@ -5138,7 +5221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             for (String joinType : Arrays.asList("AsOf", "Lt")) {
                 String query = "with gp as \n" + "(\n" + "selecT * from (\n" + "selecT * from gas_prices order by timestamp asc, galon_price desc\n" + ") timestamp(timestamp))\n" + "selecT * from gp gp1 \n" + joinType + " join gp gp2 \n" + "order by gp1.timestamp; ";
 
-                String expectedPlan = "SelectedRecord\n" + "    " + joinType + " Join\n" + "        Sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n" + "        Sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n";
+                String expectedPlan = "SelectedRecord\n" + "    " + joinType + " Join\n" + "        Encode sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n" + "        Encode sort light\n" + "          keys: [timestamp, galon_price desc]\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: gas_prices\n";
 
                 assertPlanNoLeakCheck(query, expectedPlan);
             }
@@ -5160,16 +5243,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     order by gp1.timestamp;\s""";
 
             String expectedPlan = """
-                    Sort
+                    Encode sort
                       keys: [timestamp]
                         SelectedRecord
                             Splice Join
-                                Sort light
+                                Encode sort light
                                   keys: [timestamp, galon_price desc]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: gas_prices
-                                Sort light
+                                Encode sort light
                                   keys: [timestamp, galon_price desc]
                                     PageFrame
                                         Row forward scan
@@ -5202,7 +5285,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     from full_range""";
 
             String expectedPlan = """
-                    Sort
+                    Encode sort
                       keys: [timestamp]
                         Union
                             Union
@@ -5619,6 +5702,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x+10)]
                       filter: null
                         PageFrame
@@ -5628,6 +5712,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10+x)]
                       filter: null
                         PageFrame
@@ -5848,6 +5933,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x*10)]
                       filter: null
                         PageFrame
@@ -5857,6 +5943,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10*x)]
                       filter: null
                         PageFrame
@@ -5873,6 +5960,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10.0) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x*10.0)]
                       filter: null
                         PageFrame
@@ -5882,6 +5970,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10.0*x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10.0*x)]
                       filter: null
                         PageFrame
@@ -6021,6 +6110,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x-10)]
                       filter: null
                         PageFrame
@@ -6030,6 +6120,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10-x)]
                       filter: null
                         PageFrame
@@ -6150,6 +6241,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct constant
             expected = """
                     Async Group By workers: 1
+                      vectorized: false
                       values: [count_distinct(10)]
                       filter: null
                         PageFrame
@@ -6293,7 +6385,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h align to calendar", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -6312,7 +6404,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a", """
-                    Sort
+                    Encode sort
                       keys: [a]
                         Sample By
                           keys: [a]
@@ -6324,7 +6416,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [a]
                             Async Group By workers: 1
                               keys: [a,ts]
@@ -6336,7 +6428,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a]
                         VirtualRecord
                           functions: [a,sum]
@@ -6351,7 +6443,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [column]
                             VirtualRecord
                               functions: [a,sum,10*a]
@@ -6367,7 +6459,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a desc]
                         VirtualRecord
                           functions: [a,sum]
@@ -6381,7 +6473,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a10]
                         VirtualRecord
                           functions: [a10,sum]
@@ -6396,7 +6488,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0]
                             VirtualRecord
                               functions: [a0,sum,10*a0]
@@ -6413,7 +6505,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0]
                             VirtualRecord
                               functions: [a0,sum,to_utc(ts),10*a0]
@@ -6428,7 +6520,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0, berlin_ts desc]
                             VirtualRecord
                               functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
@@ -6449,7 +6541,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck("create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);", "select b, sum(a), k k1, k from x sample by 3h", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [ts]
                             SelectedRecord
                                 Async Group By workers: 1
@@ -6463,7 +6555,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select b, sum(a), k, k k1 from x sample by 3h", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [ts]
                             SelectedRecord
                                 Async Group By workers: 1
@@ -6524,7 +6616,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // with rewrite
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar", """
                     SelectedRecord
-                        Sort
+                        Encode sort
                           keys: [ts]
                             Fill Range
                               stride: '1h'
@@ -6651,7 +6743,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // with rewrite
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar", """
                     SelectedRecord
-                        Sort
+                        Encode sort
                           keys: [ts]
                             Fill Range
                               stride: '1h'
@@ -6683,7 +6775,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to calendar", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [ts]
                             GroupBy vectorized: false
                               keys: [sym,ts]
@@ -6703,7 +6795,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a", """
-                    Sort
+                    Encode sort
                       keys: [a]
                         Sample By
                           keys: [a]
@@ -6720,7 +6812,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m order by x1.a", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [a]
                             GroupBy vectorized: false
                               keys: [a,ts]
@@ -6736,7 +6828,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a]
                         VirtualRecord
                           functions: [a,sum]
@@ -6755,7 +6847,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [column]
                             VirtualRecord
                               functions: [a,sum,10*a]
@@ -6775,7 +6867,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a desc]
                         VirtualRecord
                           functions: [a,sum]
@@ -6793,7 +6885,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a10]
                         VirtualRecord
                           functions: [a10,sum]
@@ -6812,7 +6904,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0]
                             VirtualRecord
                               functions: [a0,sum,10*a0]
@@ -6833,7 +6925,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0]
                             VirtualRecord
                               functions: [a0,sum,to_utc(ts),10*a0]
@@ -6852,7 +6944,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0, berlin_ts desc]
                             VirtualRecord
                               functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]
@@ -6885,7 +6977,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [l,i,ts]
@@ -6912,7 +7004,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [l,i,ts]
@@ -7031,7 +7123,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to first observation order by a", """
-                    Sort
+                    Encode sort
                       keys: [a]
                         Sample By
                           keys: [a]
@@ -7043,7 +7135,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m order by a", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [a]
                             Async Group By workers: 1
                               keys: [a,ts]
@@ -7055,7 +7147,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a]
                         VirtualRecord
                           functions: [a,sum]
@@ -7070,7 +7162,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a", """
                     SelectedRecord
-                        Radix sort light
+                        Encode sort light
                           keys: [column]
                             VirtualRecord
                               functions: [a,sum,10*a]
@@ -7086,7 +7178,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a desc]
                         VirtualRecord
                           functions: [a,sum]
@@ -7100,7 +7192,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10", """
-                    Radix sort light
+                    Encode sort light
                       keys: [a10]
                         VirtualRecord
                           functions: [a10,sum]
@@ -7115,7 +7207,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0]
                             VirtualRecord
                               functions: [a0,sum,10*a0]
@@ -7132,7 +7224,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0]
                             VirtualRecord
                               functions: [a0,sum,to_utc(ts),10*a0]
@@ -7147,7 +7239,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select ts, to_utc(ts, 'Europe/Berlin') berlin_ts, a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 3 asc, berlin_ts desc", """
                     SelectedRecord
-                        Sort light
+                        Encode sort light
                           keys: [column desc, a0, berlin_ts desc]
                             VirtualRecord
                               functions: [ts,to_utc(ts),a0,sum,10*a0]
@@ -7170,7 +7262,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [berlin_ts desc]
                         VirtualRecord
                           functions: [a,sum,to_timezone(ts)]
@@ -7184,7 +7276,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [berlin_ts]
                         VirtualRecord
                           functions: [a,sum,to_timezone(ts)]
@@ -7198,7 +7290,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')", """
-                    Radix sort light
+                    Encode sort light
                       keys: [berlin_ts]
                         VirtualRecord
                           functions: [a,sum,to_timezone(ts)]
@@ -7212,7 +7304,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc", """
-                    Sort light
+                    Encode sort light
                       keys: [berlin_ts desc, a, month_ts]
                         VirtualRecord
                           functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]
@@ -7541,6 +7633,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectCountDistinct7() throws Exception {
         String expected = """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [count_distinct(s)]
                   filter: s='foobar'
                     PageFrame
@@ -7555,6 +7648,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectCountDistinct8() throws Exception {
         String expected = """
                 Async Group By workers: 1
+                  vectorized: false
                   values: [count_distinct(s),first(s)]
                   filter: null
                     PageFrame
@@ -7577,7 +7671,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectDesc2() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) ;", "select * from a order by ts desc", """
-                Radix sort light
+                Encode sort light
                   keys: [ts desc]
                     PageFrame
                         Row forward scan
@@ -7588,7 +7682,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectDescMaterialized() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) ;", "select * from (select i, ts from a union all select 1, null ) order by ts desc", """
-                Sort
+                Encode sort
                   keys: [ts desc]
                     Union All
                         PageFrame
@@ -7920,7 +8014,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols04() throws Exception {
         assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
                 Limit value: 1 skip-rows: 0 take-rows: 0
-                    Sort
+                    Encode sort
                       keys: [ts desc]
                         Empty table
                 """);
@@ -8223,7 +8317,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck("select * from a " + "where (s1 = 'S1' or s1 = 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc", """
-                    Sort light
+                    Encode sort light
                       keys: [s1, ts desc]
                         Async JIT Filter workers: 1
                           filter: (s1='S1' or s1='S2')
@@ -8354,7 +8448,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 5) order by ts desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts desc]
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             PageFrame
@@ -8371,7 +8465,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 5) order by ts asc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         Limit value: 5 skip-rows: 0 take-rows: 5
                             PageFrame
@@ -8472,7 +8566,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderedAsc() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i asc", """
-                Radix sort light
+                Encode sort light
                   keys: [i]
                     PageFrame
                         Row forward scan
@@ -8483,7 +8577,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderedDesc() throws Exception {
         assertPlan("create table a ( i int, ts timestamp) timestamp(ts) ;", "select * from a order by i desc", """
-                Radix sort light
+                Encode sort light
                   keys: [i desc]
                     PageFrame
                         Row forward scan
@@ -8525,7 +8619,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectStaticTsInterval10() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ", """
-                Radix sort light
+                Encode sort light
                   keys: [l desc]
                     PageFrame
                         Row forward scan
@@ -8537,7 +8631,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectStaticTsInterval10a() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ", """
-                Sort light
+                Encode sort light
                   keys: [l desc, ts desc]
                     PageFrame
                         Row forward scan
@@ -8834,7 +8928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter22() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1 + 1 ", """
                 Async JIT Filter workers: 1
-                  filter: d=1024.1+1
+                  filter: d=1025.1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9094,7 +9188,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
                 Async Filter workers: 1
-                  filter: l=12::short
+                  filter: l=12
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9105,7 +9199,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter10() throws Exception {
         assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
                 Async Filter workers: 1
-                  filter: s=1::short
+                  filter: s=1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9127,7 +9221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter12() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
                 Async Filter workers: 1
-                  filter: l=1024::long
+                  filter: l=1024L
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9220,7 +9314,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
                 Async Filter workers: 1
-                  filter: l=12::byte
+                  filter: l=12
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9287,7 +9381,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
                 Async Filter workers: 1
-                  filter: b=1::byte
+                  filter: b=1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9537,7 +9631,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Lt Join Fast
                             Limit value: 10 skip-rows: 0 take-rows: 0
-                                Sort light
+                                Encode sort light
                                   keys: [ts, l]
                                     PageFrame
                                         Row forward scan
@@ -9555,10 +9649,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from " + "(select * from (select * from a order by ts desc, l desc) limit 10) " + "order by ts asc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         Limit value: 10 skip-rows: 0 take-rows: 0
-                            Sort light
+                            Encode sort light
                               keys: [ts desc, l desc]
                                 PageFrame
                                     Row forward scan
@@ -9576,7 +9670,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Lt Join Fast
                             Limit value: 10 skip-rows: 0 take-rows: 0
-                                Sort
+                                Encode sort
                                   keys: [ts, l]
                                     SelectedRecord
                                         Cross Join
@@ -9618,7 +9712,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts asc limit 10) order by ts desc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts desc]
                         Limit value: 10 skip-rows: 0 take-rows: 0
                             PageFrame
@@ -9648,7 +9742,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts desc limit 10) order by ts asc", """
-                    Radix sort light
+                    Encode sort light
                       keys: [ts]
                         Limit value: 10 skip-rows: 0 take-rows: 0
                             PageFrame
@@ -9664,7 +9758,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10) order by ts, l", """
-                    Sort light
+                    Encode sort light
                       keys: [ts, l]
                         Async Top K lo: 10 workers: 1
                           filter: null
@@ -9682,10 +9776,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, ts timestamp, l long)");
 
             assertPlanNoLeakCheck("select * from (select * from a order by ts, l limit 10,-10) order by ts, l", """
-                    Sort light
+                    Encode sort light
                       keys: [ts, l]
                         Limit left: 10 right: -10 skip-rows: 0 take-rows: 0
-                            Sort light
+                            Encode sort light
                               keys: [ts, l]
                                 PageFrame
                                     Row forward scan
@@ -9790,7 +9884,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: a
-                            Sort light
+                            Encode sort light
                               keys: [ts, i]
                                 PageFrame
                                     Row forward scan
@@ -10076,7 +10170,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a",
                     """
-                            Sort
+                            Encode sort
                               keys: [a]
                                 Async Window Join workers: 1
                                   vectorized: false
@@ -10095,7 +10189,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [column]
                                     VirtualRecord
                                       functions: [a,sum,10*a]
@@ -10115,7 +10209,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 1 desc",
                     """
-                            Sort
+                            Encode sort
                               keys: [a desc]
                                 Async Window Join workers: 1
                                   vectorized: false
@@ -10133,7 +10227,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select 10*x1.a as a10, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by a10",
                     """
-                            Sort
+                            Encode sort
                               keys: [a10]
                                 VirtualRecord
                                   functions: [10*a,sum]
@@ -10154,7 +10248,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [column desc, a0]
                                     VirtualRecord
                                       functions: [a0,sum,10*a0]
@@ -10175,7 +10269,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select x1.a as a0, sum(x1.b), x1.ts from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 1 asc",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [column desc, a0]
                                     VirtualRecord
                                       functions: [a0,sum,ts,10*a0]
@@ -10196,7 +10290,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by 10*x1.a desc, 3 asc, berlin_ts desc",
                     """
                             SelectedRecord
-                                Sort
+                                Encode sort
                                   keys: [column desc, sum, berlin_ts desc]
                                     VirtualRecord
                                       functions: [ts,to_utc(ts),a0,sum,10*a0]
@@ -10261,7 +10355,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     from cpu_ts \
                     order by ts asc
                     ) order by sm\s""", """
-                    Sort
+                    Encode sort
                       keys: [sm]
                         GroupBy vectorized: false
                           values: [sum(avg),sum(sum),sum(first_value)]
@@ -10295,7 +10389,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by 1 desc", """
-                    Sort
+                    Encode sort
                       keys: [sum desc]
                         GroupBy vectorized: false
                           values: [sum(avg),sum(sum),first(first_value)]
@@ -10316,7 +10410,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "from (select * from cpu_ts order by ts desc) " +
                             ") order by 1 desc",
                     """
-                            Sort
+                            Encode sort
                               keys: [sum desc]
                                 GroupBy vectorized: false
                                   values: [sum(avg),sum(sum),count(first_value)]
@@ -10336,7 +10430,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc", """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                             Window
@@ -10349,7 +10443,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by ts desc", """
-                    Sort
+                    Encode sort
                       keys: [ts desc]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                             Window
@@ -10362,7 +10456,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts asc " + ") order by hostname", """
-                    Sort
+                    Encode sort
                       keys: [hostname]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                             Window
@@ -10395,7 +10489,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by hostname ", """
-                    Sort
+                    Encode sort
                       keys: [hostname]
                         Window
                           functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
@@ -10407,7 +10501,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by hostname ", """
-                    Sort
+                    Encode sort
                       keys: [hostname]
                         Window
                           functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
@@ -10419,7 +10513,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + "order by ts desc " + ") order by ts asc ", """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                             Window
@@ -10432,7 +10526,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + "order by ts asc " + ") order by ts desc ", """
-                    Sort
+                    Encode sort
                       keys: [ts desc]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                             Window
@@ -10445,7 +10539,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc ) " + "order by ts asc " + ") order by hostname ", """
-                    Sort
+                    Encode sort
                       keys: [hostname]
                         Limit value: 9223372036854775807L skip-rows: 0 take-rows: 0
                             Window

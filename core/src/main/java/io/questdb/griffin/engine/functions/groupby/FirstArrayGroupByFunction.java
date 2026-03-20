@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -109,6 +109,11 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     @Override
     public String getName() {
         return "first";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
     @Override

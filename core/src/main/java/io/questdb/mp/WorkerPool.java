@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.log.Log;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
@@ -216,6 +217,7 @@ public class WorkerPool implements Closeable {
         for (int i = 0; i < workerCount; i++) {
             ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
             workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
+            workerCleaners.add(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 }

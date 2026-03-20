@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,11 +39,11 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long nonNullCount = Vect.countDouble(ptr, count);
             if (nonNullCount > 0) {
-                mapValue.putLong(valueIndex, nonNullCount);
+                mapValue.addLong(valueIndex, nonNullCount);
             }
         }
     }

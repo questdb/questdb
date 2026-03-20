@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -62,10 +62,24 @@ public class IntGroupByFunctionBatchTest {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(1, Numbers.INT_NULL, 2, Numbers.INT_NULL, 3);
-            function.computeBatch(value, ptr, 5);
+            function.computeBatch(value, ptr, 5, 0);
 
             Assert.assertEquals(3L, function.getLong(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testCountIntBatchAccumulates() {
+        CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(1, Numbers.INT_NULL);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(2, 3);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(3L, function.getLong(value));
         }
     }
 
@@ -74,7 +88,7 @@ public class IntGroupByFunctionBatchTest {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL, Numbers.INT_NULL);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
         }
@@ -84,7 +98,7 @@ public class IntGroupByFunctionBatchTest {
     public void testCountIntBatchZeroCountKeepsZero() {
         CountIntGroupByFunction function = new CountIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
         }
@@ -103,10 +117,24 @@ public class IntGroupByFunctionBatchTest {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(5, 6, 7);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(5, function.getInt(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstIntBatchAccumulates() {
+        FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(5, 6);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(7, 8);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(5, function.getInt(value));
         }
     }
 
@@ -115,7 +143,7 @@ public class IntGroupByFunctionBatchTest {
         FirstIntGroupByFunction function = new FirstIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, 1);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
@@ -127,7 +155,7 @@ public class IntGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
@@ -156,10 +184,24 @@ public class IntGroupByFunctionBatchTest {
         FirstNotNullIntGroupByFunction function = new FirstNotNullIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, 42, Numbers.INT_NULL);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(42, function.getInt(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstNotNullIntBatchAccumulates() {
+        FirstNotNullIntGroupByFunction function = new FirstNotNullIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(Numbers.INT_NULL, 42);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(99, Numbers.INT_NULL);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(42, function.getInt(value));
         }
     }
 
@@ -170,11 +212,27 @@ public class IntGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateInts(11, 22, 33);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
-            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(2, value.getLong(0));
             Assert.assertEquals(33, function.getInt(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastIntBatchAccumulates() {
+        LastIntGroupByFunction function = new LastIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateInts(11, 22);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(33, 44);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(44, function.getInt(value));
         }
     }
 
@@ -185,9 +243,9 @@ public class IntGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateInts(11, Numbers.INT_NULL);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
-            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(1, value.getLong(0));
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
     }
@@ -207,10 +265,26 @@ public class IntGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateInts(Numbers.INT_NULL, 10, Numbers.INT_NULL, 20);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(20, function.getInt(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastNotNullIntBatchAccumulates() {
+        LastNotNullIntGroupByFunction function = new LastNotNullIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateInts(10, Numbers.INT_NULL);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(Numbers.INT_NULL, 20);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(20, function.getInt(value));
         }
     }
 
@@ -221,10 +295,24 @@ public class IntGroupByFunctionBatchTest {
             value.putInt(0, -999);
 
             long ptr = allocateInts(-10, Numbers.INT_NULL, 15, 7);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(15, function.getInt(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testMaxIntBatchAccumulates() {
+        MaxIntGroupByFunction function = new MaxIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(1, 5);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(3, 2);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(5, function.getInt(value));
         }
     }
 
@@ -233,7 +321,7 @@ public class IntGroupByFunctionBatchTest {
         MaxIntGroupByFunction function = new MaxIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL, Numbers.INT_NULL);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
@@ -254,10 +342,24 @@ public class IntGroupByFunctionBatchTest {
             value.putInt(0, 999);
 
             long ptr = allocateInts(Numbers.INT_NULL, 4, 2, 3);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(2, function.getInt(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testMinIntBatchAccumulates() {
+        MinIntGroupByFunction function = new MinIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(5, 3);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(4, 1);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(1, function.getInt(value));
         }
     }
 
@@ -266,7 +368,7 @@ public class IntGroupByFunctionBatchTest {
         MinIntGroupByFunction function = new MinIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals(Numbers.INT_NULL, function.getInt(value));
         }
@@ -284,13 +386,25 @@ public class IntGroupByFunctionBatchTest {
     public void testSumIntBatch() {
         SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            value.putLong(0, 123);
-
             long ptr = allocateInts(1, 2, 3, 4);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(10L, function.getLong(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testSumIntBatchAccumulates() {
+        SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateInts(1, 2);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateInts(3, 4);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(10L, function.getLong(value));
         }
     }
 
@@ -299,7 +413,7 @@ public class IntGroupByFunctionBatchTest {
         SumIntGroupByFunction function = new SumIntGroupByFunction(IntColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateInts(Numbers.INT_NULL, Numbers.INT_NULL);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
         }
@@ -311,7 +425,7 @@ public class IntGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             value.putLong(0, 55);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(55L, function.getLong(value));
         }

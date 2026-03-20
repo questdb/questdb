@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -72,6 +73,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
+    private final IntList parquetEncodingConfigs = new IntList();
     private final String selectText;
     private final String sqlText;
     private long batchO3MaxLag;
@@ -186,7 +188,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCapacity(),
                     model.isIndexed(),
                     model.getIndexValueBlockSize(),
-                    model.isDedupKey()
+                    model.isDedupKey(),
+                    model.getParquetEncodingConfig()
             );
         }
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
@@ -316,10 +319,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return batchSize;
     }
 
-    public void setBatchSize(long batchSize) {
-        this.batchSize = batchSize;
-    }
-
     @Override
     public int getColumnCount() {
         return columnNames.size();
@@ -373,6 +372,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public OperationFuture getOperationFuture() {
         return future;
+    }
+
+    @Override
+    public int getParquetEncodingConfig(int index) {
+        return parquetEncodingConfigs.getQuick(index);
     }
 
     @Override
@@ -495,6 +499,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCacheFlag(),
                     symbolCapacity
             );
+            columnMetadata.setParquetEncodingConfig(model.getParquetEncodingConfig());
             augmentedColumnMetadata.put(columnNameStr, columnMetadata);
         }
     }
@@ -517,6 +522,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean needRegister() {
         return needRegister;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
     }
 
     @Override
@@ -554,6 +563,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         columnNames.clear();
         columnBits.clear();
+        parquetEncodingConfigs.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
             TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
             addColumnBits(
@@ -562,7 +572,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getSymbolCapacity(),
                     colMeta.isSymbolIndexFlag(),
                     colMeta.getIndexValueBlockCapacity(),
-                    colMeta.isDedupKeyFlag()
+                    colMeta.isDedupKeyFlag(),
+                    colMeta.getParquetEncodingConfig()
             );
             columnNames.add(colMeta.getColumnName());
         }
@@ -598,6 +609,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // at SQL parse time.
         assert this.selectText != null;
         this.columnBits.clear();
+        this.parquetEncodingConfigs.clear();
         if (this.timestampColumnName == null) {
             int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
@@ -668,6 +680,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             boolean symbolIndexed;
             boolean isDedupKey;
             int indexBlockCapacity;
+            int parquetEncodingConfig;
             if (augMeta != null) {
                 final int fromType = metadata.getColumnType(i);
                 columnType = augMeta.getColumnType();
@@ -682,6 +695,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolIndexed = augMeta.isSymbolIndexFlag();
                 isDedupKey = augMeta.isDedupKeyFlag();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
+                parquetEncodingConfig = augMeta.getParquetEncodingConfig();
             } else {
                 columnType = metadata.getColumnType(i);
                 if (ColumnType.isNull(columnType)) {
@@ -694,6 +708,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 symbolIndexed = false;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
+                parquetEncodingConfig = 0;
             }
 
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
@@ -712,7 +727,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     symbolCapacity,
                     symbolIndexed,
                     indexBlockCapacity,
-                    isDedupKey
+                    isDedupKey,
+                    parquetEncodingConfig
             );
         }
         if (hasDedup && !isTimestampDeduped) {
@@ -735,7 +751,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int symbolCapacity,
             boolean indexFlag,
             int indexBlockCapacity,
-            boolean dedupFlag
+            boolean dedupFlag,
+            int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
@@ -744,6 +761,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)
         );
+        parquetEncodingConfigs.add(parquetEncodingConfig);
     }
 
     private int getHighAt(int index) {

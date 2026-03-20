@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,7 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
+    private static final long IPv4_NULL_AS_LONG = Numbers.ipv4ToLong(Numbers.IPv4_NULL);
     private final Function arg;
     private int valueIndex;
 
@@ -45,18 +46,22 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Integer.BYTES;
-            long min = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(ptr));
-            ptr += Integer.BYTES;
+            long min = IPv4_NULL_AS_LONG;
             for (; ptr < hi; ptr += Integer.BYTES) {
                 long value = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(ptr));
-                if (value < min) {
+                if (value != IPv4_NULL_AS_LONG && (value < min || min == IPv4_NULL_AS_LONG)) {
                     min = value;
                 }
             }
-            mapValue.putInt(valueIndex, (int) min);
+            if (min != IPv4_NULL_AS_LONG) {
+                final long existing = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex));
+                if (min < existing || existing == IPv4_NULL_AS_LONG) {
+                    mapValue.putInt(valueIndex, (int) min);
+                }
+            }
         }
     }
 

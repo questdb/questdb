@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -93,6 +93,11 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     @Override
     public String getName() {
         return "last";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
     @Override

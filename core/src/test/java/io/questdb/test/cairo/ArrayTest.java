@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -560,7 +560,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, x, first(v) as v from test sample by 1s",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,x]
@@ -590,7 +590,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t8
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -613,7 +613,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t6
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -636,7 +636,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t20
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -659,7 +659,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t41.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -684,7 +684,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1320.0\t25.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,array_sum]
@@ -709,7 +709,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t510.0\t25.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,dot_product]
@@ -732,7 +732,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1045.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -2351,11 +2351,9 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testRndArrayBadTypes() throws Exception {
-        assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
-                    27, "nanRate must be an integer"
-            );
-        });
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
+                27, "nanRate must be an integer"
+        ));
     }
 
     @Test
@@ -2864,7 +2862,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT arr[2,3-1:,2:] x FROM tango",
                     """
                             VirtualRecord
-                              functions: [arr[2,3-1:,2:]]
+                              functions: [arr[2,2:,2:]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango

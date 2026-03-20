@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -50,25 +50,32 @@ pub const DECIMAL256_NULL: [u8; 32] = {
     ]
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(C)]
-pub struct Decimal8(i8);
+pub const DECIMAL8_NULL_VAL: Decimal8 = Decimal8(i8::MIN);
+pub const DECIMAL16_NULL_VAL: Decimal16 = Decimal16(i16::MIN);
+pub const DECIMAL32_NULL_VAL: Decimal32 = Decimal32(i32::MIN);
+pub const DECIMAL64_NULL_VAL: Decimal64 = Decimal64(i64::MIN);
+pub const DECIMAL128_NULL_VAL: Decimal128 = Decimal128(i64::MIN, 0);
+pub const DECIMAL256_NULL_VAL: Decimal256 = Decimal256(i64::MIN, 0, 0, 0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct Decimal16(i16);
+pub struct Decimal8(pub i8);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct Decimal32(i32);
+pub struct Decimal16(pub i16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct Decimal64(i64);
+pub struct Decimal32(pub i32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct Decimal128(i64, u64);
+pub struct Decimal64(pub i64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(C)]
+pub struct Decimal128(pub i64, pub u64);
 
 impl Nullable for Decimal128 {
     fn is_null(&self) -> bool {
@@ -104,7 +111,7 @@ impl NativeType for Decimal128 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub struct Decimal256(i64, u64, u64, u64);
+pub struct Decimal256(pub i64, pub u64, pub u64, pub u64);
 
 impl Nullable for Decimal256 {
     fn is_null(&self) -> bool {

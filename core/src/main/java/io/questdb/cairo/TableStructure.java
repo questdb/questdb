@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,10 @@ public interface TableStructure {
 
     int getIndexBlockCapacity(int columnIndex);
 
+    default int getParquetEncodingConfig(int columnIndex) {
+        return 0;
+    }
+
     default MatViewDefinition getMatViewDefinition() {
         return null;
     }
@@ -67,6 +71,10 @@ public interface TableStructure {
 
     default ViewDefinition getViewDefinition() {
         return null;
+    }
+
+    default boolean hasParquetPartitions() {
+        return false;
     }
 
     default void init(TableToken tableToken) {

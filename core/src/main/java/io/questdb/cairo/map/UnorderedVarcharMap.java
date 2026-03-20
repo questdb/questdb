@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -101,6 +101,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     private final GroupByAllocator allocator;
     private final UnorderedVarcharMapCursor cursor;
     private final long entrySize;
+    private final boolean isDeferredKeyCopy;
     private final Key key;
     private final DirectByteSink keySink; // Used to copy keys with unstable pointers.
     private final double loadFactor;
@@ -127,7 +128,19 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long allocatorDefaultChunkSize,
             long allocatorMaxChunkSize
     ) {
-        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize);
+        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
+    }
+
+    public UnorderedVarcharMap(
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            long allocatorDefaultChunkSize,
+            long allocatorMaxChunkSize,
+            boolean isDeferredKeyCopy
+    ) {
+        this(valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, allocatorDefaultChunkSize, allocatorMaxChunkSize, isDeferredKeyCopy);
     }
 
     UnorderedVarcharMap(
@@ -137,11 +150,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             int maxResizes,
             int memoryTag,
             long allocatorDefaultChunkSize,
-            long allocatorMaxChunkSize
+            long allocatorMaxChunkSize,
+            boolean isDeferredKeyCopy
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
         try {
+            this.isDeferredKeyCopy = isDeferredKeyCopy;
             this.memoryTag = memoryTag;
             this.loadFactor = loadFactor;
             this.keyCapacity = (int) (keyCapacity / loadFactor);
@@ -280,7 +295,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 long dstHashSizeFlags = Unsafe.getUnsafe().getLong(destAddr);
                 if (dstHashSizeFlags == 0) {
                     break;
-                } else if (dstHashSizeFlags == srcHashSizeFlags) {
+                } else if (makePackComparable(dstHashSizeFlags) == makePackComparable(srcHashSizeFlags)) {
                     // lower 32 bits of hash, size, and flags match, let's compare keys.
                     long dstPtrWithUnstableFlags = Unsafe.getUnsafe().getLong(destAddr + 8);
 
@@ -405,7 +420,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long ptr = keyPtrWithUnstableFlag & PTR_MASK;
             for (; ; ) {
                 long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
-                if (loadedHashSizeFlags == keyHashSizeFlags) {
+                if (makePackComparable(loadedHashSizeFlags) == makePackComparable(keyHashSizeFlags)) {
                     long entryPtrWithUnstableFlag = Unsafe.getUnsafe().getLong(startAddress + 8);
                     if (Vect.memeq(entryPtrWithUnstableFlag & PTR_MASK, ptr, keySize)) {
                         break;
@@ -445,13 +460,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             UnorderedVarcharMapValue value
     ) {
         long ptr = ptrWithUnstableFlag & PTR_MASK;
+        final long comparablePackedHashSizeFlagsToFind = makePackComparable(packedHashSizeFlagsToFind);
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
             long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
             if (loadedHashSizeFlags == 0) {
                 return asNew(startAddress, hash, ptrWithUnstableFlag, size, packedHashSizeFlagsToFind, value);
             }
-            if (loadedHashSizeFlags == packedHashSizeFlagsToFind) {
+            if (makePackComparable(loadedHashSizeFlags) == comparablePackedHashSizeFlagsToFind) {
                 long currentEntryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
                 if (Vect.memeq(currentEntryPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
@@ -460,14 +476,22 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
     }
 
+    /**
+     * When comparing hash and size for equality, we want to ignore ascii vs non-ascii flag, since it doesn't affect hash collisions or key equality checks.
+     */
+    private static long makePackComparable(long packedHashSizeFlags) {
+        return packedHashSizeFlags & 0x7fffffffffffffffL;
+    }
+
     private UnorderedVarcharMapValue probeReadOnly(long startAddress, long ptr, long size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {
+        long comparablePackedHashSizeFlagsToFind = makePackComparable(packedHashSizeFlagsToFind);
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
             long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
             if (loadedHashSizeFlags == 0) {
                 return null;
             }
-            if (loadedHashSizeFlags == packedHashSizeFlagsToFind) {
+            if (makePackComparable(loadedHashSizeFlags) == comparablePackedHashSizeFlagsToFind) {
                 long currentEntryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
                 if (Vect.memeq(currentEntryPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
@@ -575,8 +599,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             Key srcVarcharKey = (Key) srcKey;
             size = srcVarcharKey.size;
             flags = srcVarcharKey.flags;
-            if ((srcVarcharKey.ptrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
-                // stable pointer
+            if ((srcVarcharKey.ptrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0 || isDeferredKeyCopy) {
+                // stable pointer, or deferred mode: copy the ptr reference as-is
                 ptrWithUnstableFlag = srcVarcharKey.ptrWithUnstableFlag;
             } else {
                 // unstable pointer, copy key to key memory
@@ -604,7 +628,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (loadedHashSizeFlags == 0) {
                 return asNew(startAddress, hashCode, ptrWithUnstableFlag, size, currentHashSizeFlags, value);
             }
-            if (loadedHashSizeFlags == currentHashSizeFlags) {
+            if (makePackComparable(loadedHashSizeFlags) == makePackComparable(currentHashSizeFlags)) {
                 long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
                 if (Vect.memeq(currentPtr, ptrWithUnstableFlag & PTR_MASK, size)) {
                     return valueOf(startAddress, false, value);
@@ -766,10 +790,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 size = value.size();
                 if (value.isStable()) {
                     ptrWithUnstableFlag = value.ptr();
+                } else if (isDeferredKeyCopy && value.ptr() != -1) {
+                    // deferred mode: store the original unstable pointer directly,
+                    // asNew() will copy it to the arena later
+                    ptrWithUnstableFlag = value.ptr() | PTR_UNSTABLE_MASK;
                 } else {
-                    // unstable pointer, copy key to key memory
+                    // defensive copy to keySink
                     keySink.clear();
-                    // Try to use Vect#memcpy() if possible.
                     if (value.ptr() != -1) {
                         keySink.put(value.ptr(), value.ptr() + size);
                     } else {
@@ -803,7 +830,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 return null;
             }
             long packedHashSizeFlags = packHashSizeFlags(hash, size, flags);
-            if (loadedHashSizeFlags == packedHashSizeFlags) {
+            if (makePackComparable(loadedHashSizeFlags) == makePackComparable(packedHashSizeFlags)) {
                 long currentPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
                 if (Vect.memeq(currentPtr, ptr, size)) {
                     return valueOf(startAddress, false, value);
