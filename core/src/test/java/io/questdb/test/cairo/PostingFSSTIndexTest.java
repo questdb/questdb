@@ -30,6 +30,7 @@ import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.idx.FSSTBitmapIndexBwdReader;
 import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
 import io.questdb.cairo.idx.FSSTBitmapIndexUtils;
 import io.questdb.cairo.idx.FSSTBitmapIndexWriter;
@@ -812,5 +813,221 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
             }
         }
         return values;
+    }
+
+    // ===== FSST backward reader tests =====
+
+    @Test
+    public void testFSSTBwdReaderSingleGen() {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd1", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < 100; i++) {
+                    writer.add(0, i);
+                    writer.add(1, i + 1000);
+                }
+                writer.commit();
+            }
+
+            try (FSSTBitmapIndexBwdReader reader = new FSSTBitmapIndexBwdReader(configuration, path.trimTo(plen), "fsst_bwd1", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Key 0: values 99..0 in descending order
+                RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                long prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Values should be descending: " + prev + " vs " + val, val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(100, count);
+
+                // Key 1: values 1099..1000
+                cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                count = 0;
+                prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Values should be descending", val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(100, count);
+            }
+        }
+    }
+
+    @Test
+    public void testFSSTBwdReaderMultipleGens() {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd2", COLUMN_NAME_TXN_NONE)) {
+                // Gen 0: values 0..63
+                for (int i = 0; i < 64; i++) {
+                    writer.add(0, i);
+                }
+                writer.commit();
+                // Gen 1: values 64..127
+                for (int i = 64; i < 128; i++) {
+                    writer.add(0, i);
+                }
+                writer.commit();
+                // Gen 2: values 128..191
+                for (int i = 128; i < 192; i++) {
+                    writer.add(0, i);
+                }
+                writer.commit();
+            }
+
+            try (FSSTBitmapIndexBwdReader reader = new FSSTBitmapIndexBwdReader(configuration, path.trimTo(plen), "fsst_bwd2", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                long prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Values should be descending: " + prev + " vs " + val, val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(192, count);
+                Assert.assertEquals(0, prev);
+            }
+        }
+    }
+
+    @Test
+    public void testFSSTBwdReaderWithRangeBounds() {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd3", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < 200; i++) {
+                    writer.add(0, i);
+                }
+                writer.commit();
+            }
+
+            try (FSSTBitmapIndexBwdReader reader = new FSSTBitmapIndexBwdReader(configuration, path.trimTo(plen), "fsst_bwd3", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Range [50, 150] — should get 101 values in descending order
+                RowCursor cursor = reader.getCursor(true, 0, 50, 150);
+                int count = 0;
+                long prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Value " + val + " should be >= 50", val >= 50);
+                    Assert.assertTrue("Value " + val + " should be <= 150", val <= 150);
+                    Assert.assertTrue("Values should be descending", val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(101, count);
+            }
+        }
+    }
+
+    @Test
+    public void testFSSTBwdReaderAfterSeal() {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd4", COLUMN_NAME_TXN_NONE)) {
+                for (int batch = 0; batch < 5; batch++) {
+                    for (int i = 0; i < 50; i++) {
+                        writer.add(0, batch * 50 + i);
+                        writer.add(1, batch * 50 + i + 10_000);
+                    }
+                    writer.commit();
+                }
+                writer.setMaxValue(10_249);
+                writer.seal();
+            }
+
+            try (FSSTBitmapIndexBwdReader reader = new FSSTBitmapIndexBwdReader(configuration, path.trimTo(plen), "fsst_bwd4", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Key 0: 250 values, 249..0
+                RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                int count = 0;
+                long prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Values should be descending", val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(250, count);
+
+                // Key 1: 250 values, 10249..10000
+                cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                count = 0;
+                prev = Long.MAX_VALUE;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    Assert.assertTrue("Values should be descending", val <= prev);
+                    prev = val;
+                    count++;
+                }
+                Assert.assertEquals(250, count);
+            }
+        }
+    }
+
+    @Test
+    public void testFSSTBwdReaderEmptyKey() {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd5", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 1);
+                writer.commit();
+            }
+
+            try (FSSTBitmapIndexBwdReader reader = new FSSTBitmapIndexBwdReader(configuration, path.trimTo(plen), "fsst_bwd5", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                // Key 1 has no values
+                RowCursor cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                Assert.assertFalse(cursor.hasNext());
+
+                // Key beyond keyCount
+                cursor = reader.getCursor(true, 999, 0, Long.MAX_VALUE);
+                Assert.assertFalse(cursor.hasNext());
+            }
+        }
+    }
+
+    @Test
+    public void testFSSTBwdReaderMatchesFwdReader() {
+        // Oracle test: forward and backward readers must produce the same values
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            Rnd rnd = new Rnd(42, 42);
+            int keyCount = 10;
+            int totalValues = 500;
+
+            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd6", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < totalValues; i++) {
+                    writer.add(rnd.nextPositiveInt() % keyCount, i);
+                }
+                writer.commit();
+            }
+
+            for (int key = 0; key < keyCount; key++) {
+                // Collect forward
+                LongList fwdValues = new LongList();
+                try (FSSTBitmapIndexFwdReader fwd = new FSSTBitmapIndexFwdReader(configuration, path.trimTo(plen), "fsst_bwd6", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor c = fwd.getCursor(false, key, 0, Long.MAX_VALUE);
+                    while (c.hasNext()) fwdValues.add(c.next());
+                }
+
+                // Collect backward
+                LongList bwdValues = new LongList();
+                try (FSSTBitmapIndexBwdReader bwd = new FSSTBitmapIndexBwdReader(configuration, path.trimTo(plen), "fsst_bwd6", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor c = bwd.getCursor(false, key, 0, Long.MAX_VALUE);
+                    while (c.hasNext()) bwdValues.add(c.next());
+                }
+
+                // Reverse bwdValues and compare
+                Assert.assertEquals("Key " + key + " count mismatch", fwdValues.size(), bwdValues.size());
+                for (int i = 0; i < fwdValues.size(); i++) {
+                    Assert.assertEquals("Key " + key + " value mismatch at " + i,
+                            fwdValues.get(i),
+                            bwdValues.get(bwdValues.size() - 1 - i));
+                }
+            }
+        }
     }
 }

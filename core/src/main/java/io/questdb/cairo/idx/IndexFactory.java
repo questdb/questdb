@@ -134,12 +134,9 @@ public final class IndexFactory {
             case IndexType.POSTING -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            case IndexType.FSST -> {
-                if (direction != BitmapIndexReader.DIR_FORWARD) {
-                    throw CairoException.critical(0).put("FSST index backward reader not yet implemented");
-                }
-                yield new FSSTBitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            }
+            case IndexType.FSST -> direction == BitmapIndexReader.DIR_FORWARD
+                    ? new FSSTBitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
+                    : new FSSTBitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create reader for index type NONE");
             default -> throw CairoException.critical(0)
