@@ -68,6 +68,7 @@ public class TestOs {
             rustLibName = "libqdbsqllogictest" + outputLibExt;
         }
 
+        Path rustLibPath = null;
         URL resource = TestOs.class.getResource("/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName);
         if (resource != null) {
             String absolutePathPreCompiled;
@@ -89,7 +90,6 @@ public class TestOs {
             FileTime tsDevDeb = getLastModifiedTime(absoluteDevDebugPath);
             FileTime tsPrd = getLastModifiedTime(absolutePrdPath);
 
-            Path rustLibPath;
             if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
                 System.err.println("Loading DEV release sqllogictest library: " + absoluteDevReleasePath);
                 rustLibPath = absoluteDevReleasePath;
@@ -99,7 +99,32 @@ public class TestOs {
             } else {
                 rustLibPath = absolutePrdPath;
             }
+        } else {
+            // No pre-compiled binary in resources. Look for locally-built Rust library.
+            URL marker = TestOs.class.getResource("/io/questdb/test/TestOs.class");
+            if (marker != null) {
+                try {
+                    String markerPath = marker.toURI().getPath();
+                    int idx = markerPath.indexOf("/target/");
+                    if (idx >= 0) {
+                        String sourcesPath = markerPath.substring(0, idx);
+                        Path releasePath = Paths.get(sourcesPath, "rust/qdb-sqllogictest/target/release", rustLibName).toAbsolutePath();
+                        Path debugPath = Paths.get(sourcesPath, "rust/qdb-sqllogictest/target/debug", rustLibName).toAbsolutePath();
+                        if (Files.exists(releasePath)) {
+                            System.err.println("Loading locally-built release sqllogictest library: " + releasePath);
+                            rustLibPath = releasePath;
+                        } else if (Files.exists(debugPath)) {
+                            System.err.println("Loading locally-built debug sqllogictest library: " + debugPath);
+                            rustLibPath = debugPath;
+                        }
+                    }
+                } catch (URISyntaxException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
 
+        if (rustLibPath != null) {
             try (InputStream is = Files.newInputStream(rustLibPath)) {
                 Os.loadLib(rustLibPath.toString(), is);
             } catch (IOException e) {

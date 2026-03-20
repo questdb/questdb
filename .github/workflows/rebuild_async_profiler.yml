@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 # This workflow is triggered manually from the Actions tab.
 # It builds the async-profiler native library for Linux x86-64 from source
-# and commits it to the current branch, providing a full audit trail.
+# and saves it to the GitHub Actions cache.
 #
 # The async-profiler submodule is located at: core/src/main/c/share/async-profiler
 # The built library will be placed at: core/src/main/bin/linux-x86-64/libasyncProfiler.so
@@ -92,43 +92,14 @@ jobs:
           file core/src/main/bin/linux-x86-64/*
           ldd core/src/main/bin/linux-x86-64/libasyncProfiler.so || true
 
-      - name: Commit and push changes
-        run: |
-          set -eu
-          # Configure git and fix ownership issues
-          git config --global --add safe.directory '*'
-          git config --global user.name "${GITHUB_ACTOR}"
-          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
-
-          git add core/src/main/bin/linux-x86-64/libasyncProfiler.so
-          git add core/src/main/bin/linux-x86-64/asprof
-          git add core/src/main/bin/linux-x86-64/jfrconv
-
-          # remove execute permission for library, keep for binaries
-          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libasyncProfiler.so
-          git update-index --chmod=+x core/src/main/bin/linux-x86-64/asprof
-          git update-index --chmod=+x core/src/main/bin/linux-x86-64/jfrconv
-
-          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          cat << EOF > commit_message.txt
-          chore(build): rebuild async-profiler library and binaries for Linux x86-64 [skip ci]
-
-          Built from async-profiler ${{ steps.version.outputs.version }} (commit: ${{ steps.version.outputs.sha }})
-          Build timestamp: ${TIMESTAMP}
-          GitHub Action: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          EOF
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-          git commit --author="${GITHUB_ACTOR} <${GITHUB_ACTOR}@users.noreply.github.com>" -F commit_message.txt
-
-          # Push to current branch
-          git push origin HEAD
-
-          echo "Successfully committed and pushed async-profiler library update"
+      - name: Save async-profiler to cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/bin/linux-x86-64/libasyncProfiler.so
+            core/src/main/bin/linux-x86-64/asprof
+            core/src/main/bin/linux-x86-64/jfrconv
+          key: nativelibs-linux-asyncprofiler-${{ steps.version.outputs.sha }}
 
       - name: Summary
         run: |

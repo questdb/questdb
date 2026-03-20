@@ -115,20 +115,26 @@ offending character, not the start of the expression.
 
 ### Prerequisites
 
-- Java 11+ (64-bit)
+- Java 11+ (64-bit) with `JAVA_HOME` set
 - Maven 3
-- `JAVA_HOME` environment variable set
+- CMake 3.5+
+- NASM 2.14+ (x86-64 only)
+- Rust nightly-2025-09-24 (`rustup toolchain install nightly-2025-09-24`)
+- C/C++ compiler (GCC or Clang)
 
 ### Building
 
 ```bash
-# Build JAR without tests (fastest)
+# Build with native libs (default — requires CMake + Rust)
 mvn clean package -DskipTests
+
+# Skip native compilation (Java only, uses previously-built libs)
+mvn clean package -DskipTests -DskipNative
 
 # Build with web console
 mvn clean package -DskipTests -P build-web-console
 
-# Build with web console and native binaries
+# Build with web console and distribution binaries
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
@@ -163,7 +169,7 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 cd core
 cmake -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --config Release
-# Artifacts go to core/src/main/resources/io/questdb/bin/
+# Artifacts go to core/target/classes/io/questdb/bin-local/
 ```
 
 ## Architecture

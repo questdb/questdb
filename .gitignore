@@ -36,6 +36,25 @@ core/rust/qdb-core/target
 core/rust/qdbr/target
 core/rust/qdbr/parquet2/parquet-tools/target/
 core/rust/qdbr/parquet2/parquet-tools/Cargo.lock
+core/rust/qdb-sqllogictest/target
+
+# Native binaries — compiled locally or cached in CI
+core/src/main/resources/io/questdb/bin/darwin-aarch64/
+core/src/main/resources/io/questdb/bin/darwin-x86-64/
+core/src/main/resources/io/questdb/bin/linux-aarch64/
+core/src/main/resources/io/questdb/bin/linux-x86-64/
+core/src/main/resources/io/questdb/bin/windows-x86-64/
+core/src/test/resources/io/questdb/bin/darwin-aarch64/
+core/src/test/resources/io/questdb/bin/darwin-x86-64/
+core/src/test/resources/io/questdb/bin/linux-aarch64/
+core/src/test/resources/io/questdb/bin/linux-x86-64/
+core/src/test/resources/io/questdb/bin/windows-x86-64/
+core/src/main/bin/linux-x86-64/
+core/src/main/bin/linux-aarch64/
+core/src/main/bin/darwin-aarch64/
+core/src/main/bin/darwin-x86-64/
+core/src/main/bin/questdb.exe
+
 # pgwire compatibility tests - build artifacts
 compat/src/test/rust-tokio/target/
 compat/src/test/rust-tokio/Cargo.lock

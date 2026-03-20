@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 # This workflow is triggered manually from the Actions tab.
 # It builds the win64svc Windows service wrapper from source using MinGW-w64
-# and commits it to the current branch, providing a full audit trail.
+# and saves it to the GitHub Actions cache.
 #
 # The win64svc source is located at: win64svc/
 # The built binary will be placed at: core/src/main/bin/questdb.exe
@@ -89,40 +89,12 @@ jobs:
             fi
           fi
 
-      - name: Commit and push changes
-        shell: bash
-        run: |
-          set -eu
-          # Configure git
-          git config --global user.name "${GITHUB_ACTOR}"
-          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
-
-          git add core/src/main/bin/questdb.exe
-
-          # Remove execute permission (Windows binary doesn't need +x in git)
-          git update-index --chmod=-x core/src/main/bin/questdb.exe
-
-          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          cat << EOF > commit_message.txt
-          chore(build): rebuild win64svc service wrapper for Windows [skip ci]
-
-          Built from win64svc commit: ${{ steps.version.outputs.sha }}
-          Build timestamp: ${TIMESTAMP}
-          Toolchain: MinGW-w64 on Windows Server 2022
-          GitHub Action: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          EOF
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-          git commit --author="${GITHUB_ACTOR} <${GITHUB_ACTOR}@users.noreply.github.com>" -F commit_message.txt
-
-          # Push to current branch
-          git push origin HEAD
-
-          echo "Successfully committed and pushed win64svc binary update"
+      - name: Save win64svc to cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            core/src/main/bin/questdb.exe
+          key: nativelibs-windows-win64svc-${{ steps.version.outputs.sha }}
 
       - name: Summary
         shell: bash

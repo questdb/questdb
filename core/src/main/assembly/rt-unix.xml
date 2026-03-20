@@ -35,20 +35,29 @@
         </file>
     </files>
     <fileSets>
-        <!-- jemalloc (Linux only) -->
+        <!-- jemalloc (Linux only) — built by CMake into bin-local -->
         <fileSet>
-            <directory>src/main/bin/${platform.dir.name}</directory>
+            <directory>target/classes/io/questdb/bin-local</directory>
             <includes>
                 <include>${jemalloc.so}</include>
             </includes>
             <outputDirectory>${runtime.name}/bin</outputDirectory>
         </fileSet>
 
-        <!-- questdb native libs -->
+        <!-- questdb native C++ lib — built by CMake into bin-local -->
         <fileSet>
-            <directory>src/main/resources/io/questdb/bin/${platform.dir.name}</directory>
+            <directory>target/classes/io/questdb/bin-local</directory>
             <includes>
-                <include>*.*</include>
+                <include>libquestdb.*</include>
+            </includes>
+            <outputDirectory>${runtime.name}/lib</outputDirectory>
+        </fileSet>
+
+        <!-- questdb native Rust lib — built by cargo into rust/ -->
+        <fileSet>
+            <directory>target/classes/io/questdb/rust</directory>
+            <includes>
+                <include>*questdbr.*</include>
             </includes>
             <outputDirectory>${runtime.name}/lib</outputDirectory>
         </fileSet>

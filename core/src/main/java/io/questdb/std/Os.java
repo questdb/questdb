@@ -256,7 +256,9 @@ public final class Os {
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
-            throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
+            throw new FatalError("Native library not found: " + lib
+                    + ". Build native libraries with 'mvn package' (requires CMake and Rust toolchain)"
+                    + ", or set -Dquestdb.libs.dir to point to pre-built libraries.");
         }
         loadLib(lib, is);
     }
