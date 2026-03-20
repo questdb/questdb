@@ -79,7 +79,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BYTE, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -133,7 +133,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DATE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addLong(values[i]);
@@ -179,7 +179,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addDouble(values[i]);
@@ -225,7 +225,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addDouble(values[i]);
@@ -271,7 +271,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -329,7 +329,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addFloat(values[i]);
@@ -375,7 +375,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addFloat(values[i]);
@@ -419,7 +419,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -528,7 +528,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_INT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -682,7 +682,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_LONG, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -758,7 +758,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SHORT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -807,7 +807,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_TIMESTAMP, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addLong(values[i]);
@@ -853,7 +853,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_UUID, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addUuid(hiValues[i], loValues[i]);
@@ -902,7 +902,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_UUID, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {

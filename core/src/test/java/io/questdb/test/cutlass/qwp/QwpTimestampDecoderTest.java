@@ -37,7 +37,7 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpTimestampDecoderTest {
@@ -106,7 +106,7 @@ public class QwpTimestampDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 encoder.setGorillaEnabled(true);
                 QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, false);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (long ts : timestamps) {
                     tsCol.addLong(ts);
                     buffer.nextRow();
@@ -407,7 +407,7 @@ public class QwpTimestampDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 encoder.setGorillaEnabled(true);
                 QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, nullable);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < timestamps.length; i++) {
                     if (nullable && nulls[i]) {
                         tsCol.addNull();

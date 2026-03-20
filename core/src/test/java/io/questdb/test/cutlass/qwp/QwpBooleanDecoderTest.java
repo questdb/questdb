@@ -37,7 +37,8 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpBooleanDecoderTest {
@@ -194,13 +195,13 @@ public class QwpBooleanDecoderTest {
 
     private void assertRoundTrip(boolean[] values, boolean[] nulls) throws Exception {
         assertMemoryLeak(() -> {
-            boolean nullable = nulls != null;
+            boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_bool");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BOOLEAN, nullable);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BOOLEAN, useNullBitmap);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < values.length; i++) {
-                    if (nullable && nulls[i]) {
+                    if (useNullBitmap && nulls[i]) {
                         col.addNull();
                     } else {
                         col.addBoolean(values[i]);
@@ -221,7 +222,7 @@ public class QwpBooleanDecoderTest {
                     for (int i = 0; i < values.length; i++) {
                         Assert.assertTrue(table.hasNextRow());
                         table.nextRow();
-                        if (nullable && nulls[i]) {
+                        if (useNullBitmap && nulls[i]) {
                             Assert.assertTrue("Row " + i + " should be null", table.isColumnNull(colIdx));
                         } else {
                             Assert.assertFalse("Row " + i + " should not be null", table.isColumnNull(colIdx));

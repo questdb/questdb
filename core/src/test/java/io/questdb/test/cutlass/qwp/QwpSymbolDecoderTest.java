@@ -332,7 +332,7 @@ public class QwpSymbolDecoderTest {
             }
 
             // Values: index 0 for row 0, then index 0 for row 1
-            // (we can't use NULL_SYMBOL_INDEX in non-nullable mode without bitmap,
+            // (we can't use NULL_SYMBOL_INDEX without a null bitmap,
             //  so just verify basic cursor operation with 2 valid rows)
             pos = QwpVarint.encode(pos, 0);
             pos = QwpVarint.encode(pos, 1);
@@ -394,13 +394,13 @@ public class QwpSymbolDecoderTest {
 
     private void assertRoundTrip(String[] values, boolean[] nulls) throws Exception {
         assertMemoryLeak(() -> {
-            boolean nullable = nulls != null;
+            boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_symbol");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SYMBOL, nullable);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SYMBOL, useNullBitmap);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < values.length; i++) {
-                    if (nullable && nulls[i]) {
+                    if (useNullBitmap && nulls[i]) {
                         col.addNull();
                     } else {
                         col.addSymbol(values[i]);
@@ -421,7 +421,7 @@ public class QwpSymbolDecoderTest {
                     for (int i = 0; i < values.length; i++) {
                         Assert.assertTrue(table.hasNextRow());
                         table.nextRow();
-                        if (nullable && nulls[i]) {
+                        if (useNullBitmap && nulls[i]) {
                             Assert.assertTrue("Row " + i + " should be null",
                                     table.isColumnNull(colIdx));
                         } else {

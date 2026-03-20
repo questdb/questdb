@@ -37,7 +37,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
  * <p>
  * Wire format:
  * <pre>
- * [null bitmap if nullable]: ceil(rowCount/8) bytes
+ * [if null bitmap is present]: ceil(rowCount/8) bytes
  * [dictionary size]: varint
  * For each dictionary entry:
  *   [string length]: varint
@@ -63,18 +63,18 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     private int currentSymbolIndex;
     private boolean deltaMode;  // When true, use connectionDict instead of per-column dictionary
     private int dictionarySize;
+    // Configuration
+    private boolean hasNullBitmap;
     private long indicesAddress;
     private long indicesEnd;
     // Wire pointers
     private long nullBitmapAddress;
-    // Configuration
-    private boolean nullable;
 
     @Override
     public boolean advanceRow() throws QwpParseException {
         currentRow++;
 
-        if (nullable && nullBitmapAddress != 0) {
+        if (hasNullBitmap && nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 currentSymbolIndex = -1;
@@ -102,7 +102,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nullable = false;
+        hasNullBitmap = false;
         dictionarySize = 0;
         deltaMode = false;
         connectionDict = null;
@@ -187,15 +187,15 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress address of column data
-     * @param dataLength  available bytes
-     * @param rowCount    number of rows
-     * @param nullable    whether column is nullable
+     * @param dataAddress   address of column data
+     * @param dataLength    available bytes
+     * @param rowCount      number of rows
+     * @param hasNullBitmap whether column has a null bitmap
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable) throws QwpParseException {
-        return of(dataAddress, dataLength, rowCount, nullable, null);
+    public int of(long dataAddress, int dataLength, int rowCount, boolean hasNullBitmap) throws QwpParseException {
+        return of(dataAddress, dataLength, rowCount, hasNullBitmap, null);
     }
 
     /**
@@ -204,7 +204,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
      * @param dataAddress    address of column data
      * @param dataLength     available bytes
      * @param rowCount       number of rows
-     * @param nullable       whether column is nullable
+     * @param hasNullBitmap  whether column has a null bitmap
      * @param connectionDict connection-level symbol dictionary (if not null, uses delta mode)
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
@@ -213,17 +213,17 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             long dataAddress,
             int dataLength,
             int rowCount,
-            boolean nullable,
+            boolean hasNullBitmap,
             ObjList<String> connectionDict
     ) throws QwpParseException {
-        this.nullable = nullable;
+        this.hasNullBitmap = hasNullBitmap;
         this.deltaMode = connectionDict != null;
         this.connectionDict = connectionDict;
 
         long limit = dataAddress + dataLength;
         int offset = 0;
 
-        if (nullable) {
+        if (hasNullBitmap) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -281,7 +281,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
         // Calculate bytes consumed by scanning indices
         // This is needed because indices are varint-encoded
-        int nullCount = nullable ? QwpNullBitmap.countNulls(nullBitmapAddress, rowCount) : 0;
+        int nullCount = hasNullBitmap ? QwpNullBitmap.countNulls(nullBitmapAddress, rowCount) : 0;
         int valueCount = rowCount - nullCount;
         long tempAddress = indicesAddress;
         for (int i = 0; i < valueCount; i++) {
