@@ -178,6 +178,56 @@ public class TableUtilsTest extends AbstractTest {
     }
 
     @Test
+    public void testGetMaxTimestampWallClockDisabled() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        TxReader txReader = new TxReader(FF) {
+            {
+                maxTimestamp = driver.fromDays(19_723) + driver.fromHours(48);
+            }
+        };
+
+        // wallClockEnabled=false: always returns the data maxTimestamp regardless of wall clock
+        long wallClockMicros = driver.fromDays(19_723);
+        long result = TableUtils.getMaxTimestamp(txReader, driver, wallClockMicros, false);
+        Assert.assertEquals(txReader.getMaxTimestamp(), result);
+    }
+
+    @Test
+    public void testGetMaxTimestampWallClockEnabledClampsToWallClock() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        // Data maxTimestamp is far in the future (48h after day 19723)
+        long futureMax = driver.fromDays(19_723) + driver.fromHours(48);
+        TxReader txReader = new TxReader(FF) {
+            {
+                maxTimestamp = futureMax;
+            }
+        };
+
+        // Wall clock is earlier than data maxTimestamp
+        long wallClockMicros = driver.fromDays(19_723) + driver.fromHours(1);
+        long result = TableUtils.getMaxTimestamp(txReader, driver, wallClockMicros, true);
+        Assert.assertEquals(driver.fromMicros(wallClockMicros), result);
+        Assert.assertTrue(result < txReader.getMaxTimestamp());
+    }
+
+    @Test
+    public void testGetMaxTimestampWallClockEnabledReturnsDataMaxWhenEarlier() {
+        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        // Data maxTimestamp is in the past
+        long pastMax = driver.fromDays(19_723) + driver.fromHours(1);
+        TxReader txReader = new TxReader(FF) {
+            {
+                maxTimestamp = pastMax;
+            }
+        };
+
+        // Wall clock is later than data maxTimestamp
+        long wallClockMicros = driver.fromDays(19_723) + driver.fromHours(48);
+        long result = TableUtils.getMaxTimestamp(txReader, driver, wallClockMicros, true);
+        Assert.assertEquals(txReader.getMaxTimestamp(), result);
+    }
+
+    @Test
     public void testIsUnsolicitedTableLock() {
         // Internal background job reasons are NOT unsolicited
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));

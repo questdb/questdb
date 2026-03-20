@@ -1900,6 +1900,124 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropPartitionsDuplicateTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
+                Assert.assertTrue(partitionCountBefore > 2);
+
+                // Drop list with the same timestamp repeated
+                long firstPartitionTs = writer.getTxWriter().getPartitionTimestampByIndex(0);
+                LongList dropList = new LongList();
+                dropList.add(firstPartitionTs);
+                dropList.add(firstPartitionTs);
+                writer.dropPartitions(dropList);
+                writer.commit();
+
+                // Only one partition should be removed despite duplicate entries
+                Assert.assertEquals(partitionCountBefore - 1, writer.getTxWriter().getPartitionCount());
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionsEmptyList() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
+                long sizeBefore = writer.size();
+
+                LongList emptyList = new LongList();
+                writer.dropPartitions(emptyList);
+                writer.commit();
+
+                Assert.assertEquals(partitionCountBefore, writer.getTxWriter().getPartitionCount());
+                Assert.assertEquals(sizeBefore, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionsNonExistentTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
+                long sizeBefore = writer.size();
+
+                // Use a timestamp that doesn't correspond to any partition
+                LongList dropList = new LongList();
+                dropList.add(timestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z"));
+                writer.dropPartitions(dropList);
+                writer.commit();
+
+                Assert.assertEquals(partitionCountBefore, writer.getTxWriter().getPartitionCount());
+                Assert.assertEquals(sizeBefore, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionsNonExistentMixedWithExisting() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+
+                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
+                Assert.assertTrue(partitionCountBefore > 2);
+
+                // Mix a non-existent timestamp with a real one
+                long firstPartitionTs = writer.getTxWriter().getPartitionTimestampByIndex(0);
+                LongList dropList = new LongList();
+                dropList.add(timestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z"));
+                dropList.add(firstPartitionTs);
+                writer.dropPartitions(dropList);
+                writer.commit();
+
+                // Only the existing partition should be removed
+                Assert.assertEquals(partitionCountBefore - 1, writer.getTxWriter().getPartitionCount());
+            }
+        });
+    }
+
+    @Test
     public void testFrequentCommit() throws Exception {
         assertMemoryLeak(() -> {
             int N = 100000;
@@ -2208,6 +2326,189 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.assertEquals("Row " + i, expectedTs[i++], r.getTimestamp(col));
                 }
                 Assert.assertEquals(expectedTs.length, i);
+            }
+        });
+    }
+
+    @Test
+    public void testO3ClearsParquetGeneratedFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Prepare the first partition for parquet conversion and produce a parquet file
+            long partitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                partitionTimestamp = writer.preparePartitionForParquetConversion(
+                        timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")
+                );
+                Assert.assertTrue(partitionTimestamp > -1L);
+            }
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, PRODUCT);
+                    Path path = new Path();
+                    Path other = new Path()
+            ) {
+                path.of(root).concat(PRODUCT_FS);
+                other.of(root).concat(PRODUCT_FS);
+                int pathSize = path.size();
+
+                int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+                Assert.assertTrue(partitionIndex >= 0);
+
+                symbolTableProvider.of(reader);
+                long fileLength = produceParquetFromNative(
+                        reader, symbolTableProvider,
+                        path, other, pathSize, partitionTimestamp,
+                        PRODUCT, partitionIndex, configuration, -1, null
+                );
+                Assert.assertTrue(fileLength > 0);
+            }
+
+            // Mark the partition as parquetGenerated (but don't switch to parquet format)
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                Assert.assertTrue(txWriter.isPartitionParquetGenerated(partitionIndex));
+                Assert.assertFalse(txWriter.isPartitionParquet(partitionIndex));
+            }
+
+            // Insert O3 data into the partition that has parquetGenerated=true.
+            // This triggers O3 merge which should clear the parquetGenerated flag.
+            long o3Ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long o3Increment = timestampDriver.fromMicros(30000L * 1000L);
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Rnd o3Rnd = new Rnd();
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row r = writer.newRow(o3Ts + o3Increment * i);
+                    r.putInt(0, o3Rnd.nextPositiveInt());
+                    r.putStr(1, o3Rnd.nextString(7));
+                    r.putSym(2, o3Rnd.nextString(4));
+                    r.putSym(3, o3Rnd.nextString(11));
+                    r.putDouble(4, o3Rnd.nextDouble());
+                    r.putByte(5, o3Rnd.nextGeoHashByte(5));
+                    r.putShort(6, o3Rnd.nextGeoHashShort(15));
+                    r.putInt(7, o3Rnd.nextGeoHashInt(30));
+                    r.putLong(8, o3Rnd.nextGeoHashLong(60));
+                    r.append();
+                }
+                writer.commit();
+
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                Assert.assertTrue(partitionIndex >= 0);
+                Assert.assertFalse(
+                        "parquetGenerated flag should be cleared after O3 merge",
+                        txWriter.isPartitionParquetGenerated(partitionIndex)
+                );
+                Assert.assertFalse(txWriter.isPartitionParquet(partitionIndex));
+                Assert.assertEquals(N + 10, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testO3OnParquetPartitionKeepsParquetGeneratedFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Convert the first partition fully to parquet format
+            long partitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                partitionTimestamp = writer.preparePartitionForParquetConversion(
+                        timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")
+                );
+                Assert.assertTrue(partitionTimestamp > -1L);
+            }
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, PRODUCT);
+                    Path path = new Path();
+                    Path other = new Path()
+            ) {
+                path.of(root).concat(PRODUCT_FS);
+                other.of(root).concat(PRODUCT_FS);
+                int pathSize = path.size();
+
+                int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+                Assert.assertTrue(partitionIndex >= 0);
+
+                symbolTableProvider.of(reader);
+                long fileLength = produceParquetFromNative(
+                        reader, symbolTableProvider,
+                        path, other, pathSize, partitionTimestamp,
+                        PRODUCT, partitionIndex, configuration, -1, null
+                );
+                Assert.assertTrue(fileLength > 0);
+            }
+
+            // Switch to parquet format
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+                Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp));
+
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                Assert.assertTrue(txWriter.isPartitionParquetGenerated(partitionIndex));
+                Assert.assertTrue(txWriter.isPartitionParquet(partitionIndex));
+            }
+
+            // Insert O3 data into the parquet partition.
+            // This triggers O3 merge with the parquet partition,
+            // which should regenerate the parquet file and keep the flag set.
+            long o3Ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long o3Increment = timestampDriver.fromMicros(30000L * 1000L);
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Rnd o3Rnd = new Rnd();
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row r = writer.newRow(o3Ts + o3Increment * i);
+                    r.putInt(0, o3Rnd.nextPositiveInt());
+                    r.putStr(1, o3Rnd.nextString(7));
+                    r.putSym(2, o3Rnd.nextString(4));
+                    r.putSym(3, o3Rnd.nextString(11));
+                    r.putDouble(4, o3Rnd.nextDouble());
+                    r.putByte(5, o3Rnd.nextGeoHashByte(5));
+                    r.putShort(6, o3Rnd.nextGeoHashShort(15));
+                    r.putInt(7, o3Rnd.nextGeoHashInt(30));
+                    r.putLong(8, o3Rnd.nextGeoHashLong(60));
+                    r.append();
+                }
+                writer.commit();
+
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                Assert.assertTrue(partitionIndex >= 0);
+                Assert.assertTrue(
+                        "parquetGenerated flag should remain set after O3 merge into parquet partition",
+                        txWriter.isPartitionParquetGenerated(partitionIndex)
+                );
+                Assert.assertTrue(
+                        "partition should remain in parquet format after O3 merge",
+                        txWriter.isPartitionParquet(partitionIndex)
+                );
+                Assert.assertEquals(N + 10, writer.size());
             }
         });
     }
@@ -3042,6 +3343,116 @@ public class TableWriterTest extends AbstractCairoTest {
                 );
                 Assert.assertFalse("Active partition should not be converted to parquet",
                         txWriter.isPartitionParquet(partitionIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetCopyFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Prepare partition and produce parquet file
+            long partitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                partitionTimestamp = writer.preparePartitionForParquetConversion(
+                        timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")
+                );
+                Assert.assertTrue(partitionTimestamp > -1L);
+            }
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, PRODUCT);
+                    Path path = new Path();
+                    Path other = new Path()
+            ) {
+                path.of(root).concat(PRODUCT_FS);
+                other.of(root).concat(PRODUCT_FS);
+                int pathSize = path.size();
+
+                int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+                Assert.assertTrue(partitionIndex >= 0);
+
+                symbolTableProvider.of(reader);
+                long fileLength = produceParquetFromNative(
+                        reader, symbolTableProvider,
+                        path, other, pathSize, partitionTimestamp,
+                        PRODUCT, partitionIndex, configuration, -1, null
+                );
+                Assert.assertTrue(fileLength > 0);
+            }
+
+            // Mark parquet ready
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+            }
+
+            // Attempt switch with a FilesFacade that fails on copy of the parquet file
+            final long pTs = partitionTimestamp;
+            FilesFacade failCopyFf = new TestFilesFacadeImpl() {
+                @Override
+                public int copy(LPSZ from, LPSZ to) {
+                    if (Utf8s.containsAscii(from, PARQUET_PARTITION_NAME)) {
+                        return -1;
+                    }
+                    return super.copy(from, to);
+                }
+            };
+
+            CairoConfiguration failCopyConfig = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failCopyFf;
+                }
+            };
+
+            try (TableWriter writer = newOffPoolWriter(failCopyConfig, PRODUCT)) {
+                try {
+                    writer.switchNativePartitionWithParquet(pTs);
+                    Assert.fail("expected CairoException from copy failure");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not copy parquet file");
+                }
+
+                // Verify rollback: partition should still be native with parquetGenerated set
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(pTs);
+                Assert.assertTrue(partitionIndex >= 0);
+                Assert.assertTrue(
+                        "parquetGenerated flag should still be set after rollback",
+                        txWriter.isPartitionParquetGenerated(partitionIndex)
+                );
+                Assert.assertFalse(
+                        "partition should remain native after rollback",
+                        txWriter.isPartitionParquet(partitionIndex)
+                );
+
+                // Verify the new partition directory was cleaned up
+                try (Path path = new Path()) {
+                    setPathForNativePartition(
+                            path.of(root).concat(PRODUCT_FS),
+                            timestampType, PartitionBy.DAY, pTs, txWriter.getTxn()
+                    );
+                    Assert.assertFalse(
+                            "new partition dir should be removed on rollback",
+                            FF.exists(path.$())
+                    );
+                }
+            }
+
+            // Verify the table is still usable: re-open and read data
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
             }
         });
     }
