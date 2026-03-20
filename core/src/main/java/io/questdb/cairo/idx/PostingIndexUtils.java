@@ -559,6 +559,7 @@ public final class PostingIndexUtils {
             Unsafe.getUnsafe().putInt(destAddr, 0);
             return 4;
         }
+        assert count <= ctx.deltaCapacity : "encodeKeyNative: count=" + count + " exceeds ctx.deltaCapacity=" + ctx.deltaCapacity;
 
         // Fast path: single block (count <= BLOCK_CAPACITY) — avoid per-block loops
         if (count <= BLOCK_CAPACITY) {
@@ -741,7 +742,7 @@ public final class PostingIndexUtils {
         long[] residuals = new long[BLOCK_CAPACITY];
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
-        private int deltaCapacity;
+        int deltaCapacity;
         private int blockCapacity;
 
         public void ensureCapacity(int count) {

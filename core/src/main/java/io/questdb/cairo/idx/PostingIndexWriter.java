@@ -583,7 +583,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         boolean useFlat = flatSize < deltaSize;
 
-        LOG.info().$("stride mode [s=").$(s)
+        LOG.debug().$("stride mode [s=").$(s)
                 .$(", deltaSize=").$(deltaSize)
                 .$(", flatSize=").$(flatSize)
                 .$(", natBW=").$(naturalBitWidth)
@@ -1135,7 +1135,7 @@ public class PostingIndexWriter implements IndexWriter {
                                 }
 
                                 boolean useFlat = flatSize < deltaSize;
-                                LOG.info().$("reencode stride [s=").$(s)
+                                LOG.debug().$("reencode stride [s=").$(s)
                                         .$(", deltaSize=").$(deltaSize)
                                         .$(", flatSize=").$(flatSize)
                                         .$(", natBW=").$(naturalBitWidth)
@@ -1567,10 +1567,10 @@ public class PostingIndexWriter implements IndexWriter {
      * Reclaims dead space left by append-only seal. Copies the single live
      * generation to file offset 0 so future appends start from a compact base.
      * <p>
-     * Safe for concurrent readers: the source region [gen0Offset, gen0Offset+gen0Size)
-     * is NOT overwritten (destination [0, gen0Size) doesn't overlap when gen0Size <= gen0Offset,
-     * which is the typical case since sealing compresses data). Old readers with cached
-     * offsets continue to read valid data. We do NOT truncate here — close() handles that.
+     * NOT safe for concurrent readers — must only be called when no readers
+     * hold active cursors (i.e., from close() or of()). The destination region
+     * [0, gen0Size) may contain old generation data that in-flight cursors
+     * could still be reading.
      */
     private void compactValueFile() {
         if (genCount != 1 || keyCount == 0) {
@@ -2000,11 +2000,15 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, genCount);
         keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
 
-        // Bulk copy all gen dir entries from active page, then overwrite the one entry if needed
-        if (genCount > 0) {
+        // Bulk copy gen dir entries that already exist on the active page, then
+        // overwrite or append the new entry. The active page has (genCount - 1) valid
+        // entries when the caller incremented genCount before calling us.
+        int activePageGenCount = (int) keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+        int entriesToCopy = Math.min(genCount, activePageGenCount);
+        if (entriesToCopy > 0) {
             long srcGenDir = keyMem.addressOf(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
             long dstGenDir = keyMem.addressOf(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
-            int genDirBytes = genCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            int genDirBytes = entriesToCopy * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
             Unsafe.getUnsafe().copyMemory(srcGenDir, dstGenDir, genDirBytes);
         }
         if (overrideGenIndex >= 0) {

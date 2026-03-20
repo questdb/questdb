@@ -363,7 +363,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
                 long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
                 int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
-                int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startCount;
+                int endCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+                int count = endCount - startCount;
 
                 if (count == 0) {
                     this.encodedBlockCount = 0;
@@ -375,6 +376,44 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
                 long dataAddr = strideAddr + flatHeaderSize;
 
+                // Binary search to trim values outside [minValue, maxValue].
+                int effectiveStart = startCount;
+                int effectiveEnd = endCount;
+                if (minValue > 0 && bitWidth > 0 && count > 1) {
+                    int lo = startCount, hi = endCount - 1;
+                    while (lo < hi) {
+                        int mid = (lo + hi) >>> 1;
+                        long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                        if (val < minValue) {
+                            lo = mid + 1;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    effectiveStart = lo;
+                }
+                if (maxValue < Long.MAX_VALUE && effectiveStart < effectiveEnd) {
+                    int lo = effectiveStart, hi = effectiveEnd - 1;
+                    while (lo < hi) {
+                        int mid = (lo + hi + 1) >>> 1;
+                        long val = BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+                        if (val > maxValue) {
+                            hi = mid - 1;
+                        } else {
+                            lo = mid;
+                        }
+                    }
+                    effectiveEnd = lo + 1;
+                }
+                int effectiveCount = effectiveEnd - effectiveStart;
+
+                if (effectiveCount <= 0) {
+                    this.encodedBlockCount = 0;
+                    this.currentBlock = -1;
+                    this.blockBufferPos = -1;
+                    return;
+                }
+
                 this.flatMode = true;
                 this.flatBitWidth = bitWidth;
                 this.flatBaseValue = baseValue;
@@ -382,12 +421,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 this.encodedBlockCount = 0;
                 this.currentBlock = -1;
 
-                int batch = Math.min(count, PostingIndexUtils.PACKED_BATCH_SIZE);
-                int batchStart = startCount + count - batch;
+                int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
+                int batchStart = effectiveStart + effectiveCount - batch;
                 BitpackUtils.unpackValuesFrom(dataAddr, batchStart, batch, bitWidth, baseValue, blockBuffer);
                 this.blockBufferPos = batch - 1;
                 this.flatStartIdx = batchStart;
-                this.flatRemaining = count - batch;
+                this.flatRemaining = effectiveCount - batch;
                 return;
             }
 
