@@ -44,15 +44,12 @@ public class GenericDropOperation implements Operation {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             if (compiler.execute(this, sqlExecutionContext)) {
                 switch (operationCode) {
-                    case DROP_TABLE:
-                    case DROP_MAT_VIEW:
-                    case DROP_VIEW:
+                    case DROP_TABLE, DROP_MAT_VIEW, DROP_VIEW -> {
                         if (tableToken != null) {
                             engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(tableToken);
                         }
-                        break;
-                    default:
-                        break;
+                    }
+                    default -> {}
                 }
             }
         }

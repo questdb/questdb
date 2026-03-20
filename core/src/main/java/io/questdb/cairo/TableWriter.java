@@ -1456,16 +1456,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
         copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
-        final long originalSize = txWriter.getPartitionSize(partitionIndex);
-        // used to update txn and bump recordStructureVersion
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-        txWriter.setPartitionParquetGenerated(partitionIndex, true);
-        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
-        txWriter.bumpPartitionTableVersion();
-        txWriter.commit(denseSymbolMapWriters);
+        try {
+            final long originalSize = txWriter.getPartitionSize(partitionIndex);
+            // used to update txn and bump recordStructureVersion
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+            txWriter.setPartitionParquetGenerated(partitionIndex, true);
+            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+        } catch (Throwable th) {
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+            }
+            throw th;
         }
 
         if (lastPartitionConverted) {
@@ -1528,15 +1535,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
             copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
-            // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
-            txWriter.resetPartitionParquetFormat(partitionTimestamp);
-            txWriter.resetPartitionParquetGenerated(partitionIndex);
-            txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            try {
+                // used to update txn and bump recordStructureVersion
+                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
+                txWriter.resetPartitionParquetFormat(partitionTimestamp);
+                txWriter.resetPartitionParquetGenerated(partitionIndex);
+                txWriter.bumpPartitionTableVersion();
+                txWriter.commit(denseSymbolMapWriters);
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
+            } catch (Throwable th) {
+                if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                    LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+                }
+                throw th;
             }
 
             if (lastPartitionConverted) {
