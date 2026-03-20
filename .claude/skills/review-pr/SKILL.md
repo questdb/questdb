@@ -57,7 +57,11 @@ Launch the following agents in parallel. Each agent receives the full PR diff an
 
 **Agent 7 — PR metadata & conventions:** Title format, description quality, commit messages, labels, SQL style in tests.
 
-**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`, `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper error propagation. Flag every potential panic site that might be triggered by external/corrupt inputs.
+**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`,
+`expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release
+mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI
+will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper
+error propagation. Flag every potential panic site.
 
 Combine all agent findings into a single deduplicated **draft** report. Do NOT present this draft to the user yet — it goes straight into verification.
 
@@ -72,10 +76,17 @@ For each finding in the draft report:
 3. **Check both sides of JNI/FFI boundaries**: if a finding involves Java↔Rust interaction, read both the Java caller and the Rust JNI function. Verify ownership transfer, error propagation, and cleanup on both sides.
 4. **For resource leak claims**: trace every allocation to its corresponding free/close on ALL code paths (happy path, error path, finally blocks). Check for polymorphic `close()`/`clear()` overrides.
 5. **For Rust panic claims**: verify whether the panic site is actually reachable. Trace control flow backwards — a preceding guard or early return may make it unreachable.
-6. **Classify each finding** as:
-   - **CONFIRMED** — the bug is real and reproducible via the traced code path
-   - **FALSE POSITIVE** — the code is actually correct (explain why)
-   - **CONFIRMED with nuance** — the issue exists but is less severe than stated (explain)
+6. **For Rust panic claims**: if panic is caused by invaid JNI call, verfiy if there is a realistic sceanario where JAVA
+   can pass invalid parameters.
+7. **For Rust numeric overflow claims** check how realistic is the overflow. Keep in mind that QuestDB operates on
+   billion or few trillion rows at most. Thousands of tables and thousands of columns but not billions.
+9. **For performance claims**: verify at which scenario the performance is measurable. Downgrade performance claims to
+   nits if they save a paper clip on a cargo ship. GC allocations are exceptions — even a single allocation on a hot
+   path is worth flagging.
+8. **Classify each finding** as:
+    - **CONFIRMED** — the bug is real and reproducible via the traced code path
+    - **FALSE POSITIVE** — the code is actually correct (explain why)
+    - **CONFIRMED with nuance** — the issue exists but is less severe than stated (explain)
 
 **Move false positives to a separate "Downgraded" section** at the end of the report. For each, give a one-line explanation of why it was dismissed. This lets the PR author verify the reasoning and catch verification mistakes.
 
