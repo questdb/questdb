@@ -3877,6 +3877,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             bindVarMemory = null;
             bindVarFunctions = null;
             filter = null;
+            perWorkerFilters = null;
 
             // Choose async factory based on whether there are GROUP BY keys
             if (keyTypesCopy.getColumnCount() == 0) {
@@ -6122,6 +6123,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 bindVarMemory = null;
                 bindVarFunctions = null;
                 filter = null;
+                perWorkerFilters = null;
 
                 return new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
@@ -6185,6 +6187,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             bindVarMemory = null;
             bindVarFunctions = null;
             filter = null;
+            perWorkerFilters = null;
 
             return new AsyncMultiHorizonJoinRecordCursorFactory(
                     configuration,
