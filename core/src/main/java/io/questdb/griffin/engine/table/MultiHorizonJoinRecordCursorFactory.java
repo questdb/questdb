@@ -196,6 +196,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         private final ObjList<Map> asOfJoinMaps;
         private final long bwdScanAbsoluteThreshold;
         private final long bwdScanMinGap;
+        private final long[] bwdScanRowsAtPositionStarts;
         private final long bwdScanSwitchFactor;
         private final Map dataMap;
         private final GroupByAllocator groupByAllocator;
@@ -205,11 +206,13 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         private final HorizonTimestampIterator horizonIterator;
         private final MultiHorizonJoinRecord horizonJoinRecord;
         private final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+        private final boolean[] isForwardScanModes;
         private final ObjList<Function> keyFunctions;
         private final ObjList<RecordSink> masterAsOfJoinMapSinks;
         private final int masterTimestampColumnIndex;
         private final ObjList<Record> matchedSlaveRecords;
         private final long[] offsets;
+        private final long[] prevAsOfRowIds;
         private final VirtualRecord recordA;
         private final VirtualRecord recordB;
         private final ObjList<Function> recordFunctions;
@@ -254,6 +257,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.size();
+            this.prevAsOfRowIds = new long[slaveCount];
+            this.isForwardScanModes = new boolean[slaveCount];
+            this.bwdScanRowsAtPositionStarts = new long[slaveCount];
             this.slaveSymbolSources = new ObjList<>(slaveCount);
             this.slaveSymbolSources.setPos(slaveCount);
             this.matchedSlaveRecords = new ObjList<>(slaveCount);
@@ -390,11 +396,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         private void buildMap() {
-            // Per-slave adaptive scan state
-            final long[] prevAsOfRowIds = new long[slaveCount];
-            final boolean[] isForwardScanModes = new boolean[slaveCount];
-            final long[] bwdScanRowsAtPositionStarts = new long[slaveCount];
-
             for (int s = 0; s < slaveCount; s++) {
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
