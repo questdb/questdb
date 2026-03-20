@@ -188,6 +188,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(masterFactory);
         Misc.freeObjList(slaveStates);
         Misc.free(horizonJoinMetadata);
+        // recordFunctions includes groupByFunctions (same object references)
         Misc.freeObjList(recordFunctions);
     }
 

@@ -642,6 +642,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
+        // recordFunctions includes groupByFunctions (same object references)
         Misc.freeObjList(recordFunctions);
     }
 }

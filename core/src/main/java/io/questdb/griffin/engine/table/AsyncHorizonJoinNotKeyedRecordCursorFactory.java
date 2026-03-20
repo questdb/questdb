@@ -32,8 +32,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
@@ -556,6 +554,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
-        Misc.freeObjListAndClear(groupByFunctions);
+        Misc.freeObjList(groupByFunctions);
     }
 }

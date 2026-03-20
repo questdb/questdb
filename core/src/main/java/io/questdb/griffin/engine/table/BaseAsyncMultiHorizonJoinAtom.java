@@ -385,7 +385,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     public void close() {
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
-        Misc.freeObjList(ownerGroupByFunctions);
+        // ownerGroupByFunctions are freed by the owning factory via
+        // recordFunctions/groupByFunctions field, so we only free per-worker clones here.
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
