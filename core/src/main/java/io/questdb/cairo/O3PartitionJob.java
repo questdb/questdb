@@ -138,13 +138,27 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 final IntList tableToParquetIdx = ctx.getTableToParquetIdx(columnCount);
                 boolean hasMissingColumns = false;
+                boolean hasTypeConvertedColumns = false;
                 int mappedParquetColumns = 0;
                 for (int i = 0; i < columnCount; i++) {
                     if (tableWriterMetadata.getColumnType(i) < 0) {
                         continue;
                     }
                     final int writerIndex = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                    final int parquetIdx = parquetColIdToIdx.get(writerIndex);
+                    int parquetIdx = parquetColIdToIdx.get(writerIndex);
+                    if (parquetIdx < 0) {
+                        // Column not found by current writer index. Walk the
+                        // replacingIndex chain (ALTER COLUMN TYPE): the parquet
+                        // file stores data under an earlier writer index.
+                        int replacingIndex = tableWriterMetadata.getColumnMetadata(i).getReplacingIndex();
+                        while (replacingIndex >= 0 && parquetIdx < 0) {
+                            parquetIdx = parquetColIdToIdx.get(replacingIndex);
+                            replacingIndex = tableWriterMetadata.getColumnMetadata(replacingIndex).getReplacingIndex();
+                        }
+                        if (parquetIdx >= 0) {
+                            hasTypeConvertedColumns = true;
+                        }
+                    }
                     tableToParquetIdx.setQuick(i, parquetIdx);
                     if (parquetIdx < 0) {
                         hasMissingColumns = true;
@@ -152,11 +166,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         mappedParquetColumns++;
                     }
                 }
-                // Detect schema changes: missing columns (ADD COLUMN) or extra
-                // columns in the parquet file (DROP COLUMN). Both require a
-                // rewrite with the updated target schema.
+                // Detect schema changes: missing columns (ADD COLUMN), extra
+                // columns in the parquet file (DROP COLUMN), or type-converted
+                // columns (ALTER COLUMN TYPE). All require a rewrite with the
+                // updated target schema.
                 final boolean hasExtraColumns = mappedParquetColumns < parquetColumnCount;
-                final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns;
+                final boolean hasSchemaChange = hasMissingColumns || hasExtraColumns || hasTypeConvertedColumns;
 
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;

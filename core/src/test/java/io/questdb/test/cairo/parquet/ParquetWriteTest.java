@@ -2877,23 +2877,104 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16, T20 should be 10, 30, 40 respectively.
             assertSql(
                     """
                             ts\tv
                             2020-01-01T00:00:00.000000Z\tnull
                             2020-01-01T04:00:00.000000Z\tnull
                             2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10
                             2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\tnull
-                            2020-01-01T20:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
                             2020-01-02T00:00:00.000000Z\tnull
                             2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeChainedWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Two consecutive type changes: INT → LONG → DOUBLE.
+            // The parquet file stores data under the original INT writer index.
+            // The O3 merge must walk the full replacingIndex chain to find it.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99.0
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
                             """,
                     "SELECT * FROM x"
             );
@@ -2963,21 +3044,16 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16, T20 should be 10.0, 30.0, 40.0 respectively.
             assertSql(
                     """
                             ts\tv
                             2020-01-01T00:00:00.000000Z\tnull
                             2020-01-01T04:00:00.000000Z\tnull
                             2020-01-01T06:00:00.000000Z\t99.0
-                            2020-01-01T08:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10.0
                             2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\tnull
-                            2020-01-01T20:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
                             2020-01-02T00:00:00.000000Z\tnull
                             2020-01-02T12:00:00.000000Z\t50.0
                             """,
@@ -3049,21 +3125,16 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16, T20 should be 1.5, 3.5, 4.5 respectively.
             assertSql(
                     """
                             ts\tv
                             2020-01-01T00:00:00.000000Z\tnull
                             2020-01-01T04:00:00.000000Z\tnull
                             2020-01-01T06:00:00.000000Z\t9.5
-                            2020-01-01T08:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t1.5
                             2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\tnull
-                            2020-01-01T20:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t3.5
+                            2020-01-01T20:00:00.000000Z\t4.5
                             2020-01-02T00:00:00.000000Z\tnull
                             2020-01-02T12:00:00.000000Z\t5.5
                             """,
@@ -3136,21 +3207,16 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16, T20 should be 10, 30, 40 respectively.
             assertSql(
                     """
                             ts\tv
                             2020-01-01T00:00:00.000000Z\tnull
                             2020-01-01T04:00:00.000000Z\tnull
                             2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10
                             2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\tnull
-                            2020-01-01T20:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
                             2020-01-02T00:00:00.000000Z\tnull
                             2020-01-02T12:00:00.000000Z\t50
                             """,
@@ -3225,21 +3291,16 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16, T20 should be 5, 7, 8 respectively.
             assertSql(
                     """
                             ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T00:00:00.000000Z\t0
+                            2020-01-01T04:00:00.000000Z\t0
                             2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\tnull
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\tnull
-                            2020-01-01T20:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t5
+                            2020-01-01T12:00:00.000000Z\t0
+                            2020-01-01T16:00:00.000000Z\t7
+                            2020-01-01T20:00:00.000000Z\t8
                             2020-01-02T00:00:00.000000Z\tnull
                             2020-01-02T12:00:00.000000Z\t9
                             """,
@@ -3331,21 +3392,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16 should be 10, 30 respectively. Non-type-converted exotic
-            //  columns (ip, uu, gh, l2) merge correctly.
             assertSql(
                     """
                             ip\tuu\tgh\tl2\tts\tv
                             10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
                             10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
                             10.0.0.9\t99999999-9999-9999-9999-999999999999\tu33z\t0x09\t2020-01-01T06:00:00.000000Z\t99
-                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\tnull
+                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
                             10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
-                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\tnull
+                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
                             10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
                             10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
                             """,
@@ -3418,21 +3473,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            // TODO: O3 merge does not yet resolve type-converted columns via
-            //  writerIndexToDenseIndex, so values from the old parquet file are
-            //  lost (appear as null). Once the O3 merge path handles
-            //  type-converted columns, update expected values: rows at T08,
-            //  T16 should be 10, 30 respectively. Non-type-converted DECIMAL
-            //  column merges correctly.
             assertSql(
                     """
                             d\tts\tv
                             100.50\t2020-01-01T00:00:00.000000Z\tnull
                             200.75\t2020-01-01T04:00:00.000000Z\tnull
                             999.99\t2020-01-01T06:00:00.000000Z\t99
-                            300.25\t2020-01-01T08:00:00.000000Z\tnull
+                            300.25\t2020-01-01T08:00:00.000000Z\t10
                             350.00\t2020-01-01T12:00:00.000000Z\tnull
-                            400.99\t2020-01-01T16:00:00.000000Z\tnull
+                            400.99\t2020-01-01T16:00:00.000000Z\t30
                             600.00\t2020-01-02T00:00:00.000000Z\tnull
                             700.50\t2020-01-02T12:00:00.000000Z\t50
                             """,
