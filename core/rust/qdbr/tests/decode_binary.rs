@@ -1,22 +1,11 @@
 mod common;
 
-use parquet::data_type::ByteArray;
-
 use common::{
     encode_decode_byte_array, encode_decode_byte_array_filtered, every_other_row_filter,
-    generate_nulls, optional_byte_array_schema, qdb_props, required_byte_array_schema, Encoding,
-    Null, ALL_NULLS, COUNT, VERSIONS,
+    generate_nulls, optional_byte_array_schema, qdb_props, required_byte_array_schema,
+    types::binary::generate_values, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
 };
 use qdb_core::col_type::ColumnTypeTag;
-
-fn generate_values(count: usize) -> Vec<ByteArray> {
-    (0..count)
-        .map(|i| {
-            let bytes: Vec<u8> = (0..10).map(|j| ((i * 7 + j) % 256) as u8).collect();
-            ByteArray::from(bytes)
-        })
-        .collect()
-}
 
 fn assert_binary(nulls: &[bool], data: &[u8]) {
     // Binary format in QuestDB: each value is i64 length + raw bytes; null = i64(-1)
