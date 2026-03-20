@@ -382,7 +382,8 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
 
     /**
      * Process all horizon timestamps in sorted order, performing ASOF lookups
-     * on each slave for each tuple.
+     * on each slave for each tuple. Uses per-slave adaptive backward/forward
+     * scan strategy matching the single-slave implementation.
      */
     private static void processHorizonTimestamps(
             AsyncMultiHorizonJoinAtom atom,
@@ -405,6 +406,14 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
 
         final boolean sharded = !groupByMapFragment.isNotSharded();
         final ObjList<Record> matchedSlaveRecords = atom.getMatchedSlaveRecords(slotId);
+        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
+        final long bwdScanMinGap = atom.getBwdScanMinGap();
+        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
+
+        // Per-slave adaptive scan state
+        final long[] prevAsOfRowIds = new long[slaveCount];
+        final boolean[] isForwardScanModes = new boolean[slaveCount];
+        final long[] bwdScanRowsAtPositionStarts = new long[slaveCount];
 
         // Reset all slave helpers for this frame
         for (int s = 0; s < slaveCount; s++) {
@@ -413,6 +422,9 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             if (asOfMap != null) {
                 asOfMap.clear();
             }
+            prevAsOfRowIds[s] = Long.MIN_VALUE;
+            isForwardScanModes[s] = false;
+            bwdScanRowsAtPositionStarts[s] = 0;
         }
 
         while (horizonIterator.next()) {
@@ -437,42 +449,47 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
                 final RecordSink slaveSink = atom.getSlaveAsOfJoinMapSink(slotId, s);
 
                 if (asOfJoinMap != null && masterSink != null && slaveSink != null) {
-                    // Keyed ASOF JOIN
+                    // Keyed ASOF JOIN with adaptive backward/forward scan
                     final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
                     final SymbolTranslatingRecord symbolTranslatingRecord =
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
                     if (asOfRowId != Long.MIN_VALUE) {
-                        if (helper.getForwardWatermark() == Long.MIN_VALUE) {
-                            matchRowId = helper.backwardScanForKeyMatch(
-                                    asOfRowId,
-                                    masterKeyRecord,
-                                    masterSink,
-                                    slaveSink,
-                                    asOfJoinMap,
-                                    symbolTranslatingRecord
-                            );
-                            helper.initForwardWatermark(asOfRowId);
-                        } else {
-                            helper.forwardScanToPosition(asOfRowId, slaveSink, asOfJoinMap);
-
-                            MapKey cacheKey = asOfJoinMap.withKey();
-                            cacheKey.put(masterKeyRecord, masterSink);
-                            MapValue cacheValue = cacheKey.findValue();
-
-                            if (cacheValue != null) {
-                                matchRowId = cacheValue.getLong(0);
-                            } else {
-                                matchRowId = helper.backwardScanForKeyMatch(
-                                        asOfRowId,
-                                        masterKeyRecord,
-                                        masterSink,
-                                        slaveSink,
-                                        asOfJoinMap,
-                                        symbolTranslatingRecord
-                                );
+                        if (asOfRowId != prevAsOfRowIds[s]) {
+                            if (!isForwardScanModes[s]) {
+                                long bwdScanCost = helper.getBackwardScanRows() - bwdScanRowsAtPositionStarts[s];
+                                if (prevAsOfRowIds[s] != Long.MIN_VALUE) {
+                                    long gap = asOfRowId - prevAsOfRowIds[s];
+                                    if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
+                                            bwdScanCost,
+                                            gap,
+                                            bwdScanMinGap,
+                                            bwdScanSwitchFactor,
+                                            bwdScanAbsoluteThreshold
+                                    )) {
+                                        isForwardScanModes[s] = true;
+                                        helper.initForwardWatermark(prevAsOfRowIds[s]);
+                                    }
+                                }
+                                if (!isForwardScanModes[s]) {
+                                    asOfJoinMap.clear();
+                                    helper.resetBackwardWatermark();
+                                    bwdScanRowsAtPositionStarts[s] = helper.getBackwardScanRows();
+                                }
                             }
+                            if (isForwardScanModes[s]) {
+                                helper.forwardScanToPosition(asOfRowId, slaveSink, asOfJoinMap);
+                            }
+                            prevAsOfRowIds[s] = asOfRowId;
                         }
+                        matchRowId = helper.backwardScanForKeyMatch(
+                                asOfRowId,
+                                masterKeyRecord,
+                                masterSink,
+                                slaveSink,
+                                asOfJoinMap,
+                                symbolTranslatingRecord
+                        );
                     }
                 } else {
                     // Timestamp-only ASOF JOIN

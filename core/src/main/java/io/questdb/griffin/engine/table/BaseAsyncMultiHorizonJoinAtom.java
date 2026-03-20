@@ -74,6 +74,9 @@ import java.io.Closeable;
  * 5. Filter resources (compiled and Java filters, shared across slaves)
  */
 public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    protected final long bwdScanAbsoluteThreshold;
+    protected final long bwdScanMinGap;
+    protected final long bwdScanSwitchFactor;
     protected final AsyncFilterContext filterCtx;
     protected final int masterTimestampColumnIndex;
     protected final long offsetCount;
@@ -139,6 +142,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
         this.offsetCount = offsets.length;
+        this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
+        this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
+        this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
         this.horizonJoinSymbolTableSource = new MultiHorizonJoinSymbolTableSource(columnSources, columnIndexes, slaveCount);
 
         // Filter and memory pool resources (ownership transferred from caller)
@@ -392,6 +398,18 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             return ownerAsOfJoinMaps.getQuick(slaveIndex);
         }
         return perWorkerAsOfJoinMaps.getQuick(slotId * slaveCount + slaveIndex);
+    }
+
+    public long getBwdScanAbsoluteThreshold() {
+        return bwdScanAbsoluteThreshold;
+    }
+
+    public long getBwdScanMinGap() {
+        return bwdScanMinGap;
+    }
+
+    public long getBwdScanSwitchFactor() {
+        return bwdScanSwitchFactor;
     }
 
     public AsyncFilterContext getFilterContext() {
