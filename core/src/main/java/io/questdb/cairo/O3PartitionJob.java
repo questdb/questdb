@@ -289,11 +289,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
                         final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
+                        final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
                         schemaDesc.addColumn(
                                 tableWriterMetadata.getColumnName(i),
                                 colType,
                                 colId,
-                                0
+                                0,
+                                parquetEncodingConfig
                         );
                     }
                     partitionUpdater.setTargetSchema(schemaDesc);
