@@ -396,13 +396,13 @@ case "$1" in
         echo "Found QuestDB server PID: $SERVER_PID"
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/server-alloc-profile-${PROTOCOL}.collapsed"
+        PROFILE_OUTPUT="$SCRIPT_DIR/server-alloc-profile-${PROTOCOL}.jfr"
         echo "Profiling SERVER allocations during client test..."
-        echo "Output: $PROFILE_OUTPUT (collapsed stacks format)"
+        echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
 
         # Start profiler on server (alloc=1k means track allocations >= 1KB)
-        "$ASPROF" start -e alloc --alloc 1k -o collapsed -f "$PROFILE_OUTPUT" "$SERVER_PID"
+        "$ASPROF" start -e alloc --alloc 1k -o jfr -f "$PROFILE_OUTPUT" "$SERVER_PID"
 
         # Run client test
         echo "Running client test..."
@@ -415,9 +415,9 @@ case "$1" in
 
         echo ""
         echo "Server allocation profile saved to: $PROFILE_OUTPUT"
-        echo ""
-        echo "Top allocation sites:"
-        sort -t' ' -k2 -rn "$PROFILE_OUTPUT" | head -30
+        echo "View with: jfr print $PROFILE_OUTPUT | head -100"
+        echo "Or open in JDK Mission Control (jmc)"
+        echo "Or convert to flamegraph: $ASPROF --jfrstackdepth 512 convert $PROFILE_OUTPUT -o server-alloc-flame.html"
         ;;
 
     server-lock)
@@ -506,7 +506,7 @@ case "$1" in
         echo "Commands:"
         echo "  server              Start QuestDB server"
         echo "  client [options]    Run test client"
-        echo "  profile [options]   Run with async-profiler allocation tracking (collapsed format)"
+        echo "  profile [options]   Run with async-profiler allocation tracking (JFR format)"
         echo "  cpu [options]       Run with CPU profiling - find hot methods (JFR format)"
         echo "  wall [options]      Run with wall-clock profiling - find I/O waits and blocking (JFR format)"
         echo "  lock [options]      Run with lock contention profiling - find thread contention (JFR format)"
