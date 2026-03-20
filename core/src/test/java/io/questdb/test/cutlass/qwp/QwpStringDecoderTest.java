@@ -269,14 +269,14 @@ public class QwpStringDecoderTest {
 
     private void assertRoundTrip(String[] values, boolean[] nulls, byte typeCode) throws Exception {
         assertMemoryLeak(() -> {
-            boolean nullable = nulls != null;
+            boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_string");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", typeCode, nullable);
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", typeCode, useNullBitmap);
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < values.length; i++) {
-                    if (nullable && nulls[i]) {
+                    if (useNullBitmap && nulls[i]) {
                         col.addNull();
                     } else {
                         col.addString(values[i]);
@@ -303,7 +303,7 @@ public class QwpStringDecoderTest {
                         Assert.assertTrue(table.hasNextRow());
                         table.nextRow();
 
-                        if (nullable && nulls[i]) {
+                        if (useNullBitmap && nulls[i]) {
                             Assert.assertTrue("Row " + i + " should be null",
                                     table.isColumnNull(colIdx));
                         } else {
