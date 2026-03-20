@@ -2332,6 +2332,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             return Files.POSIX_MADV_RANDOM;
         }
 
+        if (Chars.equalsLowerCaseAscii(mode, "populate_write")) {
+            return Files.POSIX_MADV_POPULATE_WRITE;
+        }
+
         throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), mode);
     }
 
