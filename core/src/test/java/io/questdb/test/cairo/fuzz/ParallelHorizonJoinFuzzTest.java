@@ -232,6 +232,16 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMultiHorizonJoinFilteredThreadUnsafe() throws Exception {
+        testParallelMultiHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                "concat(t.side, '_00') = 'sell_00'"
+        );
+    }
+
+    @Test
     public void testParallelMultiHorizonJoinFilteredWithBindVariables() throws Exception {
         testParallelMultiHorizonJoin(
                 (sqlExecutionContext) -> {
