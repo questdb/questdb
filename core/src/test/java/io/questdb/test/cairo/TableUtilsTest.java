@@ -33,6 +33,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -354,6 +355,79 @@ public class TableUtilsTest extends AbstractTest {
 
         Assert.assertTrue(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp, 1));
         Assert.assertFalse(TableUtils.checkTtl(txReader, driver, partitionTimestamp, maxTimestamp - 1, 1));
+    }
+
+    @Test
+    public void testParseBloomFilterColumnIndexes() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata));
+        metadata.add(new TableColumnMetadata("b", ColumnType.STRING, metadata));
+        metadata.add(new TableColumnMetadata("c", ColumnType.DOUBLE, metadata));
+
+        try (DirectIntList indexes = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT)) {
+            TableUtils.parseBloomFilterColumnIndexes(metadata, "a,c", indexes);
+            Assert.assertEquals(2, indexes.size());
+            Assert.assertEquals(0, indexes.get(0));
+            Assert.assertEquals(2, indexes.get(1));
+        }
+    }
+
+    @Test
+    public void testParseBloomFilterColumnIndexesDuplicatesIgnored() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata));
+        metadata.add(new TableColumnMetadata("b", ColumnType.STRING, metadata));
+
+        try (DirectIntList indexes = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT)) {
+            TableUtils.parseBloomFilterColumnIndexes(metadata, "a, b, a", indexes);
+            Assert.assertEquals(2, indexes.size());
+            Assert.assertEquals(0, indexes.get(0));
+            Assert.assertEquals(1, indexes.get(1));
+        }
+    }
+
+    @Test
+    public void testParseBloomFilterColumnIndexesNonExistentColumn() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata));
+
+        try (DirectIntList indexes = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT)) {
+            try {
+                TableUtils.parseBloomFilterColumnIndexes(metadata, "z", indexes);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bloom_filter_columns contains non-existent column: z");
+            }
+        }
+    }
+
+    @Test
+    public void testParseBloomFilterColumnIndexesSkipsDeletedColumns() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata));
+        metadata.add(new TableColumnMetadata("deleted", -ColumnType.STRING, metadata));
+        metadata.add(new TableColumnMetadata("b", ColumnType.DOUBLE, metadata));
+
+        try (DirectIntList indexes = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT)) {
+            // "b" is column index 2, but descriptor index 1 (deleted column skipped)
+            TableUtils.parseBloomFilterColumnIndexes(metadata, "b", indexes);
+            Assert.assertEquals(1, indexes.size());
+            Assert.assertEquals(1, indexes.get(0));
+        }
+    }
+
+    @Test
+    public void testParseBloomFilterColumnIndexesWhitespaceTrimmed() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata));
+        metadata.add(new TableColumnMetadata("b", ColumnType.STRING, metadata));
+
+        try (DirectIntList indexes = new DirectIntList(4, MemoryTag.NATIVE_DEFAULT)) {
+            TableUtils.parseBloomFilterColumnIndexes(metadata, "  a , b  ", indexes);
+            Assert.assertEquals(2, indexes.size());
+            Assert.assertEquals(0, indexes.get(0));
+            Assert.assertEquals(1, indexes.get(1));
+        }
     }
 
     private void testIsValidColumnName(char c, boolean expected) {
