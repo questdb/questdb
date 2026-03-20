@@ -351,7 +351,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          */
         private void loadDenseGenerationCached(int gen) {
             long genFileOffset = genLookup.getGenFileOffset(gen);
-            int genDataSize = genLookup.getGenDataSize(gen);
+            long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
 
             if (requestedKey >= genKeyCount) {
@@ -461,7 +461,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          */
         private void loadSparseGenDirect(int gen, int idx) {
             long genFileOffset = genLookup.getGenFileOffset(gen);
-            int genDataSize = genLookup.getGenDataSize(gen);
+            long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
             int activeKeyCount = -genKeyCount;
 
@@ -485,7 +485,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          */
         private void loadSparseGenWithBinarySearch(int gen) {
             long genFileOffset = genLookup.getGenFileOffset(gen);
-            int genDataSize = genLookup.getGenDataSize(gen);
+            long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
             int activeKeyCount = -genKeyCount;
 

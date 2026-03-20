@@ -105,7 +105,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *   [32-35]     genCount (4B)
  *   [36-39]     formatVersion (4B)
  *   [40-63]     reserved (24B)
- *   [64-4087]   gen dir: up to 167 entries × 24B
+ *   [64-4087]   gen dir: up to 125 entries × 32B
  *   [4088-4095] sequence_end (8B) — must equal sequence_start for valid page
  * </pre>
  *
@@ -175,18 +175,18 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_GEN_DIR = 64;
     public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
 
-    public static final int MAX_GEN_COUNT = 167; // (4088-64)/24 = 167
+    public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
     public static final int FORMAT_VERSION = 1;
 
     public static final byte SIGNATURE = (byte) 0xfb;
 
-    // Generation directory entry (24 bytes per generation)
-    public static final int GEN_DIR_ENTRY_SIZE = 24;
+    // Generation directory entry (32 bytes per generation, 8-byte aligned)
+    public static final int GEN_DIR_ENTRY_SIZE = 32;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
-    public static final int GEN_DIR_OFFSET_KEY_COUNT = 12;
-    public static final int GEN_DIR_OFFSET_MIN_KEY = 16;
-    public static final int GEN_DIR_OFFSET_MAX_KEY = 20;
+    public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
+    public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
+    public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
 
     private PostingIndexUtils() {
     }

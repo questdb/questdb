@@ -321,7 +321,7 @@ public class PostingIndexWriter implements IndexWriter {
         // time it's needed.
         long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-        int gen0DataSize = keyMem.getInt(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
+        long gen0DataSize = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
 
@@ -337,7 +337,7 @@ public class PostingIndexWriter implements IndexWriter {
         );
         long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * (maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount);
         long mergedValuesSize = Math.max(maxPerStride, 1024) * Long.BYTES;
-        int copyBufSize = gen0DataSize;
+        long copyBufSize = gen0DataSize;
         long copyBufAllocSize = copyBufSize > 0 ? copyBufSize : 1;
         int[] bpKeySizes = strideBpKeySizes;
 
@@ -353,6 +353,17 @@ public class PostingIndexWriter implements IndexWriter {
             localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_DEFAULT);
             mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_DEFAULT);
             copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_DEFAULT);
+
+            // Pre-allocate seal-path arrays to avoid per-stride allocations
+            int preAllocPerKey = maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount;
+            if (preAllocPerKey > unpackBatch.length) {
+                unpackBatch = new long[preAllocPerKey];
+            }
+            int preAllocPerStride = (int) Math.min(maxPerStride, Integer.MAX_VALUE);
+            if (preAllocPerStride > packedResiduals.length) {
+                packedResiduals = new long[preAllocPerStride];
+            }
+
             // Append-only seal: write sealed data AFTER existing data so that
             // concurrent readers with active cursors are never rugpulled.
             // Old generation data at [0..sealOffset) becomes dead space but
@@ -398,7 +409,7 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.getUnsafe().storeFence();
             writeMetadataPage(genCount,
                     keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
-                    0, sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
+                    0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
         } finally {
             if (copyBuf != 0) {
                 Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_DEFAULT);
@@ -446,7 +457,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride,
-                                     long copyBuf, int copyBufSize) {
+                                     long copyBuf, long copyBufSize) {
         // If this stride existed in gen 0, copy it; otherwise write empty
         if (stride >= PostingIndexUtils.strideCount(gen0KeyCount)) {
             // Stride didn't exist in gen 0 — write empty delta stride
@@ -858,8 +869,29 @@ public class PostingIndexWriter implements IndexWriter {
                         writeOffset += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     }
     
-                    // Decode from each generation
-                    long[] reencodeUnpackBatch = new long[0];
+                    // Pre-allocate reencodeUnpackBatch and packedResiduals to avoid
+                    // per-key/per-stride allocations during the decode and re-encode loops.
+                    // Scan totalCountsAddr to find max per-key count and max per-stride total.
+                    int maxPerKeyCount = 0;
+                    int maxStrideTotal = 0;
+                    {
+                        int sc0 = PostingIndexUtils.strideCount(keyCount);
+                        for (int s0 = 0; s0 < sc0; s0++) {
+                            int strideTotal = 0;
+                            int ks0 = PostingIndexUtils.keysInStride(keyCount, s0);
+                            for (int j0 = 0; j0 < ks0; j0++) {
+                                int key0 = s0 * PostingIndexUtils.DENSE_STRIDE + j0;
+                                int c = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
+                                if (c > maxPerKeyCount) maxPerKeyCount = c;
+                                strideTotal += c;
+                            }
+                            if (strideTotal > maxStrideTotal) maxStrideTotal = strideTotal;
+                        }
+                    }
+                    long[] reencodeUnpackBatch = maxPerKeyCount > 0 ? new long[maxPerKeyCount] : new long[0];
+                    if (maxStrideTotal > packedResiduals.length) {
+                        packedResiduals = new long[maxStrideTotal];
+                    }
                     for (int gen = 0; gen < genCount; gen++) {
                         long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
                         long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
@@ -1177,7 +1209,7 @@ public class PostingIndexWriter implements IndexWriter {
                         genCount = 1;
                         Unsafe.getUnsafe().storeFence();
                         writeMetadataPage(genCount, maxValue,
-                                0, sealOffset, (int) (valueMemSize - sealOffset), keyCount, 0, keyCount - 1);
+                                0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
                     }
     
                 } finally {
@@ -1581,7 +1613,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (gen0Offset == 0) {
             return; // already compact
         }
-        int gen0Size = keyMem.getInt(dirOffset + GEN_DIR_OFFSET_SIZE);
+        long gen0Size = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
         if (gen0Size <= 0) {
             return;
         }
@@ -1787,8 +1819,8 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
 
-        // Seal at >= MAX_GEN_COUNT (not >). Entry MAX_GEN_COUNT-1 (index 166)
-        // ends at page offset 4072. Entry 167 would overlap sequence_end at 4088.
+        // Seal at >= MAX_GEN_COUNT (not >). Entry MAX_GEN_COUNT-1 (index 124)
+        // ends at page offset 4064. Entry 125 would overlap sequence_end at 4088.
         if (genCount >= MAX_GEN_COUNT) {
             seal();
         }
@@ -1977,7 +2009,7 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void writeMetadataPage(int genCount, long maxValue,
                                     int overrideGenIndex, long overrideFileOffset,
-                                    int overrideSize, int overrideKeyCount,
+                                    long overrideSize, int overrideKeyCount,
                                     int overrideMinKey, int overrideMaxKey) {
         // Compute inactive page offset
         long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
@@ -2014,7 +2046,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (overrideGenIndex >= 0) {
             long dstOffset = PostingIndexUtils.getGenDirOffset(inactivePageOffset, overrideGenIndex);
             keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
-            keyMem.putInt(dstOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
+            keyMem.putLong(dstOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);

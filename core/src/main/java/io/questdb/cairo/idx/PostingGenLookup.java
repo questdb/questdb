@@ -73,7 +73,7 @@ class PostingGenLookup implements Closeable {
 
     // Shared: gen metadata cache
     private long[] genFileOffsets;
-    private int[] genDataSizes;
+    private long[] genDataSizes;
     private int[] genKeyCounts;    // negative = sparse
     private int[] genMinKeys;
     private int[] genMaxKeys;
@@ -96,7 +96,7 @@ class PostingGenLookup implements Closeable {
         if (genFileOffsets == null || genFileOffsets.length < genCount) {
             int newSize = Math.max(genCount, 16);
             genFileOffsets = new long[newSize];
-            genDataSizes = new int[newSize];
+            genDataSizes = new long[newSize];
             genKeyCounts = new int[newSize];
             genMinKeys = new int[newSize];
             genMaxKeys = new int[newSize];
@@ -104,7 +104,7 @@ class PostingGenLookup implements Closeable {
         for (int g = 0; g < genCount; g++) {
             long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
             genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            genDataSizes[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+            genDataSizes[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
             genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
             genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
@@ -207,7 +207,7 @@ class PostingGenLookup implements Closeable {
         return Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) key * Integer.BYTES);
     }
 
-    int getGenDataSize(int gen) {
+    long getGenDataSize(int gen) {
         return genDataSizes[gen];
     }
 
@@ -291,7 +291,7 @@ class PostingGenLookup implements Closeable {
         if (genFileOffsets == null || genFileOffsets.length < toGenCount) {
             int newSize = Math.max(toGenCount, 16);
             long[] newOffsets = new long[newSize];
-            int[] newSizes = new int[newSize];
+            long[] newSizes = new long[newSize];
             int[] newKeyCounts = new int[newSize];
             int[] newMinKeys = new int[newSize];
             int[] newMaxKeys = new int[newSize];
@@ -314,7 +314,7 @@ class PostingGenLookup implements Closeable {
         for (int g = fromGen; g < toGenCount; g++) {
             long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
             genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            genDataSizes[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+            genDataSizes[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
             genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
             genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
@@ -333,7 +333,7 @@ class PostingGenLookup implements Closeable {
                 }
                 int activeKeyCount = -genKeyCounts[g];
                 long genFileOffset = genFileOffsets[g];
-                int genDataSize = genDataSizes[g];
+                long genDataSize = genDataSizes[g];
                 valueMem.extend(genFileOffset + genDataSize);
                 long genAddr = valueMem.addressOf(genFileOffset);
                 for (int i = 0; i < activeKeyCount; i++) {
