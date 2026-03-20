@@ -398,7 +398,7 @@ public class QwpSymbolDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_symbol");
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SYMBOL, nullable);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < values.length; i++) {
                     if (nullable && nulls[i]) {
                         col.addNull();

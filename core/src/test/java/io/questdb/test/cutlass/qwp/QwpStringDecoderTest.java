@@ -24,10 +24,10 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
-import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
@@ -253,6 +253,16 @@ public class QwpStringDecoderTest {
         assertRoundTrip(new String[]{longString}, null);
     }
 
+    private static int findStringColumnIndex(QwpTableBlockCursor table) {
+        for (int c = 0; c < table.getColumnCount(); c++) {
+            byte code = (byte) (table.getColumnDef(c).getTypeCode() & TYPE_MASK);
+            if (code == TYPE_STRING || code == TYPE_VARCHAR) {
+                return c;
+            }
+        }
+        return -1;
+    }
+
     private void assertRoundTrip(String[] values, boolean[] nulls) throws Exception {
         assertRoundTrip(values, nulls, TYPE_STRING);
     }
@@ -263,7 +273,7 @@ public class QwpStringDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_string");
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", typeCode, nullable);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < values.length; i++) {
                     if (nullable && nulls[i]) {
@@ -308,15 +318,5 @@ public class QwpStringDecoderTest {
                 }
             }
         });
-    }
-
-    private static int findStringColumnIndex(QwpTableBlockCursor table) {
-        for (int c = 0; c < table.getColumnCount(); c++) {
-            byte code = (byte) (table.getColumnDef(c).getTypeCode() & TYPE_MASK);
-            if (code == TYPE_STRING || code == TYPE_VARCHAR) {
-                return c;
-            }
-        }
-        return -1;
     }
 }

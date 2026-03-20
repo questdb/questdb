@@ -37,7 +37,8 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpBooleanDecoderTest {
@@ -198,7 +199,7 @@ public class QwpBooleanDecoderTest {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_bool");
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BOOLEAN, nullable);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < values.length; i++) {
                     if (nullable && nulls[i]) {
                         col.addNull();
