@@ -2926,6 +2926,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
+        int newPartitionDirLen = 0;
         try {
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int partitionDirLen = path.size();
@@ -2945,7 +2946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // upgrade partition version
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
             createDirsOrFail(ff, other, configuration.getMkDirMode());
-            final int newPartitionDirLen = other.size();
+            newPartitionDirLen = other.size();
 
             // set the parquet file full path
             setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
@@ -2988,6 +2989,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 setAppendPosition(txWriter.getTransientRowCount(), false);
             }
             return SWITCH_OK;
+        } catch (CairoException e) {
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            throw e;
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
