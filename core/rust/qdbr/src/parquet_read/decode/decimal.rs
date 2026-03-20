@@ -226,13 +226,12 @@ pub(super) fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FI
     mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
-    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
+    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
     let mut slicer = RleDictionarySlicer::try_new(
         values_buffer,
         dict_decoder,
         mode.source_row_count(),
         mode.sliced_row_count(),
-        &DECIMAL_DICT_ERROR_VALUE,
     )?;
     decode_byte_array_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
         page,
@@ -242,8 +241,6 @@ pub(super) fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FI
         target_tag,
     )
 }
-
-const DECIMAL_DICT_ERROR_VALUE: [u8; 1] = [0u8];
 
 #[inline]
 unsafe fn reverse_exact<const N: usize>(src: &[u8], dest: *mut u8) {
@@ -535,10 +532,6 @@ impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
         self.slicer.skip(count);
         Ok(())
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        Ok(())
-    }
 }
 
 impl<'a, const N: usize> ReverseDecimalColumnSink<'a, N> {
@@ -631,10 +624,6 @@ impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<
     #[inline]
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
         Ok(())
     }
 }
@@ -745,10 +734,6 @@ impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
         self.slicer.skip(count);
         Ok(())
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        Ok(())
-    }
 }
 
 impl<'a, const N: usize> SignExtendDecimalColumnSink<'a, N> {
@@ -836,7 +821,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ByteArrayDecimalColumnSink<
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let src = self.slicer.next();
+        let src = self.slicer.next()?;
         let base = self.buffers.data_vec.len();
         debug_assert!(base + N <= self.buffers.data_vec.capacity());
 
@@ -857,7 +842,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ByteArrayDecimalColumnSink<
         unsafe {
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
             for c in 0..count {
-                let src = self.slicer.next();
+                let src = self.slicer.next()?;
                 Self::convert_decimal(src, ptr.add(c * N))?;
             }
             self.buffers.data_vec.set_len(base + total_bytes);
@@ -889,12 +874,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ByteArrayDecimalColumnSink<
 
     #[inline]
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        self.slicer.skip(count)
     }
 }
 

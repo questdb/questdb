@@ -618,7 +618,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     parquetVersion,
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
-                    fpp
+                    fpp,
+                    0.0
             );
         }
 
