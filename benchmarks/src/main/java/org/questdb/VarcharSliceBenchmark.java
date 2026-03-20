@@ -248,7 +248,8 @@ public class VarcharSliceBenchmark {
                     false,
                     rowCount,
                     1024 * 1024,
-                    ParquetVersion.PARQUET_VERSION_V1
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0.0
             );
         }
     }

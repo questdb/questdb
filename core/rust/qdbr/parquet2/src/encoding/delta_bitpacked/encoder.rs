@@ -8,7 +8,25 @@ use super::super::zigzag_leb128;
 /// # Implementation
 /// * This function does not allocate on the heap.
 /// * The number of mini-blocks is always 1. This may change in the future.
-pub fn encode<I: Iterator<Item = i64>>(mut iterator: I, buffer: &mut Vec<u8>) {
+pub fn encode<I: Iterator<Item = i64>>(iterator: I, buffer: &mut Vec<u8>) {
+    encode_impl::<_, false>(iterator, buffer)
+}
+
+/// Like [`encode`], but computes deltas using i32 wrapping arithmetic.
+///
+/// For INT32 columns the values are widened to i64 for the encoder, but deltas
+/// between consecutive i32 values can exceed 32 bits in i64 space (e.g.
+/// `i32::MAX - i32::MIN` = 4294967295). The decoder rejects bit widths > 32
+/// for 32-bit targets. Truncating the subtraction to i32 keeps all deltas
+/// within 32 bits while decoding correctly (the decoder uses wrapping addition).
+pub fn encode_i32<I: Iterator<Item = i64>>(iterator: I, buffer: &mut Vec<u8>) {
+    encode_impl::<_, true>(iterator, buffer)
+}
+
+fn encode_impl<I: Iterator<Item = i64>, const WRAP32: bool>(
+    mut iterator: I,
+    buffer: &mut Vec<u8>,
+) {
     let block_size = 128;
     let mini_blocks = 1;
 
@@ -37,11 +55,15 @@ pub fn encode<I: Iterator<Item = i64>>(mut iterator: I, buffer: &mut Vec<u8>) {
         let mut max_delta = i64::MIN;
         let mut num_bits = 0;
         for (i, integer) in (0..128).zip(&mut iterator) {
-            let delta = integer - prev;
+            let delta = if WRAP32 {
+                ((integer as i32).wrapping_sub(prev as i32)) as i64
+            } else {
+                integer.wrapping_sub(prev)
+            };
             min_delta = min_delta.min(delta);
             max_delta = max_delta.max(delta);
 
-            num_bits = 64 - (max_delta - min_delta).leading_zeros();
+            num_bits = 64 - (max_delta.wrapping_sub(min_delta)).leading_zeros();
             values[i] = delta;
             prev = integer;
         }
@@ -50,7 +72,7 @@ pub fn encode<I: Iterator<Item = i64>>(mut iterator: I, buffer: &mut Vec<u8>) {
         let values = &values[..consumed];
 
         values.iter().zip(deltas.iter_mut()).for_each(|(v, delta)| {
-            *delta = (v - min_delta) as u64;
+            *delta = (v.wrapping_sub(min_delta)) as u64;
         });
 
         // <min delta> <list of bitwidths of miniblocks> <miniblocks>

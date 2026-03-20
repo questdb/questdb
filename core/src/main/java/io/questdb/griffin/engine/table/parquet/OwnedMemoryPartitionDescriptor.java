@@ -43,13 +43,14 @@ public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
             long columnSecondaryAddr,
             long columnSecondarySize,
             long symbolOffsetsAddr,
-            long symbolOffsetsCount
+            long symbolOffsetsCount,
+            int parquetEncodingConfig
     ) {
         final long savedPos = columnData.size();
         try {
             super.addColumn(columnName, columnType, columnId, columnTop,
                     columnAddr, columnSize, columnSecondaryAddr, columnSecondarySize,
-                    symbolOffsetsAddr, symbolOffsetsCount);
+                    symbolOffsetsAddr, symbolOffsetsCount, parquetEncodingConfig);
         } catch (Throwable th) {
             columnData.setPos(savedPos);
             Unsafe.free(columnAddr, columnSize, MemoryTag.NATIVE_O3);
