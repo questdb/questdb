@@ -4427,6 +4427,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         CharSequence masterAlias = null;
         ObjList<RecordCursorFactory> pendingHorizonSlaves = null;
         ObjList<QueryModel> pendingHorizonSlaveModels = null;
+        boolean isHorizonJoinCompleted = false;
 
         try {
             int n = ordered.size();
@@ -5113,6 +5114,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (horizonContext == null) {
                                     // Non-last HORIZON JOIN (no RANGE/LIST). Save the slave for later
                                     // and continue. The last HORIZON JOIN will collect all slaves.
+                                    if (isHorizonJoinCompleted) {
+                                        throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                                                .put("RANGE or LIST must only appear on the last HORIZON JOIN");
+                                    }
                                     validateHorizonJoinFilter(model, index, slaveModel);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
@@ -5125,6 +5130,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     pendingHorizonSlaveModels.add(slaveModel);
                                     closeSlaveOnFailure = false;
                                     break;
+                                }
+
+                                if (isHorizonJoinCompleted) {
+                                    throw SqlException.position(slaveModel.getJoinKeywordPosition())
+                                            .put("RANGE or LIST must only appear on the last HORIZON JOIN");
                                 }
 
                                 // Validate: WHERE clause can only reference master table columns
@@ -5182,6 +5192,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                                 // from now on, master owns slave, so we don't have to close it
                                 closeSlaveOnFailure = false;
+                                isHorizonJoinCompleted = true;
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);

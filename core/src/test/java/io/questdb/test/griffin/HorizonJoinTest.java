@@ -5612,6 +5612,44 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiHorizonJoinRangeOnNonLastJoin() throws Exception {
+        // RANGE/LIST on a non-last HORIZON JOIN must be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t2.val) " +
+                            "FROM t1 " +
+                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) LIST (0) AS h " +
+                            "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
+                    78,
+                    "RANGE or LIST must only appear on the last HORIZON JOIN"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinRangeOnAllJoins() throws Exception {
+        // RANGE/LIST on every HORIZON JOIN must be rejected
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t2 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE t3 (ts #TIMESTAMP, sym SYMBOL, val DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(t2.val) " +
+                            "FROM t1 " +
+                            "HORIZON JOIN t2 ON (t1.sym = t2.sym) LIST (0) AS h1 " +
+                            "HORIZON JOIN t3 ON (t1.sym = t3.sym) LIST (0) AS h2",
+                    79,
+                    "RANGE or LIST must only appear on the last HORIZON JOIN"
+            );
+        });
+    }
+
+    @Test
     public void testMultiHorizonJoinMixedKeyedAndNotKeyed() throws Exception {
         // One keyed slave, one not-keyed (timestamp-only ASOF)
         assertMemoryLeak(() -> {
