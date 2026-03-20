@@ -6473,7 +6473,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testHorizonJoinMultiNoRangeOrListOnAny() throws Exception {
         assertSyntaxError(
                 "SELECT avg(b.bid) FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) HORIZON JOIN asks AS a ON (t.sym = a.sym)",
-                0,
+                35,
                 "HORIZON JOIN requires offset configuration (RANGE or LIST)",
                 modelOf("trades").col("sym", ColumnType.SYMBOL).timestamp(),
                 modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),

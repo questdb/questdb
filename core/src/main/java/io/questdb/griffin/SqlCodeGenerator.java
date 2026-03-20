@@ -5286,7 +5286,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
                 Misc.freeObjList(pendingHorizonSlaves);
                 // master will be freed by the outer catch block
-                throw SqlException.position(model.getModelPosition())
+                final int errorPosition = pendingHorizonSlaveModels.getQuick(0).getJoinKeywordPosition();
+                throw SqlException.position(errorPosition)
                         .put("HORIZON JOIN requires offset configuration (RANGE or LIST)");
             }
 

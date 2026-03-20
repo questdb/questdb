@@ -5605,7 +5605,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "FROM t1 " +
                             "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
                             "HORIZON JOIN t3 ON (t1.sym = t3.sym)",
-                    0,
+                    27,
                     "HORIZON JOIN requires offset configuration (RANGE or LIST)"
             );
         });
@@ -6393,7 +6393,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN t2 ON (t1.sym = t2.sym) " +
                             "HORIZON JOIN t3 ON (t1.sym = t3.sym) " +
                             "HORIZON JOIN t4 ON (t1.sym = t4.sym)",
-                    0,
+                    27,
                     "HORIZON JOIN requires offset configuration (RANGE or LIST)"
             );
         });
