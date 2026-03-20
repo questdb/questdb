@@ -21,17 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::allocator::QdbAllocator;
-use crate::parquet::error::{
-    fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
-};
-use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
-use crate::parquet_write::file::{create_row_group, WriteOptions};
-use crate::parquet_write::schema::to_compressions;
-use crate::parquet_write::schema::{to_encodings, Partition};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
+
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::uleb128;
 use parquet2::metadata::{FileMetaData, KeyValue, SchemaDescriptor, SortingColumn};
@@ -54,7 +47,7 @@ use crate::parquet::error::{
 };
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
-use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Partition};
+use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
 
 /// Computes the contiguous byte range [start, end) of a row group's column
 /// data, including the last column's bloom filter when present.  Non-last
