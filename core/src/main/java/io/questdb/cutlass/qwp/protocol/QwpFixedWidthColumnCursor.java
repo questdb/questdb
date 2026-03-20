@@ -35,7 +35,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <p>
  * Wire format:
  * <pre>
- * [null bitmap if nullable]: ceil(rowCount/8) bytes
+ * [if null bitmap is present]: ceil(rowCount/8) bytes
  * [values]: (rowCount - nullCount) * valueSize bytes
  * </pre>
  */
@@ -54,9 +54,9 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     private long currentUuidHi;     // For UUID
     private long currentUuidLo;
     private int currentValueIndex;  // Index into non-null values
+    private boolean hasNullBitmap;
     // Wire pointers
     private long nullBitmapAddress;
-    private boolean nullable;
     private int rowCount;
     // Configuration
     private byte typeCode;
@@ -67,7 +67,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (nullable && nullBitmapAddress != 0) {
+        if (hasNullBitmap && nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -86,7 +86,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = 0;
-        nullable = false;
+        hasNullBitmap = false;
         rowCount = 0;
         valueSize = 0;
         nullBitmapAddress = 0;
@@ -144,12 +144,12 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     }
 
     /**
-     * Returns the address of the null bitmap, or 0 if not nullable.
+     * Returns the address of the null bitmap, or 0 if no null bitmap.
      * <p>
      * Used for bulk columnar writes to determine which positions need
      * null sentinel values.
      *
-     * @return the memory address of null bitmap, or 0 if not nullable
+     * @return the memory address of null bitmap, or 0 if no null bitmap
      */
     public long getNullBitmapAddress() {
         return nullBitmapAddress;
@@ -196,7 +196,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      * @return count of non-null values
      */
     public int getValueCount() {
-        if (!nullable || nullBitmapAddress == 0) {
+        if (!hasNullBitmap || nullBitmapAddress == 0) {
             return rowCount;
         }
         return rowCount - QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
@@ -231,11 +231,11 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress address of column data (starts at null bitmap if nullable, else values)
-     * @param dataLength  available bytes from dataAddress
-     * @param rowCount    number of rows
-     * @param typeCode    column type code
-     * @param nullable    whether column is nullable
+     * @param dataAddress   address of column data (starts at null bitmap if present, else values)
+     * @param dataLength    available bytes from dataAddress
+     * @param rowCount      number of rows
+     * @param typeCode      column type code
+     * @param hasNullBitmap whether column has a null bitmap
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
@@ -244,17 +244,17 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
             int dataLength,
             int rowCount,
             byte typeCode,
-            boolean nullable
+            boolean hasNullBitmap
     ) throws QwpParseException {
         this.typeCode = typeCode;
-        this.nullable = nullable;
+        this.hasNullBitmap = hasNullBitmap;
         this.rowCount = rowCount;
         this.valueSize = QwpConstants.getFixedTypeSize(typeCode);
 
         int offset = 0;
         int nullCount = 0;
 
-        if (nullable) {
+        if (hasNullBitmap) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(

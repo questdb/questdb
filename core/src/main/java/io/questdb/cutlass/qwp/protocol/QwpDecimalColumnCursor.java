@@ -33,7 +33,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <p>
  * Wire format:
  * <pre>
- * [null bitmap if nullable]: ceil(rowCount/8) bytes
+ * [if null bitmap is present]: ceil(rowCount/8) bytes
  * [scale: 1 byte] - shared for entire column
  * [values]: (rowCount - nullCount) * valueSize bytes, big-endian
  * </pre>
@@ -62,9 +62,9 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     // For DECIMAL64
     private long currentValue64;
     private int currentValueIndex;
+    private boolean hasNullBitmap;
     // Wire pointers
     private long nullBitmapAddress;
-    private boolean nullable;
     private byte scale;
     // Configuration
     private byte typeCode;
@@ -75,7 +75,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (nullable && nullBitmapAddress != 0) {
+        if (hasNullBitmap && nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -94,7 +94,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = TYPE_DECIMAL64;
-        nullable = false;
+        hasNullBitmap = false;
         valueSize = 8;
         scale = 0;
         nullBitmapAddress = 0;
@@ -188,23 +188,23 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress address of column data
-     * @param dataLength  available bytes from dataAddress
-     * @param rowCount    number of rows
-     * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
-     * @param nullable    whether column is nullable
+     * @param dataAddress   address of column data
+     * @param dataLength    available bytes from dataAddress
+     * @param rowCount      number of rows
+     * @param typeCode      column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
+     * @param hasNullBitmap whether column has a null bitmap
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) throws QwpParseException {
+    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean hasNullBitmap) throws QwpParseException {
         this.typeCode = typeCode;
-        this.nullable = nullable;
+        this.hasNullBitmap = hasNullBitmap;
         this.valueSize = getDecimalValueSize(typeCode);
 
         int offset = 0;
         int nullCount = 0;
 
-        if (nullable) {
+        if (hasNullBitmap) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
