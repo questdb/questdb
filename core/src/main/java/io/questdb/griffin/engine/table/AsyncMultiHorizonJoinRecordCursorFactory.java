@@ -410,10 +410,10 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         final long bwdScanMinGap = atom.getBwdScanMinGap();
         final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
 
-        // Per-slave adaptive scan state
-        final long[] prevAsOfRowIds = new long[slaveCount];
-        final boolean[] isForwardScanModes = new boolean[slaveCount];
-        final long[] bwdScanRowsAtPositionStarts = new long[slaveCount];
+        // Per-slave adaptive scan state (pre-allocated per worker to avoid per-frame allocations)
+        final long[] prevAsOfRowIds = atom.getPrevAsOfRowIds(slotId);
+        final boolean[] isForwardScanModes = atom.getIsForwardScanModes(slotId);
+        final long[] bwdScanRowsAtPositionStarts = atom.getBwdScanRowsAtPositionStarts(slotId);
 
         // Reset all slave helpers for this frame
         for (int s = 0; s < slaveCount; s++) {

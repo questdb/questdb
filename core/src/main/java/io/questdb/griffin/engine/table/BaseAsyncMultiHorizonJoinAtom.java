@@ -108,9 +108,16 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     protected final int slaveCount;
     protected final int workerCount;
     private final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+    // Pre-allocated per-worker adaptive scan state arrays (avoids allocations on the data path)
+    private final long[] ownerBwdScanRowsAtPositionStarts;
+    private final boolean[] ownerIsForwardScanModes;
     // Pre-allocated per-worker lists for matched slave records (avoids allocations on the data path)
     private final ObjList<Record> ownerMatchedSlaveRecords;
+    private final long[] ownerPrevAsOfRowIds;
+    private final long[][] perWorkerBwdScanRowsAtPositionStarts;
+    private final boolean[][] perWorkerIsForwardScanModes;
     private final ObjList<ObjList<Record>> perWorkerMatchedSlaveRecords;
+    private final long[][] perWorkerPrevAsOfRowIds;
 
     protected BaseAsyncMultiHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -313,6 +320,14 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 perWorkerCombinedRecords.add(record);
             }
 
+            // Per-worker adaptive scan state (shared across slaves, avoids per-frame allocation)
+            this.ownerPrevAsOfRowIds = new long[slaveCount];
+            this.ownerIsForwardScanModes = new boolean[slaveCount];
+            this.ownerBwdScanRowsAtPositionStarts = new long[slaveCount];
+            this.perWorkerPrevAsOfRowIds = new long[workerCount][slaveCount];
+            this.perWorkerIsForwardScanModes = new boolean[workerCount][slaveCount];
+            this.perWorkerBwdScanRowsAtPositionStarts = new long[workerCount][slaveCount];
+
             // Per-worker matched slave record lists (shared across slaves, avoids per-frame allocation)
             this.ownerMatchedSlaveRecords = new ObjList<>(slaveCount);
             ownerMatchedSlaveRecords.setPos(slaveCount);
@@ -408,6 +423,13 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         return bwdScanMinGap;
     }
 
+    public long[] getBwdScanRowsAtPositionStarts(int slotId) {
+        if (slotId == -1) {
+            return ownerBwdScanRowsAtPositionStarts;
+        }
+        return perWorkerBwdScanRowsAtPositionStarts[slotId];
+    }
+
     public long getBwdScanSwitchFactor() {
         return bwdScanSwitchFactor;
     }
@@ -439,6 +461,13 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             return ownerCombinedRecord;
         }
         return perWorkerCombinedRecords.getQuick(slotId);
+    }
+
+    public boolean[] getIsForwardScanModes(int slotId) {
+        if (slotId == -1) {
+            return ownerIsForwardScanModes;
+        }
+        return perWorkerIsForwardScanModes[slotId];
     }
 
     public RecordSink getMasterAsOfJoinSink(int slotId, int slaveIndex) {
@@ -490,6 +519,13 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    public long[] getPrevAsOfRowIds(int slotId) {
+        if (slotId == -1) {
+            return ownerPrevAsOfRowIds;
+        }
+        return perWorkerPrevAsOfRowIds[slotId];
     }
 
     public RecordSink getSlaveAsOfJoinMapSink(int slotId, int slaveIndex) {

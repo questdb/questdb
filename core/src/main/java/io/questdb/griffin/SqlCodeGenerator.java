@@ -5153,7 +5153,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     pendingHorizonSlaveModels.add(slaveModel);
                                     closeSlaveOnFailure = false;
                                     ObjList<RecordCursorFactory> slaves = pendingHorizonSlaves;
-                                    ObjList<QueryModel> slaveMs = pendingHorizonSlaveModels;
+                                    ObjList<QueryModel> slaveModels = pendingHorizonSlaveModels;
                                     pendingHorizonSlaves = null;
                                     pendingHorizonSlaveModels = null;
                                     master = generateMultiHorizonJoinFactory(
@@ -5163,7 +5163,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             masterAlias,
                                             masterMetadata,
                                             slaves,
-                                            slaveMs,
+                                            slaveModels,
                                             executionContext
                                     );
                                 } else {
