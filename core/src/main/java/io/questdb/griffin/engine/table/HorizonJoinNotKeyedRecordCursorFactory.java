@@ -32,8 +32,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -185,7 +183,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
-        Misc.freeObjListAndClear(groupByFunctions);
+        Misc.freeObjList(groupByFunctions);
     }
 
     private class HorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
