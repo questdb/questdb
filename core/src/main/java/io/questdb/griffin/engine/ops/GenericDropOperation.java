@@ -49,7 +49,8 @@ public class GenericDropOperation implements Operation {
                             engine.getDdlListener(entityName).onTableOrViewOrMatViewDropped(tableToken);
                         }
                     }
-                    default -> {}
+                    default -> {
+                    }
                 }
             }
         }
