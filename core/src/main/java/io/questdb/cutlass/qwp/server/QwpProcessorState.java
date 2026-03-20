@@ -300,18 +300,18 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                     return;
                 }
 
-//                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
             }
 
         } catch (QwpParseException e) {
             LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getMessage()).$();
             reject(Status.PARSE_ERROR, e.getMessage(), fd);
-//        } catch (CommitFailedException e) {
-//            LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
-//            tudCache.setDistressed();
-//            rejectMsg.clear();
-//            rejectMsg.put("commit failed: ").put(e.getMessage());
-//            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
+        } catch (CommitFailedException e) {
+            LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
+            tudCache.setDistressed();
+            rejectMsg.clear();
+            rejectMsg.put("commit failed: ").put(e.getMessage());
+            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
         } catch (CairoException e) {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
             if (e.isAuthorizationError()) {
