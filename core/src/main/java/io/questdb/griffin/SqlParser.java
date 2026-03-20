@@ -2021,8 +2021,8 @@ public class SqlParser {
         int indexValueBlockSize = configuration.getIndexValueBlockSize();
         CharSequence tok = tok(lexer, "'type', 'capacity' or ')'");
         if (isTypeKeyword(tok)) {
-            int typePosition = lexer.getPosition();
             tok = tok(lexer, "index type name");
+            int typePosition = lexer.lastTokenPosition();
             indexType = IndexType.valueOf(tok);
             if (indexType == IndexType.NONE) {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
@@ -2079,7 +2079,7 @@ public class SqlParser {
 
         expectTok(lexer, tok, "capacity");
 
-        // CAPACITY only makes sense for SYMBOL index type
+        // CAPACITY only makes sense for BITMAP index type
         if (indexType != IndexType.BITMAP) {
             throw SqlException.position(lexer.lastTokenPosition())
                     .put("CAPACITY is only supported for BITMAP index type");

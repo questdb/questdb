@@ -99,7 +99,7 @@ public class O3Basket implements Mutable {
 
         if (this.indexCount < indexCount) {
             for (int i = this.indexCount; i < indexCount; i++) {
-                // Initially create with default SYMBOL type; nextIndexer() will recreate if needed
+                // Initially create with default BITMAP type; nextIndexer() will recreate if needed
                 indexers.add(IndexFactory.createWriter(IndexType.BITMAP, configuration));
                 indexerTypes.add(IndexType.BITMAP);
             }

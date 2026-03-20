@@ -48,7 +48,7 @@ public final class IndexFactory {
     /**
      * Returns the key file name for the given index type.
      *
-     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param indexType     the type of index (BITMAP, POSTING, FSST)
      * @param path          the path to append the file name to
      * @param columnName    the column name
      * @param columnNameTxn the column name transaction number
@@ -67,7 +67,7 @@ public final class IndexFactory {
     /**
      * Returns the value file name for the given index type.
      *
-     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param indexType     the type of index (BITMAP, POSTING, FSST)
      * @param path          the path to append the file name to
      * @param columnName    the column name
      * @param columnNameTxn the column name transaction number
@@ -86,9 +86,9 @@ public final class IndexFactory {
     /**
      * Initializes the key memory for a new index of the given type.
      *
-     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param indexType     the type of index (BITMAP, POSTING, FSST)
      * @param keyMem        the memory to initialize
-     * @param blockCapacity the value block capacity (used by SYMBOL type)
+     * @param blockCapacity the value block capacity (used by BITMAP type)
      * @throws CairoException if the index type is not supported
      */
     public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
@@ -106,7 +106,7 @@ public final class IndexFactory {
     /**
      * Creates a new index reader for the given index type and direction.
      *
-     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param indexType     the type of index (BITMAP, POSTING, FSST)
      * @param direction     the read direction (BitmapIndexReader.DIR_FORWARD or DIR_BACKWARD)
      * @param configuration Cairo configuration
      * @param path          base path to the index files
@@ -151,7 +151,7 @@ public final class IndexFactory {
      * Creates a new, uninitialized index writer for the given index type.
      * The writer must be initialized using one of the {@code of()} methods before use.
      *
-     * @param indexType     the type of index (SYMBOL, DELTA, FOR, etc.)
+     * @param indexType     the type of index (BITMAP, POSTING, FSST)
      * @param configuration Cairo configuration
      * @return a new IndexWriter instance
      * @throws CairoException if the index type is not supported

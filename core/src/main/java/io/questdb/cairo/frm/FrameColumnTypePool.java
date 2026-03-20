@@ -53,7 +53,7 @@ public interface FrameColumnTypePool {
             boolean init,
             boolean canWrite
     ) {
-        // Backward-compatible overload - defaults to SYMBOL index type if indexed
+        // Backward-compatible overload - defaults to BITMAP index type if indexed
         return create(
                 partitionPath,
                 columnName,

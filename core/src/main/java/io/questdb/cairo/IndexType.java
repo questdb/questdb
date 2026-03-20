@@ -33,7 +33,7 @@ import io.questdb.std.Chars;
  */
 public final class IndexType {
     /**
-     * FSST-compressed bitmap index. Uses Fast Succint Symbol Table compression for postings.
+     * FSST-compressed bitmap index. Uses Fast Succinct Symbol Table compression for postings.
      */
     public static final byte FSST = 3;
     /**

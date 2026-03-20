@@ -860,9 +860,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
             boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
-            indexType = indexed ? IndexType.BITMAP : IndexType.NONE;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
+                if (isTypeKeyword(tok)) {
+                    tok = expectToken(lexer, "index type name");
+                    indexType = IndexType.valueOf(tok);
+                    if (indexType == IndexType.NONE) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                    }
+                    tok = SqlUtil.fetchNext(lexer);
+                } else {
+                    indexType = IndexType.BITMAP;
+                }
+            } else {
+                indexType = IndexType.NONE;
             }
 
             if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {

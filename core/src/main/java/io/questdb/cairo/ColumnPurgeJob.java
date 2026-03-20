@@ -283,7 +283,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             continue;
                         }
                         int timestampType;
-                        byte indexType = IndexType.BITMAP; // default to SYMBOL for backward compatibility
+                        byte indexType = IndexType.BITMAP; // default to BITMAP for backward compatibility
                         try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                             timestampType = metadata.getTimestampType();
                             int columnIndex = metadata.getColumnIndexQuiet(columnName);
