@@ -35,18 +35,18 @@
         </file>
     </files>
     <fileSets>
-        <!-- jemalloc (Linux only) — built by CMake into bin-local -->
+        <!-- jemalloc (Linux only) -->
         <fileSet>
-            <directory>target/classes/io/questdb/bin-local</directory>
+            <directory>src/main/bin/${platform.dir.name}</directory>
             <includes>
                 <include>${jemalloc.so}</include>
             </includes>
             <outputDirectory>${runtime.name}/bin</outputDirectory>
         </fileSet>
 
-        <!-- questdb native C++ lib — built by CMake into bin-local -->
+        <!-- questdb native C++ lib -->
         <fileSet>
-            <directory>target/classes/io/questdb/bin-local</directory>
+            <directory>src/main/resources/io/questdb/bin/${platform.dir.name}</directory>
             <includes>
                 <include>libquestdb.*</include>
             </includes>

@@ -502,11 +502,6 @@
         </profile>
         <profile>
             <id>build-cxx-library</id>
-            <activation>
-                <property>
-                    <name>!skipNative</name>
-                </property>
-            </activation>
             <build>
                 <plugins>
                     <plugin>
