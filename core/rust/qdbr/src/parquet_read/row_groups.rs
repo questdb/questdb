@@ -101,6 +101,62 @@ fn decompress_varchar_slice_data<'a>(
     }
 }
 
+/// Apply post-decode conversions that cannot be handled by the per-page decode dispatch,
+/// typically because the source and target share the same physical representation.
+fn post_convert(
+    src_tag: ColumnTypeTag,
+    dst_tag: ColumnTypeTag,
+    bufs: &mut ColumnChunkBuffers,
+) -> ParquetResult<()> {
+    match (src_tag, dst_tag) {
+        (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
+            // Expand 1-byte boolean values (0/1) to 4-byte i32 values.
+            let n = bufs.data_vec.len();
+            if n == 0 {
+                return Ok(());
+            }
+            let needed = n * size_of::<i32>();
+            bufs.data_vec.reserve(needed - n)?;
+            unsafe { bufs.data_vec.set_len(needed) };
+            let ptr = bufs.data_vec.as_mut_ptr();
+            // Iterate backwards so wider writes don't overwrite unread bytes.
+            for i in (0..n).rev() {
+                let val = unsafe { *ptr.add(i) } as i32;
+                unsafe { (ptr.add(i * size_of::<i32>()) as *mut i32).write_unaligned(val) };
+            }
+        }
+        (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) => {
+            // Date milliseconds → Timestamp microseconds: multiply by 1000.
+            scale_i64_in_place(&mut bufs.data_vec, 1000, false);
+        }
+        (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) => {
+            // Timestamp microseconds → Date milliseconds: divide by 1000.
+            scale_i64_in_place(&mut bufs.data_vec, 1000, true);
+        }
+        _ => return Ok(()),
+    }
+    bufs.data_ptr = bufs.data_vec.as_mut_ptr();
+    bufs.data_size = bufs.data_vec.len();
+    Ok(())
+}
+
+/// Multiply or divide every non-null i64 in the buffer by `factor`.
+fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
+    let count = data.len() / size_of::<i64>();
+    let ptr = data.as_mut_ptr() as *mut i64;
+    for i in 0..count {
+        let val = unsafe { ptr.add(i).read_unaligned() };
+        let converted = if val == qdb_core::col_type::nulls::LONG {
+            qdb_core::col_type::nulls::LONG
+        } else if divide {
+            val / factor
+        } else {
+            val * factor
+        };
+        unsafe { ptr.add(i).write_unaligned(converted) };
+    }
+}
+
 impl ParquetDecoder {
     pub fn decode_row_group(
         &self,
@@ -152,14 +208,54 @@ impl ParquetDecoder {
                 column_type = to_column_type;
             }
 
+            let src_tag = column_type.tag();
             if column_type != to_column_type {
-                return Err(fmt_err!(
-                    InvalidType,
-                    "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type,
-                    column_type,
-                    column_idx
-                ));
+                // Allow fixed-to-fixed type conversions (ALTER COLUMN TYPE).
+                // The output buffer is sized for the target type. The decode dispatch
+                // reads the source physical type from parquet and converts on the fly.
+                match (src_tag, to_column_type.tag()) {
+                    // Integer widening
+                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Int, ColumnTypeTag::Long) |
+                    // Integer/float widening
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int, ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
+                    // Integer narrowing
+                    (ColumnTypeTag::Long, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Byte) |
+                    // Float/double narrowing to integer (range-checked in decoder)
+                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    // Timestamp/Date ↔ Long (same i64 representation)
+                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Date, ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Date) |
+                    // Date ↔ Timestamp (needs post-decode scaling)
+                    (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
+                    // Int ↔ Boolean
+                    (ColumnTypeTag::Int, ColumnTypeTag::Boolean) => {
+                        column_type = to_column_type;
+                    }
+                    // Boolean → Int: decode as boolean, post-expand to i32
+                    (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
+                        // Keep column_type as Boolean for decode; post-processing
+                        // expands the 1-byte boolean values to 4-byte integers.
+                    }
+                    _ => {
+                        return Err(fmt_err!(
+                            InvalidType,
+                            "requested column type {} does not match file column type {}, column index: {}",
+                            to_column_type,
+                            column_type,
+                            column_idx
+                        ));
+                    }
+                }
             }
 
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
@@ -200,6 +296,9 @@ impl ParquetDecoder {
                     return Err(err);
                 }
             }
+
+            // Post-decode conversions that cannot be handled by the decode dispatch.
+            post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
         }
 
         Ok(decoded)
@@ -276,14 +375,51 @@ impl ParquetDecoder {
                 column_type = to_column_type;
             }
 
+            let src_tag = column_type.tag();
             if column_type != to_column_type {
-                return Err(fmt_err!(
-                    InvalidType,
-                    "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type,
-                    column_type,
-                    column_idx
-                ));
+                match (src_tag, to_column_type.tag()) {
+                    // Integer widening
+                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Int, ColumnTypeTag::Long) |
+                    // Integer/float widening
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int, ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
+                    // Integer narrowing
+                    (ColumnTypeTag::Long, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Byte) |
+                    // Float/double narrowing to integer (range-checked in decoder)
+                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    // Timestamp/Date ↔ Long (same i64 representation)
+                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Date, ColumnTypeTag::Long) |
+                    (ColumnTypeTag::Long, ColumnTypeTag::Date) |
+                    // Date ↔ Timestamp (needs post-decode scaling)
+                    (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
+                    // Int ↔ Boolean
+                    (ColumnTypeTag::Int, ColumnTypeTag::Boolean) => {
+                        column_type = to_column_type;
+                    }
+                    // Boolean → Int: decode as boolean, post-expand to i32
+                    (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
+                        // Keep column_type as Boolean for decode; post-processing
+                        // expands the 1-byte boolean values to 4-byte integers.
+                    }
+                    _ => {
+                        return Err(fmt_err!(
+                            InvalidType,
+                            "requested column type {} does not match file column type {}, column index: {}",
+                            to_column_type,
+                            column_type,
+                            column_idx
+                        ));
+                    }
+                }
             }
 
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
@@ -327,6 +463,9 @@ impl ParquetDecoder {
                     return Err(err);
                 }
             }
+
+            // Post-decode conversions that cannot be handled by the decode dispatch.
+            post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
         }
 
         Ok(output_count)

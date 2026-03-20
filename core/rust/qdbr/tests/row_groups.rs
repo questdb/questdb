@@ -154,8 +154,8 @@ fn test_column_type_mismatch() {
     let mut rgb = RowGroupBuffers::new(allocator.clone());
     let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
 
-    // Request it as Int (type mismatch: file has Long, we request Int)
-    let wrong_type = ColumnType::new(ColumnTypeTag::Int, 0);
+    // Request it as Boolean (type mismatch: file has Long, we request Boolean)
+    let wrong_type = ColumnType::new(ColumnTypeTag::Boolean, 0);
     let columns = vec![(0i32, wrong_type)];
 
     let err = decoder

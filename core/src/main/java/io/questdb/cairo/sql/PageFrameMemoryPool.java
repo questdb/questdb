@@ -396,9 +396,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int queryDenseIdx = columnMapping.getColumnIndex(i);
             parquetIdx = denseIdxToParquetIdx.get(queryDenseIdx);
             if (parquetIdx >= 0) {
-                // Type-converted column found. Data conversion is not yet implemented,
-                // so leave the column at address 0 (NULL) for now.
-                throw CairoException.nonCritical().put("type conversion for ALTER COLUMN TYPE is not supported yet for parquet partitions");
+                // Type-converted column — tell Rust to decode as target type.
+                // Rust detects the mismatch with parquet's stored source type
+                // and applies fixed-to-fixed conversion during decode.
+                int targetType = addressCache.getColumnTypes().getQuick(i);
+                if (ColumnType.isSymbol(ColumnType.tagOf(targetType))) {
+                    // Symbol conversion not yet supported for parquet partitions.
+                    return;
+                }
+                if (ColumnType.tagOf(targetType) == ColumnType.VARCHAR) {
+                    targetType = ColumnType.VARCHAR_SLICE;
+                }
+                parquetColumns.add(parquetIdx);
+                fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                parquetColumns.add(targetType);
+                return;
             }
         }
 
