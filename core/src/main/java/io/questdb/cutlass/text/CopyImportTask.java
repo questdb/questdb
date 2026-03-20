@@ -553,7 +553,7 @@ public class CopyImportTask {
             ) {
                 for (int i = 0; i < columnCount; i++) {
                     if (metadata.isColumnIndexed(i)) {
-                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
+                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i), metadata.getColumnIndexType(i));
                     }
                 }
             }

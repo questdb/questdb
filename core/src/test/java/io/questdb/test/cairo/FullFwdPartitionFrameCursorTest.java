@@ -2357,7 +2357,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
 
-                writer.addIndex("a", configuration.getIndexValueBlockSize());
+                writer.addIndex("a", configuration.getIndexValueBlockSize(), IndexType.SYMBOL);
 
                 populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
                 writer.commit();
@@ -2470,7 +2470,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                writer.addIndex("a", configuration.getIndexValueBlockSize());
+                writer.addIndex("a", configuration.getIndexValueBlockSize(), IndexType.SYMBOL);
             }
 
             // check that each symbol in table exists in index as well

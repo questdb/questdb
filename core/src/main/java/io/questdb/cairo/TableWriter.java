@@ -731,7 +731,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -761,7 +761,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
-        final byte indexType = IndexType.SYMBOL;
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
         writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 

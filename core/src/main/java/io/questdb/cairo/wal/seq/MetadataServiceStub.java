@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
-    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 

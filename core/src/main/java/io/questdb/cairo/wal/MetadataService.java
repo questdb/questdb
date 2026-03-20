@@ -104,7 +104,7 @@ public interface MetadataService {
         );
     }
 
-    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 

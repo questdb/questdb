@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -250,8 +251,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 }
 
                 if (column.isIndexed()) {
-                    // INDEX CAPACITY value
-                    sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
+                    byte idxType = column.getIndexType();
+                    if (idxType == IndexType.SYMBOL) {
+                        sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
+                    } else {
+                        sink.putAscii(" INDEX TYPE ").putAscii(IndexType.nameOf(idxType));
+                    }
                 }
             }
 

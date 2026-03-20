@@ -2016,17 +2016,29 @@ public class SqlParser {
                     .put(']');
         }
 
-        int indexValueBlockSize;
-        if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
+        // Parse optional index type and/or capacity
+        byte indexType = IndexType.SYMBOL;
+        int indexValueBlockSize = configuration.getIndexValueBlockSize();
+        CharSequence tok = tok(lexer, "index type, 'capacity' or ')'");
+        // Try shorthand: INDEX(col POSTING)
+        byte directType = IndexType.valueOf(tok);
+        if (directType != IndexType.NONE && !isCapacityKeyword(tok)) {
+            indexType = directType;
+            tok = tok(lexer, "'capacity' or ')'");
+        }
+        if (isCapacityKeyword(tok)) {
+            if (indexType != IndexType.SYMBOL) {
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("CAPACITY is only supported for SYMBOL (legacy) index type");
+            }
             int errorPosition = lexer.getPosition();
             indexValueBlockSize = expectInt(lexer);
             TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
             indexValueBlockSize = Numbers.ceilPow2(indexValueBlockSize);
         } else {
-            indexValueBlockSize = configuration.getIndexValueBlockSize();
             lexer.unparseLast();
         }
-        model.setIndexType(IndexType.SYMBOL, columnNamePosition, indexValueBlockSize);
+        model.setIndexType(indexType, columnNamePosition, indexValueBlockSize);
         expectTok(lexer, ')');
     }
 
@@ -2046,9 +2058,17 @@ public class SqlParser {
             return tok;
         }
 
-        // Parse optional TYPE <type_name>
+        // Parse optional index type: INDEX POSTING or INDEX TYPE POSTING
         byte indexType = IndexType.SYMBOL;
-        if (isTypeKeyword(tok)) {
+        // First, try the shorthand: INDEX <typename>
+        byte directType = IndexType.valueOf(tok);
+        if (directType != IndexType.NONE && !isTypeKeyword(tok)) {
+            indexType = directType;
+            if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
+                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+                return tok;
+            }
+        } else if (isTypeKeyword(tok)) {
             tok = tok(lexer, "index type name");
             int typePosition = lexer.lastTokenPosition();
             indexType = IndexType.valueOf(tok);
@@ -2056,7 +2076,7 @@ public class SqlParser {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
 
-            if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
+            if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
                 model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
                 return tok;
             }

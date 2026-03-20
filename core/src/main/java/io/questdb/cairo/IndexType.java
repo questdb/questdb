@@ -33,6 +33,10 @@ import io.questdb.std.Chars;
  */
 public final class IndexType {
     /**
+     * FSST-compressed bitmap index. Uses Fast Succint Symbol Table compression for postings.
+     */
+    public static final byte FSST = 3;
+    /**
      * Mask for extracting the 2-bit index type value.
      */
     public static final int INDEX_TYPE_MASK = 0x03;
@@ -41,17 +45,13 @@ public final class IndexType {
      */
     public static final byte NONE = 0;
     /**
-     * Symbol index (original BitmapIndex for SYMBOL columns).
-     */
-    public static final byte SYMBOL = 1;
-    /**
      * Posting index. Delta + FoR64 bitpacking with stride-indexed layout.
      */
     public static final byte POSTING = 2;
     /**
-     * FSST-compressed bitmap index. Uses Finite State Symbol Table compression for postings.
+     * Symbol index (original BitmapIndex for SYMBOL columns).
      */
-    public static final byte FSST = 3;
+    public static final byte SYMBOL = 1;
 
     private IndexType() {
         // Utility class, no instances

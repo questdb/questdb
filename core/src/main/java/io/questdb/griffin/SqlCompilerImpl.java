@@ -1133,7 +1133,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int columnNamePosition,
             CharSequence columnName,
             TableRecordMetadata metadata,
-            int indexValueBlockSize
+            int indexValueBlockSize,
+            byte indexType
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1154,7 +1155,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableToken,
                 metadata.getTableId(),
                 columnName,
-                Numbers.ceilPow2(indexValueBlockSize)
+                Numbers.ceilPow2(indexValueBlockSize),
+                indexType
         );
         securityContext.authorizeAlterTableAddIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
@@ -1952,21 +1954,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     final int indexValueBlockSize;
                     final boolean sizeInferred;
+                    byte indexType = IndexType.SYMBOL;
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || isSemicolon(tok)) {
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {
-                        if (!SqlKeywords.isCapacityKeyword(tok)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                        // Try to parse an index type name
+                        byte parsedType = IndexType.valueOf(tok);
+                        if (parsedType != IndexType.NONE) {
+                            indexType = parsedType;
+                            tok = SqlUtil.fetchNext(lexer);
                         }
-                        tok = expectToken(lexer, "index capacity value");
-                        try {
-                            indexValueBlockSize = Numbers.parseInt(tok);
-                            sizeInferred = false;
-                        } catch (NumericException e) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                        if (tok == null || isSemicolon(tok)) {
+                            indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
+                            sizeInferred = true;
+                        } else {
+                            if (!SqlKeywords.isCapacityKeyword(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                            }
+                            if (indexType != IndexType.SYMBOL) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for SYMBOL (legacy) index type");
+                            }
+                            tok = expectToken(lexer, "index capacity value");
+                            try {
+                                indexValueBlockSize = Numbers.parseInt(tok);
+                                sizeInferred = false;
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                            }
                         }
                     }
 
@@ -1983,7 +2000,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             columnNamePosition,
                             columnName,
                             tableMetadata,
-                            indexValueBlockSize
+                            indexValueBlockSize,
+                            indexType
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     expectKeyword(lexer, "index");
@@ -2317,11 +2335,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
                         int indexValueCapacity = -1;
+                        byte indexType = IndexType.SYMBOL;
 
-                        if (tok != null && (!isSemicolon(tok))) {
-                            if (!isCapacityKeyword(tok)) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
-                            } else {
+                        if (tok != null && !isSemicolon(tok)) {
+                            // Try to parse an index type name
+                            byte parsedType = IndexType.valueOf(tok);
+                            if (parsedType != IndexType.NONE) {
+                                indexType = parsedType;
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            // tok might be CAPACITY, semicolon, or null
+                            if (tok != null && !isSemicolon(tok)) {
+                                if (!isCapacityKeyword(tok)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
+                                }
+                                if (indexType != IndexType.SYMBOL) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for SYMBOL (legacy) index type");
+                                }
                                 tok = expectToken(lexer, "capacity value");
                                 try {
                                     indexValueCapacity = Numbers.parseInt(tok);
@@ -2341,7 +2371,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnNamePosition,
                                 columnName,
                                 tableMetadata,
-                                indexValueCapacity
+                                indexValueCapacity,
+                                indexType
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index' or 'parquet'");
