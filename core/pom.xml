@@ -213,7 +213,7 @@
                             tcp::addr=localhost:9002;user=testUser1;token=UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=;
                         </QDB_CLIENT_CONF>
                         <!-- Used by cargo when running a test with code coverage -->
-                        <LLVM_PROFILE_FILE>questdbr-junit-%p-%m.profraw</LLVM_PROFILE_FILE>
+                        <LLVM_PROFILE_FILE>questdbr-junit.profraw</LLVM_PROFILE_FILE>
                     </environmentVariables>
                 </configuration>
             </plugin>
@@ -677,13 +677,13 @@
                                 <goals>
                                     <goal>test</goal>
                                 </goals>
-                                <phase>test</phase>
+                                <phase>none</phase>
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
-                                        <LLVM_PROFILE_FILE>questdbr-cargo-test-%p-%m.profraw</LLVM_PROFILE_FILE>
+                                        <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
                                     </environmentVariables>
                                 </configuration>
                             </execution>

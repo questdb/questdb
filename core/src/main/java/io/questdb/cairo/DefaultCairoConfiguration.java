@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -750,8 +750,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
+    }
+
+    @Override
     public int getPartitionEncoderParquetDataPageSize() {
         return 0; // use default (1024*1024) bytes
+    }
+
+    @Override
+    public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return 1024 * 1024 * 1024L;
+    }
+
+    @Override
+    public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return 0.5;
     }
 
     @Override

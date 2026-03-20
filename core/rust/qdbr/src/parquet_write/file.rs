@@ -18,7 +18,9 @@ use parquet2::write::{
 };
 use qdb_core::error::CoreResult;
 
-use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
+use crate::parquet_write::schema::{
+    to_compressions, to_encodings, to_parquet_schema, Column, Partition,
+};
 use crate::parquet_write::{
     array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar,
 };
@@ -34,7 +36,19 @@ pub const DEFAULT_BLOOM_FILTER_FPP: f64 = 0.01;
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 pub const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
-#[derive(Debug, Clone, PartialEq)]
+/// Returns the compression for a given column, using per-column override if available.
+fn column_compression(
+    per_column_compressions: &[Option<CompressionOptions>],
+    global_compression: CompressionOptions,
+    col_idx: usize,
+) -> CompressionOptions {
+    per_column_compressions
+        .get(col_idx)
+        .and_then(|opt| *opt)
+        .unwrap_or(global_compression)
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct WriteOptions {
     /// Whether to write statistics
     pub write_statistics: bool,
@@ -48,10 +62,11 @@ pub struct WriteOptions {
     pub data_page_size: Option<usize>,
     /// If true array columns will be encoded in native QDB format instead of nested lists
     pub raw_array_encoding: bool,
-    /// Set of column indices that should have bloom filters written
-    pub bloom_filter_columns: HashSet<usize>,
     /// False positive probability for bloom filters
     pub bloom_filter_fpp: f64,
+    /// Minimum compression ratio (uncompressed/compressed) to keep compressed output.
+    /// A value of 0.0 (or <= 1.0) means always keep compressed output.
+    pub min_compression_ratio: f64,
 }
 
 pub struct ParquetWriter<W: Write> {
@@ -75,6 +90,8 @@ pub struct ParquetWriter<W: Write> {
     bloom_filter_columns: HashSet<usize>,
     /// False positive probability for bloom filters
     bloom_filter_fpp: f64,
+    /// Minimum compression ratio to keep compressed output
+    min_compression_ratio: f64,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -95,6 +112,7 @@ impl<W: Write> ParquetWriter<W> {
             parallel: false,
             bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         }
     }
 
@@ -164,6 +182,13 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    /// Set the minimum compression ratio to keep compressed output.
+    /// A value of 0.0 means always keep compressed output.
+    pub fn with_min_compression_ratio(mut self, min_compression_ratio: f64) -> Self {
+        self.min_compression_ratio = min_compression_ratio;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -172,8 +197,8 @@ impl<W: Write> ParquetWriter<W> {
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
-            bloom_filter_columns: self.bloom_filter_columns.clone(),
             bloom_filter_fpp: self.bloom_filter_fpp,
+            min_compression_ratio: self.min_compression_ratio,
         }
     }
 
@@ -181,6 +206,16 @@ impl<W: Write> ParquetWriter<W> {
         self,
         parquet_schema: SchemaDescriptor,
         encodings: Vec<Encoding>,
+    ) -> ParquetResult<ChunkedWriter<W>> {
+        let compressions = encodings.iter().map(|_| None).collect();
+        self.chunked_with_compressions(parquet_schema, encodings, compressions)
+    }
+
+    pub fn chunked_with_compressions(
+        self,
+        parquet_schema: SchemaDescriptor,
+        encodings: Vec<Encoding>,
+        per_column_compressions: Vec<Option<CompressionOptions>>,
     ) -> ParquetResult<ChunkedWriter<W>> {
         let options = self.write_options();
         let parallel = self.parallel;
@@ -203,6 +238,8 @@ impl<W: Write> ParquetWriter<W> {
             parquet_schema,
             encodings,
             options,
+            per_column_compressions,
+            bloom_filter_columns: self.bloom_filter_columns,
             parallel,
         })
     }
@@ -211,7 +248,8 @@ impl<W: Write> ParquetWriter<W> {
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
         let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
         let encodings = to_encodings(&partition);
-        let mut chunked = self.chunked(schema, encodings)?;
+        let compressions = to_compressions(&partition);
+        let mut chunked = self.chunked_with_compressions(schema, encodings, compressions)?;
         chunked.write_chunk(&partition)?;
         chunked.finish(additional_meta)
     }
@@ -222,6 +260,8 @@ pub struct ChunkedWriter<W: Write> {
     parquet_schema: SchemaDescriptor,
     encodings: Vec<Encoding>,
     options: WriteOptions,
+    per_column_compressions: Vec<Option<CompressionOptions>>,
+    bloom_filter_columns: HashSet<usize>,
     parallel: bool,
 }
 
@@ -251,7 +291,9 @@ impl<W: Write> ChunkedWriter<W> {
                 length,
                 schema.fields(),
                 &self.encodings,
-                self.options.clone(),
+                self.options,
+                &self.per_column_compressions,
+                &self.bloom_filter_columns,
                 self.parallel,
             )?;
             self.writer.write(row_group, &bloom_hashes)?;
@@ -272,7 +314,9 @@ impl<W: Write> ChunkedWriter<W> {
             last_partition_end,
             schema.fields(),
             &self.encodings,
-            self.options.clone(),
+            self.options,
+            &self.per_column_compressions,
+            &self.bloom_filter_columns,
             self.parallel,
         )?;
         self.writer.write(row_group, &bloom_hashes)?;
@@ -288,6 +332,7 @@ impl<W: Write> ChunkedWriter<W> {
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group(
     partition: &Partition,
     offset: usize,
@@ -295,9 +340,10 @@ pub fn create_row_group(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    per_column_compressions: &[Option<CompressionOptions>],
+    bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
-    let compression = options.compression;
     let num_columns = partition.columns.len();
 
     // Collect unique hash values for bloom filter construction.
@@ -320,7 +366,7 @@ pub fn create_row_group(
     // This is acceptable as it's temporary memory released after row group is written.
     let bloom_hashes: BloomHashes = (0..num_columns)
         .map(|col_idx| {
-            if options.bloom_filter_columns.contains(&col_idx) {
+            if bloom_filter_columns.contains(&col_idx) {
                 Some(Arc::new(Mutex::new(HashSet::new())))
             } else {
                 None
@@ -328,39 +374,47 @@ pub fn create_row_group(
         })
         .collect();
 
+    // WriteOptions is Copy (no heap fields), so per-column copies are trivial.
     let col_to_iter = |column: &Column,
                        column_type: &ParquetType,
                        encoding: &Encoding,
-                       options: &WriteOptions,
+                       compression: Option<CompressionOptions>,
+                       options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
      -> ParquetResult<
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
     > {
+        let col_compression = compression.unwrap_or(options.compression);
+        let col_options = if column.designated_timestamp {
+            WriteOptions { write_statistics: true, ..options }
+        } else {
+            options
+        };
         let pages = column_chunk_to_pages(
             *column,
             column_type.clone(),
             offset,
             length,
-            options.clone(),
+            col_options,
             *encoding,
             bloom_set,
         )?;
-
-        let compressor = Compressor::new(pages, compression, vec![]);
+        let min_ratio = options.min_compression_ratio;
+        let compressor = Compressor::new(pages, col_compression, vec![], min_ratio);
         Ok(DynStreamingIterator::new(compressor))
     };
 
     let columns: Vec<_> = if parallel {
-        let options = options.clone();
         POOL.install(|| {
             partition
                 .columns
                 .par_iter()
                 .zip(column_types)
                 .zip(encoding)
+                .zip(per_column_compressions)
                 .zip(&bloom_hashes)
-                .map(|(((column, column_type), enc), bloom)| {
-                    col_to_iter(column, column_type, enc, &options, bloom.clone())
+                .map(|((((column, column_type), enc), comp), bloom)| {
+                    col_to_iter(column, column_type, enc, *comp, options, bloom.clone())
                 })
                 .collect::<ParquetResult<Vec<_>>>()
         })?
@@ -370,9 +424,10 @@ pub fn create_row_group(
             .iter()
             .zip(column_types)
             .zip(encoding)
+            .zip(per_column_compressions)
             .zip(&bloom_hashes)
-            .map(|(((column, column_type), enc), bloom)| {
-                col_to_iter(column, column_type, enc, &options, bloom.clone())
+            .map(|((((column, column_type), enc), comp), bloom)| {
+                col_to_iter(column, column_type, enc, *comp, options, bloom.clone())
             })
             .collect::<ParquetResult<Vec<_>>>()?
     };
@@ -394,6 +449,7 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions(
     partitions: &[&Partition],
     first_partition_start: usize,
@@ -401,20 +457,25 @@ pub fn create_row_group_from_partitions(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    per_column_compressions: &[Option<CompressionOptions>],
+    bloom_filter_columns: &HashSet<usize>,
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
-    assert!(!partitions.is_empty(), "partitions cannot be empty");
+    if partitions.is_empty() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "create_row_group_from_partitions: partitions cannot be empty"
+        ));
+    }
     let num_columns = partitions[0].columns.len();
     let num_partitions = partitions.len();
-
-    let compression = options.compression;
 
     // Collect unique hash values for bloom filter construction.
     // See comment in create_row_group() for rationale on using HashSet vs direct bloom
     // filter writing. Memory: ~20 bytes per distinct value, ~20MB for 1M unique values.
     let bloom_hashes: BloomHashes = (0..num_columns)
         .map(|col_idx| {
-            if options.bloom_filter_columns.contains(&col_idx) {
+            if bloom_filter_columns.contains(&col_idx) {
                 Some(Arc::new(Mutex::new(HashSet::new())))
             } else {
                 None
@@ -422,15 +483,34 @@ pub fn create_row_group_from_partitions(
         })
         .collect();
 
+    // WriteOptions is Copy (no heap fields), so per-column copies are trivial.
     let col_to_iter = |col_idx: usize,
-                       options: &WriteOptions,
+                       options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
      -> ParquetResult<
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
     > {
         let column_type = &column_types[col_idx];
-        let col_encoding = encoding[col_idx];
+        let mut col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];
+        let col_compression =
+            column_compression(per_column_compressions, options.compression, col_idx);
+
+        // Multi-partition dict encoding fallback: when merging multiple partitions,
+        // non-Symbol dict columns would emit multiple DictPages per column chunk
+        // (invalid Parquet). Fall back to the type's default encoding.
+        if num_partitions > 1
+            && col_encoding == Encoding::RleDictionary
+            && !first_partition_column.data_type.is_symbol()
+        {
+            col_encoding = super::schema::encoding_map(first_partition_column.data_type);
+        }
+
+        let options = if first_partition_column.designated_timestamp {
+            WriteOptions { write_statistics: true, ..options }
+        } else {
+            options
+        };
 
         let partition_ranges: Vec<(Column, usize, usize)> = partitions
             .iter()
@@ -462,39 +542,49 @@ pub fn create_row_group_from_partitions(
             let pages = symbol_column_to_pages_multi_partition(
                 &partition_ranges,
                 primitive_type,
-                options.clone(),
+                options,
                 bloom_set,
             )?;
 
-            let compressor = Compressor::new(pages.into_iter().map(Ok), compression, vec![]);
+            let min_ratio = options.min_compression_ratio;
+            let compressor = Compressor::new(
+                pages.into_iter().map(Ok),
+                col_compression,
+                vec![],
+                min_ratio,
+            );
             return Ok(DynStreamingIterator::new(compressor));
         }
 
         let all_pages = collect_multi_partition_pages(
             &partition_ranges,
             column_type,
-            options,
+            &options,
             col_encoding,
             bloom_set,
         )?;
 
-        let compressor = Compressor::new(all_pages.into_iter(), compression, vec![]);
+        let compressor = Compressor::new(
+            all_pages.into_iter(),
+            col_compression,
+            vec![],
+            options.min_compression_ratio,
+        );
         Ok(DynStreamingIterator::new(compressor))
     };
 
     let columns: Vec<_> = if parallel {
-        let options = options.clone();
         POOL.install(|| {
             (0..num_columns)
                 .into_par_iter()
                 .zip(&bloom_hashes)
-                .map(|(col_idx, bloom)| col_to_iter(col_idx, &options, bloom.clone()))
+                .map(|(col_idx, bloom)| col_to_iter(col_idx, options, bloom.clone()))
                 .collect::<ParquetResult<Vec<_>>>()
         })?
     } else {
         (0..num_columns)
             .zip(&bloom_hashes)
-            .map(|(col_idx, bloom)| col_to_iter(col_idx, &options, bloom.clone()))
+            .map(|(col_idx, bloom)| col_to_iter(col_idx, options, bloom.clone()))
             .collect::<ParquetResult<Vec<_>>>()?
     };
 
@@ -542,7 +632,7 @@ fn collect_multi_partition_pages(
             column_type.clone(),
             offset,
             length,
-            options.clone(),
+            *options,
             encoding,
             bloom_set.clone(),
         )?;
@@ -570,6 +660,8 @@ fn symbol_column_to_pages_multi_partition(
     let partition_slices: Vec<(&[i32], usize, bool)> = partition_ranges
         .iter()
         .map(|(col, offset, length)| {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i32` values.
             let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
             let (keys_slice, adjusted_column_top) =
                 compute_symbol_slice(keys, col.column_top, *offset, *length);
@@ -602,7 +694,7 @@ fn symbol_column_to_pages_multi_partition(
             keys_slice,
             adjusted_column_top,
             global_info.max_key,
-            options.clone(),
+            options,
             primitive_type.clone(),
             offsets,
             chars,
@@ -640,7 +732,7 @@ fn compute_symbol_slice(
     (&keys[lower_bound..upper_bound], adjusted_column_top)
 }
 
-fn column_chunk_to_pages(
+pub(crate) fn column_chunk_to_pages(
     column: Column,
     parquet_type: ParquetType,
     chunk_offset: usize,
@@ -700,7 +792,7 @@ fn column_chunk_to_group_pages(
             parquet_type.clone(),
             offset,
             length,
-            options.clone(),
+            options,
             encoding,
         )
     });
@@ -743,6 +835,8 @@ fn chunk_to_group_page(
                 Some(t) => Ok(t),
             }?;
             let dim = column.data_type.array_dimensionality()? as usize;
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             array::array_to_page(
@@ -790,6 +884,337 @@ fn array_primitive_type(parquet_type: ParquetType) -> Option<PrimitiveType> {
     primitive_type.cloned()
 }
 
+/// Dispatch to the appropriate dict encoder for a column chunk with RleDictionary encoding.
+/// This handles all types except Symbol (handled earlier) and Varchar (handled earlier).
+fn column_chunk_to_dict_pages(
+    column: Column,
+    primitive_type: PrimitiveType,
+    chunk_offset: usize,
+    chunk_length: usize,
+    options: WriteOptions,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let orig_column_top = column.column_top;
+
+    let mut adjusted_column_top = 0;
+    let lower_bound = if chunk_offset < orig_column_top {
+        adjusted_column_top = orig_column_top - chunk_offset;
+        0
+    } else {
+        chunk_offset - orig_column_top
+    };
+    let upper_bound = if chunk_offset + chunk_length < orig_column_top {
+        adjusted_column_top = chunk_length;
+        0
+    } else {
+        chunk_offset + chunk_length - orig_column_top
+    };
+
+    match column.data_type.tag() {
+        ColumnTypeTag::Int => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i32` values.
+            let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Long | ColumnTypeTag::Date => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
+            let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Timestamp => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
+            let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
+            if column.designated_timestamp {
+                // Designated timestamp is NOT NULL; treat as nullable with 0 nulls
+                // since the dict encoder handles optional repetition.
+                // Fall back to the notnull int encoder approach.
+                primitive::int_slice_to_dict_pages_notnull::<i64, i64>(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    bloom_hashes,
+                )
+            } else {
+                primitive::slice_to_dict_pages_simd(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    bloom_hashes,
+                )
+            }
+        }
+        ColumnTypeTag::Float => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f32` values.
+            let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Double => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f64` values.
+            let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Byte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i8` values.
+            let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_notnull::<i8, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Short => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i16` values.
+            let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_notnull::<i16, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Char => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `u16` values.
+            let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_notnull::<u16, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::IPv4 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `IPv4` values.
+            let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<IPv4, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::GeoByte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoByte` values.
+            let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoByte, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::GeoShort => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoShort` values.
+            let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoShort, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::GeoInt => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoInt` values.
+            let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoInt, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::GeoLong => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoLong` values.
+            let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoLong, i64>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::String => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
+            let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
+            let data = column.primary_data;
+            string::string_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Binary => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
+            let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
+            let data = column.primary_data;
+            binary::binary_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
+            let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
+            let data: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
+            fixed_len_bytes::bytes_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                reversed,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Long256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 32]` values.
+            let data: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
+            fixed_len_bytes::bytes_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                false,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Decimal8 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal8` values.
+            let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Decimal16 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal16` values.
+            let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Decimal32 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal32` values.
+            let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Decimal64 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal64` values.
+            let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Decimal128 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal128` values.
+            let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        ColumnTypeTag::Decimal256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal256` values.
+            let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            )
+        }
+        _ => Err(fmt_err!(
+            Unsupported,
+            "RleDictionary encoding not supported for column type {:?}",
+            column.data_type.tag()
+        )),
+    }
+}
+
 fn column_chunk_to_primitive_pages(
     column: Column,
     primitive_type: PrimitiveType,
@@ -800,6 +1225,8 @@ fn column_chunk_to_primitive_pages(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     if column.data_type.tag() == ColumnTypeTag::Symbol {
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+        // The byte content represents valid `i32` values.
         let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
 
         let offsets = column.symbol_offsets;
@@ -841,6 +1268,8 @@ fn column_chunk_to_primitive_pages(
             .transpose()?;
         let bloom_hashes = bloom_guard.as_deref_mut();
 
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+        // The byte content represents valid `[u8; 16]` values.
         let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
         let data = column.primary_data;
         let orig_column_top = column.column_top;
@@ -859,12 +1288,46 @@ fn column_chunk_to_primitive_pages(
             chunk_offset + chunk_length - orig_column_top
         };
 
-        return varchar::varchar_to_dict_pages(
-            &aux[lower_bound..upper_bound],
-            data,
-            adjusted_column_top,
-            options,
+        return match encoding {
+            Encoding::DeltaLengthByteArray | Encoding::Plain => {
+                let page = varchar::varchar_to_page(
+                    &aux[lower_bound..upper_bound],
+                    data,
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    encoding,
+                    bloom_hashes,
+                )?;
+                Ok(DynIter::new(std::iter::once(Ok(page))))
+            }
+            _ => varchar::varchar_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            ),
+        };
+    }
+
+    if encoding == Encoding::RleDictionary {
+        let mut bloom_guard = bloom_set
+            .as_ref()
+            .map(|arc| {
+                arc.lock()
+                    .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+            })
+            .transpose()?;
+        let bloom_hashes = bloom_guard.as_deref_mut();
+
+        return column_chunk_to_dict_pages(
+            column,
             primitive_type,
+            chunk_offset,
+            chunk_length,
+            options,
             bloom_hashes,
         );
     }
@@ -885,7 +1348,7 @@ fn column_chunk_to_primitive_pages(
                 chunk_offset + offset,
                 length,
                 primitive_type.clone(),
-                options.clone(),
+                options,
                 encoding,
                 bloom_set.as_ref(),
             )?;
@@ -939,6 +1402,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Byte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i8` values.
             let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i8, i32>(
                 &data[lower_bound..upper_bound],
@@ -950,6 +1415,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Char => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `u16` values.
             let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<u16, i32>(
                 &data[lower_bound..upper_bound],
@@ -961,6 +1428,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Short => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i16` values.
             let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i16, i32>(
                 &data[lower_bound..upper_bound],
@@ -972,6 +1441,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Int => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i32` values.
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -984,6 +1455,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::IPv4 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `IPv4` values.
             let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<_, i32, true>(
                 &data[lower_bound..upper_bound],
@@ -995,6 +1468,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1007,6 +1482,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Timestamp => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             if column.designated_timestamp {
                 // Designated timestamp column is NOT NULL, no need for SIMD def level encoding
@@ -1031,6 +1508,8 @@ fn chunk_to_primitive_page(
             }
         }
         ColumnTypeTag::GeoByte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoByte` values.
             let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<_, i32, false>(
                 &data[lower_bound..upper_bound],
@@ -1042,6 +1521,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoShort => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoShort` values.
             let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<_, i32, false>(
                 &data[lower_bound..upper_bound],
@@ -1053,6 +1534,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoInt => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoInt` values.
             let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<_, i32, false>(
                 &data[lower_bound..upper_bound],
@@ -1064,6 +1547,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoLong => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoLong` values.
             let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<_, i64, false>(
                 &data[lower_bound..upper_bound],
@@ -1075,6 +1560,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Float => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f32` values.
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1087,6 +1574,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Double => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f64` values.
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1099,6 +1588,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Binary => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             binary::binary_to_page(
@@ -1112,6 +1603,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::String => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             string::string_to_page(
@@ -1130,6 +1623,8 @@ fn chunk_to_primitive_page(
             column.name,
         )),
         ColumnTypeTag::Array => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             array::array_to_raw_page(
@@ -1143,6 +1638,8 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
             let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let data: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &data[lower_bound..upper_bound],
@@ -1154,6 +1651,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Long256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 32]` values.
             let data: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &data[lower_bound..upper_bound],
@@ -1170,6 +1669,8 @@ fn chunk_to_primitive_page(
             column.name,
         )),
         ColumnTypeTag::Decimal8 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal8` values.
             let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1180,6 +1681,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal16 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal16` values.
             let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1190,6 +1693,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal32 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal32` values.
             let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1200,6 +1705,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal64 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal64` values.
             let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1210,6 +1717,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal128 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal128` values.
             let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1220,6 +1729,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal256` values.
             let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],

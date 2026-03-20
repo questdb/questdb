@@ -263,4 +263,42 @@ mod tests {
         assert_eq!(result, vec![0; 100]);
         Ok(())
     }
+
+    #[test]
+    fn roundtrip_long_runs() -> Result<(), Error> {
+        // 1000 identical values — exercises RLE encoding path.
+        let mut buffer = vec![];
+        let num_bits = 8u32;
+        let data = vec![42u32; 1000];
+        let len = data.len();
+
+        encode_u32(&mut buffer, data.iter().cloned(), len, num_bits).unwrap();
+
+        let decoder = HybridRleDecoder::try_new(&buffer, num_bits, len)?;
+        let result = decoder.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(result, data);
+        Ok(())
+    }
+
+    #[test]
+    fn roundtrip_mixed_runs_and_sequential() -> Result<(), Error> {
+        // Mixed data: runs interspersed with sequential values.
+        let mut data = Vec::new();
+        data.extend(vec![5u32; 200]);       // long run
+        data.extend(0..100);                 // sequential
+        data.extend(vec![99u32; 300]);       // long run
+        data.extend((0..50).map(|x| x % 7)); // low-cardinality mix
+        data.extend(vec![0u32; 150]);        // run of zeros
+
+        let mut buffer = vec![];
+        let num_bits = 10u32;
+        let len = data.len();
+
+        encode_u32(&mut buffer, data.iter().cloned(), len, num_bits).unwrap();
+
+        let decoder = HybridRleDecoder::try_new(&buffer, num_bits, len)?;
+        let result = decoder.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(result, data);
+        Ok(())
+    }
 }

@@ -2,7 +2,9 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
-use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
+use crate::parquet_write::util::{
+    build_plain_page, encode_all_ones_def_levels, encode_primitive_def_levels, ExactSizedIter,
+};
 use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
@@ -182,13 +184,26 @@ pub fn symbol_to_data_page_only(
         "local key exceeds global_max_key, encoding would be invalid"
     );
 
+    // Always encode def levels so the file-level schema stays OPTIONAL
+    // across O3 merges.  When there are no nulls (required=true), a
+    // single RLE run of 1s is ~3 bytes regardless of row count.
     let definition_levels_byte_length = if required {
-        debug_assert!(column_top == 0);
-        debug_assert!(
-            data_null_count == 0,
-            "required column should not have nulls"
-        );
-        0
+        if column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_data_page_only: required column has column_top {}",
+                column_top
+            ));
+        }
+        if data_null_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_data_page_only: required column has {} nulls",
+                data_null_count
+            ));
+        }
+        encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
+        data_buffer.len()
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
@@ -232,7 +247,7 @@ pub fn symbol_to_data_page_only(
         primitive_type,
         options,
         Encoding::RleDictionary,
-        required,
+        false, // always OPTIONAL: def levels are always encoded
     )?;
 
     Ok(Page::Data(data_page))
@@ -380,13 +395,26 @@ pub fn symbol_to_pages(
     // Total nulls includes column_top (all null) + nulls in data
     let total_null_count = column_top + data_null_count;
 
+    // Always encode def levels so the file-level schema stays OPTIONAL
+    // across O3 merges.  When there are no nulls (required=true), a
+    // single RLE run of 1s is ~3 bytes regardless of row count.
     let definition_levels_byte_length = if required {
-        debug_assert!(column_top == 0);
-        debug_assert!(
-            data_null_count == 0,
-            "required column should not have nulls"
-        );
-        0
+        if column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_pages: required column has column_top {}",
+                column_top
+            ));
+        }
+        if data_null_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_pages: required column has {} nulls",
+                data_null_count
+            ));
+        }
+        encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
+        data_buffer.len()
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
@@ -438,7 +466,7 @@ pub fn symbol_to_pages(
         primitive_type,
         options,
         Encoding::RleDictionary,
-        required,
+        false, // always OPTIONAL: def levels are always encoded
     )?;
 
     let uniq_vals = if !dict_buffer.is_empty() {

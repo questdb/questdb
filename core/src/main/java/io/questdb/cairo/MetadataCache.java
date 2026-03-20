@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -245,6 +245,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
                 column.setWriterIndex(writerIndex);
 
                 boolean isDesignated = writerIndex == timestampWriterIndex;
@@ -602,6 +603,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
+                column.setParquetEncodingConfig(columnMetadata.getParquetEncodingConfig());
 
                 int writerIndex = columnMetadata.getWriterIndex();
                 column.setWriterIndex(writerIndex);
