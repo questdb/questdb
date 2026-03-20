@@ -6111,15 +6111,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
                 final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
+                final CompiledFilter compiledFilter0 = compiledFilter;
+                final MemoryCARW bindVarMemory0 = bindVarMemory;
+                final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+                final Function filter0 = filter;
+                final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
                 innerMetadata = null;
                 groupByFunctions = null;
                 perWorkerGroupByFunctions = null;
                 slaveStates = null;
                 isSlaveFactoriesTransferred = true;
-                final CompiledFilter compiledFilter0 = compiledFilter;
-                final MemoryCARW bindVarMemory0 = bindVarMemory;
-                final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
-                final Function filter0 = filter;
                 compiledFilter = null;
                 bindVarMemory = null;
                 bindVarFunctions = null;
@@ -6150,7 +6151,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         bindVarFunctions0,
                         filter0,
                         filterUsedColumnIndexes,
-                        perWorkerFilters,
+                        perWorkerFilters0,
                         workerCount
                 );
             }
@@ -6175,15 +6176,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
             final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
             final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
+            final CompiledFilter compiledFilter0 = compiledFilter;
+            final MemoryCARW bindVarMemory0 = bindVarMemory;
+            final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+            final Function filter0 = filter;
+            final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
             innerMetadata = null;
             groupByFunctions = null;
             perWorkerGroupByFunctions = null;
             slaveStates = null;
             isSlaveFactoriesTransferred = true;
-            final CompiledFilter compiledFilter0 = compiledFilter;
-            final MemoryCARW bindVarMemory0 = bindVarMemory;
-            final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
-            final Function filter0 = filter;
             compiledFilter = null;
             bindVarMemory = null;
             bindVarFunctions = null;
@@ -6219,7 +6221,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     bindVarFunctions0,
                     filter0,
                     filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    perWorkerFilters0,
                     workerCount
             );
         } catch (Throwable th) {
