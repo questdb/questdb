@@ -3497,6 +3497,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
+        ObjList<Function> perWorkerFilters = null;
 
         try {
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
@@ -3853,7 +3854,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
+            perWorkerFilters = compileWorkerFiltersConditionally(
                     executionContext,
                     filter,
                     workerCount,
@@ -3961,6 +3962,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);
             Misc.free(filter);
+            Misc.freeObjList(perWorkerFilters);
             throw th;
         }
     }
@@ -5768,6 +5770,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
+        ObjList<Function> perWorkerFilters = null;
         ObjList<HorizonJoinSlaveState> slaveStates = null;
         boolean isSlaveFactoriesTransferred = false;
 
@@ -6092,7 +6095,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Parallel path
             masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
 
-            final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
+            perWorkerFilters = compileWorkerFiltersConditionally(
                     executionContext,
                     filter,
                     workerCount,
@@ -6227,6 +6230,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);
             Misc.free(filter);
+            Misc.freeObjList(perWorkerFilters);
             if (slaveStates != null) {
                 // Free slave states that were already created, plus any remaining
                 // slave factories not yet wrapped in a HorizonJoinSlaveState.
