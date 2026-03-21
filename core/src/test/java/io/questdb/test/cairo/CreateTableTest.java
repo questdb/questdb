@@ -698,6 +698,54 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostingIndexWhereFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+
+            // Verify the index metadata
+            try (TableReader r = engine.getReader("t")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T02:00:00.000000Z\tA
+                    2024-01-01T05:00:00.000000Z\tA
+                    """, "SELECT * FROM t WHERE s = 'A'");
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T01:00:00.000000Z\tB
+                    2024-01-01T04:00:00.000000Z\tB
+                    """, "SELECT * FROM t WHERE s = 'B'");
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T03:00:00.000000Z\tC
+                    """, "SELECT * FROM t WHERE s = 'C'");
+
+            // Non-existent symbol returns no rows
+            assertSql("""
+                    ts\ts
+                    """, "SELECT * FROM t WHERE s = 'Z'");
+        });
+    }
+
+    @Test
     public void testCreateTableWithSymbolIndexType() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (s symbol index type bitmap, ts timestamp) timestamp(ts)");
@@ -870,6 +918,68 @@ public class CreateTableTest extends AbstractCairoTest {
                             DEDUP UPSERT KEYS(ns,a);
                             """,
                     "show create table z;");
+        });
+    }
+
+    @Test
+    public void testDropIndexFsst() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE FSST) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'X'),
+                    ('2024-01-01T01:00:00', 'Y'),
+                    ('2024-01-01T02:00:00', 'X')
+                    """);
+
+            try (TableReader r = engine.getReader("t")) {
+                assertTrue(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+                assertEquals(IndexType.FSST, r.getMetadata().getColumnIndexType(r.getMetadata().getColumnIndex("s")));
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s DROP INDEX");
+
+            try (TableReader r = engine.getReader("t")) {
+                assertFalse(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+            }
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tX
+                    2024-01-01T01:00:00.000000Z\tY
+                    2024-01-01T02:00:00.000000Z\tX
+                    """, "SELECT * FROM t");
+        });
+    }
+
+    @Test
+    public void testDropIndexPosting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A')
+                    """);
+
+            try (TableReader r = engine.getReader("t")) {
+                assertTrue(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(r.getMetadata().getColumnIndex("s")));
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s DROP INDEX");
+
+            try (TableReader r = engine.getReader("t")) {
+                assertFalse(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+            }
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T01:00:00.000000Z\tB
+                    2024-01-01T02:00:00.000000Z\tA
+                    """, "SELECT * FROM t");
         });
     }
 

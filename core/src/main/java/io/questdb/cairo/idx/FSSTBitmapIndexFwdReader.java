@@ -59,7 +59,6 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    private int blockValues;
     private long columnTxn;
     private int genCount;
     private int keyCountIncludingNulls;
@@ -252,7 +251,6 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
             if (keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 int keyCount = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 long valueMemSize = keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-                int blockValues = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUES);
                 int genCount = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
@@ -260,19 +258,16 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
                     this.keyCount = keyCount;
-                    this.blockValues = blockValues;
                     this.genCount = genCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
 
-                    // Deserialize symbol table
-                    if (genCount > 0) {
-                        long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
-                        keyMem.extend(keyFileSize);
-                        this.symbolTable = FSST.deserialize(keyMem.addressOf(FSSTBitmapIndexUtils.SYMBOL_TABLE_OFFSET));
-                    }
-
                     long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
                     keyMem.extend(keyFileSize);
+
+                    // Deserialize symbol table
+                    if (genCount > 0) {
+                        this.symbolTable = FSST.deserialize(keyMem.addressOf(FSSTBitmapIndexUtils.SYMBOL_TABLE_OFFSET));
+                    }
                     break;
                 }
             }

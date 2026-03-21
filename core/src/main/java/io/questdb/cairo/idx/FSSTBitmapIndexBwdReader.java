@@ -263,14 +263,12 @@ public class FSSTBitmapIndexBwdReader implements BitmapIndexReader {
                     this.genCount = genCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
 
-                    if (genCount > 0) {
-                        long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
-                        keyMem.extend(keyFileSize);
-                        this.symbolTable = FSST.deserialize(keyMem.addressOf(FSSTBitmapIndexUtils.SYMBOL_TABLE_OFFSET));
-                    }
-
                     long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
                     keyMem.extend(keyFileSize);
+
+                    if (genCount > 0) {
+                        this.symbolTable = FSST.deserialize(keyMem.addressOf(FSSTBitmapIndexUtils.SYMBOL_TABLE_OFFSET));
+                    }
                     break;
                 }
             }
