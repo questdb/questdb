@@ -839,6 +839,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                         throw SqlException.position(0)
                                 .put("INCLUDE column doesn't exist [column=").put(coverNames.get(j)).put(']');
                     }
+                    CreateTableColumnModel covModel = modelMap.get(coverNames.get(j));
+                    int covType = ColumnType.tagOf(covModel.getColumnType());
+                    if (ColumnType.isVarSize(covType) || covType == ColumnType.LONG256
+                            || covType == ColumnType.UUID || covType == ColumnType.GEOHASH) {
+                        throw SqlException.position(0)
+                                .put("INCLUDE column must be a fixed-size numeric type [column=")
+                                .put(coverNames.get(j)).put(", type=").put(ColumnType.nameOf(covType)).put(']');
+                    }
                     indices[j] = idx;
                 }
                 coveringColumnIndicesList.add(indices);

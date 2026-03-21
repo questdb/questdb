@@ -1080,4 +1080,339 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SHOW CREATE TABLE t_show");
         });
     }
+
+    // ===================================================================
+    // Type-specific covering column tests
+    // ===================================================================
+
+    @Test
+    public void testCoveringQueryBooleanColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bool (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (flag, extra),
+                        flag BOOLEAN,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bool VALUES
+                    ('2024-01-01T00:00:00', 'A', true, 1),
+                    ('2024-01-01T01:00:00', 'B', false, 2),
+                    ('2024-01-01T02:00:00', 'A', false, 3),
+                    ('2024-01-01T03:00:00', 'A', true, 4)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    flag\textra
+                    true\t1
+                    false\t3
+                    true\t4
+                    """, "SELECT flag, extra FROM t_bool WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryByteColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_byte (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (b, extra),
+                        b BYTE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_byte VALUES
+                    ('2024-01-01T00:00:00', 'X', 42, 1),
+                    ('2024-01-01T01:00:00', 'Y', 0, 2),
+                    ('2024-01-01T02:00:00', 'X', -1, 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    b\textra
+                    42\t1
+                    -1\t3
+                    """, "SELECT b, extra FROM t_byte WHERE sym = 'X'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryDateColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_date (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d, extra),
+                        d DATE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_date VALUES
+                    ('2024-01-01T00:00:00', 'A', '2020-06-15T00:00:00.000Z', 1),
+                    ('2024-01-01T01:00:00', 'B', '2021-12-25T00:00:00.000Z', 2),
+                    ('2024-01-01T02:00:00', 'A', '2022-03-01T00:00:00.000Z', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    d\textra
+                    2020-06-15T00:00:00.000Z\t1
+                    2022-03-01T00:00:00.000Z\t3
+                    """, "SELECT d, extra FROM t_date WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            assertSql("""
+                    price\tqty
+                    """, "SELECT price, qty FROM t_empty WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryFloatColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_float (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (f, extra),
+                        f FLOAT,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_float VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.5, 1),
+                    ('2024-01-01T01:00:00', 'B', 2.5, 2),
+                    ('2024-01-01T02:00:00', 'A', 3.5, 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    f\textra
+                    1.5\t1
+                    3.5\t3
+                    """, "SELECT f, extra FROM t_float WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryReversedColumnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rev (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rev VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 11.5, 150)
+                    """);
+            engine.releaseAllWriters();
+
+            // Reversed column order vs table definition
+            assertSql("""
+                    qty\tprice
+                    100\t10.5
+                    150\t11.5
+                    """, "SELECT qty, price FROM t_rev WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQuerySelectOnlySymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_symonly (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_symonly VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 11.5, 150)
+                    """);
+            engine.releaseAllWriters();
+
+            // Selecting only the indexed symbol column
+            assertSql("""
+                    sym
+                    A
+                    A
+                    """, "SELECT sym FROM t_symonly WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (event_time, extra),
+                        event_time TIMESTAMP,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_ts VALUES
+                    ('2024-01-01T00:00:00', 'A', '2024-06-15T12:30:00.000000Z', 1),
+                    ('2024-01-01T01:00:00', 'B', '2024-07-20T08:00:00.000000Z', 2),
+                    ('2024-01-01T02:00:00', 'A', '2024-08-25T16:45:00.000000Z', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    event_time\textra
+                    2024-06-15T12:30:00.000000Z\t1
+                    2024-08-25T16:45:00.000000Z\t3
+                    """, "SELECT event_time, extra FROM t_ts WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryAllNullCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_allnull (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_allnull VALUES
+                    ('2024-01-01T00:00:00', 'A', NULL, NULL),
+                    ('2024-01-01T01:00:00', 'A', NULL, NULL),
+                    ('2024-01-01T02:00:00', 'B', 10.5, 100)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    null\tnull
+                    null\tnull
+                    """, "SELECT price, qty FROM t_allnull WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBoundaryValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_boundary (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d, i),
+                        d DOUBLE,
+                        i INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_boundary VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.7976931348623157E308, 2147483647),
+                    ('2024-01-01T01:00:00', 'A', -1.7976931348623157E308, -2147483648),
+                    ('2024-01-01T02:00:00', 'A', 0.0, 0)
+                    """);
+            engine.releaseAllWriters();
+
+            // INT MIN_VALUE is the NULL sentinel; displays as "null" via covering path
+            assertSql("""
+                    d\ti
+                    1.7976931348623157E308\t2147483647
+                    -1.7976931348623157E308\tnull
+                    0.0\t0
+                    """, "SELECT d, i FROM t_boundary WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryKeyAbsentFromMiddlePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_absent (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_absent VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.5, 10),
+                    ('2024-01-02T00:00:00', 'B', 2.5, 20),
+                    ('2024-01-03T00:00:00', 'A', 3.5, 30)
+                    """);
+            engine.releaseAllWriters();
+
+            // Key A is absent from partition 2024-01-02
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_absent WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testIncludeWithVarSizeColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("""
+                        CREATE TABLE bad (
+                            ts TIMESTAMP,
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (s),
+                            s STRING
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                fail("Should have thrown SqlException");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage().contains("fixed-size"));
+            }
+        });
+    }
+
+    @Test
+    public void testIncludeWithVarcharColumnFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("""
+                        CREATE TABLE bad (
+                            ts TIMESTAMP,
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                            v VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                fail("Should have thrown SqlException");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage().contains("fixed-size"));
+            }
+        });
+    }
 }

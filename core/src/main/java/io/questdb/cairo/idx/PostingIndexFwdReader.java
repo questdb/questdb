@@ -663,11 +663,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 startBlock = lo;
             }
 
-            // Advance packedDataAddr past skipped blocks
+            // Advance packedDataAddr past skipped blocks and account for
+            // skipped values in the sidecar offset calculation
+            int skippedValueCount = 0;
             for (int b = 0; b < startBlock; b++) {
                 int numDeltas = valueCounts[b] - 1;
                 packedDataStart += BitpackUtils.packedDataSize(numDeltas, bitWidths[b]);
+                skippedValueCount += valueCounts[b];
             }
+            this.sidecarStrideKeyStart += skippedValueCount;
 
             // Trim trailing blocks that are entirely above maxValue
             int endBlock = blockCount;
