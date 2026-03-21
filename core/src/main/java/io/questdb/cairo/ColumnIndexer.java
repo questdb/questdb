@@ -34,7 +34,7 @@ import io.questdb.std.str.Path;
 public interface ColumnIndexer extends QuietCloseable {
 
     default void configureCovering(
-            long[] coveredColumnAddrs,
+            MemoryMA[] coveredColumnMems,
             long[] coveredColumnTops,
             int[] coveredColumnShifts,
             int[] coveredColumnIndices,

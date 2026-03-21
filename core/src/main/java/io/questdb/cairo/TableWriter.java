@@ -5714,22 +5714,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         int coverCount = coveringCols.length;
-        long[] addrs = new long[coverCount];
+        MemoryMA[] mems = new MemoryMA[coverCount];
         long[] tops = new long[coverCount];
         int[] shifts = new int[coverCount];
         int[] indices = new int[coverCount];
         int[] types = new int[coverCount];
         for (int i = 0; i < coverCount; i++) {
             int covCol = coveringCols[i];
-            MemoryMA covMem = getPrimaryColumn(covCol);
-            addrs[i] = covMem.addressOf(0);
+            mems[i] = getPrimaryColumn(covCol);
             tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
             int covType = metadata.getColumnType(covCol);
             types[i] = covType;
             indices[i] = covCol;
             shifts[i] = ColumnType.pow2SizeOf(covType);
         }
-        indexer.configureCovering(addrs, tops, shifts, indices, types, coverCount);
+        indexer.configureCovering(mems, tops, shifts, indices, types, coverCount);
     }
 
     private MemoryMA getPrimaryColumn(int column) {

@@ -32,7 +32,11 @@ import io.questdb.cairo.sql.RowCursor;
  */
 public interface CoveringRowCursor extends RowCursor {
 
+    byte getCoveredByte(int includeIdx);
+
     double getCoveredDouble(int includeIdx);
+
+    float getCoveredFloat(int includeIdx);
 
     int getCoveredInt(int includeIdx);
 

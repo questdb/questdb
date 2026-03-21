@@ -197,38 +197,41 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void toTop() {
+            frameCursor.toTop();
             currentRowCursor = null;
         }
 
         private boolean advanceToNextPartition() {
-            PartitionFrame frame = frameCursor.next();
-            if (frame == null) {
-                return false;
+            while (true) {
+                PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    return false;
+                }
+                int partitionIndex = frame.getPartitionIndex();
+                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                        partitionIndex,
+                        indexColumnIndex,
+                        BitmapIndexReader.DIR_FORWARD
+                );
+                RowCursor rowCursor = indexReader.getCursor(
+                        true,
+                        symbolKey,
+                        frame.getRowLo(),
+                        frame.getRowHi() - 1
+                );
+                if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                    currentRowCursor = crc;
+                    record.of(crc);
+                    return true;
+                }
+                // Fallback: not a covering reader — still iterate row IDs but without sidecar data
+                if (rowCursor instanceof CoveringRowCursor crc2) {
+                    currentRowCursor = crc2;
+                    record.of(crc2);
+                    return true;
+                }
+                // Non-CoveringRowCursor partition — skip to next
             }
-            int partitionIndex = frame.getPartitionIndex();
-            BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
-                    partitionIndex,
-                    indexColumnIndex,
-                    BitmapIndexReader.DIR_FORWARD
-            );
-            RowCursor rowCursor = indexReader.getCursor(
-                    true,
-                    symbolKey,
-                    frame.getRowLo(),
-                    frame.getRowHi() - 1
-            );
-            if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                currentRowCursor = crc;
-                record.of(crc);
-                return true;
-            }
-            // Fallback: not a covering reader — still iterate row IDs but without sidecar data
-            currentRowCursor = rowCursor instanceof CoveringRowCursor crc2 ? crc2 : null;
-            if (currentRowCursor == null && rowCursor.hasNext()) {
-                return advanceToNextPartition();
-            }
-            record.of(currentRowCursor);
-            return true;
         }
     }
 
@@ -256,7 +259,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public boolean getBool(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                return cursor.getCoveredLong(includeIdx) != 0;
+                return cursor.getCoveredByte(includeIdx) != 0;
             }
             return false;
         }
@@ -265,7 +268,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public byte getByte(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                return (byte) cursor.getCoveredInt(includeIdx);
+                return cursor.getCoveredByte(includeIdx);
             }
             return 0;
         }
@@ -292,7 +295,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public float getFloat(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                return (float) cursor.getCoveredDouble(includeIdx);
+                return cursor.getCoveredFloat(includeIdx);
             }
             return Float.NaN;
         }

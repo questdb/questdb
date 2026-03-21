@@ -78,6 +78,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long columnNameTxn;
     private int coverCount;
     private long[] coveredColumnAddrs;
+    private MemoryMA[] coveredColumnMems;
     private int[] coveredColumnIndices;
     private int[] coveredColumnShifts;
     private long[] coveredColumnTops;
@@ -254,6 +255,24 @@ public class PostingIndexWriter implements IndexWriter {
             int coverCount
     ) {
         this.coveredColumnAddrs = coveredColumnAddrs;
+        this.coveredColumnMems = null;
+        this.coveredColumnTops = coveredColumnTops;
+        this.coveredColumnShifts = coveredColumnShifts;
+        this.coveredColumnIndices = coveredColumnIndices;
+        this.coveredColumnTypes = coveredColumnTypes;
+        this.coverCount = coverCount;
+    }
+
+    public void configureCovering(
+            MemoryMA[] coveredColumnMems,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount
+    ) {
+        this.coveredColumnMems = coveredColumnMems;
+        this.coveredColumnAddrs = null;
         this.coveredColumnTops = coveredColumnTops;
         this.coveredColumnShifts = coveredColumnShifts;
         this.coveredColumnIndices = coveredColumnIndices;
@@ -919,8 +938,23 @@ public class PostingIndexWriter implements IndexWriter {
                 );
                 path.trimTo(plen);
             }
+        } catch (Throwable e) {
+            closeSidecarMems();
+            throw e;
         } finally {
             path.trimTo(plen);
+        }
+    }
+
+    private static void writeNullSentinel(long addr, int valueSize) {
+        if (valueSize == Long.BYTES) {
+            Unsafe.getUnsafe().putLong(addr, Long.MIN_VALUE);
+        } else if (valueSize == Integer.BYTES) {
+            Unsafe.getUnsafe().putInt(addr, Integer.MIN_VALUE);
+        } else if (valueSize == Short.BYTES) {
+            Unsafe.getUnsafe().putShort(addr, (short) 0);
+        } else {
+            Unsafe.getUnsafe().putByte(addr, (byte) 0);
         }
     }
 
@@ -936,7 +970,11 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
         for (int c = 0; c < coverCount; c++) {
-            long colAddr = coveredColumnAddrs[c];
+            // Resolve address at seal time (not at configureCovering time) to avoid
+            // stale pointers after column file remapping during growth.
+            long colAddr = coveredColumnMems != null
+                    ? coveredColumnMems[c].addressOf(0)
+                    : coveredColumnAddrs[c];
             long colTop = coveredColumnTops[c];
             int shift = coveredColumnShifts[c];
             long sidecarOffset = 0;
@@ -946,20 +984,25 @@ public class PostingIndexWriter implements IndexWriter {
                 for (int i = 0; i < count; i++) {
                     long rowId = Unsafe.getUnsafe().getLong(
                             mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    long srcOffset = (rowId - colTop) << shift;
                     int valueSize = 1 << shift;
-                    if (valueSize == Long.BYTES) {
-                        long val = Unsafe.getUnsafe().getLong(colAddr + srcOffset);
-                        Unsafe.getUnsafe().putLong(sidecarBuf + sidecarOffset, val);
-                    } else if (valueSize == Integer.BYTES) {
-                        int val = Unsafe.getUnsafe().getInt(colAddr + srcOffset);
-                        Unsafe.getUnsafe().putInt(sidecarBuf + sidecarOffset, val);
-                    } else if (valueSize == Short.BYTES) {
-                        short val = Unsafe.getUnsafe().getShort(colAddr + srcOffset);
-                        Unsafe.getUnsafe().putShort(sidecarBuf + sidecarOffset, val);
+                    if (rowId < colTop) {
+                        // Row is below column top (column added after these rows) — write NULL sentinel
+                        writeNullSentinel(sidecarBuf + sidecarOffset, valueSize);
                     } else {
-                        byte val = Unsafe.getUnsafe().getByte(colAddr + srcOffset);
-                        Unsafe.getUnsafe().putByte(sidecarBuf + sidecarOffset, val);
+                        long srcOffset = (rowId - colTop) << shift;
+                        if (valueSize == Long.BYTES) {
+                            long val = Unsafe.getUnsafe().getLong(colAddr + srcOffset);
+                            Unsafe.getUnsafe().putLong(sidecarBuf + sidecarOffset, val);
+                        } else if (valueSize == Integer.BYTES) {
+                            int val = Unsafe.getUnsafe().getInt(colAddr + srcOffset);
+                            Unsafe.getUnsafe().putInt(sidecarBuf + sidecarOffset, val);
+                        } else if (valueSize == Short.BYTES) {
+                            short val = Unsafe.getUnsafe().getShort(colAddr + srcOffset);
+                            Unsafe.getUnsafe().putShort(sidecarBuf + sidecarOffset, val);
+                        } else {
+                            byte val = Unsafe.getUnsafe().getByte(colAddr + srcOffset);
+                            Unsafe.getUnsafe().putByte(sidecarBuf + sidecarOffset, val);
+                        }
                     }
                     sidecarOffset += valueSize;
                 }

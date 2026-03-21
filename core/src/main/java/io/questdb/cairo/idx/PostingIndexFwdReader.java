@@ -103,6 +103,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int sidecarStrideKeyStart;
 
         @Override
+        public byte getCoveredByte(int includeIdx) {
+            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+                return 0;
+            }
+            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
+            long offset = getSidecarOffset(includeIdx, shift);
+            return sidecarMems[includeIdx].getByte(offset);
+        }
+
+        @Override
         public double getCoveredDouble(int includeIdx) {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return Double.NaN;
@@ -110,6 +120,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
             long offset = getSidecarOffset(includeIdx, shift);
             return sidecarMems[includeIdx].getDouble(offset);
+        }
+
+        @Override
+        public float getCoveredFloat(int includeIdx) {
+            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+                return Float.NaN;
+            }
+            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
+            long offset = getSidecarOffset(includeIdx, shift);
+            return sidecarMems[includeIdx].getFloat(offset);
         }
 
         @Override
@@ -500,6 +520,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.flatDataBase = dataAddr;
                 this.encodedBlockCount = 0;
                 this.currentBlock = 0;
+                this.sidecarStrideKeyStart = effectiveStart;
+                this.sidecarOrdinal = 0;
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
                 BitpackUtils.unpackValuesFrom(dataAddr, effectiveStart, batch, bitWidth, baseValue, blockBuffer);
@@ -513,6 +535,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // Delta mode
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
+            // Compute sidecar start: sum of counts for keys 0..localKey-1
+            int sidecarStart = 0;
+            for (int j = 0; j < localKey; j++) {
+                sidecarStart += Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
+            }
+            this.sidecarStrideKeyStart = sidecarStart;
+            this.sidecarOrdinal = 0;
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);

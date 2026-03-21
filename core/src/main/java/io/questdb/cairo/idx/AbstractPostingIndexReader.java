@@ -253,6 +253,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 path.trimTo(plen);
             }
         } catch (Throwable e) {
+            LOG.error().$("failed to open sidecar files").$((Throwable) e).$();
             closeSidecarMems();
         } finally {
             Misc.free(infoMem);

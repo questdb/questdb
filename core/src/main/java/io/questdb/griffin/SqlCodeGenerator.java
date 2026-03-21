@@ -1447,6 +1447,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (includeIdx < 0) {
                 return null; // not covered — fallback to regular scan
             }
+            // Non-indexed SYMBOL columns in INCLUDE are not supported — the covering
+            // path cannot resolve symbol int keys back to strings for arbitrary symbol tables.
+            int colType = ColumnType.tagOf(reader.getMetadata().getColumnType(readerColIdx));
+            if (colType == ColumnType.SYMBOL) {
+                return null;
+            }
             mapping[q] = includeIdx;
         }
         return mapping;
