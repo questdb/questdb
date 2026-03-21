@@ -9887,6 +9887,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     flags |= META_FLAG_BIT_SYMBOL_CACHE;
                 }
 
+                if (metadata.isCovering(i)) {
+                    flags |= META_FLAG_BIT_COVERING;
+                }
+
                 ddlMem.putLong(flags);
 
                 ddlMem.putInt(metadata.getIndexBlockCapacity(i));
@@ -9903,6 +9907,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 CharSequence columnName = metadata.getColumnName(i);
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
+            }
+
+            for (int i = 0; i < columnCount; i++) {
+                int[] coveringIndices = metadata.getCoveringColumnIndices(i);
+                if (coveringIndices != null && coveringIndices.length > 0) {
+                    ddlMem.putInt(coveringIndices.length);
+                    for (int idx : coveringIndices) {
+                        ddlMem.putInt(idx);
+                    }
+                }
             }
 
             ddlMem.sync(false);

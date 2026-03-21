@@ -1415,4 +1415,356 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testCoveringMultiGenFallback() throws Exception {
+        // When genCount > 1 (pre-seal), hasCovering() must return false
+        // and queries fall back to regular column reads
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_multigen";
+                int plen = path.size();
+
+                int rowCount = 20;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                    }
+
+                    // Write index with covering, two commits (two gens), do NOT close (no seal)
+                    PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                    writer.configureCovering(
+                            new long[]{colAddr},
+                            new long[]{0},
+                            new int[]{3},
+                            new int[]{2},
+                            new int[]{ColumnType.DOUBLE},
+                            1
+                    );
+
+                    // Gen 0
+                    for (int i = 0; i < 10; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(9);
+                    writer.commit();
+
+                    // Gen 1 — index now has genCount=2, not sealed
+                    for (int i = 10; i < 20; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(19);
+                    writer.commit();
+
+                    // Reader sees genCount=2 but no sidecar files yet (seal hasn't run)
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        assertTrue(cursor instanceof CoveringRowCursor);
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        // genCount=2, hasCovering() must be false
+                        assertFalse(cc.hasCovering());
+
+                        // But row IDs are still correct
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            assertEquals(count, cursor.next());
+                            count++;
+                        }
+                        assertEquals(20, count);
+                    }
+
+                    writer.close(); // seal happens here
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringAfterSealThenNewCommit() throws Exception {
+        // After seal + new commit: genCount=2, sidecar files exist from seal,
+        // but hasCovering() must be false to prevent wrong sidecar reads
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_postseal";
+                int plen = path.size();
+
+                int rowCount = 30;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                    }
+
+                    // First writer: write data and close (seal creates sidecar files)
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        for (int i = 0; i < 20; i++) {
+                            writer.add(i % 5, i);
+                        }
+                        writer.setMaxValue(19);
+                        writer.commit();
+                    } // seal + compact
+
+                    // Verify sidecar files exist
+                    FilesFacade ff = configuration.getFilesFacade();
+                    assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)));
+
+                    // Second writer: reopen without reinit (preserves sealed data), add more
+                    PostingIndexWriter writer2 = new PostingIndexWriter(configuration);
+                    writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    writer2.configureCovering(
+                            new long[]{colAddr},
+                            new long[]{0},
+                            new int[]{3},
+                            new int[]{2},
+                            new int[]{ColumnType.DOUBLE},
+                            1
+                    );
+                    for (int i = 20; i < 30; i++) {
+                        writer2.add(i % 5, i);
+                    }
+                    writer2.setMaxValue(29);
+                    writer2.commit();
+
+                    // Reader: sidecar files exist but genCount=2 — hasCovering must be false
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        assertTrue(cursor instanceof CoveringRowCursor);
+                        assertFalse(((CoveringRowCursor) cursor).hasCovering());
+
+                        int count = 0;
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            count++;
+                        }
+                        assertTrue(count > 0);
+                    }
+
+                    writer2.close();
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringHighCardinalityCrossesStrideBoundary() throws Exception {
+        // Keys >= 256 cross the stride boundary (DENSE_STRIDE=256).
+        // Verify correct sidecar offset computation for second stride.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_stride";
+                int plen = path.size();
+
+                int keyCount = 300;
+                int rowCount = keyCount;
+                long colAddr = Unsafe.malloc((long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},  // Long.BYTES = 8 = 2^3
+                                new int[]{1},
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+
+                        // One row per key, 300 keys (crosses 256 boundary)
+                        for (int k = 0; k < keyCount; k++) {
+                            writer.add(k, k);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+
+                    // Read back keys from second stride (key >= 256)
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // Key 260 is in stride 1, local key 4
+                        RowCursor cursor = reader.getCursor(true, 260, 0, Long.MAX_VALUE);
+                        assertTrue(cursor instanceof CoveringRowCursor);
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+
+                        assertTrue(cc.hasNext());
+                        assertEquals(260, cc.next());
+                        assertEquals(1260L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+
+                        // Key 299 is in stride 1, local key 43
+                        cursor = reader.getCursor(true, 299, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.hasNext());
+                        assertEquals(299, cc.next());
+                        assertEquals(1299L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+
+                        // Key 0 is in stride 0 (control)
+                        cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.hasNext());
+                        assertEquals(0, cc.next());
+                        assertEquals(1000L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringWithColumnTop() throws Exception {
+        // Rows below columnTop get null sentinels in sidecar data
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_coltop";
+                int plen = path.size();
+
+                int rowCount = 10;
+                long colTop = 4; // first 4 rows are below column top
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 50.0 + i);
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{colTop},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+
+                        for (int i = 0; i < rowCount; i++) {
+                            writer.add(0, i);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+
+                        // First 4 rows: below columnTop, null sentinel Long.MIN_VALUE as double bits
+                        double nullDouble = Double.longBitsToDouble(Long.MIN_VALUE);
+                        for (int i = 0; i < 4; i++) {
+                            assertTrue(cc.hasNext());
+                            assertEquals(i, cc.next());
+                            assertEquals(nullDouble, cc.getCoveredDouble(0), 0.0);
+                        }
+                        // Rows 4-9: above columnTop, should get actual values
+                        // Row 4 maps to colAddr offset (4-4)*8 = 0 -> value 50.0
+                        for (int i = 4; i < rowCount; i++) {
+                            assertTrue(cc.hasNext());
+                            assertEquals(i, cc.next());
+                            assertEquals(50.0 + (i - colTop), cc.getCoveredDouble(0), 0.001);
+                        }
+                        assertFalse(cc.hasNext());
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    // TODO: ALTER TABLE + covering index interaction needs deeper work.
+    //  rewriteMetadata() preserves the covering flag and indices, but
+    //  TableReaderMetadata.readCoveringColumnData() has a memory mapping
+    //  issue when the _meta file is swapped. Tracked separately.
+
+    @Test
+    public void testCoveringNullSentinelGeoShort() throws Exception {
+        // Verify GeoHashes.SHORT_NULL (-1) is used for GEOSHORT covering columns
+        // below columnTop, not (short) 0
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_geo";
+                int plen = path.size();
+
+                int rowCount = 4;
+                long colTop = 2; // first 2 rows below column top
+                long colAddr = Unsafe.malloc((long) rowCount * Short.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putShort(colAddr + (long) i * Short.BYTES, (short) (100 + i));
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{colTop},
+                                new int[]{1},  // Short.BYTES = 2 = 2^1
+                                new int[]{1},
+                                new int[]{ColumnType.GEOSHORT},
+                                1
+                        );
+
+                        for (int i = 0; i < rowCount; i++) {
+                            writer.add(0, i);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+
+                        // Rows 0-1: below columnTop, must get GeoHashes.SHORT_NULL (-1)
+                        assertTrue(cc.hasNext());
+                        assertEquals(0, cc.next());
+                        assertEquals(-1, cc.getCoveredShort(0));
+
+                        assertTrue(cc.hasNext());
+                        assertEquals(1, cc.next());
+                        assertEquals(-1, cc.getCoveredShort(0));
+
+                        // Rows 2-3: above columnTop, actual values
+                        assertTrue(cc.hasNext());
+                        assertEquals(2, cc.next());
+                        assertEquals(100, cc.getCoveredShort(0));
+
+                        assertTrue(cc.hasNext());
+                        assertEquals(3, cc.next());
+                        assertEquals(101, cc.getCoveredShort(0));
+
+                        assertFalse(cc.hasNext());
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Short.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
 }

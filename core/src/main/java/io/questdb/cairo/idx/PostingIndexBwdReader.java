@@ -494,6 +494,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 this.encodedBlockCount = 0;
                 this.currentBlock = -1;
                 this.blockBufferPos = -1;
+                this.flatMode = false;
                 return;
             }
 

@@ -56,6 +56,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int[] getCoveringColumnIndices(int columnIndex) {
+        return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
@@ -183,6 +188,26 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
             offset += Vm.getStorageLength(name);
+        }
+        long metaSize = metaMem.size();
+        if (offset < metaSize) {
+            for (int i = 0; i < columnCount; i++) {
+                if (TableUtils.isColumnCovering(metaMem, i)) {
+                    if (offset + Integer.BYTES > metaSize) {
+                        break;
+                    }
+                    int includeCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= metaSize) {
+                        int[] indices = new int[includeCount];
+                        for (int j = 0; j < includeCount; j++) {
+                            indices[j] = metaMem.getInt(offset);
+                            offset += Integer.BYTES;
+                        }
+                        columnMetadata.getQuick(i).setCoveringColumnIndices(indices);
+                    }
+                }
+            }
         }
     }
 

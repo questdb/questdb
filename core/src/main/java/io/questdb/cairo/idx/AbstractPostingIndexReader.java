@@ -32,6 +32,8 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -47,6 +49,7 @@ import io.questdb.std.str.Path;
 public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
+    private static final String INDEX_CORRUPT = "posting index is corrupt";
     protected final PostingGenLookup genLookup = new PostingGenLookup();
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
@@ -58,10 +61,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     protected int[] sidecarColumnTypes;
     protected MemoryMR[] sidecarMems;
     private long activePageOffset;
+    private MillisecondClock clock;
     private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
     private long partitionTxn;
+    private long spinLockTimeoutMs;
     private long valueMemSize = -1;
 
     @Override
@@ -168,6 +173,8 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         this.columnTop = columnTop;
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
+        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
+        this.clock = configuration.getMillisecondClock();
         final int plen = path.size();
 
         try {
@@ -279,45 +286,61 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     }
 
     public void updateKeyCount() {
-        // Use the same snapshot-and-validate protocol as readIndexMetadataFromBestPage.
-        // Try best page first, fall back to other if mid-write.
-        for (int attempt = 0; attempt < 2; attempt++) {
+        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        while (true) {
+            Unsafe.getUnsafe().loadFence();
             long seqStartA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
             long seqStartB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
 
             long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
             long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-            long tryPage = (attempt == 0) ? bestPage : otherPage;
 
-            long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            if (seqStart <= keyFileSequence) {
-                if (attempt == 0) continue; // try other page
-                return; // no update available
-            }
-            Unsafe.getUnsafe().loadFence();
+            for (int attempt = 0; attempt < 2; attempt++) {
+                long tryPage = (attempt == 0) ? bestPage : otherPage;
 
-            int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-            int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-            long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-
-            Unsafe.getUnsafe().loadFence();
-            long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-            if (seqStart == seqEnd && keyCount >= this.keyCount
-                    && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
-                genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-                if (valueMemSize > 0) {
-                    ((MemoryCMR) valueMem).changeSize(valueMemSize);
+                long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                if (seqStart <= keyFileSequence) {
+                    if (attempt == 0) {
+                        continue;
+                    }
+                    return; // no update available on either page
                 }
-                this.activePageOffset = tryPage;
-                this.keyFileSequence = seqStart;
-                this.valueMemSize = valueMemSize;
-                this.keyCount = keyCount;
-                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-                this.genCount = genCount;
+                Unsafe.getUnsafe().loadFence();
+
+                int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+                int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+                long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+
+                Unsafe.getUnsafe().loadFence();
+                long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                if (seqStart == seqEnd && keyCount >= this.keyCount
+                        && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                    genLookup.snapshotMetadata(keyMem, genCount, tryPage);
+
+                    Unsafe.getUnsafe().loadFence();
+                    if (keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) != seqStart) {
+                        break; // page overwritten during snapshot, re-pick best page
+                    }
+
+                    if (valueMemSize > 0) {
+                        ((MemoryCMR) valueMem).changeSize(valueMemSize);
+                    }
+                    this.activePageOffset = tryPage;
+                    this.keyFileSequence = seqStart;
+                    this.valueMemSize = valueMemSize;
+                    this.keyCount = keyCount;
+                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                    this.genCount = genCount;
+                    return;
+                }
+            }
+
+            if (clock.getTicks() > deadline) {
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, updateKeyCount]").$();
                 return;
             }
-            // Page was mid-write, try the other
+            Os.pause();
         }
     }
 
@@ -337,49 +360,53 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
      * so no further reads from the key file pages are needed during cursor iteration.
      */
     private void readIndexMetadataFromBestPage() {
-        // Try the page with the higher seq_start first, fall back to the other
-        for (int attempt = 0; attempt < 2; attempt++) {
-            long pageA = PostingIndexUtils.PAGE_A_OFFSET;
-            long pageB = PostingIndexUtils.PAGE_B_OFFSET;
+        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        while (true) {
             long memSize = keyMem.size();
-            long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(pageA + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-            long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(pageB + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
+            long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
+            long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
 
-            // Pick the page with the higher seq_start
-            long bestPage = (seqStartB > seqStartA) ? pageB : pageA;
-            long otherPage = (bestPage == pageA) ? pageB : pageA;
-            long tryPage = (attempt == 0) ? bestPage : otherPage;
+            long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+            long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
 
-            long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            Unsafe.getUnsafe().loadFence();
+            for (int attempt = 0; attempt < 2; attempt++) {
+                long tryPage = (attempt == 0) ? bestPage : otherPage;
 
-            // Read header fields
-            long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-            int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-            int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+                long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                Unsafe.getUnsafe().loadFence();
 
-            // Validate seq_end BEFORE reading gen dir to avoid reading garbage
-            // entries from a torn/corrupted page with bogus genCount
-            Unsafe.getUnsafe().loadFence();
-            long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+                int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+                int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
-            if (seqStart == seqEnd && seqStart > 0
-                    && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
-                // Page is consistent -- safe to snapshot gen dir
-                genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-                // Consistent snapshot
-                this.activePageOffset = tryPage;
-                this.keyFileSequence = seqStart;
-                this.valueMemSize = valueMemSize;
-                this.keyCount = keyCount;
-                this.genCount = genCount;
-                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-                return;
+                Unsafe.getUnsafe().loadFence();
+                long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                if (seqStart == seqEnd && seqStart > 0
+                        && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                    genLookup.snapshotMetadata(keyMem, genCount, tryPage);
+
+                    Unsafe.getUnsafe().loadFence();
+                    if (keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) != seqStart) {
+                        break; // page overwritten during snapshot, re-pick best page
+                    }
+
+                    this.activePageOffset = tryPage;
+                    this.keyFileSequence = seqStart;
+                    this.valueMemSize = valueMemSize;
+                    this.keyCount = keyCount;
+                    this.genCount = genCount;
+                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                    return;
+                }
             }
-            // Page was mid-write -- try the other page
+
+            if (clock.getTicks() > deadline) {
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
+                break;
+            }
+            Os.pause();
         }
-        // Both pages torn -- should not happen in normal operation
-        LOG.error().$("both metadata pages torn, falling back to empty index").$();
         this.keyFileSequence = 0;
         this.valueMemSize = 0;
         this.keyCount = 0;

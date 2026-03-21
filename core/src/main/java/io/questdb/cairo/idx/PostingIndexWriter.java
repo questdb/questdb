@@ -26,8 +26,10 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
@@ -216,25 +218,30 @@ public class PostingIndexWriter implements IndexWriter {
             seal();
             compactValueFile();
         } finally {
-            if (keyMem.isOpen()) {
-                keyMem.setSize(KEY_FILE_RESERVED);
-                Misc.free(keyMem);
-            }
-            if (valueMem.isOpen()) {
-                if (valueMemSize > 0) {
-                    valueMem.setSize(valueMemSize);
+            try {
+                if (keyMem.isOpen()) {
+                    keyMem.setSize(KEY_FILE_RESERVED);
+                    Misc.free(keyMem);
                 }
-                Misc.free(valueMem);
+            } finally {
+                try {
+                    if (valueMem.isOpen()) {
+                        if (valueMemSize > 0) {
+                            valueMem.setSize(valueMemSize);
+                        }
+                        Misc.free(valueMem);
+                    }
+                } finally {
+                    closeSidecarMems();
+                    freeNativeBuffers();
+                    keyCount = 0;
+                    valueMemSize = 0;
+                    genCount = 0;
+                    hasPendingData = false;
+                    activeKeyCount = 0;
+                    coverCount = 0;
+                }
             }
-
-            closeSidecarMems();
-            freeNativeBuffers();
-            keyCount = 0;
-            valueMemSize = 0;
-            genCount = 0;
-            hasPendingData = false;
-            activeKeyCount = 0;
-            coverCount = 0;
         }
     }
 
@@ -946,7 +953,23 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    private static void writeNullSentinel(long addr, int valueSize) {
+    private static void writeNullSentinel(long addr, int valueSize, int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.GEOBYTE:
+                Unsafe.getUnsafe().putByte(addr, GeoHashes.BYTE_NULL);
+                return;
+            case ColumnType.GEOSHORT:
+                Unsafe.getUnsafe().putShort(addr, GeoHashes.SHORT_NULL);
+                return;
+            case ColumnType.GEOINT:
+                Unsafe.getUnsafe().putInt(addr, GeoHashes.INT_NULL);
+                return;
+            case ColumnType.GEOLONG:
+                Unsafe.getUnsafe().putLong(addr, GeoHashes.NULL);
+                return;
+            default:
+                break;
+        }
         if (valueSize == Long.BYTES) {
             Unsafe.getUnsafe().putLong(addr, Long.MIN_VALUE);
         } else if (valueSize == Integer.BYTES) {
@@ -977,6 +1000,7 @@ public class PostingIndexWriter implements IndexWriter {
                     : coveredColumnAddrs[c];
             long colTop = coveredColumnTops[c];
             int shift = coveredColumnShifts[c];
+            int colType = coveredColumnTypes[c];
             long sidecarOffset = 0;
             for (int j = 0; j < ks; j++) {
                 int count = keyCounts[j];
@@ -987,7 +1011,7 @@ public class PostingIndexWriter implements IndexWriter {
                     int valueSize = 1 << shift;
                     if (rowId < colTop) {
                         // Row is below column top (column added after these rows) — write NULL sentinel
-                        writeNullSentinel(sidecarBuf + sidecarOffset, valueSize);
+                        writeNullSentinel(sidecarBuf + sidecarOffset, valueSize, colType);
                     } else {
                         long srcOffset = (rowId - colTop) << shift;
                         if (valueSize == Long.BYTES) {
@@ -1783,20 +1807,26 @@ public class PostingIndexWriter implements IndexWriter {
             seal();
             compactValueFile();
         } finally {
-            if (keyMem.isOpen()) {
-                keyMem.close(false);
+            try {
+                if (keyMem.isOpen()) {
+                    keyMem.close(false);
+                }
+            } finally {
+                try {
+                    if (valueMem.isOpen()) {
+                        valueMem.close(false);
+                    }
+                } finally {
+                    closeSidecarMems();
+                    freeNativeBuffers();
+                    keyCount = 0;
+                    valueMemSize = 0;
+                    genCount = 0;
+                    hasPendingData = false;
+                    activeKeyCount = 0;
+                    coverCount = 0;
+                }
             }
-            if (valueMem.isOpen()) {
-                valueMem.close(false);
-            }
-            closeSidecarMems();
-            freeNativeBuffers();
-            keyCount = 0;
-            valueMemSize = 0;
-            genCount = 0;
-            hasPendingData = false;
-            activeKeyCount = 0;
-            coverCount = 0;
         }
     }
 

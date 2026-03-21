@@ -140,28 +140,35 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
 
     @Override
     public void close() {
-        seal();
-
-        if (keyMem.isOpen()) {
-            long keyFileSize = genCount > 0
-                    ? FSSTBitmapIndexUtils.getGenDirOffset(genCount)
-                    : KEY_FILE_RESERVED;
-            keyMem.setSize(keyFileSize);
-            Misc.free(keyMem);
-        }
-        if (valueMem.isOpen()) {
-            if (valueMemSize > 0) {
-                valueMem.setSize(valueMemSize);
+        try {
+            seal();
+        } finally {
+            try {
+                if (keyMem.isOpen()) {
+                    long keyFileSize = genCount > 0
+                            ? FSSTBitmapIndexUtils.getGenDirOffset(genCount)
+                            : KEY_FILE_RESERVED;
+                    keyMem.setSize(keyFileSize);
+                    Misc.free(keyMem);
+                }
+            } finally {
+                try {
+                    if (valueMem.isOpen()) {
+                        if (valueMemSize > 0) {
+                            valueMem.setSize(valueMemSize);
+                        }
+                        Misc.free(valueMem);
+                    }
+                } finally {
+                    freeNativeBuffers();
+                    keyCount = 0;
+                    valueMemSize = 0;
+                    genCount = 0;
+                    symbolTable = null;
+                    hasPendingData = false;
+                }
             }
-            Misc.free(valueMem);
         }
-
-        freeNativeBuffers();
-        keyCount = 0;
-        valueMemSize = 0;
-        genCount = 0;
-        symbolTable = null;
-        hasPendingData = false;
     }
 
     @Override

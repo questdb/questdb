@@ -5,6 +5,7 @@
 .ignore
 out
 benchmarks/target
+benchmarks/*.png
 core/target
 utils/target
 utils/dependency-reduced-pom.xml

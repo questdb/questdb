@@ -101,6 +101,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // Covering index sidecar state
         private int sidecarOrdinal;
         private int sidecarStrideKeyStart;
+        private int sealedGenKeyCount;
 
         @Override
         public byte getCoveredByte(int includeIdx) {
@@ -164,18 +165,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public boolean hasCovering() {
-            return coverCount > 0 && sidecarMems != null;
+            return coverCount > 0 && sidecarMems != null && genCount == 1;
         }
 
         private long getSidecarOffset(int includeIdx, int shift) {
-            // sidecarOrdinal is the ordinal position of the last-returned value
-            // within the current stride for this key
-            int sc = PostingIndexUtils.strideCount(keyCount);
+            int sc = PostingIndexUtils.strideCount(sealedGenKeyCount);
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             if (stride >= sc) {
                 return 0;
             }
-            int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+            int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
             int strideOff = sidecarMems[includeIdx].getInt((long) stride * Integer.BYTES);
             return siSize + strideOff + ((long) (sidecarStrideKeyStart + sidecarOrdinal - 1) << shift);
         }
@@ -449,6 +448,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long genAddr = valueMem.addressOf(genFileOffset);
 
             this.flatMode = false;
+            this.sealedGenKeyCount = genKeyCount;
 
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
@@ -591,6 +591,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (idx < 0) {
                 clearBlockState();
                 totalValueCount = 0;
+                this.flatMode = false;
                 return;
             }
 
