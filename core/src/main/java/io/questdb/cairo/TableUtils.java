@@ -203,6 +203,7 @@ public final class TableUtils {
     static final int META_FLAG_INDEX_TYPE_MASK_LO = 0x03; // bits 0-1: index type
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
+    static final int META_FLAG_BIT_COVERING = META_FLAG_BIT_DEDUP_KEY << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -2127,6 +2128,10 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_DEDUP_KEY;
             }
 
+            if (tableStruct.isCovering(i)) {
+                flags |= META_FLAG_BIT_COVERING;
+            }
+
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
@@ -2137,6 +2142,16 @@ public final class TableUtils {
 
         for (int i = 0; i < count; i++) {
             mem.putStr(tableStruct.getColumnName(i));
+        }
+
+        for (int i = 0; i < count; i++) {
+            int[] coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.length > 0) {
+                mem.putInt(coveringIndices.length);
+                for (int idx : coveringIndices) {
+                    mem.putInt(idx);
+                }
+            }
         }
     }
 
@@ -2266,6 +2281,10 @@ public final class TableUtils {
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+    }
+
+    static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_COVERING) != 0;
     }
 
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {

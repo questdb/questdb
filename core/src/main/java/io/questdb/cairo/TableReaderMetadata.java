@@ -357,6 +357,40 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             }
         }
         this.columnCount = columnMetadata.size();
+        readCoveringColumnData(mem, columnCount);
+    }
+
+    private void readCoveringColumnData(MemoryR mem, int columnCount) {
+        // Compute offset past all column names
+        long offset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            int strLen = mem.getInt(offset);
+            offset += Vm.getStorageLength(strLen);
+        }
+        // Read covering column indices for each column that has the covering flag
+        for (int i = 0; i < columnCount; i++) {
+            if (TableUtils.isColumnCovering(mem, i)) {
+                if (offset + Integer.BYTES > mem.size()) {
+                    break;
+                }
+                int includeCount = mem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= mem.size()) {
+                    int[] indices = new int[includeCount];
+                    for (int j = 0; j < includeCount; j++) {
+                        indices[j] = mem.getInt(offset);
+                        offset += Integer.BYTES;
+                    }
+                    // Find the corresponding TableColumnMetadata for writerIndex i
+                    for (int k = 0, n = columnMetadata.size(); k < n; k++) {
+                        if (columnMetadata.getQuick(k).getWriterIndex() == i) {
+                            columnMetadata.getQuick(k).setCoveringColumnIndices(indices);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     public void updateTableToken(TableToken tableToken) {

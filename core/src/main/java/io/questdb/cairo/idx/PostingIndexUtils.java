@@ -148,6 +148,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public final class PostingIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
+    public static final int COVER_INFO_MAGIC = 0x50434930; // "PCI0"
     public static final int DENSE_STRIDE = 256;
     public static final int PACKED_BATCH_SIZE = 256;
 
@@ -868,6 +869,22 @@ public final class PostingIndexUtils {
             }
         }
         return -(lo + 1);
+    }
+
+    public static LPSZ coverDataFileName(Path path, CharSequence name, long columnNameTxn, int includeIdx) {
+        path.concat(name).put(".pc").put(includeIdx);
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    public static LPSZ coverInfoFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pci");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {

@@ -256,6 +256,20 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                     } else {
                         sink.putAscii(" INDEX TYPE ").putAscii(IndexType.nameOf(idxType));
+                        int[] coveringCols = column.getCoveringColumnIndices();
+                        if (coveringCols != null && coveringCols.length > 0) {
+                            sink.putAscii(" INCLUDE (");
+                            for (int ci = 0; ci < coveringCols.length; ci++) {
+                                if (ci > 0) {
+                                    sink.putAscii(", ");
+                                }
+                                CairoColumn covCol = table.getColumnQuiet(coveringCols[ci]);
+                                if (covCol != null) {
+                                    sink.put(covCol.getName());
+                                }
+                            }
+                            sink.putAscii(')');
+                        }
                     }
                 }
             }

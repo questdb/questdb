@@ -298,6 +298,7 @@ import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
@@ -1400,6 +1401,55 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    /**
+     * Checks if all selected columns in the query can be served from the covering
+     * index sidecar files. Returns a mapping array (query column → include index)
+     * if fully covered, or null if any column requires column file access.
+     */
+    /**
+     * Checks if all selected columns can be served from the covering index
+     * sidecar. Returns a mapping array (query col → include idx, or -1 for the
+     * indexed symbol column) if fully covered, or null otherwise.
+     */
+    @Nullable
+    private static int[] buildCoveringIndexMapping(
+            TableReader reader,
+            int keyColumnIndex,
+            IntList columnIndexes,
+            RecordMetadata queryMeta
+    ) {
+        // keyColumnIndex is a reader column index; covering indices are writer column indices.
+        int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyColumnIndex).getCoveringColumnIndices();
+        if (coveringIndices == null || coveringIndices.length == 0) {
+            return null;
+        }
+        // The mapping is keyed by query column position (0 to queryColCount-1).
+        // SelectedRecord wraps CoveringRecord but maps via identity (factory metadata
+        // column position == query column position) so the query-position index is correct.
+        int queryColCount = queryMeta.getColumnCount();
+        int[] mapping = new int[queryColCount];
+        for (int q = 0; q < queryColCount; q++) {
+            int readerColIdx = columnIndexes.getQuick(q);
+            if (readerColIdx == keyColumnIndex) {
+                mapping[q] = -1; // symbol column — value known from WHERE key
+                continue;
+            }
+            int writerColIdx = reader.getMetadata().getWriterIndex(readerColIdx);
+            int includeIdx = -1;
+            for (int c = 0; c < coveringIndices.length; c++) {
+                if (coveringIndices[c] == writerColIdx) {
+                    includeIdx = c;
+                    break;
+                }
+            }
+            if (includeIdx < 0) {
+                return null; // not covered — fallback to regular scan
+            }
+            mapping[q] = includeIdx;
+        }
+        return mapping;
     }
 
     @Nullable
@@ -8327,6 +8377,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             true,
                                             indexDirection,
                                             null
+                                    );
+                                }
+                            }
+
+                            // Check if covering index can serve all selected columns
+                            if (filter == null && symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                                int[] coveringMapping = buildCoveringIndexMapping(
+                                        reader, keyColumnIndex, columnIndexes, queryMeta
+                                );
+                                if (coveringMapping != null) {
+                                    return new CoveringIndexRecordCursorFactory(
+                                            queryMeta,
+                                            dfcFactory,
+                                            keyColumnIndex,
+                                            symbolKey,
+                                            symbolFunc,
+                                            columnIndexes,
+                                            columnSizeShifts,
+                                            coveringMapping
                                     );
                                 }
                             }

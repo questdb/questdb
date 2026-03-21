@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Unsafe;
@@ -65,7 +66,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         return EmptyRowCursor.INSTANCE;
     }
 
-    private class Cursor implements RowCursor {
+    private class Cursor implements CoveringRowCursor {
         private final long[] blockBuffer = new long[PostingIndexUtils.PACKED_BATCH_SIZE];
         private final long[] blockDeltas = new long[PostingIndexUtils.BLOCK_CAPACITY];
         private long next;
@@ -97,6 +98,67 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // Inverted index cursor state — jumps directly to relevant sparse gens
         private int lookupPos;
         private int lookupEnd;
+        // Covering index sidecar state
+        private int sidecarOrdinal;
+        private int sidecarStrideKeyStart;
+
+        @Override
+        public double getCoveredDouble(int includeIdx) {
+            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+                return Double.NaN;
+            }
+            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
+            long offset = getSidecarOffset(includeIdx, shift);
+            return sidecarMems[includeIdx].getDouble(offset);
+        }
+
+        @Override
+        public int getCoveredInt(int includeIdx) {
+            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+                return Integer.MIN_VALUE;
+            }
+            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
+            long offset = getSidecarOffset(includeIdx, shift);
+            return sidecarMems[includeIdx].getInt(offset);
+        }
+
+        @Override
+        public long getCoveredLong(int includeIdx) {
+            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+                return Long.MIN_VALUE;
+            }
+            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
+            long offset = getSidecarOffset(includeIdx, shift);
+            return sidecarMems[includeIdx].getLong(offset);
+        }
+
+        @Override
+        public short getCoveredShort(int includeIdx) {
+            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+                return 0;
+            }
+            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
+            long offset = getSidecarOffset(includeIdx, shift);
+            return sidecarMems[includeIdx].getShort(offset);
+        }
+
+        @Override
+        public boolean hasCovering() {
+            return coverCount > 0 && sidecarMems != null;
+        }
+
+        private long getSidecarOffset(int includeIdx, int shift) {
+            // sidecarOrdinal is the ordinal position of the last-returned value
+            // within the current stride for this key
+            int sc = PostingIndexUtils.strideCount(keyCount);
+            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            if (stride >= sc) {
+                return 0;
+            }
+            int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+            int strideOff = sidecarMems[includeIdx].getInt((long) stride * Integer.BYTES);
+            return siSize + strideOff + ((long) (sidecarStrideKeyStart + sidecarOrdinal - 1) << shift);
+        }
 
         @Override
         public boolean hasNext() {
@@ -111,8 +173,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
                     if (value >= minValue) {
                         this.next = value;
+                        sidecarOrdinal++;
                         return true;
                     }
+                    sidecarOrdinal++;
                 }
 
                 // Try to decode next block in current generation
@@ -171,6 +235,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.currentBlock = 0;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+            this.sidecarOrdinal = 0;
+            this.sidecarStrideKeyStart = 0;
             advanceToNextRelevantGen();
         }
 

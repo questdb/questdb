@@ -51,8 +51,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     protected long columnTop;
+    protected int coverCount;
     protected int genCount;
     protected int keyCount;
+    protected int[] sidecarColumnIndices;
+    protected int[] sidecarColumnTypes;
+    protected MemoryMR[] sidecarMems;
     private long activePageOffset;
     private long columnTxn;
     private int keyCountIncludingNulls;
@@ -65,6 +69,20 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         genLookup.close();
         Misc.free(keyMem);
         Misc.free(valueMem);
+        closeSidecarMems();
+    }
+
+    private void closeSidecarMems() {
+        if (sidecarMems != null) {
+            for (int i = 0; i < sidecarMems.length; i++) {
+                Misc.free(sidecarMems[i]);
+                sidecarMems[i] = null;
+            }
+            sidecarMems = null;
+        }
+        coverCount = 0;
+        sidecarColumnIndices = null;
+        sidecarColumnTypes = null;
     }
 
     @Override
@@ -179,10 +197,65 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
             );
+
+            // Try to open sidecar files for covering index
+            openSidecarFilesIfPresent(configuration, path.trimTo(plen), columnName, columnNameTxn);
         } catch (Throwable e) {
             close();
             throw e;
         } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private void openSidecarFilesIfPresent(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn
+    ) {
+        FilesFacade ff = configuration.getFilesFacade();
+        int plen = path.size();
+        LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, columnName, columnNameTxn);
+        if (!ff.exists(pciFile)) {
+            path.trimTo(plen);
+            return;
+        }
+        MemoryCMR infoMem = Vm.getCMRInstance();
+        try {
+            infoMem.of(ff, pciFile, ff.getMapPageSize(), 8, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+            int magic = infoMem.getInt(0);
+            if (magic != PostingIndexUtils.COVER_INFO_MAGIC) {
+                return;
+            }
+            int count = infoMem.getInt(4);
+            if (count <= 0) {
+                return;
+            }
+            long neededSize = 8 + (long) count * 8;
+            infoMem.extend(neededSize);
+            sidecarColumnIndices = new int[count];
+            sidecarColumnTypes = new int[count];
+            for (int i = 0; i < count; i++) {
+                sidecarColumnIndices[i] = infoMem.getInt(8 + (long) i * 8);
+                sidecarColumnTypes[i] = infoMem.getInt(8 + (long) i * 8 + 4);
+            }
+            coverCount = count;
+
+            sidecarMems = new MemoryMR[count];
+            for (int c = 0; c < count; c++) {
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
+                if (ff.exists(pcFile)) {
+                    sidecarMems[c] = Vm.getCMRInstance();
+                    long fileLen = ff.length(pcFile);
+                    ((MemoryCMR) sidecarMems[c]).of(ff, pcFile, ff.getMapPageSize(), fileLen, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                }
+                path.trimTo(plen);
+            }
+        } catch (Throwable e) {
+            closeSidecarMems();
+        } finally {
+            Misc.free(infoMem);
             path.trimTo(plen);
         }
     }

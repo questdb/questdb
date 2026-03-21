@@ -601,6 +601,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
                 column.setIndexType(columnMetadata.getIndexType());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
+                column.setCoveringColumnIndices(columnMetadata.getCoveringColumnIndices());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
                 column.setParquetEncodingConfig(columnMetadata.getParquetEncodingConfig());

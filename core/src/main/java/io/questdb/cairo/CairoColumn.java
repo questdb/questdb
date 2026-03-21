@@ -34,6 +34,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn implements Sinkable {
     public static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private int[] coveringColumnIndices;
     private boolean dedupKey;
     private boolean designated;
     private int indexBlockCapacity;
@@ -52,6 +53,7 @@ public class CairoColumn implements Sinkable {
     }
 
     public void copyTo(@NotNull CairoColumn target) {
+        target.coveringColumnIndices = this.coveringColumnIndices;
         target.designated = this.designated;
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.dedupKey = this.dedupKey;
@@ -65,6 +67,10 @@ public class CairoColumn implements Sinkable {
         target.type = this.type;
         target.writerIndex = this.writerIndex;
         target.metadataVersion = this.metadataVersion;
+    }
+
+    public int[] getCoveringColumnIndices() {
+        return coveringColumnIndices;
     }
 
     public int getIndexBlockCapacity() {
@@ -117,6 +123,10 @@ public class CairoColumn implements Sinkable {
 
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
+    }
+
+    public void setCoveringColumnIndices(int[] coveringColumnIndices) {
+        this.coveringColumnIndices = coveringColumnIndices;
     }
 
     public void setDedupKeyFlag(boolean dedupKey) {

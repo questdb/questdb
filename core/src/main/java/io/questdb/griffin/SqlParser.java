@@ -2071,9 +2071,31 @@ public class SqlParser {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
 
-            if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
+            tok = tok(lexer, ") | , expected");
+            if (isFieldTerm(tok) || isParquetKeyword(tok)) {
                 model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
                 return tok;
+            }
+
+            if (SqlKeywords.isIncludeKeyword(tok)) {
+                if (indexType != IndexType.POSTING) {
+                    throw SqlException.position(lexer.lastTokenPosition())
+                            .put("INCLUDE is only supported for POSTING index type");
+                }
+                expectTok(lexer, '(');
+                do {
+                    tok = tok(lexer, "column name");
+                    model.addCoveringColumnName(Chars.toString(tok));
+                    tok = tok(lexer, "',' or ')'");
+                } while (Chars.equals(tok, ','));
+                if (!Chars.equals(tok, ')')) {
+                    throw errUnexpected(lexer, tok);
+                }
+                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+                tok = optTok(lexer);
+                if (tok == null || isFieldTerm(tok) || isParquetKeyword(tok)) {
+                    return tok;
+                }
             }
         }
 

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -69,6 +70,22 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             fd = -1;
             Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
             buffer = 0;
+        }
+    }
+
+    @Override
+    public void configureCovering(
+            long[] coveredColumnAddrs,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount
+    ) {
+        if (writer instanceof PostingIndexWriter) {
+            ((PostingIndexWriter) writer).configureCovering(
+                    coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
+                    coveredColumnIndices, coveredColumnTypes, coverCount);
         }
     }
 

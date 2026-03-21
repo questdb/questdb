@@ -88,6 +88,15 @@ public interface TableStructure {
      */
     byte getIndexType(int columnIndex);
 
+    default int[] getCoveringColumnIndices(int columnIndex) {
+        return null;
+    }
+
+    default boolean isCovering(int columnIndex) {
+        int[] indices = getCoveringColumnIndices(columnIndex);
+        return indices != null && indices.length > 0;
+    }
+
     boolean isDedupKey(int columnIndex);
 
     default boolean isIndexed(int columnIndex) {

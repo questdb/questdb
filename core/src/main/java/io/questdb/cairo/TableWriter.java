@@ -34,6 +34,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -1241,6 +1242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
                         assert indexer != null;
                         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+                        configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
                     }
                 }
             } catch (Throwable th) {
@@ -5705,6 +5707,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
+        TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
+        int[] coveringCols = colMeta.getCoveringColumnIndices();
+        if (coveringCols == null || coveringCols.length == 0) {
+            return;
+        }
+        int coverCount = coveringCols.length;
+        long[] addrs = new long[coverCount];
+        long[] tops = new long[coverCount];
+        int[] shifts = new int[coverCount];
+        int[] indices = new int[coverCount];
+        int[] types = new int[coverCount];
+        for (int i = 0; i < coverCount; i++) {
+            int covCol = coveringCols[i];
+            MemoryMA covMem = getPrimaryColumn(covCol);
+            addrs[i] = covMem.addressOf(0);
+            tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
+            int covType = metadata.getColumnType(covCol);
+            types[i] = covType;
+            indices[i] = covCol;
+            shifts[i] = ColumnType.pow2SizeOf(covType);
+        }
+        indexer.configureCovering(addrs, tops, shifts, indices, types, coverCount);
+    }
+
     private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
@@ -5990,6 +6017,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+        configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
     }
 
@@ -7106,7 +7134,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (indexed) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
-                indexers.getQuick(columnIndex).configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
+                indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
+                configureCoveringIfNeeded(indexer, columnIndex, txWriter.getLastPartitionTimestamp());
             }
 
             // configure append position for variable length columns
@@ -7157,6 +7186,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (indexer != null) {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
                         indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop);
+                        configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
                     }
                 }
             }
@@ -9487,8 +9517,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (IndexType.isIndexed(indexType)) {
             removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
             removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+            // Remove covering index sidecar files
+            removeCoveringIndexFiles(columnName, columnNameTxn, plen);
         }
         path.trimTo(pathSize);
+    }
+
+    private void removeCoveringIndexFiles(CharSequence columnName, long columnNameTxn, int plen) {
+        removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(path.trimTo(plen), columnName, columnNameTxn));
+        // Remove .pc0, .pc1, ... — try up to a reasonable limit
+        for (int c = 0; c < 64; c++) {
+            LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
+            if (!ff.exists(pcFile)) {
+                break;
+            }
+            removeFileOrLog(ff, pcFile);
+        }
     }
 
     private void removeMetaFile() {
