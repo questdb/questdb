@@ -73,6 +73,7 @@ public class PostingIndexWriter implements IndexWriter {
     private final int[] strideKeyCounts = new int[PostingIndexUtils.DENSE_STRIDE];
     private final long[] strideKeyOffsets = new long[PostingIndexUtils.DENSE_STRIDE];
 
+    private static final int PENDING_SLOT_CAPACITY = 8;
     private int activeKeyCount;
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private long activePageOffset;
@@ -171,7 +172,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         int count = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
 
-        if (count >= blockCapacity) {
+        if (count >= PENDING_SLOT_CAPACITY) {
             // Buffer full for this key — spill its values to the overflow buffer
             // instead of flushing ALL keys. This prevents gen-count explosion
             // when a single hot key drives all overflows.
@@ -181,7 +182,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (count > 0) {
             long lastVal = Unsafe.getUnsafe().getLong(
-                    pendingValuesAddr + ((long) key * blockCapacity + count - 1) * Long.BYTES);
+                    pendingValuesAddr + ((long) key * PENDING_SLOT_CAPACITY + count - 1) * Long.BYTES);
             if (value < lastVal) {
                 throw CairoException.critical(0)
                         .put("index values must be added in ascending order [lastValue=")
@@ -203,7 +204,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         Unsafe.getUnsafe().putLong(
-                pendingValuesAddr + ((long) key * blockCapacity + count) * Long.BYTES, value);
+                pendingValuesAddr + ((long) key * PENDING_SLOT_CAPACITY + count) * Long.BYTES, value);
         Unsafe.getUnsafe().putInt(pendingCountsAddr + (long) key * Integer.BYTES, count + 1);
 
         if (key >= keyCount) {
@@ -1997,7 +1998,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     private void allocateNativeBuffers() {
         keyCapacity = Math.max(INITIAL_KEY_CAPACITY, keyCount);
-        long valBufSize = (long) keyCapacity * blockCapacity * Long.BYTES;
+        long valBufSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long countBufSize = (long) keyCapacity * Integer.BYTES;
 
         pendingValuesAddr = Unsafe.malloc(valBufSize, MemoryTag.NATIVE_DEFAULT);
@@ -2093,7 +2094,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (spillCount == 0) {
                 // No spill — encode directly from pending buffer
-                long keyValuesAddr = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
+                long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                 encodeCtx.ensureCapacity(count);
                 bytesWritten = PostingIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
 
@@ -2120,7 +2121,7 @@ public class PostingIndexWriter implements IndexWriter {
                         Unsafe.getUnsafe().putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
                     }
                     // Append pending values after spill values
-                    long pendingSrc = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
+                    long pendingSrc = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                     long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                     Unsafe.getUnsafe().copyMemory(pendingSrc,
                             spillAddr + (long) spillCount * Long.BYTES,
@@ -2191,7 +2192,7 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.getUnsafe().putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
         }
         // Copy values from pending buffer to this key's spill
-        long srcAddr = pendingValuesAddr + (long) key * blockCapacity * Long.BYTES;
+        long srcAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
         long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
         Unsafe.getUnsafe().copyMemory(srcAddr, spillAddr + (long) prevCount * Long.BYTES,
                 (long) count * Long.BYTES);
@@ -2271,7 +2272,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     private void freeNativeBuffers() {
         if (pendingValuesAddr != 0) {
-            Unsafe.free(pendingValuesAddr, (long) keyCapacity * blockCapacity * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(pendingValuesAddr, (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             pendingValuesAddr = 0;
         }
         if (pendingCountsAddr != 0) {
@@ -2307,8 +2308,8 @@ public class PostingIndexWriter implements IndexWriter {
     private void growKeyBuffers(int minCapacity) {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
-        long oldValSize = (long) keyCapacity * blockCapacity * Long.BYTES;
-        long newValSize = (long) newCapacity * blockCapacity * Long.BYTES;
+        long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
+        long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().setMemory(pendingValuesAddr + oldValSize, newValSize - oldValSize, (byte) 0);
 
