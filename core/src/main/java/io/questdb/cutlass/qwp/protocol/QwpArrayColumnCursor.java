@@ -53,7 +53,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     private long dataAddress;
     private boolean isDoubleArray;
     private long nullBitmapAddress;
-    private boolean hasNullBitmap;
     private int[] rowDims = new int[INITIAL_ROW_CAPACITY];
     private int[] rowElementCounts = new int[INITIAL_ROW_CAPACITY];
     // Pre-computed row offsets for fast random access
@@ -64,7 +63,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (hasNullBitmap && nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, currentRow)) {
+        if (nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, currentRow)) {
             currentIsNull = true;
             currentNDims = 0;
             currentElementCount = 0;
@@ -93,7 +92,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = TYPE_DOUBLE_ARRAY;
-        hasNullBitmap = false;
         isDoubleArray = true;
         nullBitmapAddress = 0;
         dataAddress = 0;
@@ -163,24 +161,30 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
      * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_DOUBLE_ARRAY or TYPE_LONG_ARRAY)
-     * @param hasNullBitmap    whether column has a null bitmap
      * @return bytes consumed from dataAddress
      */
     public int of(
             long dataAddress,
             int dataLength,
             int rowCount,
-            byte typeCode,
-            boolean hasNullBitmap
+            byte typeCode
     ) throws QwpParseException {
         this.typeCode = typeCode;
-        this.hasNullBitmap = hasNullBitmap;
         this.isDoubleArray = (typeCode == TYPE_DOUBLE_ARRAY);
 
         ensureRowCapacity(rowCount);
         int offset = 0;
 
-        if (hasNullBitmap) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "array column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + (long) bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -188,10 +192,13 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                         "array column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
         this.dataAddress = dataAddress + offset;
@@ -200,7 +207,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         // Pre-scan all non-null rows to build offset table
         long scanAddr = this.dataAddress;
         for (int row = 0; row < rowCount; row++) {
-            if (hasNullBitmap && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+            if (nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                 rowOffsets[row] = -1; // Mark as null
                 rowDims[row] = 0;
                 rowElementCounts[row] = 0;

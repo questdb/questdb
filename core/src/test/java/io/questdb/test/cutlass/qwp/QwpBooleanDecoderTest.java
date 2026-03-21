@@ -45,14 +45,15 @@ public class QwpBooleanDecoderTest {
 
     @Test
     public void testBitOrderLsbFirst() throws QwpParseException {
-        // Hand-craft 1 byte with only bit 0 set: 0b00000001
-        int size = 1;
+        // Hand-craft: no-null-bitmap flag + 1 byte with only bit 0 set: 0b00000001
+        int size = 2;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0b00000001);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.getUnsafe().putByte(address + 1, (byte) 0b00000001);
 
             QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
-            cursor.of(address, size, 8, false);
+            cursor.of(address, size, 8);
 
             // Bit 0 should be true, bits 1-7 should be false
             cursor.advanceRow();
@@ -68,14 +69,15 @@ public class QwpBooleanDecoderTest {
 
     @Test
     public void testBitOrderMsbOfByte() throws QwpParseException {
-        // Hand-craft 1 byte with only bit 7 set: 0b10000000
-        int size = 1;
+        // Hand-craft: no-null-bitmap flag + 1 byte with only bit 7 set: 0b10000000
+        int size = 2;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0b10000000);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.getUnsafe().putByte(address + 1, (byte) 0b10000000);
 
             QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
-            cursor.of(address, size, 8, false);
+            cursor.of(address, size, 8);
 
             // Bits 0-6 should be false, bit 7 should be true
             for (int i = 0; i < 7; i++) {
@@ -110,38 +112,50 @@ public class QwpBooleanDecoderTest {
 
     @Test
     public void testDecodeEmptyColumn() throws QwpParseException {
-        QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
-        int consumed = cursor.of(0, 0, 0, false);
-        Assert.assertEquals(0, consumed);
+        // Even for 0 rows, the cursor reads the null bitmap flag
+        int size = 1;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
+            int consumed = cursor.of(address, size, 0);
+            Assert.assertEquals(1, consumed);
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
     public void testDecodeInsufficientDataForNullBitmap() {
-        // 10 rows need 2 bytes for null bitmap, but we only provide 1
-        long address = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        // null bitmap flag=1 but only 1 byte left, not enough for bitmap (10 rows need 2 bytes)
+        int size = 2;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 1); // null bitmap present
             QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
-            cursor.of(address, 1, 10, true);
+            cursor.of(address, size, 10);
             Assert.fail("expected QwpParseException for truncated null bitmap");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
-            Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
     public void testDecodeInsufficientDataForValues() {
-        // 16 rows need 2 bytes for value bits, we only provide 1
-        long address = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        // no null bitmap, then 16 rows need 2 bytes for value bits, we only provide 1
+        int size = 2;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
-            cursor.of(address, 1, 16, false);
+            cursor.of(address, size, 16);
             Assert.fail("expected QwpParseException for truncated value bitmap");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
-            Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

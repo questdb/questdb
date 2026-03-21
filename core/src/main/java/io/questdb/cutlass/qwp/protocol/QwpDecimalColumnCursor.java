@@ -62,7 +62,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     // For DECIMAL64
     private long currentValue64;
     private int currentValueIndex;
-    private boolean hasNullBitmap;
     // Wire pointers
     private long nullBitmapAddress;
     private byte scale;
@@ -75,7 +74,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (hasNullBitmap && nullBitmapAddress != 0) {
+        if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -94,7 +93,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = TYPE_DECIMAL64;
-        hasNullBitmap = false;
         valueSize = 8;
         scale = 0;
         nullBitmapAddress = 0;
@@ -188,23 +186,29 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes from dataAddress
-     * @param rowCount      number of rows
-     * @param typeCode      column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
-     * @param hasNullBitmap whether column has a null bitmap
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes from dataAddress
+     * @param rowCount    number of rows
+     * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean hasNullBitmap) throws QwpParseException {
+    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode) throws QwpParseException {
         this.typeCode = typeCode;
-        this.hasNullBitmap = hasNullBitmap;
         this.valueSize = getDecimalValueSize(typeCode);
 
         int offset = 0;
-        int nullCount = 0;
 
-        if (hasNullBitmap) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "decimal column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -212,11 +216,13 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
                         "decimal column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
         // Read scale byte
@@ -252,7 +258,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     }
 
     private static int getDecimalValueSize(byte typeCode) {
-        int type = typeCode & TYPE_MASK;
+        int type = typeCode;
         return switch (type) {
             case TYPE_DECIMAL64 -> 8;
             case TYPE_DECIMAL128 -> 16;
@@ -262,7 +268,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     }
 
     private void readCurrentValue(long address) {
-        int type = typeCode & TYPE_MASK;
+        int type = typeCode;
         switch (type) {
             case TYPE_DECIMAL64:
                 // Big-endian

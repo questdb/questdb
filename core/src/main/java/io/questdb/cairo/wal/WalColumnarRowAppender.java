@@ -1882,8 +1882,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private static void formatFixedOtherValue(CharSink<?> sink, QwpFixedWidthColumnCursor cursor, byte ilpType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
-        switch (wireType) {
+        switch (ilpType) {
             case TYPE_UUID -> Numbers.appendUuid(cursor.getUuidLo(), cursor.getUuidHi(), sink);
             case TYPE_LONG256 -> Numbers.appendLong256(
                     cursor.getLong256_0(), cursor.getLong256_1(),
@@ -1893,7 +1892,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             case TYPE_TIMESTAMP_NANOS -> MicrosFormatUtils.appendDateTime(sink, cursor.getTimestamp() / 1000);
             case TYPE_CHAR -> sink.putAscii((char) cursor.getShort());
             default -> throw CairoException.nonCritical()
-                    .put("unsupported wire type for string conversion: ").put(wireType);
+                    .put("unsupported wire type for string conversion: ").put(ilpType);
         }
     }
 

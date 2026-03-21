@@ -46,8 +46,6 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
     private int currentRow;
     private boolean currentValue;
     private int currentValueIndex;  // Index into value bitmap (non-null values only)
-    // Configuration
-    private boolean hasNullBitmap;
     // Wire pointers
     private long nullBitmapAddress;
     private long valueBitmapAddress;
@@ -56,7 +54,7 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (hasNullBitmap && nullBitmapAddress != 0) {
+        if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -76,7 +74,6 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        hasNullBitmap = false;
         nullBitmapAddress = 0;
         valueBitmapAddress = 0;
         resetRowPosition();
@@ -105,22 +102,26 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
      * @param dataAddress   address of column data
      * @param dataLength    available bytes from dataAddress
      * @param rowCount      number of rows
-     * @param hasNullBitmap whether column has a null bitmap
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
     public int of(
             long dataAddress,
             int dataLength,
-            int rowCount,
-            boolean hasNullBitmap
+            int rowCount
     ) throws QwpParseException {
-        this.hasNullBitmap = hasNullBitmap;
-
         int offset = 0;
-        int nullCount = 0;
 
-        if (hasNullBitmap) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "boolean column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -128,11 +129,13 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
                         "boolean column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
         int valueCount = rowCount - nullCount;

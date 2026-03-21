@@ -61,21 +61,6 @@ public class QwpSchemaTest {
     }
 
     @Test
-    public void testColumnDefNullableEquality() {
-        QwpColumnDef col1 = new QwpColumnDef("name", QwpConstants.TYPE_STRING, false);
-        QwpColumnDef col2 = new QwpColumnDef("name", QwpConstants.TYPE_STRING, true);
-
-        Assert.assertNotEquals(col1, col2);
-    }
-
-    @Test
-    public void testColumnDefNullableToString() {
-        QwpColumnDef col = new QwpColumnDef("value", QwpConstants.TYPE_DOUBLE, true);
-        String str = col.toString();
-        Assert.assertTrue(str.contains("?"));
-    }
-
-    @Test
     public void testColumnDefToString() {
         QwpColumnDef col = new QwpColumnDef("temperature", QwpConstants.TYPE_DOUBLE);
         String str = col.toString();
@@ -99,11 +84,11 @@ public class QwpSchemaTest {
 
     @Test
     public void testColumnDefWireTypeCode() {
-        QwpColumnDef noNullBitmap = new QwpColumnDef("col", QwpConstants.TYPE_INT, false);
-        QwpColumnDef withNullBitmap = new QwpColumnDef("col", QwpConstants.TYPE_INT, true);
+        QwpColumnDef col = new QwpColumnDef("col", QwpConstants.TYPE_INT);
+        Assert.assertEquals(QwpConstants.TYPE_INT, col.getWireTypeCode());
 
-        Assert.assertEquals(QwpConstants.TYPE_INT, noNullBitmap.getWireTypeCode());
-        Assert.assertEquals((byte) (QwpConstants.TYPE_INT | 0x80), withNullBitmap.getWireTypeCode());
+        // Wire type code equals the type code
+        Assert.assertEquals(QwpConstants.TYPE_INT, col.getTypeCode());
     }
 
     @Test
@@ -185,7 +170,7 @@ public class QwpSchemaTest {
         QwpColumnDef[] columns = {
                 new QwpColumnDef("id", QwpConstants.TYPE_LONG),
                 new QwpColumnDef("name", QwpConstants.TYPE_STRING),
-                new QwpColumnDef("price", (byte) (QwpConstants.TYPE_DOUBLE | 0x80)), // nullable
+                new QwpColumnDef("price", QwpConstants.TYPE_DOUBLE),
                 new QwpColumnDef("ts", QwpConstants.TYPE_TIMESTAMP)
         };
 
@@ -201,7 +186,7 @@ public class QwpSchemaTest {
         for (int i = 0; i < original.getColumnCount(); i++) {
             Assert.assertEquals(original.getColumn(i).getName(), result.schema.getColumn(i).getName());
             Assert.assertEquals(original.getColumn(i).getTypeCode(), result.schema.getColumn(i).getTypeCode());
-            Assert.assertEquals(original.getColumn(i).hasNullBitmap(), result.schema.getColumn(i).hasNullBitmap());
+            Assert.assertEquals(original.getColumn(i).getWireTypeCode(), result.schema.getColumn(i).getWireTypeCode());
         }
     }
 
@@ -371,10 +356,9 @@ public class QwpSchemaTest {
     }
 
     @Test
-    public void testParseNullableType() throws QwpParseException {
-        // Test nullable flag (high bit set)
+    public void testParseTypeCodeRoundTrip() throws QwpParseException {
         QwpColumnDef[] columns = {
-                new QwpColumnDef("nullable_col", (byte) (QwpConstants.TYPE_DOUBLE | 0x80))
+                new QwpColumnDef("col", QwpConstants.TYPE_DOUBLE)
         };
 
         QwpSchema original = QwpSchema.create(columns);
@@ -383,7 +367,6 @@ public class QwpSchemaTest {
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
 
-        Assert.assertTrue(result.schema.getColumn(0).hasNullBitmap());
         Assert.assertEquals(QwpConstants.TYPE_DOUBLE, result.schema.getColumn(0).getTypeCode());
     }
 

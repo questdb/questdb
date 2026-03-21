@@ -47,8 +47,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     // Iteration state
     private int currentRow;
     private int currentValueIndex;
-    // Configuration
-    private boolean hasNullBitmap;
     // Wire pointers
     private long nullBitmapAddress;
     private int precision;
@@ -59,7 +57,7 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (hasNullBitmap && nullBitmapAddress != 0) {
+        if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 currentGeoHash = 0;
@@ -78,7 +76,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        hasNullBitmap = false;
         precision = 0;
         valueSize = 0;
         nullBitmapAddress = 0;
@@ -116,18 +113,23 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
      * @param dataAddress   address of column data
      * @param dataLength    available bytes
      * @param rowCount      number of rows
-     * @param hasNullBitmap whether column has a null bitmap
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, int rowCount, boolean hasNullBitmap) throws QwpParseException {
-        this.hasNullBitmap = hasNullBitmap;
-
+    public int of(long dataAddress, int dataLength, int rowCount) throws QwpParseException {
         int offset = 0;
-        int nullCount = 0;
         long limit = dataAddress + dataLength;
 
-        if (hasNullBitmap) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "geohash column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + (long) bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -135,11 +137,13 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
                         "geohash column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
         // Parse precision

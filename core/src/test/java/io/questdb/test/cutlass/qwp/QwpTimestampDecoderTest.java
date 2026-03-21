@@ -309,19 +309,20 @@ public class QwpTimestampDecoderTest {
 
     @Test
     public void testDecodeIncompleteData() {
-        // Gorilla flag but insufficient data for timestamps (3 rows need gorilla decoding)
+        // no null bitmap, Gorilla flag but insufficient data for timestamps
         int bufSize = 32;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, QwpTimestampColumnCursor.ENCODING_GORILLA);
-            Unsafe.getUnsafe().putLong(address + 1, 1000L);
-            Unsafe.getUnsafe().putLong(address + 9, 2000L);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.getUnsafe().putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.getUnsafe().putLong(address + 2, 1000L);
+            Unsafe.getUnsafe().putLong(address + 10, 2000L);
             // No gorilla data follows for the remaining 3 rows
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
-            // dataLength=17 means 0 bytes for gorilla data, decoder throws on first DoD read
+            // dataLength=18 means 0 bytes for gorilla data, decoder throws on first DoD read
             Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, 17, 5, TYPE_TIMESTAMP, false, true));
+                    cursor.of(address, 18, 5, TYPE_TIMESTAMP, true));
         } finally {
             Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -329,17 +330,18 @@ public class QwpTimestampDecoderTest {
 
     @Test
     public void testDecodeInsufficientDataForFirstTimestamp() {
-        // Gorilla encoding flag but insufficient bytes for first timestamp
+        // no null bitmap, Gorilla encoding flag but insufficient bytes for first timestamp
         int bufSize = 32;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.getUnsafe().putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
             // No valid first timestamp, and 3 rows require gorilla decoding
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
-            // dataLength=5 means gorillaDataLength is negative, decoder throws immediately
+            // dataLength=6 means gorillaDataLength is negative, decoder throws immediately
             Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, 5, 3, TYPE_TIMESTAMP, false, true));
+                    cursor.of(address, 6, 3, TYPE_TIMESTAMP, true));
         } finally {
             Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -347,18 +349,19 @@ public class QwpTimestampDecoderTest {
 
     @Test
     public void testDecodeInsufficientDataForSecondTimestamp() {
-        // Gorilla encoding flag + first timestamp but not enough for second
+        // no null bitmap, Gorilla encoding flag + first timestamp but not enough for second
         int bufSize = 32;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, QwpTimestampColumnCursor.ENCODING_GORILLA);
-            Unsafe.getUnsafe().putLong(address + 1, 1_000_000L);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.getUnsafe().putByte(address + 1, QwpTimestampColumnCursor.ENCODING_GORILLA);
+            Unsafe.getUnsafe().putLong(address + 2, 1_000_000L);
             // No valid second timestamp, and 3 rows require gorilla decoding
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
-            // dataLength=12 means gorillaDataLength is negative, decoder throws immediately
+            // dataLength=13 means gorillaDataLength is negative, decoder throws immediately
             Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, 12, 3, TYPE_TIMESTAMP, false, true));
+                    cursor.of(address, 13, 3, TYPE_TIMESTAMP, true));
         } finally {
             Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -369,12 +372,13 @@ public class QwpTimestampDecoderTest {
         int bufSize = 100;
         long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             // Write invalid encoding flag
-            Unsafe.getUnsafe().putByte(address, (byte) 0xFF);
+            Unsafe.getUnsafe().putByte(address + 1, (byte) 0xFF);
 
             QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
             Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, bufSize, 1, TYPE_TIMESTAMP, false, true));
+                    cursor.of(address, bufSize, 1, TYPE_TIMESTAMP, true));
         } finally {
             Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -395,10 +399,17 @@ public class QwpTimestampDecoderTest {
 
     @Test
     public void testDecodeZeroRows() throws QwpParseException {
-        // Zero rows with gorillaEnabled=false consumes no bytes
-        QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
-        int consumed = cursor.of(0, 0, 0, TYPE_TIMESTAMP, false, false);
-        Assert.assertEquals(0, consumed);
+        // Zero rows with gorillaEnabled=false: no null bitmap
+        int size = 1;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            QwpTimestampColumnCursor cursor = new QwpTimestampColumnCursor();
+            int consumed = cursor.of(address, size, 0, TYPE_TIMESTAMP, false);
+            Assert.assertEquals(1, consumed);
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void assertGorillaRoundTrip(long[] timestamps, boolean[] nulls) throws Exception {

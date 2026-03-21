@@ -371,15 +371,13 @@ public class QwpTableBlockCursor implements Mutable {
         for (int i = 0; i < columnCount; i++) {
             QwpColumnDef colDef = columnDefs[i];
             byte typeCode = colDef.getTypeCode();
-            boolean hasNullBitmap = colDef.hasNullBitmap();
 
             int consumed = initializeColumnCursor(
                     i,
                     dataAddress + offset,
                     dataLength - offset,
                     rowCount,
-                    typeCode,
-                    hasNullBitmap
+                    typeCode
             );
             offset += consumed;
         }
@@ -422,10 +420,9 @@ public class QwpTableBlockCursor implements Mutable {
             long dataAddress,
             int dataLength,
             int rowCount,
-            byte typeCode,
-            boolean hasNullBitmap
+            byte typeCode
     ) throws QwpParseException {
-        int type = typeCode & TYPE_MASK;
+        int type = typeCode;
 
         QwpColumnCursor cursor = columnCursors.getQuick(colIndex);
 
@@ -439,7 +436,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, boolCursor);
                 }
                 booleanColumnIndices[booleanColumnCount++] = colIndex;
-                yield boolCursor.of(dataAddress, dataLength, rowCount, hasNullBitmap);
+                yield boolCursor.of(dataAddress, dataLength, rowCount);
             }
             case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_LONG,
                  TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> {
@@ -451,7 +448,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, fixedCursor);
                 }
                 fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
-                yield fixedCursor.of(dataAddress, dataLength, rowCount, typeCode, hasNullBitmap);
+                yield fixedCursor.of(dataAddress, dataLength, rowCount, typeCode);
             }
             case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> {
                 QwpTimestampColumnCursor tsCursor;
@@ -462,7 +459,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, tsCursor);
                 }
                 timestampColumnIndices[timestampColumnCount++] = colIndex;
-                yield tsCursor.of(dataAddress, dataLength, rowCount, typeCode, hasNullBitmap, gorillaEnabled);
+                yield tsCursor.of(dataAddress, dataLength, rowCount, typeCode, gorillaEnabled);
             }
             case TYPE_STRING, TYPE_VARCHAR -> {
                 QwpStringColumnCursor strCursor;
@@ -473,7 +470,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, strCursor);
                 }
                 stringColumnIndices[stringColumnCount++] = colIndex;
-                yield strCursor.of(dataAddress, dataLength, rowCount, typeCode, hasNullBitmap);
+                yield strCursor.of(dataAddress, dataLength, rowCount, typeCode);
             }
             case TYPE_SYMBOL -> {
                 QwpSymbolColumnCursor symCursor;
@@ -486,7 +483,7 @@ public class QwpTableBlockCursor implements Mutable {
                 symbolColumnIndices[symbolColumnCount++] = colIndex;
                 // In delta mode, pass connection dictionary; otherwise null (per-column dict)
                 ObjList<String> dictForSymbol = deltaSymbolDictEnabled ? connectionSymbolDict : null;
-                yield symCursor.of(dataAddress, dataLength, rowCount, hasNullBitmap, dictForSymbol);
+                yield symCursor.of(dataAddress, dataLength, rowCount, dictForSymbol);
             }
             case TYPE_GEOHASH -> {
                 QwpGeoHashColumnCursor geoCursor;
@@ -497,7 +494,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, geoCursor);
                 }
                 geoHashColumnIndices[geoHashColumnCount++] = colIndex;
-                yield geoCursor.of(dataAddress, dataLength, rowCount, hasNullBitmap);
+                yield geoCursor.of(dataAddress, dataLength, rowCount);
             }
             case TYPE_DOUBLE_ARRAY, TYPE_LONG_ARRAY -> {
                 QwpArrayColumnCursor arrCursor;
@@ -508,7 +505,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, arrCursor);
                 }
                 arrayColumnIndices[arrayColumnCount++] = colIndex;
-                yield arrCursor.of(dataAddress, dataLength, rowCount, typeCode, hasNullBitmap);
+                yield arrCursor.of(dataAddress, dataLength, rowCount, typeCode);
             }
             case TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> {
                 QwpDecimalColumnCursor decCursor;
@@ -519,7 +516,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, decCursor);
                 }
                 decimalColumnIndices[decimalColumnCount++] = colIndex;
-                yield decCursor.of(dataAddress, dataLength, rowCount, typeCode, hasNullBitmap);
+                yield decCursor.of(dataAddress, dataLength, rowCount, typeCode);
             }
             default -> throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,

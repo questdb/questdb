@@ -49,14 +49,14 @@ public class QwpSymbolDecoderTest {
 
     @Test
     public void testDecodeEmptySymbolColumn() throws Exception {
-        // The cursor always parses the dictionary, even for 0 rows.
-        // Allocate a buffer with an empty dictionary (varint 0) for 0 rows.
-        int allocSize = QwpVarint.encodedLength(0);
+        // no null bitmap + empty dictionary (varint 0), 0 rows.
+        int allocSize = 1 + QwpVarint.encodedLength(0); // flag byte + dictionary size
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            QwpVarint.encode(address, 0); // empty dictionary
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            QwpVarint.encode(address + 1, 0); // empty dictionary
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            int consumed = cursor.of(address, allocSize, 0, false);
+            int consumed = cursor.of(address, allocSize, 0);
             Assert.assertEquals(allocSize, consumed);
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
@@ -169,9 +169,13 @@ public class QwpSymbolDecoderTest {
         try {
             long pos = address;
 
+            // null bitmap present
+            Unsafe.getUnsafe().putByte(pos, (byte) 1);
+            pos++;
+
             // Null bitmap (all nulls)
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            QwpNullBitmap.fillAllNull(address, rowCount);
+            QwpNullBitmap.fillAllNull(pos, rowCount);
             pos += bitmapSize;
 
             // Empty dictionary (size = 0)
@@ -181,7 +185,7 @@ public class QwpSymbolDecoderTest {
 
             int actualSize = (int) (pos - address);
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            cursor.of(address, actualSize, rowCount, true);
+            cursor.of(address, actualSize, rowCount);
 
             for (int i = 0; i < rowCount; i++) {
                 boolean isNull = cursor.advanceRow();
@@ -211,17 +215,20 @@ public class QwpSymbolDecoderTest {
 
     @Test
     public void testInsufficientDataForDictionary() {
-        int size = 5;
+        int size = 6;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             long pos = address;
+            // no null bitmap
+            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            pos++;
             // Dictionary size = 1
             pos = QwpVarint.encode(pos, 1);
             // String length = 100 (but we don't have that much data)
             QwpVarint.encode(pos, 100);
 
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            cursor.of(address, size, 1, false);
+            cursor.of(address, size, 1);
             Assert.fail("Expected QwpParseException");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().length() > 0);
@@ -236,6 +243,10 @@ public class QwpSymbolDecoderTest {
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             long pos = address;
+
+            // no null bitmap
+            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            pos++;
 
             // Dictionary: 1 entry
             pos = QwpVarint.encode(pos, 1);
@@ -252,7 +263,7 @@ public class QwpSymbolDecoderTest {
 
             int actualSize = (int) (pos - address);
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            cursor.of(address, actualSize, 1, false);
+            cursor.of(address, actualSize, 1);
             cursor.advanceRow();
             Assert.fail("Expected QwpParseException for out-of-bounds dictionary index");
         } catch (QwpParseException e) {
@@ -270,6 +281,10 @@ public class QwpSymbolDecoderTest {
         try {
             long pos = address;
 
+            // no null bitmap
+            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            pos++;
+
             // Value: index 3 (invalid, connection dictionary has only 2 entries)
             pos = QwpVarint.encode(pos, 3);
 
@@ -279,7 +294,7 @@ public class QwpSymbolDecoderTest {
             connectionDict.add("beta");
 
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            cursor.of(address, actualSize, 1, false, connectionDict);
+            cursor.of(address, actualSize, 1, connectionDict);
             cursor.advanceRow();
             Assert.fail("Expected QwpParseException for out-of-bounds delta dictionary index");
         } catch (QwpParseException e) {
@@ -314,6 +329,10 @@ public class QwpSymbolDecoderTest {
         try {
             long pos = address;
 
+            // no null bitmap
+            Unsafe.getUnsafe().putByte(pos, (byte) 0);
+            pos++;
+
             // Dictionary: 2 entries
             pos = QwpVarint.encode(pos, 2);
 
@@ -331,15 +350,13 @@ public class QwpSymbolDecoderTest {
                 Unsafe.getUnsafe().putByte(pos++, b);
             }
 
-            // Values: index 0 for row 0, then index 0 for row 1
-            // (we can't use NULL_SYMBOL_INDEX without a null bitmap,
-            //  so just verify basic cursor operation with 2 valid rows)
+            // Values: index 0 for row 0, then index 1 for row 1
             pos = QwpVarint.encode(pos, 0);
             pos = QwpVarint.encode(pos, 1);
 
             int actualSize = (int) (pos - address);
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
-            cursor.of(address, actualSize, 2, false);
+            cursor.of(address, actualSize, 2);
 
             // Row 0: "a"
             cursor.advanceRow();

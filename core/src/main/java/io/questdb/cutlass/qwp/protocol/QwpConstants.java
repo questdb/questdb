@@ -235,11 +235,12 @@ public final class QwpConstants {
      */
     public static final byte TYPE_LONG_ARRAY = 0x12;
     /**
-     * Mask for type code without nullable flag.
+     * @deprecated No longer used. Nullability is encoded per-batch via a null bitmap flag byte,
+     * not as a flag in the type code. Retained temporarily for compilation of downstream code.
      */
     public static final byte TYPE_MASK = 0x7F;
     /**
-     * High bit indicating nullable column.
+     * @deprecated No longer used. See {@link #TYPE_MASK}.
      */
     public static final byte TYPE_NULLABLE_FLAG = (byte) 0x80;
     /**
@@ -291,7 +292,7 @@ public final class QwpConstants {
      * @return size in bytes, 0 for bit-packed (BOOLEAN), or -1 for variable-width types
      */
     public static int getFixedTypeSize(byte typeCode) {
-        int code = typeCode & TYPE_MASK;
+        int code = typeCode;
         return switch (code) {
             case TYPE_BOOLEAN -> 0; // Special: bit-packed
             case TYPE_BYTE -> 1;
@@ -312,9 +313,8 @@ public final class QwpConstants {
      * @return type name
      */
     public static String getTypeName(byte typeCode) {
-        int code = typeCode & TYPE_MASK;
-        boolean hasNullBitmap = (typeCode & TYPE_NULLABLE_FLAG) != 0;
-        String name = switch (code) {
+        int code = typeCode;
+        return switch (code) {
             case TYPE_BOOLEAN -> "BOOLEAN";
             case TYPE_BYTE -> "BYTE";
             case TYPE_SHORT -> "SHORT";
@@ -339,7 +339,6 @@ public final class QwpConstants {
             case TYPE_DECIMAL256 -> "DECIMAL256";
             default -> "UNKNOWN(" + code + ")";
         };
-        return hasNullBitmap ? name + "?" : name;
     }
 
     /**
@@ -349,7 +348,7 @@ public final class QwpConstants {
      * @return true if fixed-width
      */
     public static boolean isFixedWidthType(byte typeCode) {
-        int code = typeCode & TYPE_MASK;
+        int code = typeCode;
         return code == TYPE_BOOLEAN ||
                 code == TYPE_BYTE ||
                 code == TYPE_SHORT ||
