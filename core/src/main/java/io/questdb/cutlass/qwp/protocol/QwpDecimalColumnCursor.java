@@ -258,8 +258,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     }
 
     private static int getDecimalValueSize(byte typeCode) {
-        int type = typeCode;
-        return switch (type) {
+        return switch (typeCode) {
             case TYPE_DECIMAL64 -> 8;
             case TYPE_DECIMAL128 -> 16;
             case TYPE_DECIMAL256 -> 32;
@@ -268,8 +267,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     }
 
     private void readCurrentValue(long address) {
-        int type = typeCode;
-        switch (type) {
+        switch (typeCode) {
             case TYPE_DECIMAL64:
                 // Big-endian
                 currentValue64 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));

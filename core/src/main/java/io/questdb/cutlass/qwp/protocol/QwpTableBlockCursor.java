@@ -422,11 +422,9 @@ public class QwpTableBlockCursor implements Mutable {
             int rowCount,
             byte typeCode
     ) throws QwpParseException {
-        int type = typeCode;
-
         QwpColumnCursor cursor = columnCursors.getQuick(colIndex);
 
-        return switch (type) {
+        return switch (typeCode) {
             case TYPE_BOOLEAN -> {
                 QwpBooleanColumnCursor boolCursor;
                 if (cursor instanceof QwpBooleanColumnCursor c) {
@@ -520,7 +518,7 @@ public class QwpTableBlockCursor implements Mutable {
             }
             default -> throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
-                    "unknown column type: " + type
+                    "unknown column type: " + typeCode
             );
         };
     }

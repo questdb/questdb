@@ -764,12 +764,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = {1_000_000L, 1_001_000L};
 
             // Build wire format with Gorilla encoding
-            // Wire format: [null count varint (0)] [encoding byte (0x01)] [first timestamp] [second timestamp]
+            // Wire format: [null bitmap flag (0)] [encoding byte (0x01)] [first timestamp] [second timestamp]
             int dataLength = 1 + 1 + 8 + 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
 
             try {
-                // Write null count varint (0 = no nulls)
+                // No null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0);
 
                 // Write Gorilla encoding flag
@@ -817,11 +817,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long expected3 = 0x4444444444444444L; // most significant
 
             // Wire format is little-endian: least significant first
-            int dataLength = 1 + 32; // null count varint + 4 longs
+            int dataLength = 1 + 32; // null bitmap flag + 4 longs
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
 
             try {
-                // Write null count varint (0 = no nulls)
+                // No null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0);
 
                 // Write in little-endian order
@@ -1320,11 +1320,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 1;
-            // Wire format: [null count varint (0)][scale: 1 byte][values: rowCount * 32 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 32 bytes, big-endian]
             int dataLength = 1 + 1 + rowCount * 32;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // 256-bit value with hl=1 overflows 128-bit decimal
                 long offset = 2;
@@ -1365,11 +1365,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 2;
-            // Wire format: [null count varint (0)][scale: 1 byte][values: rowCount * 32 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 32 bytes, big-endian]
             int dataLength = 1 + 1 + rowCount * 32;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Value 1: 12345 (= 123.45), sign-extended to 256-bit big-endian (hh, hl, lh, ll)
                 long offset = 2;
@@ -1426,11 +1426,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 2;
-            // Wire format: [null count varint (0)][scale: 1 byte][values: rowCount * 8 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 8 bytes, big-endian]
             int dataLength = 1 + 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
                 Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(12_345L));
@@ -1478,11 +1478,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 1;
-            // Wire format: [null count varint (0)][scale: 1 byte][values: rowCount * 8 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 8 bytes, big-endian]
             int dataLength = 1 + 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Value: 40_000 overflows short range for DECIMAL16
                 Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(40_000L));
@@ -1523,8 +1523,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [NULL, 12.34, NULL, -99.99]
             byte scale = 2;
             long[] unscaledValues = {1234L, -9999L};
-            int nullCount = 2;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 + unscaledValues.length * 8;
@@ -1584,7 +1582,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Value: 3_000_000_000 overflows int range for DECIMAL32
                 Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(3_000_000_000L));
@@ -1625,8 +1623,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [NULL, 1.5, NULL, -2.5]
             byte scale = 1;
             long[] unscaledValues = {15L, -25L};
-            int nullCount = 2;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 + unscaledValues.length * 8;
@@ -1687,7 +1683,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 // Wire scale = 2
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
@@ -1735,12 +1731,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            // Decimal64 wire format: null count varint + null bitmap + scale byte + big-endian values
+            // Decimal64 wire format: null bitmap flag + null bitmap + scale byte + big-endian values
             // Values: 1.50 (unscaled=150, scale=2), -3.75 (unscaled=-375, scale=2), null
             byte scale = 2;
             long[] unscaledValues = {150, -375};
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 + unscaledValues.length * 8;
@@ -1797,8 +1791,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 3;
             byte scale = 2;
             long[] unscaledValues = {250, -100};
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 + unscaledValues.length * 8;
@@ -2997,7 +2989,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, dateValues[i]);
                 }
@@ -3050,7 +3042,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, tsValues[i]);
                 }
@@ -3103,7 +3095,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, tsNanosValues[i]);
                 }
@@ -3157,7 +3149,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 16;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 // Row 0: the UUID
                 Unsafe.getUnsafe().putLong(dataAddress + 1, uuidLo);
                 Unsafe.getUnsafe().putLong(dataAddress + 9, uuidHi);
@@ -3211,8 +3203,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int rowCount = 2;
             long[] dateValues = {1_630_933_921_000L}; // 1 non-null date in milliseconds
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 * 8; // 1 non-null date
@@ -3263,8 +3253,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int rowCount = 2;
             long[] tsValues = {1_630_933_921_000_000L}; // 1 non-null timestamp in microseconds
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 * 8; // 1 non-null timestamp
@@ -3315,8 +3303,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int rowCount = 2;
             long[] tsNanosValues = {1_630_933_921_000_000_000L}; // 1 non-null timestamp in nanoseconds
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 * 8; // 1 non-null timestamp
@@ -3369,7 +3355,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long uuidLo = 0xa716446655440000L;
             long uuidHi = 0x550e8400e29b41d4L;
 
-            int nullCount = 1;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 1 * 16; // 1 non-null UUID
@@ -3427,7 +3412,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -3477,8 +3462,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 3;
             // Pattern: [NULL, 7, NULL]
             long[] nonNullValues = {7};
-            int nullCount = 2;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + nonNullValues.length * 8;
@@ -3536,7 +3519,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -3586,8 +3569,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 3;
             // Pattern: [3, NULL, -1]
             long[] nonNullValues = {3, -1};
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + nonNullValues.length * 8;
@@ -3645,7 +3626,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -3697,7 +3678,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -3745,8 +3726,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null values
@@ -3813,7 +3792,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -3875,7 +3854,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putDouble(dataAddress + 1, 123.5);
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -3914,8 +3893,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [NULL, 1.5, NULL, 2.25]
             double[] nonNullValues = {1.5, 2.25};
             int valueCount = nonNullValues.length;
-            int nullCount = 2;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + valueCount * 8;
@@ -3993,7 +3970,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -4055,7 +4032,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putDouble(dataAddress + 1, 12.5);
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -4094,8 +4071,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [NULL, 1.5, NULL, 2.5]
             double[] nonNullValues = {1.5, 2.5};
             int valueCount = nonNullValues.length;
-            int nullCount = 2;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + valueCount * 8;
@@ -4156,7 +4131,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -4218,7 +4193,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putDouble(dataAddress + 1, 1.25);
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -4256,8 +4231,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Pattern: [NULL, 1.5, NULL, 2.25]
             double[] nonNullValues = {1.5, 2.25};
             int valueCount = nonNullValues.length;
-            int nullCount = 2;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + valueCount * 8;
@@ -4316,7 +4289,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -4363,7 +4336,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null doubles
@@ -4419,7 +4391,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 4; // 2 non-null floats
@@ -4475,7 +4446,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null doubles
@@ -4531,7 +4501,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null doubles
@@ -4592,7 +4561,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -4644,7 +4613,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -4691,8 +4660,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8;
@@ -4749,7 +4716,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int nullCount = 1; // row 2 is null
             int nonNullCount = rowCount - nullCount;
 
-            // Wire format: [null count varint] [null bitmap] [precision varint] [packed non-null values]
+            // Wire format: [null bitmap flag] [null bitmap] [precision varint] [packed non-null values]
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int precVarintLen = QwpVarint.encodedLength(precision);
@@ -4820,10 +4787,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             // Build wire data: varint(0) + varint(precision) + packed values (1 byte each)
             int precVarintLen = QwpVarint.encodedLength(precision);
-            int dataLength = 1 + precVarintLen + rowCount * 8; // null count varint + values stored as longs
+            int dataLength = 1 + precVarintLen + rowCount * 8; // null bitmap flag + values stored as longs
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 long addr = QwpVarint.encode(dataAddress + 1, precision);
                 // 5-bit values stored in 1-byte slots, but cursor uses valueSizeBytes
                 Unsafe.getUnsafe().putByte(addr, (byte) 0b10110); // row 0 → "10110"
@@ -4878,7 +4845,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + precVarintLen + rowCount * valueSizeBytes;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 long addr = QwpVarint.encode(dataAddress + 1, wirePrecision);
                 // 2-char geohash "01" = (0 << 5) | 1 = 1
                 Unsafe.getUnsafe().putShort(addr, (short) 1);
@@ -4937,7 +4904,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + precVarintLen + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 long addr = QwpVarint.encode(dataAddress + 1, precision);
                 Unsafe.getUnsafe().putByte(addr, (byte) 0b00001); // "00001"
                 Unsafe.getUnsafe().putByte(addr + valueSizeBytes, (byte) 0b00000); // "00000"
@@ -4991,7 +4958,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + precVarintLen + rowCount * valueSizeBytes;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 long addr = QwpVarint.encode(dataAddress + 1, wirePrecision);
                 // 2-char geohash "01" = (0 << 5) | 1 = 1
                 Unsafe.getUnsafe().putShort(addr, (short) 1);
@@ -5043,8 +5010,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null values
@@ -5105,7 +5070,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, values[i]);
                 }
@@ -5152,8 +5117,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null values
@@ -5209,8 +5172,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null values
@@ -5266,8 +5227,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + 2 * 8; // 2 non-null values
@@ -6651,7 +6610,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putLong(dataAddress + 1 + (long) i * 8, tsValues[i]);
                 }
@@ -6699,8 +6658,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int rowCount = 3;
             long[] tsValues = {1_630_933_921_000_000L, 0L};
-            int nullCount = 1;
-
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
             int dataLength = flagSize + bitmapSize + tsValues.length * 8;
@@ -7074,11 +7031,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long expectedLo = 0xa716446655440000L;
 
             // Wire format is little-endian: lo first, then hi
-            int dataLength = 1 + 16; // null count varint + 2 longs
+            int dataLength = 1 + 16; // null bitmap flag + 2 longs
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
 
             try {
-                // Write null count varint (0 = no nulls)
+                // No null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0);
 
                 // Write in little-endian order: lo first, then hi
@@ -7133,7 +7090,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // null count varint
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + 1 + (long) i * 8, values[i]);
                 }

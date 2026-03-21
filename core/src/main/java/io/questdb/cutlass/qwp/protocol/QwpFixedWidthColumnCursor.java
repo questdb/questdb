@@ -297,8 +297,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     }
 
     private void readCurrentValue(long address) {
-        int type = typeCode;
-        switch (type) {
+        switch (typeCode) {
             case TYPE_BYTE:
                 currentLong = Unsafe.getUnsafe().getByte(address);
                 break;
