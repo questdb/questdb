@@ -256,7 +256,7 @@ public class QwpStringDecoderTest {
 
     private static int findStringColumnIndex(QwpTableBlockCursor table) {
         for (int c = 0; c < table.getColumnCount(); c++) {
-            byte code = (byte) (table.getColumnDef(c).getTypeCode() & TYPE_MASK);
+            byte code = table.getColumnDef(c).getTypeCode();
             if (code == TYPE_STRING || code == TYPE_VARCHAR) {
                 return c;
             }

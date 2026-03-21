@@ -962,7 +962,7 @@ public class QwpFixedWidthDecoderTest {
 
     private static int findColumnIndex(QwpTableBlockCursor table, byte typeCode) {
         for (int c = 0; c < table.getColumnCount(); c++) {
-            if ((table.getColumnDef(c).getTypeCode() & TYPE_MASK) == typeCode) {
+            if (table.getColumnDef(c).getTypeCode() == typeCode) {
                 return c;
             }
         }

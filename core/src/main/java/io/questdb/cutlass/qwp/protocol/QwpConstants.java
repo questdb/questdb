@@ -235,15 +235,6 @@ public final class QwpConstants {
      */
     public static final byte TYPE_LONG_ARRAY = 0x12;
     /**
-     * @deprecated No longer used. Nullability is encoded per-batch via a null bitmap flag byte,
-     * not as a flag in the type code. Retained temporarily for compilation of downstream code.
-     */
-    public static final byte TYPE_MASK = 0x7F;
-    /**
-     * @deprecated No longer used. See {@link #TYPE_MASK}.
-     */
-    public static final byte TYPE_NULLABLE_FLAG = (byte) 0x80;
-    /**
      * Column type: SHORT (int16, little-endian).
      */
     public static final byte TYPE_SHORT = 0x03;

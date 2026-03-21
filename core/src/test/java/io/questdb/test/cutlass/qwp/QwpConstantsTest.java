@@ -173,16 +173,6 @@ public class QwpConstantsTest {
     }
 
     @Test
-    public void testNullableFlag() {
-        Assert.assertEquals((byte) 0x80, TYPE_NULLABLE_FLAG);
-        Assert.assertEquals(0x7F, TYPE_MASK);
-
-        // Test nullable type extraction
-        byte nullableInt = (byte) (TYPE_INT | TYPE_NULLABLE_FLAG);
-        Assert.assertEquals(TYPE_INT, nullableInt & TYPE_MASK);
-    }
-
-    @Test
     public void testSchemaModes() {
         Assert.assertEquals(0x00, SCHEMA_MODE_FULL);
         Assert.assertEquals(0x01, SCHEMA_MODE_REFERENCE);
