@@ -862,7 +862,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (isTypeKeyword(tok)) {
+                if (tok != null && isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "index type name");
                     indexType = IndexType.valueOf(tok);
                     if (indexType == IndexType.NONE) {

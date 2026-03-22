@@ -711,6 +711,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     ('2024-01-01T05:00:00', 'A')
                     """);
             drainWalQueue();
+            engine.releaseAllWriters();
 
             // Verify the index metadata
             try (TableReader r = engine.getReader("t")) {
