@@ -228,10 +228,10 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes from dataAddress
-     * @param rowCount      number of rows
-     * @param typeCode      column type code
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes from dataAddress
+     * @param rowCount    number of rows
+     * @param typeCode    column type code
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */

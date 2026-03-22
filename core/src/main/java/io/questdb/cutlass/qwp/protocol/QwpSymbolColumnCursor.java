@@ -185,9 +185,9 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */

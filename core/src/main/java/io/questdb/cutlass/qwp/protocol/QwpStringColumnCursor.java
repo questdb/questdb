@@ -133,10 +133,10 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes from dataAddress
-     * @param rowCount      number of rows
-     * @param typeCode      column type code (TYPE_STRING or TYPE_VARCHAR)
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes from dataAddress
+     * @param rowCount    number of rows
+     * @param typeCode    column type code (TYPE_STRING or TYPE_VARCHAR)
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
