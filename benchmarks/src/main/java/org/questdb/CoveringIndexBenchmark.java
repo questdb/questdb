@@ -66,9 +66,21 @@ public class CoveringIndexBenchmark {
                 "Column Type", "Raw (MB)", "Sidecar (MB)", "Ratio", "Baseline", "Uncompressed", "Compressed");
         System.out.println("  " + "-".repeat(107));
 
+        double geoRaw = 1, geoSidecar = 1, geoBase = 1, geoRawCov = 1, geoCov = 1;
+        int n = 0;
         for (CoverType ct : CoverType.values()) {
-            runTypeVariant(config, tmpDir, keyAssignment, readKeys, ct);
+            double[] r = runTypeVariant(config, tmpDir, keyAssignment, readKeys, ct);
+            geoRaw *= r[0]; geoSidecar *= r[1]; geoBase *= r[2]; geoRawCov *= r[3]; geoCov *= r[4];
+            n++;
         }
+        double p = 1.0 / n;
+        System.out.println("  " + "-".repeat(107));
+        System.out.printf("  %-35s %10.1f %10.1f MB %9.1fx %10.1f ms %10.1f ms %10.1f ms%n",
+                "Geomean",
+                Math.pow(geoRaw, p), Math.pow(geoSidecar, p), Math.pow(geoRaw, p) / Math.pow(geoSidecar, p),
+                Math.pow(geoBase, p), Math.pow(geoRawCov, p), Math.pow(geoCov, p));
+        System.out.printf("%n  Per-key latency (compressed): %.1f µs (%,d values/key)%n",
+                Math.pow(geoCov, p) / READ_KEYS * 1000, VALUES_PER_KEY);
     }
 
     private static long baselineRead(CairoConfiguration config, String dir, int[] keys,
@@ -196,8 +208,8 @@ public class CoveringIndexBenchmark {
         return size;
     }
 
-    private static void runTypeVariant(CairoConfiguration config, String tmpDir,
-                                       int[] keyAssignment, int[] readKeys, CoverType ct) {
+    private static double[] runTypeVariant(CairoConfiguration config, String tmpDir,
+                                           int[] keyAssignment, int[] readKeys, CoverType ct) {
         String baseDir = tmpDir + File.separator + "cov_base_" + ct.name() + "_" + System.nanoTime();
         String covDir = tmpDir + File.separator + "cov_comp_" + ct.name() + "_" + System.nanoTime();
         new File(baseDir).mkdirs();
@@ -262,6 +274,7 @@ public class CoveringIndexBenchmark {
             System.out.printf("  %-35s %10.1f %10.1f MB %9.1fx %10.1f ms %10.1f ms %10.1f ms%n",
                     ct.name() + " (" + ct.description + ")",
                     rawMB, sidecarMB, ratio, baseMs, rawCovMs, covMs);
+            return new double[]{rawMB, sidecarMB, baseMs, rawCovMs, covMs};
 
         } finally {
             Unsafe.free(colAddr, (long) TOTAL_ROWS * ct.size, MemoryTag.NATIVE_DEFAULT);
