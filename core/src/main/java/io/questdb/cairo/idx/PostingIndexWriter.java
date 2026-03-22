@@ -333,14 +333,17 @@ public class PostingIndexWriter implements IndexWriter {
                         if (fileLen > 0) {
                             long fd = ff.openRO(pcFile);
                             if (fd >= 0) {
-                                savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_DEFAULT);
-                                savedSidecarSizes[c] = fileLen;
-                                long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-                                if (mapped > 0) {
-                                    Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
-                                    ff.munmap(mapped, fileLen, MemoryTag.MMAP_DEFAULT);
+                                try {
+                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                                    if (mapped > 0) {
+                                        savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_DEFAULT);
+                                        savedSidecarSizes[c] = fileLen;
+                                        Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                        ff.munmap(mapped, fileLen, MemoryTag.MMAP_DEFAULT);
+                                    }
+                                } finally {
+                                    ff.close(fd);
                                 }
-                                ff.close(fd);
                             }
                         }
                     }

@@ -73,6 +73,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private int blockBufferPos;
         private int currentGen;
         private int encodedBlockCount;
+        private int minBlock;
         private int currentBlock;
         private long maxValue;
         private long minValue;
@@ -112,7 +113,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
 
                 // Try to decode previous block in current generation
-                if (currentBlock >= 0) {
+                if (currentBlock >= minBlock) {
                     decodeBlock(currentBlock);
                     currentBlock--;
                     continue;
@@ -588,6 +589,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             this.encodedBlockCount = endBlock;
             this.currentBlock = endBlock - 1;
+            this.minBlock = startBlock;
             this.blockBufferPos = -1;
         }
     }
