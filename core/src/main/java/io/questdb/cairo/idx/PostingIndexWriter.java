@@ -1958,6 +1958,11 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    // Compaction copies gen 0 data from its file offset to offset 0, overwriting dead
+    // space from earlier generations. This modifies MAP_SHARED pages that concurrent readers
+    // may have mapped. Safety relies on the partition lifecycle: compaction runs only during
+    // close() and of(), which are coordinated by the TableWriter/TableReader scoreboard
+    // to ensure no reader has active cursors on this partition during writer lifecycle transitions.
     private void compactValueFile() {
         if (genCount != 1 || keyCount == 0) {
             return;
