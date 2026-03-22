@@ -408,26 +408,30 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void sealIncremental(long[] savedSidecarBufs, long[] savedSidecarSizes) {
         int sc = PostingIndexUtils.strideCount(keyCount);
-
-        // Mark dirty strides by scanning sparse gens 1..N (native byte array)
         long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().setMemory(dirtyStridesAddr, sc, (byte) 0);
-        int dirtyCount = 0;
-        for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-            long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            int activeKeyCount = -genKeyCount;
-            long genAddr = valueMem.addressOf(genFileOffset);
+        int dirtyCount;
+        try {
+            Unsafe.getUnsafe().setMemory(dirtyStridesAddr, sc, (byte) 0);
+            dirtyCount = 0;
+            for (int g = 1; g < genCount; g++) {
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                int activeKeyCount = -genKeyCount;
+                long genAddr = valueMem.addressOf(genFileOffset);
 
-            for (int i = 0; i < activeKeyCount; i++) {
-                int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                int stride = key / PostingIndexUtils.DENSE_STRIDE;
-                if (stride < sc && Unsafe.getUnsafe().getByte(dirtyStridesAddr + stride) == 0) {
-                    Unsafe.getUnsafe().putByte(dirtyStridesAddr + stride, (byte) 1);
-                    dirtyCount++;
+                for (int i = 0; i < activeKeyCount; i++) {
+                    int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
+                    int stride = key / PostingIndexUtils.DENSE_STRIDE;
+                    if (stride < sc && Unsafe.getUnsafe().getByte(dirtyStridesAddr + stride) == 0) {
+                        Unsafe.getUnsafe().putByte(dirtyStridesAddr + stride, (byte) 1);
+                        dirtyCount++;
+                    }
                 }
             }
+        } catch (Throwable t) {
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
+            throw t;
         }
 
         // If all strides are dirty, fall back to full seal (no savings).

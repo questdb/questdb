@@ -451,6 +451,7 @@ class PostingGenLookup implements Closeable {
             long genAddr = valueMem.addressOf(genFileOffsets[g]);
 
             sbbfAddrs[g] = SplitBlockBloomFilter.allocate(sbbfSizePerGen);
+            sbbfGenCount = g + 1; // track for cleanup if later allocations fail
             for (int i = 0; i < activeKeyCount; i++) {
                 int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
                 long hash = SplitBlockBloomFilter.hashKey(key);
@@ -532,6 +533,7 @@ class PostingGenLookup implements Closeable {
             }
 
             sbbfAddrs[g] = SplitBlockBloomFilter.allocate(sbbfSizePerGen);
+            sbbfGenCount = g + 1; // track for cleanup if later allocations fail
             for (int i = 0; i < activeKeyCount; i++) {
                 int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
                 SplitBlockBloomFilter.insert(sbbfAddrs[g], sbbfSizePerGen, SplitBlockBloomFilter.hashKey(key));
