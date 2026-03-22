@@ -34,11 +34,11 @@ simplifications imposed by the self-contained datagram constraint:
 
 | Aspect                    | Notes                                               |
 |---------------------------|-----------------------------------------------------|
-| Message header            | 12 bytes: magic `ILP4`, version, flags, table count (always 1), payload length |
+| Message header            | 12 bytes: magic `QWP1`, version, flags, table count (always 1), payload length |
 | Column type codes         | All 22 types (0x01 - 0x16), same wire encoding      |
-| Null bitmaps              | `ceil(rows/8)` bytes, LSB-first, bit=1 means NULL   |
+| Null bitmaps              | 1-byte null flag + `ceil(rows/8)` bitmap bytes, LSB-first, bit=1 means NULL |
 | Varint encoding           | Unsigned LEB128, identical                           |
-| Fixed-width column layout | Contiguous arrays, little-endian (big-endian for UUID, LONG256, DECIMALs) |
+| Fixed-width column layout | Contiguous arrays, little-endian (big-endian for DECIMALs only)           |
 | String/VARCHAR encoding   | Offset array + concatenated UTF-8                    |
 | Boolean bit-packing       | 8 values per byte, LSB-first                         |
 | Array encoding            | nDims + dim lengths + flattened values                |
@@ -51,7 +51,7 @@ simplifications imposed by the self-contained datagram constraint:
 |----------------------------------------|------------------------------------------|-----------------------------------------------------|
 | Schema reference mode (0x01)           | **Full schema only (0x00)**              | No session state to cache schema hashes             |
 | Delta symbol dictionary (FLAG 0x08)    | **Per-column dictionary only**           | No cross-datagram dictionary accumulation. Each SYMBOL column carries its own dictionary inline (dict_size + entries + indices), same as the existing non-delta wire format in `QwpSymbolColumnCursor`. |
-| Gorilla timestamp encoding (FLAG 0x04) | **Disabled**                             | Requires ordering guarantees; UDP datagrams may arrive out of order or not at all |
+| Gorilla timestamp encoding (FLAG 0x04) | **Disabled**                             | Marginal benefit at sub-1,400 byte datagram scale; simplifies encoder |
 | Multi-table batches                    | **Single table per datagram**            | Simplicity and predictable sizing                   |
 | Response/ACK channel                   | **None (fire-and-forget)**               | UDP has no built-in response channel; consistent with best-effort semantics |
 | Pipelining / in-flight window          | **N/A**                                  | No acknowledgments to track                          |
@@ -72,7 +72,7 @@ sub-1,400 byte payloads offers marginal benefit).
 │                                                              │
 │  Message Header (12 bytes)                                   │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │ Magic:          4 bytes LE  "ILP4" (0x34504C49)        │  │
+│  │ Magic:          4 bytes LE  "QWP1" (0x31505751)        │  │
 │  │ Version:        1 byte      0x01                       │  │
 │  │ Flags:          1 byte      0x00                       │  │
 │  │ Table count:    2 bytes LE  0x0001 (always 1)          │  │
@@ -92,12 +92,13 @@ sub-1,400 byte payloads offers marginal benefit).
 │  │ │ For each column:                                 │   │  │
 │  │ │   name_len: varint                               │   │  │
 │  │ │   name:     UTF-8 bytes                          │   │  │
-│  │ │   type:     uint8 (type code | nullable flag)    │   │  │
+│  │ │   type:     uint8 (type code, 0x01-0x16)          │   │  │
 │  │ └──────────────────────────────────────────────────┘   │  │
 │  │                                                        │  │
 │  │ Column data (repeated for each column)                 │  │
 │  │ ┌──────────────────────────────────────────────────┐   │  │
-│  │ │ [Null bitmap if nullable: ceil(rows/8) bytes]    │   │  │
+│  │ │ null_flag: uint8 (0=no nulls, nonzero=bitmap)    │   │  │
+│  │ │ [Null bitmap if flag != 0: ceil(rows/8) bytes]   │   │  │
 │  │ │ [Type-specific encoded values]                   │   │  │
 │  │ └──────────────────────────────────────────────────┘   │  │
 │  └────────────────────────────────────────────────────────┘  │
@@ -107,7 +108,7 @@ sub-1,400 byte payloads offers marginal benefit).
 
 This is a strict subset of the WebSocket QWP format. A server that understands
 WebSocket QWP can decode a UDP datagram by checking `flags == 0x00` and
-`table_count == 1`. Conversely, any standard ILP v4 decoder handles UDP
+`table_count == 1`. Conversely, any standard QWP v1 decoder handles UDP
 datagrams without modification.
 
 ## Client Side
@@ -209,12 +210,12 @@ estimator accounts for the current dictionary state at estimation time.
 | `NativeBufferWriter`   | 100%        | Off-heap buffer with varint/string/block writes   |
 | `QwpGorillaEncoder`    | Not used    | Disabled for UDP                                  |
 | `GlobalSymbolDictionary` | Not used  | No cross-datagram state                          |
-| `QwpWebSocketEncoder`  | ~80%        | Column encoding logic reused; header/symbol dict code forked |
+| `QwpColumnWriter`      | ~80%        | Column encoding logic reused; header/symbol dict code forked |
 | `Sender` interface     | 100%        | UDP sender implements it                          |
 
-The column encoding methods in `QwpWebSocketEncoder` (`writeBooleanColumn`,
+The column encoding methods in `QwpColumnWriter` (`writeBooleanColumn`,
 `writeStringColumn`, `writeDecimal*Column`, etc.) are transport-agnostic and
-can be extracted into a shared utility or base class.
+shared between WebSocket and UDP transports.
 
 ### New Client Classes
 
@@ -244,11 +245,11 @@ Constructor parameters (matching existing `LineUdpSender` pattern):
 
 ### `QwpUdpEncoder`
 
-A simplified fork of `QwpWebSocketEncoder`:
+A simplified encoder that reuses `QwpColumnWriter` for column encoding:
 - Removed: delta symbol dictionary, schema reference mode, Gorilla encoding
   tag.
 - Added: always writes full schema, always uses per-column symbol dictionary
-  (same non-delta wire format as `QwpWebSocketEncoder.writeSymbolColumn()`).
+  (same non-delta wire format as `QwpColumnWriter.writeSymbolColumn()`).
 - Same `encodeColumn()` dispatch and all type-specific write methods.
 
 ## Server Side
@@ -286,7 +287,7 @@ QwpWalAppender (writes to WAL)
 | `QwpMessageCursor`      | 100%        | Table block iteration                            |
 | `QwpTableBlockCursor`   | 100%        | Column iteration within table                    |
 | `QwpSchema`             | 100%        | Full schema parsing (always mode 0x00)           |
-| All column decoders     | 100%        | `QwpFixedWidthDecoder`, `QwpBooleanDecoder`, `QwpStringDecoder`, `QwpSymbolDecoder`, `QwpGeoHashDecoder`, etc. |
+| All column cursors      | 100%        | `QwpFixedWidthColumnCursor`, `QwpBooleanColumnCursor`, `QwpStringColumnCursor`, `QwpSymbolColumnCursor`, `QwpGeoHashColumnCursor`, etc. |
 | `QwpWalAppender`        | 100%        | Column-type mapping, WAL writes, auto-create     |
 | `QwpNullBitmap`         | 100%        | Null bitmap reading                              |
 | `QwpVarint`             | 100%        | Varint decoding                                  |
@@ -383,18 +384,21 @@ Schema mode byte:                         1 byte
 Column "host" def (varint + UTF8 + type): 1 + 4 + 1 = 6 bytes
 Column "usage" def:                       1 + 5 + 1 = 7 bytes
 Column "" (designated ts) def:            1 + 0 + 1 = 2 bytes
+Symbol null flag:                         1 byte
 Symbol dictionary (1 entry "server-1"):   1 + (1 + 8) = 10 bytes
 Symbol index (varint):                    1 byte
+Double null flag:                         1 byte
 Double value:                             8 bytes
+Timestamp null flag:                      1 byte
 Timestamp value:                          8 bytes
 ─────────────────────────────────────────────────
-Total:                                    69 bytes
+Total:                                    72 bytes
 ```
 
-At 69 bytes per single row with full schema, there is ample room. With 10
+At 72 bytes per single row with full schema, there is ample room. With 10
 rows (same schema, same symbol), the incremental cost per row is ~17 bytes
 (symbol index + double + timestamp), bringing the total to roughly
-69 + 9 * 17 = 222 bytes -- comfortably within 1,400 bytes.
+72 + 9 * 17 = 225 bytes -- comfortably within 1,400 bytes.
 
 For wider schemas (20 columns, long column names), the fixed schema overhead
 grows but still typically fits. The sender's size estimator catches overflow
@@ -402,10 +406,10 @@ before encoding.
 
 ## Open Questions
 
-1. **New magic or same `ILP4`?** Using the same magic means any ILP v4
-   decoder works out of the box. A distinct magic (e.g., `ILPu`) would let
+1. **New magic or same `QWP1`?** Using the same magic means any QWP v1
+   decoder works out of the box. A distinct magic (e.g., `QWPu`) would let
    the server distinguish UDP datagrams at the first 4 bytes without
-   inspecting the transport layer. Current recommendation: **keep `ILP4`** for
+   inspecting the transport layer. Current recommendation: **keep `QWP1`** for
    compatibility.
 
 2. **Sequence numbers.** Adding an optional monotonic sequence number to each
@@ -419,7 +423,7 @@ before encoding.
 
 ## Implementation Plan
 
-1. **Client: `QwpUdpEncoder`** -- fork `QwpWebSocketEncoder`, remove delta
+1. **Client: `QwpUdpEncoder`** -- build on `QwpColumnWriter`, remove delta
    dict / schema ref / Gorilla paths. Add size estimation method.
 2. **Client: `QwpUdpSender`** -- implement `Sender` interface. Manage UDP
    socket, `QwpTableBuffer`, auto-flush on MTU threshold.

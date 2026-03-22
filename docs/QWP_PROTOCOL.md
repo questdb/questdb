@@ -21,7 +21,7 @@ payload.
 ```
 Offset  Size  Type       Field
 ─────── ───── ────────── ─────────────────────────────────────
-0       4     uint32 LE  Magic: 0x34504C49 ("ILP4" in ASCII)
+0       4     uint32 LE  Magic: 0x31505751 ("QWP1" in ASCII)
 4       1     uint8      Version (currently 0x01)
 5       1     uint8      Flags (see below)
 6       2     uint16 LE  Table count (number of table blocks)
@@ -49,7 +49,7 @@ Constraints:
 
 | Magic bytes  | uint32 LE    | Purpose                             |
 |-------------|--------------|-------------------------------------|
-| `ILP4`      | `0x34504C49` | Data message                        |
+| `QWP1`      | `0x31505751` | Data message                        |
 | `ILP?`      | `0x3F504C49` | Capability request (8 bytes total)  |
 | `ILP!`      | `0x21504C49` | Capability response (8 bytes total) |
 | `ILP0`      | `0x30504C49` | Fallback (old server)               |
@@ -103,7 +103,8 @@ Each table block contains data for one table:
 │   [Full schema OR schema reference]                 │
 │                                                     │
 │ Column Data (repeated for each column)              │
-│   [null bitmap if nullable]                         │
+│   null_flag:   uint8   0=no nulls, nonzero=bitmap  │
+│   [null bitmap if null_flag != 0]                   │
 │   [type-specific encoded values]                    │
 └─────────────────────────────────────────────────────┘
 ```
@@ -121,13 +122,11 @@ Sent on the first batch for a given table, or when the server responds with
 │ For each column:                                    │
 │   col_name_len:   varint     UTF-8 byte length      │
 │   col_name:       bytes      UTF-8 column name      │
-│   type_code:      uint8      Type + nullable flag   │
+│   type_code:      uint8      Column type (0x01-0x16) │
 └─────────────────────────────────────────────────────┘
 ```
 
-The `type_code` byte encodes both the column type and nullability:
-- Bits 0-6: Column type (0x01 - 0x16)
-- Bit 7 (0x80): Nullable flag (1 = nullable)
+The `type_code` byte contains the column type (0x01 through 0x16).
 
 A column with an **empty name** (length 0) and type TIMESTAMP denotes the
 designated timestamp column.
@@ -162,8 +161,8 @@ and the client resends with full schema mode.
 | `0x09` | SYMBOL           | Variable        | N/A           | Dictionary-encoded string                          |
 | `0x0A` | TIMESTAMP        | 8 bytes*        | Little-endian | int64 microseconds since Unix epoch                |
 | `0x0B` | DATE             | 8 bytes         | Little-endian | int64 milliseconds since Unix epoch                |
-| `0x0C` | UUID             | 16 bytes        | Big-endian    | 128-bit UUID (hi, lo)                              |
-| `0x0D` | LONG256          | 32 bytes        | Big-endian    | 256-bit integer                                    |
+| `0x0C` | UUID             | 16 bytes        | Little-endian | 128-bit UUID                                       |
+| `0x0D` | LONG256          | 32 bytes        | Little-endian | 256-bit integer                                    |
 | `0x0E` | GEOHASH          | Variable        | Little-endian | Varint precision + packed values                   |
 | `0x0F` | VARCHAR          | Variable        | Little-endian | Same wire format as STRING                         |
 | `0x10` | TIMESTAMP_NANOS  | 8 bytes*        | Little-endian | int64 nanoseconds since Unix epoch                 |
@@ -178,8 +177,12 @@ and the client resends with full schema mode.
 
 ## Null Bitmap
 
-For nullable columns (type code has bit 7 set), a null bitmap precedes the
-column values:
+Each column's data section begins with a 1-byte **null flag**:
+
+- `0x00` — no null values; no bitmap follows.
+- Any nonzero value — a null bitmap follows immediately after the flag byte.
+
+### Null Bitmap Format
 
 ```
 Size: ceil(row_count / 8) bytes
@@ -196,6 +199,16 @@ Byte 1: 0b00000010  (bit 1 set = row 9)
 
 Non-null values are stored densely in the column data section. The decoder uses
 the bitmap to expand sparse non-null values into dense storage.
+
+### Column Data Layout (all types)
+
+```
+┌───────────────────────────────────────────────────────┐
+│ null_flag:     uint8     0=no nulls, nonzero=bitmap   │
+│ [null bitmap:  ceil(row_count/8) bytes if flag != 0]  │
+│ [type-specific encoded values for non-null rows]      │
+└───────────────────────────────────────────────────────┘
+```
 
 ## Column Encoding Details
 
@@ -302,11 +315,11 @@ uncompressed int64 arrays without the encoding tag byte.
 
 ### UUID
 
-16 bytes per value in **big-endian** order: 8 bytes high, 8 bytes low.
+16 bytes per value: 8 bytes low, then 8 bytes high.
 
 ### LONG256
 
-32 bytes per value in **big-endian** order: four int64 values (highest to lowest).
+32 bytes per value: four int64 values, least significant first.
 
 ### GEOHASH
 
@@ -392,27 +405,34 @@ decode(n) = (n >>> 1) ^ -(n & 1)
 
 ## Response Format
 
-The server responds to each batch with a binary WebSocket frame:
+The server responds to each batch with a binary WebSocket frame. Every response
+includes an 8-byte sequence number that correlates the response with the
+original request.
 
-### OK Response (1 byte)
-
-```
-┌────────────────────────┐
-│ status: uint8  (0x00)  │
-└────────────────────────┘
-```
-
-### Error Response
+### OK Response (9 bytes)
 
 ```
-┌───────────────────────────────────────────────────────┐
-│ status:      uint8          Status code               │
-│ msg_len:     varint         Error message length       │
-│ msg_bytes:   bytes          UTF-8 error message        │
-└───────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ status:    uint8   (0x00)                             │
+│ sequence:  int64 LE       Request sequence number     │
+└──────────────────────────────────────────────────────┘
+```
+
+### Error Response (11 + msg_len bytes)
+
+```
+┌──────────────────────────────────────────────────────┐
+│ status:    uint8          Status code                 │
+│ sequence:  int64 LE       Request sequence number     │
+│ msg_len:   uint16 LE      Error message length        │
+│ msg_bytes: bytes          UTF-8 error message         │
+└──────────────────────────────────────────────────────┘
 ```
 
 ### Partial Failure Response (status 0x01)
+
+At the WAL appender layer, partial failures use a different encoding with
+varints for per-table error details:
 
 ```
 ┌───────────────────────────────────────────────────────┐
@@ -488,16 +508,14 @@ The client uses double-buffered microbatches:
 
 ## Endianness Summary
 
-| Category                         | Byte Order    |
-|----------------------------------|---------------|
-| Message header fields            | Little-endian |
-| Varint-encoded values            | LEB128 (LE)   |
-| Fixed-width numerics (most)      | Little-endian |
-| UUID                             | Big-endian    |
-| LONG256                          | Big-endian    |
-| DECIMAL64 / DECIMAL128 / DECIMAL256 | Big-endian |
-| String offsets                   | Little-endian |
-| Schema hash                      | Little-endian |
+| Category                            | Byte Order    |
+|-------------------------------------|---------------|
+| Message header fields               | Little-endian |
+| Varint-encoded values               | LEB128 (LE)   |
+| Fixed-width numerics                            | Little-endian |
+| DECIMAL64 / DECIMAL128 / DECIMAL256 | Big-endian    |
+| String offsets                      | Little-endian |
+| Schema hash                         | Little-endian |
 
 ## Worked Example
 
@@ -506,7 +524,7 @@ A message with 1 table ("sensors"), 2 rows, 3 columns (symbol "host", double
 
 ```
 Header (12 bytes):
-  49 4C 50 34   -- Magic: "ILP4"
+  51 57 50 31   -- Magic: "QWP1"
   01            -- Version: 1
   0C            -- Flags: 0x04 (Gorilla) | 0x08 (Delta Symbol Dict)
   01 00         -- Table count: 1
@@ -532,14 +550,17 @@ Payload:
       00              0A       -- "" : TIMESTAMP (designated)
 
     Column 0 (SYMBOL, global IDs):
+      00                       -- null_flag: no nulls
       00                       -- row 0: global ID 0
       01                       -- row 1: global ID 1
 
     Column 1 (DOUBLE, 2 x 8 bytes LE):
+      00                       -- null_flag: no nulls
       66 66 66 66 66 E6 56 40  -- 91.6
       9A 99 99 99 99 19 57 40  -- 92.4
 
     Column 2 (TIMESTAMP, Gorilla):
+      00                       -- null_flag: no nulls
       01                       -- encoding = Gorilla
       [8 bytes LE: t0]
       [8 bytes LE: t1]
