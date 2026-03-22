@@ -1673,12 +1673,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 
-                        // First 4 rows: below columnTop, null sentinel Long.MIN_VALUE as double bits
-                        double nullDouble = Double.longBitsToDouble(Long.MIN_VALUE);
+                        // First 4 rows: below columnTop, null sentinel is NaN for DOUBLE
                         for (int i = 0; i < 4; i++) {
                             assertTrue(cc.hasNext());
                             assertEquals(i, cc.next());
-                            assertEquals(nullDouble, cc.getCoveredDouble(0), 0.0);
+                            assertTrue("row " + i + " should be NaN", Double.isNaN(cc.getCoveredDouble(0)));
                         }
                         // Rows 4-9: above columnTop, should get actual values
                         // Row 4 maps to colAddr offset (4-4)*8 = 0 -> value 50.0

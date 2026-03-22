@@ -170,7 +170,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private int sidecarValueIndex() {
-            return sidecarOrdinal - 1;
+            // sidecarStrideKeyStart tracks values skipped by block-skip (delta mode)
+            // or binary search (flat mode) within this key's decoded sidecar block.
+            // sidecarOrdinal counts values iterated (both emitted and filtered).
+            return sidecarStrideKeyStart + sidecarOrdinal - 1;
         }
 
         private void decodeSidecarKey(int stride, int localKey) {
@@ -246,7 +249,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         if (decodedInts[c] == null || decodedInts[c].length < count) {
                             decodedInts[c] = new int[count];
                         }
-                        AlpCompression.decompressInts(keyBlockAddr, decodedInts[c]);
+                        if (decodeWorkspace == null || decodeWorkspace.length < count) {
+                            decodeWorkspace = new long[count];
+                        }
+                        AlpCompression.decompressInts(keyBlockAddr, decodedInts[c], decodeWorkspace);
                         break;
                     }
                     default: {
@@ -613,7 +619,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.flatDataBase = dataAddr;
                 this.encodedBlockCount = 0;
                 this.currentBlock = 0;
-                this.sidecarStrideKeyStart = effectiveStart;
+                this.sidecarStrideKeyStart = effectiveStart - startCount;
                 this.sidecarOrdinal = 0;
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
@@ -628,12 +634,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // Delta mode
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
-            // Compute sidecar start: sum of counts for keys 0..localKey-1
-            int sidecarStart = 0;
-            for (int j = 0; j < localKey; j++) {
-                sidecarStart += Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
-            }
-            this.sidecarStrideKeyStart = sidecarStart;
+            this.sidecarStrideKeyStart = 0;
             this.sidecarOrdinal = 0;
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);

@@ -97,9 +97,17 @@ public class AlpCompression {
      *
      * @return packed int: high 16 bits = e, low 16 bits = f
      */
+    private static final int SAMPLE_SIZE = 64;
+
     public static int findBestAlpParams(long srcAddr, int count, int valueShift) {
         int bestE = 0, bestF = 0;
         long bestCost = Long.MAX_VALUE;
+
+        // Sample up to SAMPLE_SIZE equidistant values for parameter search.
+        // ALP parameters depend on the data's decimal scale, not individual values,
+        // so a small sample is sufficient.
+        int sampleStep = Math.max(1, count / SAMPLE_SIZE);
+        int sampleCount = (count + sampleStep - 1) / sampleStep;
 
         for (int e = MAX_EXPONENT; e >= 0; e--) {
             for (int f = e; f >= 0; f--) {
@@ -107,7 +115,7 @@ public class AlpCompression {
                 long maxEnc = Long.MIN_VALUE;
                 long minEnc = Long.MAX_VALUE;
 
-                for (int i = 0; i < count; i++) {
+                for (int i = 0; i < count; i += sampleStep) {
                     double val = readDouble(srcAddr, i, valueShift);
                     long enc = alpEncode(val, e, f);
                     if (enc == Long.MAX_VALUE) {
@@ -123,11 +131,11 @@ public class AlpCompression {
                     }
                 }
 
-                if (count - exceptions < 1) {
+                if (sampleCount - exceptions < 1) {
                     continue;
                 }
                 int bw = (maxEnc == minEnc) ? 0 : 64 - Long.numberOfLeadingZeros(maxEnc - minEnc);
-                long cost = (long) count * bw + (long) exceptions * (64 + 16);
+                long cost = (long) sampleCount * bw + (long) exceptions * (64 + 16);
 
                 if (cost < bestCost) {
                     bestCost = cost;
@@ -396,6 +404,14 @@ public class AlpCompression {
      * Decompress FoR-encoded ints.
      */
     public static int decompressInts(long srcAddr, int[] output) {
+        int count = Unsafe.getUnsafe().getInt(srcAddr);
+        return decompressInts(srcAddr, output, new long[count]);
+    }
+
+    /**
+     * Decompress FoR-encoded ints using a pre-allocated workspace to avoid allocation.
+     */
+    public static int decompressInts(long srcAddr, int[] output, long[] workspace) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
@@ -405,10 +421,9 @@ public class AlpCompression {
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            long[] longs = new long[count];
-            BitpackUtils.unpackAllValues(pos, count, bw, 0, longs);
+            BitpackUtils.unpackAllValues(pos, count, bw, 0, workspace);
             for (int i = 0; i < count; i++) {
-                output[i] = forBase + (int) longs[i];
+                output[i] = forBase + (int) workspace[i];
             }
         } else {
             for (int i = 0; i < count; i++) {

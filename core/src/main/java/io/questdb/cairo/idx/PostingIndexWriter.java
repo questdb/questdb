@@ -961,6 +961,12 @@ public class PostingIndexWriter implements IndexWriter {
 
     private static void writeNullSentinel(long addr, int valueSize, int columnType) {
         switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DOUBLE:
+                Unsafe.getUnsafe().putDouble(addr, Double.NaN);
+                return;
+            case ColumnType.FLOAT:
+                Unsafe.getUnsafe().putFloat(addr, Float.NaN);
+                return;
             case ColumnType.GEOBYTE:
                 Unsafe.getUnsafe().putByte(addr, GeoHashes.BYTE_NULL);
                 return;
@@ -1010,59 +1016,66 @@ public class PostingIndexWriter implements IndexWriter {
             // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
             int keyOffsetsSize = ks * Integer.BYTES;
 
-            // Write key offsets placeholder, then compress each key's values
-            long keyOffsetsPos = sidecarMems[c].getAppendOffset();
+            // Pre-allocate compress buffer for the largest key in this stride
+            int maxKeyCount = 0;
             for (int j = 0; j < ks; j++) {
-                sidecarMems[c].putInt(0); // placeholder
+                maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
             }
+            int compressBufSize = maxKeyCount > 0 ? AlpCompression.maxCompressedSize(maxKeyCount, colType) : 0;
+            long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_DEFAULT) : 0;
 
-            for (int j = 0; j < ks; j++) {
-                int count = keyCounts[j];
-                // Record this key's offset relative to start of key data
-                long currentPos = sidecarMems[c].getAppendOffset();
-                long keyDataStart = keyOffsetsPos + keyOffsetsSize;
-                int keyOffset = (int) (currentPos - keyDataStart);
-                sidecarMems[c].putInt(keyOffsetsPos + (long) j * Integer.BYTES, keyOffset);
-
-                if (count == 0) {
-                    continue;
+            try {
+                // Write key offsets placeholder, then compress each key's values
+                long keyOffsetsPos = sidecarMems[c].getAppendOffset();
+                for (int j = 0; j < ks; j++) {
+                    sidecarMems[c].putInt(0); // placeholder
                 }
 
-                // Assemble this key's raw values into sidecarBuf
-                long keyOff = keyOffsets[j];
-                long rawOffset = 0;
-                for (int i = 0; i < count; i++) {
-                    long rowId = Unsafe.getUnsafe().getLong(
-                            mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    if (rowId < colTop) {
-                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
-                    } else {
-                        long srcOffset = (rowId - colTop) << shift;
-                        if (valueSize == Long.BYTES) {
-                            Unsafe.getUnsafe().putLong(sidecarBuf + rawOffset,
-                                    Unsafe.getUnsafe().getLong(colAddr + srcOffset));
-                        } else if (valueSize == Integer.BYTES) {
-                            Unsafe.getUnsafe().putInt(sidecarBuf + rawOffset,
-                                    Unsafe.getUnsafe().getInt(colAddr + srcOffset));
-                        } else if (valueSize == Short.BYTES) {
-                            Unsafe.getUnsafe().putShort(sidecarBuf + rawOffset,
-                                    Unsafe.getUnsafe().getShort(colAddr + srcOffset));
-                        } else {
-                            Unsafe.getUnsafe().putByte(sidecarBuf + rawOffset,
-                                    Unsafe.getUnsafe().getByte(colAddr + srcOffset));
-                        }
+                for (int j = 0; j < ks; j++) {
+                    int count = keyCounts[j];
+                    long currentPos = sidecarMems[c].getAppendOffset();
+                    long keyDataStart = keyOffsetsPos + keyOffsetsSize;
+                    int keyOffset = (int) (currentPos - keyDataStart);
+                    sidecarMems[c].putInt(keyOffsetsPos + (long) j * Integer.BYTES, keyOffset);
+
+                    if (count == 0) {
+                        continue;
                     }
-                    rawOffset += valueSize;
-                }
 
-                // Compress and write
-                int maxCompressed = AlpCompression.maxCompressedSize(count, colType);
-                long compressBuf = Unsafe.malloc(maxCompressed, MemoryTag.NATIVE_DEFAULT);
-                try {
+                    // Assemble this key's raw values into sidecarBuf
+                    long keyOff = keyOffsets[j];
+                    long rawOffset = 0;
+                    for (int i = 0; i < count; i++) {
+                        long rowId = Unsafe.getUnsafe().getLong(
+                                mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                        if (rowId < colTop) {
+                            writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        } else {
+                            long srcOffset = (rowId - colTop) << shift;
+                            if (valueSize == Long.BYTES) {
+                                Unsafe.getUnsafe().putLong(sidecarBuf + rawOffset,
+                                        Unsafe.getUnsafe().getLong(colAddr + srcOffset));
+                            } else if (valueSize == Integer.BYTES) {
+                                Unsafe.getUnsafe().putInt(sidecarBuf + rawOffset,
+                                        Unsafe.getUnsafe().getInt(colAddr + srcOffset));
+                            } else if (valueSize == Short.BYTES) {
+                                Unsafe.getUnsafe().putShort(sidecarBuf + rawOffset,
+                                        Unsafe.getUnsafe().getShort(colAddr + srcOffset));
+                            } else {
+                                Unsafe.getUnsafe().putByte(sidecarBuf + rawOffset,
+                                        Unsafe.getUnsafe().getByte(colAddr + srcOffset));
+                            }
+                        }
+                        rawOffset += valueSize;
+                    }
+
+                    // Compress and write
                     int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType, compressBuf);
                     sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
-                } finally {
-                    Unsafe.free(compressBuf, maxCompressed, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                if (compressBuf != 0) {
+                    Unsafe.free(compressBuf, compressBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         }
