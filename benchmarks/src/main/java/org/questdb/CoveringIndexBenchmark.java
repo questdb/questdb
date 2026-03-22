@@ -62,9 +62,9 @@ public class CoveringIndexBenchmark {
             readKeys[i] = readRng.nextInt(KEY_COUNT);
         }
 
-        System.out.printf("  %-35s %10s %10s %10s %12s %12s%n",
-                "Column Type", "Raw (MB)", "Sidecar", "Ratio", "Baseline ms", "Covering ms");
-        System.out.println("  " + "-".repeat(95));
+        System.out.printf("  %-35s %10s %12s %8s %12s %12s %12s%n",
+                "Column Type", "Raw (MB)", "Sidecar (MB)", "Ratio", "Baseline", "Uncompressed", "Compressed");
+        System.out.println("  " + "-".repeat(107));
 
         for (CoverType ct : CoverType.values()) {
             runTypeVariant(config, tmpDir, keyAssignment, readKeys, ct);
@@ -105,6 +105,35 @@ public class CoveringIndexBenchmark {
             a[j] = tmp;
         }
         return a;
+    }
+
+    /**
+     * Simulates uncompressed covering: iterates the index, reads values sequentially
+     * from a flat column buffer at the row IDs returned by the cursor. This has the
+     * same I/O pattern as an uncompressed sidecar (sequential per-key access) but
+     * without any decode overhead.
+     */
+    private static long rawCoveringRead(CairoConfiguration config, String dir, int[] keys,
+                                        long colAddr, CoverType ct) {
+        long sum = 0;
+        try (Path path = new Path().of(dir)) {
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0)) {
+                for (int key : keys) {
+                    RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                    while (cursor.hasNext()) {
+                        long rowId = cursor.next();
+                        sum += switch (ct) {
+                            case DOUBLE -> (long) Unsafe.getUnsafe().getDouble(colAddr + rowId * Double.BYTES);
+                            case FLOAT -> (long) Unsafe.getUnsafe().getFloat(colAddr + rowId * Float.BYTES);
+                            case LONG -> Unsafe.getUnsafe().getLong(colAddr + rowId * Long.BYTES);
+                            case INT -> Unsafe.getUnsafe().getInt(colAddr + rowId * Integer.BYTES);
+                        };
+                    }
+                }
+            }
+        }
+        return sum;
     }
 
     private static long coveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
@@ -221,9 +250,22 @@ public class CoveringIndexBenchmark {
             }
             double covMs = covTotal / (ITERS * 1e6);
 
-            System.out.printf("  %-35s %10.1f %8.1f MB %9.1fx %10.1f ms %10.1f ms%n",
+            // Benchmark: raw covering (index scan, sequential column read — no decode,
+            // simulates uncompressed sidecar with perfect locality)
+            for (int w = 0; w < WARMUP; w++) {
+                rawCoveringRead(config, baseDir, readKeys, colAddr, ct);
+            }
+            long rawCovTotal = 0;
+            for (int i = 0; i < ITERS; i++) {
+                long start = System.nanoTime();
+                rawCoveringRead(config, baseDir, readKeys, colAddr, ct);
+                rawCovTotal += System.nanoTime() - start;
+            }
+            double rawCovMs = rawCovTotal / (ITERS * 1e6);
+
+            System.out.printf("  %-35s %10.1f %10.1f MB %9.1fx %10.1f ms %10.1f ms %10.1f ms%n",
                     ct.name() + " (" + ct.description + ")",
-                    rawMB, sidecarMB, ratio, baseMs, covMs);
+                    rawMB, sidecarMB, ratio, baseMs, rawCovMs, covMs);
 
         } finally {
             Unsafe.free(colAddr, (long) TOTAL_ROWS * ct.size, MemoryTag.NATIVE_DEFAULT);
