@@ -221,16 +221,22 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             try {
                 if (keyMem.isOpen()) {
-                    keyMem.setSize(KEY_FILE_RESERVED);
-                    Misc.free(keyMem);
+                    try {
+                        keyMem.setSize(KEY_FILE_RESERVED);
+                    } finally {
+                        Misc.free(keyMem);
+                    }
                 }
             } finally {
                 try {
                     if (valueMem.isOpen()) {
-                        if (valueMemSize > 0) {
-                            valueMem.setSize(valueMemSize);
+                        try {
+                            if (valueMemSize > 0) {
+                                valueMem.setSize(valueMemSize);
+                            }
+                        } finally {
+                            Misc.free(valueMem);
                         }
-                        Misc.free(valueMem);
                     }
                 } finally {
                     closeSidecarMems();
@@ -341,7 +347,9 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        if (isIncrementalCandidate && gen0KeyCount == keyCount) {
+        if (isIncrementalCandidate && gen0KeyCount == keyCount && coverCount == 0) {
+            // Incremental seal only when no covering index — the clean-stride
+            // copy path does not handle sidecar data.
             sealIncremental();
         } else {
             sealFull();

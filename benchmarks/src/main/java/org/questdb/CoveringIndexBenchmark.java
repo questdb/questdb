@@ -226,10 +226,15 @@ public class CoveringIndexBenchmark {
             double sidecarMB = sidecarSize / (1024.0 * 1024.0);
             double ratio = rawMB / sidecarMB;
 
-            // Benchmark: baseline (index + random column read)
-            for (int w = 0; w < WARMUP; w++) {
+            // Interleaved warmup: all three variants warm up together to equalize
+            // JIT compilation state and cache conditions
+            for (int w = 0; w < WARMUP + 2; w++) {
                 baselineRead(config, baseDir, readKeys, colAddr, ct);
+                rawCoveringRead(config, baseDir, readKeys, colAddr, ct);
+                coveringRead(config, covDir, readKeys, ct);
             }
+
+            // Measure each variant
             long baseTotal = 0;
             for (int i = 0; i < ITERS; i++) {
                 long start = System.nanoTime();
@@ -238,23 +243,6 @@ public class CoveringIndexBenchmark {
             }
             double baseMs = baseTotal / (ITERS * 1e6);
 
-            // Benchmark: covering read
-            for (int w = 0; w < WARMUP; w++) {
-                coveringRead(config, covDir, readKeys, ct);
-            }
-            long covTotal = 0;
-            for (int i = 0; i < ITERS; i++) {
-                long start = System.nanoTime();
-                coveringRead(config, covDir, readKeys, ct);
-                covTotal += System.nanoTime() - start;
-            }
-            double covMs = covTotal / (ITERS * 1e6);
-
-            // Benchmark: raw covering (index scan, sequential column read — no decode,
-            // simulates uncompressed sidecar with perfect locality)
-            for (int w = 0; w < WARMUP; w++) {
-                rawCoveringRead(config, baseDir, readKeys, colAddr, ct);
-            }
             long rawCovTotal = 0;
             for (int i = 0; i < ITERS; i++) {
                 long start = System.nanoTime();
@@ -262,6 +250,14 @@ public class CoveringIndexBenchmark {
                 rawCovTotal += System.nanoTime() - start;
             }
             double rawCovMs = rawCovTotal / (ITERS * 1e6);
+
+            long covTotal = 0;
+            for (int i = 0; i < ITERS; i++) {
+                long start = System.nanoTime();
+                coveringRead(config, covDir, readKeys, ct);
+                covTotal += System.nanoTime() - start;
+            }
+            double covMs = covTotal / (ITERS * 1e6);
 
             System.out.printf("  %-35s %10.1f %10.1f MB %9.1fx %10.1f ms %10.1f ms %10.1f ms%n",
                     ct.name() + " (" + ct.description + ")",
