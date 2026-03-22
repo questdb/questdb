@@ -250,25 +250,43 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         writer.commit();
                     }
 
-                    // Read back with covering cursor
+                    // Read back with covering cursor — verify both row IDs and covered values
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
                         RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
-                        CoveringRowCursor coverCursor = (CoveringRowCursor) cursor;
-                        assertTrue(coverCursor.hasCovering());
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
 
-                        // Iterate key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
-                        assertTrue(coverCursor.hasNext());
-                        assertEquals(0, coverCursor.next());
+                        // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
+                        assertTrue(cc.hasNext());
+                        assertEquals(0, cc.next());
+                        assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(coverCursor.hasNext());
-                        assertEquals(3, coverCursor.next());
+                        assertTrue(cc.hasNext());
+                        assertEquals(3, cc.next());
+                        assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(coverCursor.hasNext());
-                        assertEquals(6, coverCursor.next());
+                        assertTrue(cc.hasNext());
+                        assertEquals(6, cc.next());
+                        assertEquals(70.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertFalse(coverCursor.hasNext());
+                        assertFalse(cc.hasNext());
+
+                        // key 1: rows 1, 4 -> values 20.0, 50.0
+                        cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+
+                        assertTrue(cc.hasNext());
+                        assertEquals(1, cc.next());
+                        assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
+
+                        assertTrue(cc.hasNext());
+                        assertEquals(4, cc.next());
+                        assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
+
+                        assertFalse(cc.hasNext());
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
