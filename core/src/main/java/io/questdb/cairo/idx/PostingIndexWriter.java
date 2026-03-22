@@ -999,50 +999,67 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
         for (int c = 0; c < coverCount; c++) {
-            // Resolve address at seal time (not at configureCovering time) to avoid
-            // stale pointers after column file remapping during growth.
             long colAddr = coveredColumnMems != null
                     ? coveredColumnMems[c].addressOf(0)
                     : coveredColumnAddrs[c];
             long colTop = coveredColumnTops[c];
             int shift = coveredColumnShifts[c];
             int colType = coveredColumnTypes[c];
-            long sidecarOffset = 0;
+            int valueSize = 1 << shift;
+
+            // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
+            int keyOffsetsSize = ks * Integer.BYTES;
+
+            // Write key offsets placeholder, then compress each key's values
+            long keyOffsetsPos = sidecarMems[c].getAppendOffset();
+            for (int j = 0; j < ks; j++) {
+                sidecarMems[c].putInt(0); // placeholder
+            }
+
             for (int j = 0; j < ks; j++) {
                 int count = keyCounts[j];
+                // Record this key's offset relative to start of key data
+                long currentPos = sidecarMems[c].getAppendOffset();
+                long keyDataStart = keyOffsetsPos + keyOffsetsSize;
+                int keyOffset = (int) (currentPos - keyDataStart);
+                sidecarMems[c].putInt(keyOffsetsPos + (long) j * Integer.BYTES, keyOffset);
+
+                if (count == 0) {
+                    continue;
+                }
+
+                // Assemble this key's raw values into sidecarBuf
                 long keyOff = keyOffsets[j];
+                long rawOffset = 0;
                 for (int i = 0; i < count; i++) {
                     long rowId = Unsafe.getUnsafe().getLong(
                             mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    int valueSize = 1 << shift;
                     if (rowId < colTop) {
-                        // Row is below column top (column added after these rows) — write NULL sentinel
-                        writeNullSentinel(sidecarBuf + sidecarOffset, valueSize, colType);
+                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                     } else {
                         long srcOffset = (rowId - colTop) << shift;
                         if (valueSize == Long.BYTES) {
-                            long val = Unsafe.getUnsafe().getLong(colAddr + srcOffset);
-                            Unsafe.getUnsafe().putLong(sidecarBuf + sidecarOffset, val);
+                            Unsafe.getUnsafe().putLong(sidecarBuf + rawOffset,
+                                    Unsafe.getUnsafe().getLong(colAddr + srcOffset));
                         } else if (valueSize == Integer.BYTES) {
-                            int val = Unsafe.getUnsafe().getInt(colAddr + srcOffset);
-                            Unsafe.getUnsafe().putInt(sidecarBuf + sidecarOffset, val);
+                            Unsafe.getUnsafe().putInt(sidecarBuf + rawOffset,
+                                    Unsafe.getUnsafe().getInt(colAddr + srcOffset));
                         } else if (valueSize == Short.BYTES) {
-                            short val = Unsafe.getUnsafe().getShort(colAddr + srcOffset);
-                            Unsafe.getUnsafe().putShort(sidecarBuf + sidecarOffset, val);
+                            Unsafe.getUnsafe().putShort(sidecarBuf + rawOffset,
+                                    Unsafe.getUnsafe().getShort(colAddr + srcOffset));
                         } else {
-                            byte val = Unsafe.getUnsafe().getByte(colAddr + srcOffset);
-                            Unsafe.getUnsafe().putByte(sidecarBuf + sidecarOffset, val);
+                            Unsafe.getUnsafe().putByte(sidecarBuf + rawOffset,
+                                    Unsafe.getUnsafe().getByte(colAddr + srcOffset));
                         }
                     }
-                    sidecarOffset += valueSize;
+                    rawOffset += valueSize;
                 }
-            }
-            if (sidecarOffset > 0) {
-                int totalValues = (int) (sidecarOffset / (1 << shift));
-                int maxCompressed = AlpCompression.maxCompressedSize(totalValues, colType);
+
+                // Compress and write
+                int maxCompressed = AlpCompression.maxCompressedSize(count, colType);
                 long compressBuf = Unsafe.malloc(maxCompressed, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    int compressedSize = compressSidecarBlock(sidecarBuf, totalValues, shift, colType, compressBuf);
+                    int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType, compressBuf);
                     sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
                 } finally {
                     Unsafe.free(compressBuf, maxCompressed, MemoryTag.NATIVE_DEFAULT);
@@ -1054,22 +1071,21 @@ public class PostingIndexWriter implements IndexWriter {
     private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType, long destBuf) {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE:
+                return AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf);
+            case ColumnType.LONG:
             case ColumnType.TIMESTAMP:
             case ColumnType.DATE:
             case ColumnType.GEOLONG:
-                return shift == 3
-                        ? AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf)
-                        : AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.LONG:
                 return AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
             case ColumnType.FLOAT:
             case ColumnType.GEOINT:
             case ColumnType.INT:
                 return AlpCompression.compressInts(rawBuf, valueCount, destBuf);
             default:
-                // SHORT, BYTE, BOOLEAN, GEOSHORT, GEOBYTE: copy raw (too small to compress)
-                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf, (long) valueCount << shift);
-                return valueCount << shift;
+                // SHORT, BYTE: count header + raw copy
+                Unsafe.getUnsafe().putInt(destBuf, valueCount);
+                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
+                return 4 + (valueCount << shift);
         }
     }
 

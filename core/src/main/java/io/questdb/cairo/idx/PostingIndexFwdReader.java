@@ -107,6 +107,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private double[][] decodedDoubles;
         private int[][] decodedInts;
         private long[][] decodedLongs;
+        private long[] decodeWorkspace; // reusable workspace for ALP decompress
         private int decodedStride = -1;
 
         @Override
@@ -169,14 +170,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private int sidecarValueIndex() {
-            return sidecarStrideKeyStart + sidecarOrdinal - 1;
+            return sidecarOrdinal - 1;
         }
 
-        private void decodeSidecarStride(int stride) {
-            if (stride == decodedStride || sidecarMems == null || coverCount == 0) {
-                return;
-            }
-            if (sealedGenKeyCount <= 0) {
+        private void decodeSidecarKey(int stride, int localKey) {
+            if (sidecarMems == null || coverCount == 0 || sealedGenKeyCount <= 0) {
                 return;
             }
             int sc = PostingIndexUtils.strideCount(sealedGenKeyCount);
@@ -184,6 +182,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
+            int ks = PostingIndexUtils.keysInStride(sealedGenKeyCount, stride);
+            if (localKey >= ks) {
+                return;
+            }
 
             if (decodedDoubles == null) {
                 decodedDoubles = new double[coverCount][];
@@ -196,64 +198,69 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 if (mem == null || mem.size() == 0) {
                     continue;
                 }
+                // Get stride data offset from stride index
                 long strideIdxOffset = (long) stride * Integer.BYTES;
                 if (strideIdxOffset + Integer.BYTES > mem.size()) {
                     continue;
                 }
                 int strideOff = mem.getInt(strideIdxOffset);
-                long dataOffset = siSize + strideOff;
-                if (dataOffset >= mem.size()) {
+                long strideDataStart = siSize + strideOff;
+                if (strideDataStart >= mem.size()) {
                     continue;
                 }
-                long addr = mem.addressOf(dataOffset);
+
+                // Per-key layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
+                long keyOffsetsAddr = mem.addressOf(strideDataStart);
+                int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
+                long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
+                int count = Unsafe.getUnsafe().getInt(keyBlockAddr);
+                if (count == 0) {
+                    continue;
+                }
                 int colType = sidecarColumnTypes[c];
 
                 switch (ColumnType.tagOf(colType)) {
                     case ColumnType.DOUBLE: {
-                        int count = Unsafe.getUnsafe().getShort(addr) & 0xFFFF;
                         if (decodedDoubles[c] == null || decodedDoubles[c].length < count) {
                             decodedDoubles[c] = new double[count];
                         }
-                        AlpCompression.decompressDoubles(addr, decodedDoubles[c]);
+                        if (decodeWorkspace == null || decodeWorkspace.length < count) {
+                            decodeWorkspace = new long[count];
+                        }
+                        AlpCompression.decompressDoubles(keyBlockAddr, decodedDoubles[c], decodeWorkspace);
                         break;
                     }
                     case ColumnType.LONG:
                     case ColumnType.TIMESTAMP:
                     case ColumnType.DATE:
                     case ColumnType.GEOLONG: {
-                        int count = Unsafe.getUnsafe().getShort(addr) & 0xFFFF;
                         if (decodedLongs[c] == null || decodedLongs[c].length < count) {
                             decodedLongs[c] = new long[count];
                         }
-                        AlpCompression.decompressLongs(addr, decodedLongs[c]);
+                        AlpCompression.decompressLongs(keyBlockAddr, decodedLongs[c]);
                         break;
                     }
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
                     case ColumnType.GEOINT: {
-                        int count = Unsafe.getUnsafe().getShort(addr) & 0xFFFF;
                         if (decodedInts[c] == null || decodedInts[c].length < count) {
                             decodedInts[c] = new int[count];
                         }
-                        AlpCompression.decompressInts(addr, decodedInts[c]);
+                        AlpCompression.decompressInts(keyBlockAddr, decodedInts[c]);
                         break;
                     }
                     default: {
-                        // SHORT, BYTE: small types stored uncompressed
-                        // Read raw bytes into int array for uniform access
+                        // SHORT, BYTE: stored uncompressed with count header
                         int shift = ColumnType.pow2SizeOf(colType);
-                        int ks = PostingIndexUtils.keysInStride(sealedGenKeyCount, stride);
-                        // Estimate count from stride key count (conservative)
-                        int maxCount = ks * PostingIndexUtils.BLOCK_CAPACITY;
-                        if (decodedInts[c] == null || decodedInts[c].length < maxCount) {
-                            decodedInts[c] = new int[maxCount];
+                        if (decodedInts[c] == null || decodedInts[c].length < count) {
+                            decodedInts[c] = new int[count];
                         }
-                        // Read raw values
-                        for (int i = 0; i < maxCount && dataOffset + (long) (i + 1) * (1 << shift) <= mem.size(); i++) {
+                        long rawAddr = keyBlockAddr + 4; // skip count header
+                        for (int i = 0; i < count; i++) {
                             if (shift == 1) {
-                                decodedInts[c][i] = mem.getShort(dataOffset + (long) i * Short.BYTES);
+                                decodedInts[c][i] = Unsafe.getUnsafe().getShort(rawAddr + (long) i * Short.BYTES);
                             } else {
-                                decodedInts[c][i] = mem.getByte(dataOffset + i);
+                                decodedInts[c][i] = Unsafe.getUnsafe().getByte(rawAddr + i);
                             }
                         }
                         break;
@@ -536,8 +543,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.sealedGenKeyCount = genKeyCount;
 
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
-            decodeSidecarStride(stride);
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
+            decodeSidecarKey(stride, localKey);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
             long strideAddr = genAddr + siSize + strideOff;
