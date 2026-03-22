@@ -427,9 +427,18 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        // If all strides are dirty, fall back to full seal (no savings)
+        // If all strides are dirty, fall back to full seal (no savings).
+        // Free savedSidecarBufs since sealFull rebuilds sidecars from scratch.
         if (dirtyCount == sc) {
             Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
+            if (savedSidecarBufs != null) {
+                for (int c = 0; c < savedSidecarBufs.length; c++) {
+                    if (savedSidecarBufs[c] != 0) {
+                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_DEFAULT);
+                        savedSidecarBufs[c] = 0;
+                    }
+                }
+            }
             sealFull();
             return;
         }
