@@ -1696,10 +1696,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // TODO: ALTER TABLE + covering index interaction needs deeper work.
-    //  rewriteMetadata() preserves the covering flag and indices, but
-    //  TableReaderMetadata.readCoveringColumnData() has a memory mapping
-    //  issue when the _meta file is swapped. Tracked separately.
+    @Test
+    public void testCoveringMetadataSurvivesAlterTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            execute("""
+                    INSERT INTO t_alter VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    10.5
+                    11.5
+                    """, "SELECT price FROM t_alter WHERE sym = 'A'");
+
+            execute("ALTER TABLE t_alter ADD COLUMN extra INT");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader r = engine.getReader("t_alter")) {
+                int symIdx = r.getMetadata().getColumnIndex("sym");
+                assertTrue("covering flag lost after ALTER", r.getMetadata().getColumnMetadata(symIdx).isCovering());
+                int[] indices = r.getMetadata().getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull("covering indices lost after ALTER", indices);
+                assertEquals(1, indices.length);
+            }
+
+            assertSql("""
+                    price
+                    10.5
+                    11.5
+                    """, "SELECT price FROM t_alter WHERE sym = 'A'");
+        });
+    }
 
     @Test
     public void testCoveringNullSentinelGeoShort() throws Exception {

@@ -2086,6 +2086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // refresh metadata
             columnMetadata.setIndexType(IndexType.NONE);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
+            columnMetadata.setCoveringColumnIndices(null);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 

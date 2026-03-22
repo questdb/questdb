@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -108,9 +109,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return 0;
             }
-            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
-            long offset = getSidecarOffset(includeIdx, shift);
-            return sidecarMems[includeIdx].getByte(offset);
+            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
+            return offset >= 0 ? sidecarMems[includeIdx].getByte(offset) : 0;
         }
 
         @Override
@@ -118,9 +118,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return Double.NaN;
             }
-            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
-            long offset = getSidecarOffset(includeIdx, shift);
-            return sidecarMems[includeIdx].getDouble(offset);
+            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
+            return offset >= 0 ? sidecarMems[includeIdx].getDouble(offset) : Double.NaN;
         }
 
         @Override
@@ -128,9 +127,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return Float.NaN;
             }
-            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
-            long offset = getSidecarOffset(includeIdx, shift);
-            return sidecarMems[includeIdx].getFloat(offset);
+            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
+            return offset >= 0 ? sidecarMems[includeIdx].getFloat(offset) : Float.NaN;
         }
 
         @Override
@@ -138,9 +136,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return Integer.MIN_VALUE;
             }
-            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
-            long offset = getSidecarOffset(includeIdx, shift);
-            return sidecarMems[includeIdx].getInt(offset);
+            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
+            return offset >= 0 ? sidecarMems[includeIdx].getInt(offset) : Integer.MIN_VALUE;
         }
 
         @Override
@@ -148,9 +145,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return Long.MIN_VALUE;
             }
-            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
-            long offset = getSidecarOffset(includeIdx, shift);
-            return sidecarMems[includeIdx].getLong(offset);
+            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
+            return offset >= 0 ? sidecarMems[includeIdx].getLong(offset) : Long.MIN_VALUE;
         }
 
         @Override
@@ -158,9 +154,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
                 return 0;
             }
-            int shift = ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]);
-            long offset = getSidecarOffset(includeIdx, shift);
-            return sidecarMems[includeIdx].getShort(offset);
+            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
+            return offset >= 0 ? sidecarMems[includeIdx].getShort(offset) : 0;
         }
 
         @Override
@@ -169,13 +164,21 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private long getSidecarOffset(int includeIdx, int shift) {
+            if (sealedGenKeyCount <= 0) {
+                return -1;
+            }
             int sc = PostingIndexUtils.strideCount(sealedGenKeyCount);
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             if (stride >= sc) {
-                return 0;
+                return -1;
+            }
+            MemoryMR mem = sidecarMems[includeIdx];
+            long strideIdxOffset = (long) stride * Integer.BYTES;
+            if (strideIdxOffset + Integer.BYTES > mem.size()) {
+                return -1;
             }
             int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
-            int strideOff = sidecarMems[includeIdx].getInt((long) stride * Integer.BYTES);
+            int strideOff = mem.getInt(strideIdxOffset);
             return siSize + strideOff + ((long) (sidecarStrideKeyStart + sidecarOrdinal - 1) << shift);
         }
 

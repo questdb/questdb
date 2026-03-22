@@ -299,22 +299,27 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        // Open sidecar files for covering index if configured
-        if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
-            try (Path p = new Path().of(partitionPath)) {
-                openSidecarFiles(p, indexName, columnNameTxn);
-            }
-        }
-
         // Single sparse generation: seal to convert to stride-indexed dense format
         // (enables flat mode compression which can be significantly smaller)
         if (genCount == 1) {
             long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
             int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             if (gen0KeyCount >= 0) {
-                // Already dense — nothing to do
+                // Already dense — nothing to do (sidecar files from previous seal are valid)
                 return;
             }
+        }
+
+        // Open sidecar files for covering index if configured.
+        // Must happen AFTER the early return above to avoid truncating existing sidecar
+        // files when the index is already sealed.
+        if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
+            try (Path p = new Path().of(partitionPath)) {
+                openSidecarFiles(p, indexName, columnNameTxn);
+            }
+        }
+
+        if (genCount == 1) {
             sealFull();
             return;
         }

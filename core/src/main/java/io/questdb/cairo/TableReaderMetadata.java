@@ -361,11 +361,18 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     private void readCoveringColumnData(MemoryR mem, int columnCount) {
+        long memSize = mem.size();
         // Compute offset past all column names
         long offset = TableUtils.getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
             int strLen = mem.getInt(offset);
             offset += Vm.getStorageLength(strLen);
+        }
+        if (offset >= memSize) {
+            return;
         }
         // Read covering column indices for each column that has the covering flag
         for (int i = 0; i < columnCount; i++) {
@@ -523,6 +530,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.timestampIndex = timestampIndex;
         }
 
+        readCoveringColumnData(newMetaMem, newColumnCount);
         return transitionIndex;
     }
 
