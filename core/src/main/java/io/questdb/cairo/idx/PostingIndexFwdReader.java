@@ -103,59 +103,64 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int sidecarOrdinal;
         private int sidecarStrideKeyStart;
         private int sealedGenKeyCount;
+        // Decoded sidecar buffers (one per covered column, lazily allocated)
+        private double[][] decodedDoubles;
+        private int[][] decodedInts;
+        private long[][] decodedLongs;
+        private int decodedStride = -1;
 
         @Override
         public byte getCoveredByte(int includeIdx) {
-            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+            int idx = sidecarValueIndex();
+            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return 0;
             }
-            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
-            return offset >= 0 ? sidecarMems[includeIdx].getByte(offset) : 0;
+            return (byte) decodedInts[includeIdx][idx];
         }
 
         @Override
         public double getCoveredDouble(int includeIdx) {
-            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+            int idx = sidecarValueIndex();
+            if (idx < 0 || decodedDoubles == null || decodedDoubles[includeIdx] == null) {
                 return Double.NaN;
             }
-            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
-            return offset >= 0 ? sidecarMems[includeIdx].getDouble(offset) : Double.NaN;
+            return decodedDoubles[includeIdx][idx];
         }
 
         @Override
         public float getCoveredFloat(int includeIdx) {
-            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+            int idx = sidecarValueIndex();
+            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return Float.NaN;
             }
-            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
-            return offset >= 0 ? sidecarMems[includeIdx].getFloat(offset) : Float.NaN;
+            return Float.intBitsToFloat(decodedInts[includeIdx][idx]);
         }
 
         @Override
         public int getCoveredInt(int includeIdx) {
-            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+            int idx = sidecarValueIndex();
+            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return Integer.MIN_VALUE;
             }
-            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
-            return offset >= 0 ? sidecarMems[includeIdx].getInt(offset) : Integer.MIN_VALUE;
+            return decodedInts[includeIdx][idx];
         }
 
         @Override
         public long getCoveredLong(int includeIdx) {
-            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+            int idx = sidecarValueIndex();
+            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
                 return Long.MIN_VALUE;
             }
-            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
-            return offset >= 0 ? sidecarMems[includeIdx].getLong(offset) : Long.MIN_VALUE;
+            return decodedLongs[includeIdx][idx];
         }
 
         @Override
         public short getCoveredShort(int includeIdx) {
-            if (sidecarMems == null || includeIdx >= coverCount || sidecarMems[includeIdx] == null) {
+            int idx = sidecarValueIndex();
+            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return 0;
             }
-            long offset = getSidecarOffset(includeIdx, ColumnType.pow2SizeOf(sidecarColumnTypes[includeIdx]));
-            return offset >= 0 ? sidecarMems[includeIdx].getShort(offset) : 0;
+            return (short) decodedInts[includeIdx][idx];
         }
 
         @Override
@@ -163,23 +168,99 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return coverCount > 0 && sidecarMems != null && genCount == 1;
         }
 
-        private long getSidecarOffset(int includeIdx, int shift) {
+        private int sidecarValueIndex() {
+            return sidecarStrideKeyStart + sidecarOrdinal - 1;
+        }
+
+        private void decodeSidecarStride(int stride) {
+            if (stride == decodedStride || sidecarMems == null || coverCount == 0) {
+                return;
+            }
             if (sealedGenKeyCount <= 0) {
-                return -1;
+                return;
             }
             int sc = PostingIndexUtils.strideCount(sealedGenKeyCount);
-            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             if (stride >= sc) {
-                return -1;
-            }
-            MemoryMR mem = sidecarMems[includeIdx];
-            long strideIdxOffset = (long) stride * Integer.BYTES;
-            if (strideIdxOffset + Integer.BYTES > mem.size()) {
-                return -1;
+                return;
             }
             int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
-            int strideOff = mem.getInt(strideIdxOffset);
-            return siSize + strideOff + ((long) (sidecarStrideKeyStart + sidecarOrdinal - 1) << shift);
+
+            if (decodedDoubles == null) {
+                decodedDoubles = new double[coverCount][];
+                decodedInts = new int[coverCount][];
+                decodedLongs = new long[coverCount][];
+            }
+
+            for (int c = 0; c < coverCount; c++) {
+                MemoryMR mem = sidecarMems[c];
+                if (mem == null || mem.size() == 0) {
+                    continue;
+                }
+                long strideIdxOffset = (long) stride * Integer.BYTES;
+                if (strideIdxOffset + Integer.BYTES > mem.size()) {
+                    continue;
+                }
+                int strideOff = mem.getInt(strideIdxOffset);
+                long dataOffset = siSize + strideOff;
+                if (dataOffset >= mem.size()) {
+                    continue;
+                }
+                long addr = mem.addressOf(dataOffset);
+                int colType = sidecarColumnTypes[c];
+
+                switch (ColumnType.tagOf(colType)) {
+                    case ColumnType.DOUBLE: {
+                        int count = Unsafe.getUnsafe().getShort(addr) & 0xFFFF;
+                        if (decodedDoubles[c] == null || decodedDoubles[c].length < count) {
+                            decodedDoubles[c] = new double[count];
+                        }
+                        AlpCompression.decompressDoubles(addr, decodedDoubles[c]);
+                        break;
+                    }
+                    case ColumnType.LONG:
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.DATE:
+                    case ColumnType.GEOLONG: {
+                        int count = Unsafe.getUnsafe().getShort(addr) & 0xFFFF;
+                        if (decodedLongs[c] == null || decodedLongs[c].length < count) {
+                            decodedLongs[c] = new long[count];
+                        }
+                        AlpCompression.decompressLongs(addr, decodedLongs[c]);
+                        break;
+                    }
+                    case ColumnType.INT:
+                    case ColumnType.FLOAT:
+                    case ColumnType.GEOINT: {
+                        int count = Unsafe.getUnsafe().getShort(addr) & 0xFFFF;
+                        if (decodedInts[c] == null || decodedInts[c].length < count) {
+                            decodedInts[c] = new int[count];
+                        }
+                        AlpCompression.decompressInts(addr, decodedInts[c]);
+                        break;
+                    }
+                    default: {
+                        // SHORT, BYTE: small types stored uncompressed
+                        // Read raw bytes into int array for uniform access
+                        int shift = ColumnType.pow2SizeOf(colType);
+                        int ks = PostingIndexUtils.keysInStride(sealedGenKeyCount, stride);
+                        // Estimate count from stride key count (conservative)
+                        int maxCount = ks * PostingIndexUtils.BLOCK_CAPACITY;
+                        if (decodedInts[c] == null || decodedInts[c].length < maxCount) {
+                            decodedInts[c] = new int[maxCount];
+                        }
+                        // Read raw values
+                        for (int i = 0; i < maxCount && dataOffset + (long) (i + 1) * (1 << shift) <= mem.size(); i++) {
+                            if (shift == 1) {
+                                decodedInts[c][i] = mem.getShort(dataOffset + (long) i * Short.BYTES);
+                            } else {
+                                decodedInts[c][i] = mem.getByte(dataOffset + i);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            decodedStride = stride;
         }
 
         @Override
@@ -259,6 +340,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.blockBufferEnd = 0;
             this.sidecarOrdinal = 0;
             this.sidecarStrideKeyStart = 0;
+            this.decodedStride = -1;
             advanceToNextRelevantGen();
         }
 
@@ -454,6 +536,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.sealedGenKeyCount = genKeyCount;
 
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            decodeSidecarStride(stride);
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);

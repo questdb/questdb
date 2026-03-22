@@ -1038,8 +1038,38 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
             if (sidecarOffset > 0) {
-                sidecarMems[c].putBlockOfBytes(sidecarBuf, sidecarOffset);
+                int totalValues = (int) (sidecarOffset / (1 << shift));
+                int maxCompressed = AlpCompression.maxCompressedSize(totalValues, colType);
+                long compressBuf = Unsafe.malloc(maxCompressed, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    int compressedSize = compressSidecarBlock(sidecarBuf, totalValues, shift, colType, compressBuf);
+                    sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
+                } finally {
+                    Unsafe.free(compressBuf, maxCompressed, MemoryTag.NATIVE_DEFAULT);
+                }
             }
+        }
+    }
+
+    private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType, long destBuf) {
+        switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DATE:
+            case ColumnType.GEOLONG:
+                return shift == 3
+                        ? AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf)
+                        : AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
+            case ColumnType.LONG:
+                return AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
+            case ColumnType.FLOAT:
+            case ColumnType.GEOINT:
+            case ColumnType.INT:
+                return AlpCompression.compressInts(rawBuf, valueCount, destBuf);
+            default:
+                // SHORT, BYTE, BOOLEAN, GEOSHORT, GEOBYTE: copy raw (too small to compress)
+                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf, (long) valueCount << shift);
+                return valueCount << shift;
         }
     }
 
