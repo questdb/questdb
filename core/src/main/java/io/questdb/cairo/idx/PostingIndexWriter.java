@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -316,41 +317,85 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        // Open sidecar files for covering index if configured.
-        // Must happen AFTER the early return above to avoid truncating existing sidecar
-        // files when the index is already sealed.
-        if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
+        // Buffer old sidecar data from disk before openSidecarFiles truncates them.
+        // Needed for incremental seal to copy clean stride sidecar blocks.
+        long[] savedSidecarBufs = null;
+        long[] savedSidecarSizes = null;
+        if (coverCount > 0 && partitionPath != null) {
             try (Path p = new Path().of(partitionPath)) {
-                openSidecarFiles(p, indexName, columnNameTxn);
-            }
-        }
-
-        if (genCount == 1) {
-            sealFull();
-            return;
-        }
-
-        // Check if incremental seal is possible:
-        // gen 0 must be dense, and all subsequent gens must be sparse
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        boolean isIncrementalCandidate = gen0KeyCount >= 0;
-
-        if (isIncrementalCandidate) {
-            for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-                int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                if (gkc >= 0) {
-                    isIncrementalCandidate = false;
-                    break;
+                int pp = p.size();
+                savedSidecarBufs = new long[coverCount];
+                savedSidecarSizes = new long[coverCount];
+                for (int c = 0; c < coverCount; c++) {
+                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, columnNameTxn, c);
+                    if (ff.exists(pcFile)) {
+                        long fileLen = ff.length(pcFile);
+                        if (fileLen > 0) {
+                            long fd = ff.openRO(pcFile);
+                            if (fd >= 0) {
+                                savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_DEFAULT);
+                                savedSidecarSizes[c] = fileLen;
+                                long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                                if (mapped > 0) {
+                                    Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                    ff.munmap(mapped, fileLen, MemoryTag.MMAP_DEFAULT);
+                                }
+                                ff.close(fd);
+                            }
+                        }
+                    }
+                    p.trimTo(pp);
                 }
             }
+            if (sidecarMems != null) {
+                closeSidecarMems();
+            }
         }
 
-        if (isIncrementalCandidate && gen0KeyCount == keyCount) {
-            sealIncremental();
-        } else {
-            sealFull();
+        try {
+            // Open sidecar files (truncates to 0 and starts fresh)
+            if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
+                try (Path p = new Path().of(partitionPath)) {
+                    openSidecarFiles(p, indexName, columnNameTxn);
+                }
+            }
+
+            if (genCount == 1) {
+                sealFull();
+                return;
+            }
+
+            // Check if incremental seal is possible:
+            // gen 0 must be dense, and all subsequent gens must be sparse
+            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            boolean isIncrementalCandidate = gen0KeyCount >= 0;
+
+            if (isIncrementalCandidate) {
+                for (int g = 1; g < genCount; g++) {
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                    int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    if (gkc >= 0) {
+                        isIncrementalCandidate = false;
+                        break;
+                    }
+                }
+            }
+
+            if (isIncrementalCandidate && gen0KeyCount == keyCount) {
+                sealIncremental(savedSidecarBufs, savedSidecarSizes);
+                savedSidecarBufs = null; // ownership transferred
+            } else {
+                sealFull();
+            }
+        } finally {
+            if (savedSidecarBufs != null) {
+                for (int c = 0; c < savedSidecarBufs.length; c++) {
+                    if (savedSidecarBufs[c] != 0) {
+                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
         }
     }
 
@@ -358,7 +403,7 @@ public class PostingIndexWriter implements IndexWriter {
      * Incremental seal: only re-encode dirty strides (those touched by sparse gens 1..N).
      * Clean strides are copied verbatim from the existing dense gen 0.
      */
-    private void sealIncremental() {
+    private void sealIncremental(long[] savedSidecarBufs, long[] savedSidecarSizes) {
         int sc = PostingIndexUtils.strideCount(keyCount);
 
         // Mark dirty strides by scanning sparse gens 1..N (native byte array)
@@ -454,20 +499,12 @@ public class PostingIndexWriter implements IndexWriter {
                 valueMem.putInt(0);
             }
 
-            // Sidecar: buffer old data before truncating, then reserve stride index
+            // Sidecar: use saved old data (buffered in seal() before truncation)
             if (coverCount > 0 && sidecarMems != null) {
                 incrSidecarSiBufs = new long[coverCount];
-                oldSidecarBufs = new long[coverCount];
-                oldSidecarSizes = new long[coverCount];
+                oldSidecarBufs = savedSidecarBufs;
+                oldSidecarSizes = savedSidecarSizes;
                 for (int c = 0; c < coverCount; c++) {
-                    // Buffer old sidecar file contents before truncating
-                    long oldSize = sidecarMems[c].getAppendOffset();
-                    if (oldSize > 0) {
-                        oldSidecarBufs[c] = Unsafe.malloc(oldSize, MemoryTag.NATIVE_DEFAULT);
-                        oldSidecarSizes[c] = oldSize;
-                        Unsafe.getUnsafe().copyMemory(sidecarMems[c].addressOf(0), oldSidecarBufs[c], oldSize);
-                    }
-                    // Truncate and reserve new stride index
                     sidecarMems[c].jumpTo(0);
                     sidecarMems[c].truncate();
                     incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
@@ -1044,6 +1081,14 @@ public class PostingIndexWriter implements IndexWriter {
         if (coverCount <= 0 || sidecarMems == null) {
             return;
         }
+        // Pre-allocate workspaces once for all covered columns (maxKeyCount is the same)
+        int maxKeyCount = 0;
+        for (int j = 0; j < ks; j++) {
+            maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
+        }
+        long[] longWorkspace = maxKeyCount > 0 ? new long[maxKeyCount] : null;
+        boolean[] boolWorkspace = maxKeyCount > 0 ? new boolean[maxKeyCount] : null;
+
         for (int c = 0; c < coverCount; c++) {
             long colAddr = coveredColumnMems != null
                     ? coveredColumnMems[c].addressOf(0)
@@ -1056,15 +1101,9 @@ public class PostingIndexWriter implements IndexWriter {
             // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
             int keyOffsetsSize = ks * Integer.BYTES;
 
-            // Pre-allocate compress buffer and workspaces for the largest key
-            int maxKeyCount = 0;
-            for (int j = 0; j < ks; j++) {
-                maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
-            }
+            // Pre-allocate compress buffer for the largest key in this column type
             int compressBufSize = maxKeyCount > 0 ? AlpCompression.maxCompressedSize(maxKeyCount, colType) : 0;
             long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_DEFAULT) : 0;
-            long[] longWorkspace = maxKeyCount > 0 ? new long[maxKeyCount] : null;
-            boolean[] boolWorkspace = maxKeyCount > 0 ? new boolean[maxKeyCount] : null;
 
             try {
                 // Write key offsets placeholder, then compress each key's values

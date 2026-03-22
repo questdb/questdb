@@ -62,8 +62,7 @@ public class AlpCompression {
     // Compressed block header sizes (excluding packed data)
     // DOUBLE: valueCount(4) + e(1) + f(1) + bitWidth(1) + excCount(4) + forBase(8) = 19
     public static final int DOUBLE_HEADER_SIZE = 19;
-    // FLOAT: valueCount(4) + e(1) + f(1) + bitWidth(1) + excCount(4) + forBase(4) = 15
-    static final int FLOAT_HEADER_SIZE = 15;
+    // FLOAT is compressed via compressInts (INT_HEADER_SIZE)
     // LONG: valueCount(4) + bitWidth(1) + forBase(8) = 13
     static final int LONG_HEADER_SIZE = 13;
     // INT: valueCount(4) + bitWidth(1) + forBase(4) = 9
@@ -457,19 +456,17 @@ public class AlpCompression {
     public static int maxCompressedSize(int count, int columnType) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE:
-            case ColumnType.GEOLONG:
-                // Header + packed data (worst case 64 bits) + all exceptions
+                // ALP header + packed data (worst case 64 bits) + all exceptions
                 return DOUBLE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64)
                         + count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
-            case ColumnType.FLOAT:
-            case ColumnType.GEOINT:
-                return FLOAT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32)
-                        + count * (4 + 4);
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
                 return LONG_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
             case ColumnType.INT:
+            case ColumnType.FLOAT:
+            case ColumnType.GEOINT:
                 return INT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32);
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:

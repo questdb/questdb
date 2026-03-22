@@ -1824,4 +1824,127 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testIncrementalSealPreservesCoveringForCleanStrides() throws Exception {
+        // Incremental seal: gen0 dense + sparse gens → only dirty strides re-encoded.
+        // Clean strides must copy old sidecar data verbatim.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "incr_seal_cover";
+                int plen = path.size();
+
+                // 300 keys (2 strides: 0-255 in stride 0, 256-299 in stride 1)
+                int keyCount = 300;
+                long colAddr = Unsafe.malloc((long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < keyCount; i++) {
+                        Unsafe.getUnsafe().putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+
+                    // First writer: write all keys, commit, close (seal → gen0 dense)
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+                        for (int k = 0; k < keyCount; k++) {
+                            writer.add(k, k);
+                        }
+                        writer.setMaxValue(keyCount - 1);
+                        writer.commit();
+                    } // seal creates gen0 dense + sidecar
+
+                    // Second writer: touch only key 260 (stride 1) → stride 0 stays clean
+                    PostingIndexWriter writer2 = new PostingIndexWriter(configuration);
+                    writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    writer2.configureCovering(
+                            new long[]{colAddr},
+                            new long[]{0},
+                            new int[]{3},
+                            new int[]{1},
+                            new int[]{ColumnType.LONG},
+                            1
+                    );
+                    writer2.add(260, keyCount); // new row for key 260
+                    writer2.setMaxValue(keyCount);
+                    writer2.commit();
+                    writer2.close(); // incremental seal: stride 0 clean, stride 1 dirty
+
+                    // Read: verify covering values for clean stride keys
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // Key 0 is in stride 0 (clean stride) — should have correct covered value
+                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        assertTrue(cursor instanceof CoveringRowCursor);
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue("covering should be available after incremental seal", cc.hasCovering());
+                        assertTrue(cc.hasNext());
+                        assertEquals(0, cc.next());
+                        assertEquals(1000L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+
+                        // Key 100 is in stride 0 (clean stride)
+                        cursor = reader.getCursor(true, 100, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.hasNext());
+                        assertEquals(100, cc.next());
+                        assertEquals(1100L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+
+                        // Key 260 is in stride 1 (dirty stride) — should also work
+                        cursor = reader.getCursor(true, 260, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.hasNext());
+                        assertEquals(260, cc.next());
+                        assertEquals(1260L, cc.getCoveredLong(0));
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSequencerMetadataPreservesIndexType() throws Exception {
+        // Verify that WAL table sequencer metadata persists and reloads index type
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_seq_idx (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            execute("""
+                    INSERT INTO t_seq_idx VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5)
+                    """);
+            drainWalQueue();
+
+            // Verify index type is POSTING through the reader
+            try (TableReader r = engine.getReader("t_seq_idx")) {
+                int symIdx = r.getMetadata().getColumnIndex("sym");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(symIdx));
+            }
+
+            // Force sequencer metadata reload by releasing everything and reopening
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader r = engine.getReader("t_seq_idx")) {
+                int symIdx = r.getMetadata().getColumnIndex("sym");
+                assertEquals("index type should survive reload", IndexType.POSTING, r.getMetadata().getColumnIndexType(symIdx));
+            }
+        });
+    }
 }
