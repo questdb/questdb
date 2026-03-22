@@ -355,9 +355,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    // TODO: sequencer metadata format does not store index type;
-                    //  this assumes SYMBOL for all indexed symbol columns.
-                    //  Storing the actual index type requires a schema format change.
+                    // Default to BITMAP; overridden by optional index-type section if present
                     columnMetadata.add(new TableColumnMetadata(name, type, IndexType.BITMAP, 1024, true, null));
                 } else {
                     columnMetadata.add(new TableColumnMetadata(name, type));
@@ -388,6 +386,24 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         for (int i = 0; i < records; i++) {
                             readColumnOrder.add(metaMem.getInt(offset));
                             offset += Integer.BYTES;
+                        }
+                    }
+                }
+            }
+
+            // Optional section: index types (backward compatible)
+            if (memSize > offset + 8 + 4) {
+                long indexTypeCheckSum = checkSum * 31 + 0x494E4458; // "INDX" salt
+                long storedCheckSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCheckSum == indexTypeCheckSum) {
+                    int indexTypeCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (indexTypeCount == columnCount && memSize - offset >= columnCount) {
+                        for (int i = 0; i < columnCount; i++) {
+                            byte indexType = metaMem.getByte(offset);
+                            offset += Byte.BYTES;
+                            columnMetadata.getQuick(i).setIndexType(indexType);
                         }
                     }
                 }
@@ -440,6 +456,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(readColumnOrder.size());
         for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
             metaMem.putInt(readColumnOrder.get(i));
+        }
+
+        // write index types (optional section, backward compatible)
+        long indexTypeCheckSum = checkSum * 31 + 0x494E4458; // "INDX" salt
+        metaMem.putLong(indexTypeCheckSum);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putByte(getColumnMetadata(i).getIndexType());
         }
 
         // update metadata size

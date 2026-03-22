@@ -347,9 +347,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        if (isIncrementalCandidate && gen0KeyCount == keyCount && coverCount == 0) {
-            // Incremental seal only when no covering index — the clean-stride
-            // copy path does not handle sidecar data.
+        if (isIncrementalCandidate && gen0KeyCount == keyCount) {
             sealIncremental();
         } else {
             sealFull();
@@ -425,6 +423,8 @@ public class PostingIndexWriter implements IndexWriter {
         long[] incrSidecarSiBufs = null;
         long incrSidecarBuf = 0;
         long incrSidecarBufSize = 0;
+        long[] oldSidecarBufs = null;
+        long[] oldSidecarSizes = null;
 
         try {
             strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
@@ -454,13 +454,23 @@ public class PostingIndexWriter implements IndexWriter {
                 valueMem.putInt(0);
             }
 
-            // Sidecar stride index for incremental seal
+            // Sidecar: buffer old data before truncating, then reserve stride index
             if (coverCount > 0 && sidecarMems != null) {
                 incrSidecarSiBufs = new long[coverCount];
+                oldSidecarBufs = new long[coverCount];
+                oldSidecarSizes = new long[coverCount];
                 for (int c = 0; c < coverCount; c++) {
-                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
+                    // Buffer old sidecar file contents before truncating
+                    long oldSize = sidecarMems[c].getAppendOffset();
+                    if (oldSize > 0) {
+                        oldSidecarBufs[c] = Unsafe.malloc(oldSize, MemoryTag.NATIVE_DEFAULT);
+                        oldSidecarSizes[c] = oldSize;
+                        Unsafe.getUnsafe().copyMemory(sidecarMems[c].addressOf(0), oldSidecarBufs[c], oldSize);
+                    }
+                    // Truncate and reserve new stride index
                     sidecarMems[c].jumpTo(0);
                     sidecarMems[c].truncate();
+                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
                     for (int i = 0; i < siSize; i += Integer.BYTES) {
                         sidecarMems[c].putInt(0);
                     }
@@ -479,13 +489,28 @@ public class PostingIndexWriter implements IndexWriter {
                 if (Unsafe.getUnsafe().getByte(dirtyStridesAddr + s) == 0) {
                     // Clean stride: copy verbatim from gen 0
                     copyStrideFromGen0(gen0Addr, gen0KeyCount, gen0SiSize, s, copyBuf, copyBufSize);
-                    // Sidecar: record stride offset (data not copied - clean strides
-                    // will be re-written from scratch in sealFull if needed)
-                    if (incrSidecarSiBufs != null) {
+                    // Sidecar: copy old stride block verbatim
+                    if (incrSidecarSiBufs != null && oldSidecarBufs != null) {
+                        int oldSiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
                         for (int c = 0; c < coverCount; c++) {
                             Unsafe.getUnsafe().putInt(
                                     incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
                                     (int) (sidecarMems[c].getAppendOffset() - siSize));
+                            if (oldSidecarBufs[c] != 0 && oldSidecarSizes[c] > oldSiSize) {
+                                // Read old stride data range from old stride index
+                                int oldStrideOff = Unsafe.getUnsafe().getInt(oldSidecarBufs[c] + (long) s * Integer.BYTES);
+                                int nextStrideOff;
+                                if (s + 1 < sc) {
+                                    nextStrideOff = Unsafe.getUnsafe().getInt(oldSidecarBufs[c] + (long) (s + 1) * Integer.BYTES);
+                                } else {
+                                    nextStrideOff = (int) (oldSidecarSizes[c] - oldSiSize);
+                                }
+                                int strideDataSize = nextStrideOff - oldStrideOff;
+                                if (strideDataSize > 0) {
+                                    long oldStrideDataAddr = oldSidecarBufs[c] + oldSiSize + oldStrideOff;
+                                    sidecarMems[c].putBlockOfBytes(oldStrideDataAddr, strideDataSize);
+                                }
+                            }
                         }
                     }
                 } else {
@@ -577,6 +602,13 @@ public class PostingIndexWriter implements IndexWriter {
                 for (int c = 0; c < coverCount; c++) {
                     if (incrSidecarSiBufs[c] != 0) {
                         Unsafe.free(incrSidecarSiBufs[c], siSize, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+            if (oldSidecarBufs != null) {
+                for (int c = 0; c < coverCount; c++) {
+                    if (oldSidecarBufs[c] != 0) {
+                        Unsafe.free(oldSidecarBufs[c], oldSidecarSizes[c], MemoryTag.NATIVE_DEFAULT);
                     }
                 }
             }
