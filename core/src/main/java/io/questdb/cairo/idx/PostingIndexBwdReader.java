@@ -519,40 +519,76 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         private void readDeltaBlockMetadata(long encodedAddr) {
             long pos = encodedAddr;
-            this.encodedBlockCount = Unsafe.getUnsafe().getInt(pos);
+            int blockCount = Unsafe.getUnsafe().getInt(pos);
             pos += 4;
 
-            ensureMetadataCapacity(encodedBlockCount);
+            ensureMetadataCapacity(blockCount);
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
-            pos += encodedBlockCount;
+            pos += blockCount;
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
             }
-            pos += (long) encodedBlockCount * Long.BYTES;
+            pos += (long) blockCount * Long.BYTES;
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
             }
-            pos += (long) encodedBlockCount * Long.BYTES;
+            pos += (long) blockCount * Long.BYTES;
 
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
-            pos += encodedBlockCount;
+            pos += blockCount;
 
             // Pre-compute packed data addresses for each block (needed for reverse iteration)
-            for (int b = 0; b < encodedBlockCount; b++) {
+            for (int b = 0; b < blockCount; b++) {
                 blockPackedAddrs[b] = pos;
                 int numDeltas = valueCounts[b] - 1;
                 pos += BitpackUtils.packedDataSize(numDeltas, bitWidths[b]);
             }
 
-            this.currentBlock = encodedBlockCount - 1;
-            this.blockBufferPos = -1; // will be set by decodeBlock
+            // Trim trailing blocks (highest values) above maxValue.
+            // Since we iterate in reverse, these are the first blocks we'd decode.
+            int endBlock = blockCount;
+            if (maxValue < Long.MAX_VALUE && blockCount > 1) {
+                // Binary search: find last block with firstValue <= maxValue
+                int lo = 0, hi = blockCount - 1;
+                while (lo < hi) {
+                    int mid = (lo + hi + 1) >>> 1;
+                    if (firstValues[mid] <= maxValue) {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+                // lo is the last block that might contain values <= maxValue
+                endBlock = lo + 1;
+            }
+
+            // Trim leading blocks (lowest values) below minValue.
+            int startBlock = 0;
+            if (minValue > 0 && blockCount > 1) {
+                // Find first block whose firstValue could contain values >= minValue.
+                // All blocks before this one have all values < minValue.
+                int lo = 0, hi = blockCount - 1;
+                while (lo < hi) {
+                    int mid = (lo + hi + 1) >>> 1;
+                    if (firstValues[mid] <= minValue) {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+                startBlock = lo;
+            }
+
+            this.encodedBlockCount = endBlock;
+            this.currentBlock = endBlock - 1;
+            this.blockBufferPos = -1;
         }
     }
 }

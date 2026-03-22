@@ -71,10 +71,19 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
     @Override
     public void close() {
-        genLookup.close();
-        Misc.free(keyMem);
-        Misc.free(valueMem);
-        closeSidecarMems();
+        try {
+            genLookup.close();
+        } finally {
+            try {
+                Misc.free(keyMem);
+            } finally {
+                try {
+                    Misc.free(valueMem);
+                } finally {
+                    closeSidecarMems();
+                }
+            }
+        }
     }
 
     private void closeSidecarMems() {
