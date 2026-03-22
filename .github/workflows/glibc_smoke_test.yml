@@ -76,7 +76,7 @@ jobs:
         id: client
         uses: ./.github/actions/detect-local-client
       - name: Build distribution
-        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core' ${{ steps.client.outputs.client_profile }}
+        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks' ${{ steps.client.outputs.client_profile }}
         env:
           MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
