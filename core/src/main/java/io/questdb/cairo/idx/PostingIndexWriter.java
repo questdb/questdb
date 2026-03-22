@@ -1016,13 +1016,15 @@ public class PostingIndexWriter implements IndexWriter {
             // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
             int keyOffsetsSize = ks * Integer.BYTES;
 
-            // Pre-allocate compress buffer for the largest key in this stride
+            // Pre-allocate compress buffer and workspaces for the largest key
             int maxKeyCount = 0;
             for (int j = 0; j < ks; j++) {
                 maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
             }
             int compressBufSize = maxKeyCount > 0 ? AlpCompression.maxCompressedSize(maxKeyCount, colType) : 0;
             long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_DEFAULT) : 0;
+            long[] longWorkspace = maxKeyCount > 0 ? new long[maxKeyCount] : null;
+            boolean[] boolWorkspace = maxKeyCount > 0 ? new boolean[maxKeyCount] : null;
 
             try {
                 // Write key offsets placeholder, then compress each key's values
@@ -1070,7 +1072,8 @@ public class PostingIndexWriter implements IndexWriter {
                     }
 
                     // Compress and write
-                    int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType, compressBuf);
+                    int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType,
+                            compressBuf, longWorkspace, boolWorkspace);
                     sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
                 }
             } finally {
@@ -1081,19 +1084,20 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType, long destBuf) {
+    private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
+                                              long destBuf, long[] longWorkspace, boolean[] boolWorkspace) {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE:
-                return AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf);
+                return AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspace, boolWorkspace);
             case ColumnType.LONG:
             case ColumnType.TIMESTAMP:
             case ColumnType.DATE:
             case ColumnType.GEOLONG:
-                return AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
+                return AlpCompression.compressLongs(rawBuf, valueCount, destBuf, longWorkspace);
             case ColumnType.FLOAT:
             case ColumnType.GEOINT:
             case ColumnType.INT:
-                return AlpCompression.compressInts(rawBuf, valueCount, destBuf);
+                return AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspace);
             default:
                 // SHORT, BYTE: count header + raw copy
                 Unsafe.getUnsafe().putInt(destBuf, valueCount);

@@ -154,13 +154,22 @@ public class AlpCompression {
      * @return number of bytes written
      */
     public static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr) {
+        return compressDoubles(srcAddr, count, valueShift, destAddr, new long[count], new boolean[count]);
+    }
+
+    public static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr,
+                                      long[] encodedWorkspace, boolean[] exceptionWorkspace) {
         int params = findBestAlpParams(srcAddr, count, valueShift);
         int e = params >>> 16;
         int f = params & 0xFFFF;
 
         // Encode all values, detect exceptions
-        long[] encoded = new long[count];
-        boolean[] isException = new boolean[count];
+        long[] encoded = encodedWorkspace;
+        boolean[] isException = exceptionWorkspace;
+        // Clear exception flags from prior use
+        for (int i = 0; i < count; i++) {
+            isException[i] = false;
+        }
         int excCount = 0;
         long fillValue = 0;
         boolean fillFound = false;
@@ -304,6 +313,10 @@ public class AlpCompression {
      * @return number of bytes written
      */
     public static int compressLongs(long srcAddr, int count, long destAddr) {
+        return compressLongs(srcAddr, count, destAddr, new long[count]);
+    }
+
+    public static int compressLongs(long srcAddr, int count, long destAddr, long[] workspace) {
         long forBase = Long.MAX_VALUE;
         long forMax = Long.MIN_VALUE;
         for (int i = 0; i < count; i++) {
@@ -325,11 +338,10 @@ public class AlpCompression {
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            long[] values = new long[count];
             for (int i = 0; i < count; i++) {
-                values[i] = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+                workspace[i] = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
             }
-            BitpackUtils.packValues(values, count, forBase, bw, pos);
+            BitpackUtils.packValues(workspace, count, forBase, bw, pos);
         }
         pos += packedBytes;
 
@@ -367,6 +379,10 @@ public class AlpCompression {
      * @return number of bytes written
      */
     public static int compressInts(long srcAddr, int count, long destAddr) {
+        return compressInts(srcAddr, count, destAddr, new long[count]);
+    }
+
+    public static int compressInts(long srcAddr, int count, long destAddr, long[] workspace) {
         int forBase = Integer.MAX_VALUE;
         int forMax = Integer.MIN_VALUE;
         for (int i = 0; i < count; i++) {
@@ -389,11 +405,10 @@ public class AlpCompression {
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            long[] values = new long[count];
             for (int i = 0; i < count; i++) {
-                values[i] = Unsafe.getUnsafe().getInt(srcAddr + (long) i * Integer.BYTES);
+                workspace[i] = Unsafe.getUnsafe().getInt(srcAddr + (long) i * Integer.BYTES);
             }
-            BitpackUtils.packValues(values, count, (long) forBase, bw, pos);
+            BitpackUtils.packValues(workspace, count, (long) forBase, bw, pos);
         }
         pos += packedBytes;
 
