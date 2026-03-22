@@ -1947,4 +1947,237 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testDropCoveredColumn() throws Exception {
+        // Drop a column that is INCLUDED in a covering index
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_drop_col (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_drop_col VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T02:00:00', 'A', 11.5, 150)
+                    """);
+            engine.releaseAllWriters();
+
+            // Drop a covered column
+            execute("ALTER TABLE t_drop_col DROP COLUMN qty");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            // Index should still work (posting data is per-symbol, not per-covered-column)
+            assertSql("""
+                    sym
+                    A
+                    A
+                    """, "SELECT sym FROM t_drop_col WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testRenameIndexedColumn() throws Exception {
+        // Rename a column that has INDEX TYPE POSTING
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5)
+                    """);
+            engine.releaseAllWriters();
+
+            execute("ALTER TABLE t_rename RENAME COLUMN sym TO symbol");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            // Query using new name — index should still work
+            assertSql("""
+                    val
+                    10.5
+                    11.5
+                    """, "SELECT val FROM t_rename WHERE symbol = 'A'");
+        });
+    }
+
+    @Test
+    public void testTruncateTableWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_trunc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_trunc VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5)
+                    """);
+            engine.releaseAllWriters();
+
+            // Verify data exists
+            assertSql("""
+                    price
+                    10.5
+                    """, "SELECT price FROM t_trunc WHERE sym = 'A'");
+
+            execute("TRUNCATE TABLE t_trunc");
+
+            // Table should be empty
+            assertSql("""
+                    price
+                    """, "SELECT price FROM t_trunc WHERE sym = 'A'");
+
+            // Insert new data — index should work after truncate
+            execute("""
+                    INSERT INTO t_trunc VALUES
+                    ('2024-01-02T00:00:00', 'C', 30.5),
+                    ('2024-01-02T01:00:00', 'C', 31.5)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    30.5
+                    31.5
+                    """, "SELECT price FROM t_trunc WHERE sym = 'C'");
+        });
+    }
+
+    @Test
+    public void testInsertIntoSelectWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_src (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_src VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5)
+                    """);
+
+            execute("""
+                    CREATE TABLE t_dst (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            execute("INSERT INTO t_dst SELECT * FROM t_src");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    10.5
+                    11.5
+                    """, "SELECT price FROM t_dst WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testPostingIndexWithO3Inserts() throws Exception {
+        // Posting index (without covering) works correctly with O3
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            execute("""
+                    INSERT INTO t_o3 VALUES
+                    ('2024-01-01T01:00:00', 'A', 10.0),
+                    ('2024-01-01T03:00:00', 'B', 30.0),
+                    ('2024-01-01T05:00:00', 'A', 50.0)
+                    """);
+
+            // Out-of-order inserts
+            execute("""
+                    INSERT INTO t_o3 VALUES
+                    ('2024-01-01T00:00:00', 'A', 5.0),
+                    ('2024-01-01T02:00:00', 'A', 20.0),
+                    ('2024-01-01T04:00:00', 'B', 40.0)
+                    """);
+            drainWalQueue();
+
+            // All A's returned in ts order via posting index + column reads
+            assertSql("""
+                    price
+                    5.0
+                    10.0
+                    20.0
+                    50.0
+                    """, "SELECT price FROM t_o3 WHERE sym = 'A'");
+
+            assertSql("""
+                    price
+                    30.0
+                    40.0
+                    """, "SELECT price FROM t_o3 WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testMultiPartitionAlterAndQuery() throws Exception {
+        // Multiple partitions, ALTER TABLE, then query across all
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_multi_alter (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_multi_alter VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-02T00:00:00', 'A', 20.0),
+                    ('2024-01-03T00:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // ALTER: add column
+            execute("ALTER TABLE t_multi_alter ADD COLUMN extra INT");
+
+            // Insert into new partition with new column
+            execute("""
+                    INSERT INTO t_multi_alter (ts, sym, price, extra) VALUES
+                    ('2024-01-04T00:00:00', 'A', 40.0, 999)
+                    """);
+            engine.releaseAllWriters();
+
+            // Query should return all A's across all partitions
+            assertSql("""
+                    price
+                    10.0
+                    20.0
+                    30.0
+                    40.0
+                    """, "SELECT price FROM t_multi_alter WHERE sym = 'A'");
+        });
+    }
 }
