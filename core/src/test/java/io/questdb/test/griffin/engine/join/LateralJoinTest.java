@@ -29,7 +29,6 @@ import org.junit.Test;
 
 public class LateralJoinTest extends AbstractCairoTest {
 
-    // Test CROSS JOIN LATERAL syntax
     @Test
     public void testCrossJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
@@ -265,7 +264,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Test LATERAL requires subquery (not table name)
     @Test
     public void testLateralRequiresSubquery() throws Exception {
         assertMemoryLeak(() -> {
@@ -274,7 +272,7 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             assertException(
                     "SELECT * FROM orders o JOIN LATERAL trades t",
-                    0,
+                    36,
                     "LATERAL requires a subquery"
             );
         });
@@ -324,7 +322,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             SELECT * FROM orders o
                             RIGHT JOIN LATERAL (SELECT * FROM trades WHERE order_id = o.id) t
                             """,
-                    0,
+                    34,
                     "LATERAL is only supported with INNER, LEFT, or CROSS joins"
             );
         });
@@ -1362,7 +1360,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 WHERE t2.t1_id = t1.id
                             ) sub1
                             """,
-                    null, false, false
+                    null, false, true
             );
         });
     }
@@ -2298,7 +2296,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub
                             ORDER BY o.id
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }

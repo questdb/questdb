@@ -1174,6 +1174,19 @@ class LateralJoinRewriter {
                 return existing.getAlias();
             }
         }
+
+        if (colExpr.type == ExpressionNode.LITERAL) {
+            CharSequence unqualifiedName = unqualify(colExpr.token);
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                QueryColumn existing = cols.getQuick(i);
+                ExpressionNode ast = existing.getAst();
+                if (ast != null
+                        && ast.type == ExpressionNode.LITERAL
+                        && Chars.equalsIgnoreCase(unqualify(ast.token), unqualifiedName)) {
+                    return existing.getAlias();
+                }
+            }
+        }
         CharSequence alias = createColumnAlias(preferredAlias, model);
         QueryColumn qc = queryColumnPool.next().of(alias, colExpr);
         model.addBottomUpColumn(qc);
@@ -2293,7 +2306,7 @@ class LateralJoinRewriter {
                         ExpressionNode innerNode = expressionNodePool.next().of(
                                 ExpressionNode.LITERAL, innerCol, 0, 0
                         );
-                        CharSequence selectAlias = propagateColumnUp(innerCol, branchTop, dataSourceLayer);
+                        CharSequence selectAlias = ensureColumnInSelect(branchTop, innerNode, innerCol);
                         CharSequence qualifiedInner = qualifyWithAlias(lateralAlias, selectAlias);
                         ExpressionNode qualifiedInnerNode = expressionNodePool.next().of(
                                 ExpressionNode.LITERAL, qualifiedInner, 0, 0
