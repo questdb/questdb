@@ -347,6 +347,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             }
 
             valueMem.extend(genFileOffset + genDataSize);
+            // Fence ensures value file writes are visible after metadata reads (ARM)
+            Unsafe.getUnsafe().loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
             this.flatMode = false;
@@ -460,6 +462,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int activeKeyCount = -genKeyCount;
 
             valueMem.extend(genFileOffset + genDataSize);
+            Unsafe.getUnsafe().loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
             this.flatMode = false;
@@ -488,6 +491,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int activeKeyCount = -genKeyCount;
 
             valueMem.extend(genFileOffset + genDataSize);
+            Unsafe.getUnsafe().loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
             int idx = PostingIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, requestedKey);

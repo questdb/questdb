@@ -124,6 +124,10 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                         t.interrupt();
                     }
                 }
+                // Wait for interrupted threads to fully exit before writer closes
+                for (Thread t : readers) {
+                    t.join(JOIN_MS);
+                }
 
                 if (error.get() != null) {
                     throw new AssertionError("Concurrent reader failed", error.get());
