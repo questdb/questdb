@@ -127,6 +127,45 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testWebSocketUpgradeWithNonGetMethodFails() throws Exception {
+        // RFC 6455 Section 4.1: the handshake must use GET. The HTTP request
+        // validator rejects non-GET methods with 405 before the WebSocket
+        // handshake validation runs.
+        runInContext((port) -> {
+            byte[] keyBytes = new byte[16];
+            for (int i = 0; i < 16; i++) {
+                keyBytes[i] = (byte) (Math.random() * 256);
+            }
+            String wsKey = Base64.getEncoder().encodeToString(keyBytes);
+
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                OutputStream out = socket.getOutputStream();
+
+                String request = "POST /write/v4 HTTP/1.1\r\n" +
+                        "Host: localhost:" + port + "\r\n" +
+                        "Upgrade: websocket\r\n" +
+                        "Connection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: " + wsKey + "\r\n" +
+                        "Sec-WebSocket-Version: 13\r\n" +
+                        "Content-Length: 0\r\n" +
+                        "\r\n";
+
+                out.write(request.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+
+                BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+
+                String statusLine = reader.readLine();
+                Assert.assertNotNull("Should receive response", statusLine);
+                Assert.assertFalse("Should not upgrade with POST: " + statusLine,
+                        statusLine.contains("101"));
+            }
+        });
+    }
+
+    @Test
     public void testWebSocketUpgradeSucceeds() throws Exception {
         runInContext((port) -> {
             byte[] keyBytes = new byte[16];
