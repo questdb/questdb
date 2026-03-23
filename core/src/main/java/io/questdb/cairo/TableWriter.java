@@ -821,11 +821,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        alterOp.authorize();
         return alterOp.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
     public long apply(UpdateOperation operation) {
+        operation.authorize();
         return operation.apply(this, true);
     }
 

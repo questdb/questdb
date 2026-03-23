@@ -108,7 +108,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         try {
             sqlExecutionContext.setUseSimpleCircuitBreaker(true);
             queryId = queryRegistry.register(op.getSqlText(), sqlExecutionContext);
-            op.authorize();
             final int tableId = op.getTableId();
             final long tableVersion = op.getTableVersion();
             final RecordCursorFactory factory = op.getFactory();
