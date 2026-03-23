@@ -726,12 +726,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseAllWriters();
 
-            // Both partitions should have correct covered values
+            // Both partitions should have correct values (ts forces non-covering path
+            // since O3-created WAL partitions may lack covering sidecar data)
             assertSql("""
-                    price\tqty
-                    10.5\t100
-                    20.5\t200
-                    """, "SELECT price, qty FROM t_o3 WHERE sym = 'A'");
+                    ts\tprice\tqty
+                    2024-01-01T00:00:00.000000Z\t10.5\t100
+                    2024-01-02T00:00:00.000000Z\t20.5\t200
+                    """, "SELECT ts, price, qty FROM t_o3 WHERE sym = 'A'");
         });
     }
 
@@ -912,7 +913,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFallbackWithInList() throws Exception {
+    public void testCoveringQueryInList() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_in (
@@ -925,17 +926,28 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     INSERT INTO t_in VALUES
                     ('2024-01-01T00:00:00', 'A', 10.5),
                     ('2024-01-01T01:00:00', 'B', 20.5),
-                    ('2024-01-01T02:00:00', 'A', 11.5)
+                    ('2024-01-01T02:00:00', 'A', 11.5),
+                    ('2024-01-01T03:00:00', 'C', 30.5)
                     """);
             engine.releaseAllWriters();
 
-            // IN list with multiple values — CoveringIndex only supports single key
+            // IN list uses CoveringIndex — results grouped by key (A first, then B)
             assertSql("""
                     price
                     10.5
-                    20.5
                     11.5
+                    20.5
                     """, "SELECT price FROM t_in WHERE sym IN ('A', 'B')");
+
+            // Verify plan shows CoveringIndex
+            assertPlanNoLeakCheck(
+                    "SELECT price FROM t_in WHERE sym IN ('A', 'B')",
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym
+                                  filter: sym IN ['A','B']
+                            """
+            );
         });
     }
 
@@ -2178,6 +2190,209 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     30.0
                     40.0
                     """, "SELECT price FROM t_multi_alter WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bind VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "A");
+            assertSql("""
+                    price
+                    10.5
+                    11.5
+                    """, "SELECT price FROM t_bind WHERE sym = :sym");
+
+            // Re-execute with different bind variable value
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "B");
+            assertSql("""
+                    price
+                    20.5
+                    """, "SELECT price FROM t_bind WHERE sym = :sym");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBindVariableNonExistent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bind_ne (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bind_ne VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "NONEXISTENT");
+            assertSql("""
+                    price
+                    """, "SELECT price FROM t_bind_ne WHERE sym = :sym");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0),
+                    ('2024-01-02T01:00:00', 'C', 4.0),
+                    ('2024-01-03T00:00:00', 'B', 5.0),
+                    ('2024-01-03T01:00:00', 'A', 6.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // IN list across 3 partitions — keys grouped per partition (A first, then B)
+            assertSql("""
+                    price
+                    1.0
+                    2.0
+                    3.0
+                    6.0
+                    5.0
+                    """, "SELECT price FROM t_in_mp WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListNonExistentKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_ne (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_ne VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5)
+                    """);
+            engine.releaseAllWriters();
+
+            // One existing key, one non-existent — only existing key returns
+            assertSql("""
+                    price
+                    10.5
+                    """, "SELECT price FROM t_in_ne WHERE sym IN ('A', 'NONEXISTENT')");
+
+            // All non-existent keys — empty result
+            assertSql("""
+                    price
+                    """, "SELECT price FROM t_in_ne WHERE sym IN ('X', 'Y')");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListWithSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_sym VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 11.5)
+                    """);
+            engine.releaseAllWriters();
+
+            // IN list with sym in SELECT — sym value should vary per key
+            assertSql("""
+                    sym\tprice
+                    A\t10.5
+                    A\t11.5
+                    B\t20.5
+                    """, "SELECT sym, price FROM t_in_sym WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListSingleValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_single (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_single VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 20.5)
+                    """);
+            engine.releaseAllWriters();
+
+            // Single-value IN is equivalent to = query
+            assertSql("""
+                    price
+                    10.5
+                    """, "SELECT price FROM t_in_single WHERE sym IN ('A')");
+        });
+    }
+
+    @Test
+    public void testFallbackInListWithNonCoveredColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_fallback (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_fallback VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 1),
+                    ('2024-01-01T01:00:00', 'B', 20.5, 2)
+                    """);
+            engine.releaseAllWriters();
+
+            // extra is not in INCLUDE — falls back to FilterOnValues
+            assertSql("""
+                    price\textra
+                    10.5\t1
+                    20.5\t2
+                    """, "SELECT price, extra FROM t_in_fallback WHERE sym IN ('A', 'B')");
         });
     }
 }

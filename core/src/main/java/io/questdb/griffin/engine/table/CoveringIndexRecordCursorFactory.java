@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexReader;
@@ -37,13 +38,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -54,8 +55,8 @@ import org.jetbrains.annotations.NotNull;
  * - The indexed symbol column (value known from the WHERE key)
  * - Included in the INCLUDE list (values stored in .pc0, .pc1, ... sidecar files)
  * <p>
- * This transforms random column file reads into sequential sidecar reads,
- * grouped by index key.
+ * Supports single-key (WHERE sym = 'A'), bind variable (WHERE sym = $1),
+ * and multi-key (WHERE sym IN ('A', 'B')) queries.
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
@@ -63,7 +64,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final CoveringCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
+    private final int keyQueryPosition;
+    private final ObjList<Function> keyValueFuncs;
     private final RecordMetadata metadata;
+    private final IntList resolvedKeys;
     private final Function symbolFunction;
 
     public CoveringIndexRecordCursorFactory(
@@ -71,7 +75,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @NotNull PartitionFrameCursorFactory dfcFactory,
             int indexColumnIndex,
             int symbolKey,
-            @NotNull Function symbolFunction,
+            Function symbolFunction,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
             @NotNull int[] queryColToIncludeIdx
@@ -79,10 +83,47 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
+        this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx);
+        this.keyValueFuncs = null;
+        this.resolvedKeys = null;
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0);
+    }
+
+    public CoveringIndexRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory dfcFactory,
+            int indexColumnIndex,
+            int symbolKey,
+            Function symbolFunction,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
+            @NotNull int[] queryColToIncludeIdx,
+            ObjList<Function> keyValueFuncs,
+            TableReader reader
+    ) {
+        this.metadata = metadata;
+        this.dfcFactory = dfcFactory;
+        this.indexColumnIndex = indexColumnIndex;
+        this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
+        this.symbolFunction = symbolFunction;
+        this.columnIndexes = columnIndexes;
+        this.columnSizeShifts = columnSizeShifts;
+        this.keyValueFuncs = keyValueFuncs;
+        this.resolvedKeys = keyValueFuncs != null ? new IntList(keyValueFuncs.size()) : null;
+        int multiKeyCapacity = 0;
+        if (keyValueFuncs != null && reader != null) {
+            multiKeyCapacity = keyValueFuncs.size();
+            SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
+            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+                Function f = keyValueFuncs.getQuick(i);
+                int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
+                resolvedKeys.add(key);
+            }
+        }
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity);
     }
 
     @Override
@@ -98,7 +139,46 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 columnIndexes,
                 PartitionFrameCursorFactory.ORDER_ASC
         );
-        cursor.of(frameCursor, executionContext);
+
+        if (resolvedKeys != null) {
+            // Multi-key path (IN list)
+            SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+            cursor.multiKeys.clear();
+            boolean hasAnyKey = false;
+            for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                int key = resolvedKeys.getQuick(i);
+                if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
+                    CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
+                    key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                }
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    cursor.multiKeys.add(key);
+                    hasAnyKey = true;
+                }
+            }
+            if (!hasAnyKey) {
+                Misc.free(frameCursor);
+                cursor.ofEmpty();
+                return cursor;
+            }
+            cursor.of(frameCursor);
+            return cursor;
+        }
+
+        // Single-key path
+        int resolvedKey = cursor.symbolKey;
+        if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+            SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+            CharSequence symValue = symbolFunction.getStrA(null);
+            resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+                Misc.free(frameCursor);
+                cursor.ofEmpty();
+                return cursor;
+            }
+            cursor.resolveKey(resolvedKey);
+        }
+        cursor.of(frameCursor);
         return cursor;
     }
 
@@ -115,22 +195,42 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("CoveringIndex");
-        sink.meta("on").putColumnName(indexColumnIndex);
-        sink.attr("filter").putColumnName(indexColumnIndex).val('=').val(symbolFunction);
+        sink.meta("on").putColumnName(keyQueryPosition);
+        if (keyValueFuncs != null) {
+            sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
+        } else {
+            sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);
+        }
+    }
+
+    private static int findQueryPosition(IntList columnIndexes, int readerColIdx) {
+        for (int q = 0, n = columnIndexes.size(); q < n; q++) {
+            if (columnIndexes.getQuick(q) == readerColIdx) {
+                return q;
+            }
+        }
+        return 0;
     }
 
     private static class CoveringCursor implements RecordCursor {
-        private final CoveringRecord record;
         private final int indexColumnIndex;
-        private final int symbolKey;
+        private final IntList multiKeys;
+        private final CoveringRecord record;
+        private int cachedPartitionIndex;
+        private long cachedRowHi;
+        private long cachedRowLo;
         private CoveringRowCursor currentRowCursor;
+        private int currentKeyIdx;
         private PartitionFrameCursor frameCursor;
+        private int symbolKey;
         private TableReader tableReader;
 
-        CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx) {
+        CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx, int multiKeyCapacity) {
             this.indexColumnIndex = indexColumnIndex;
-            this.symbolKey = TableUtils.toIndexKey(symbolKey);
+            this.symbolKey = symbolKey;
             this.record = new CoveringRecord(queryColToIncludeIdx, symbolKey);
+            this.multiKeys = multiKeyCapacity > 0 ? new IntList(multiKeyCapacity) : null;
+            this.cachedPartitionIndex = -1;
         }
 
         @Override
@@ -156,13 +256,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            if (frameCursor == null) {
+                return false;
+            }
             while (true) {
                 if (currentRowCursor != null && currentRowCursor.hasNext()) {
                     record.setRowId(currentRowCursor.next());
                     return true;
                 }
-                if (!advanceToNextPartition()) {
-                    return false;
+                if (multiKeys != null) {
+                    if (!advanceMultiKey()) {
+                        return false;
+                    }
+                } else {
+                    if (!advanceSingleKey()) {
+                        return false;
+                    }
                 }
             }
         }
@@ -170,14 +279,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return frameCursor.newSymbolTable(columnIndex);
-        }
-
-        void of(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) {
-            this.frameCursor = frameCursor;
-            this.tableReader = frameCursor.getTableReader();
-            this.currentRowCursor = null;
-            this.record.of(null);
-            this.record.setSymbolTable(tableReader.getSymbolMapReader(indexColumnIndex));
         }
 
         @Override
@@ -197,41 +298,98 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void toTop() {
-            frameCursor.toTop();
+            if (frameCursor != null) {
+                frameCursor.toTop();
+            }
             currentRowCursor = null;
+            currentKeyIdx = 0;
+            cachedPartitionIndex = -1;
         }
 
-        private boolean advanceToNextPartition() {
+        void of(PartitionFrameCursor frameCursor) {
+            this.frameCursor = frameCursor;
+            this.tableReader = frameCursor.getTableReader();
+            this.currentRowCursor = null;
+            this.currentKeyIdx = 0;
+            this.cachedPartitionIndex = -1;
+            this.record.of(null);
+            this.record.setSymbolTable(tableReader.getSymbolMapReader(indexColumnIndex));
+        }
+
+        void ofEmpty() {
+            this.frameCursor = null;
+            this.tableReader = null;
+            this.currentRowCursor = null;
+            this.record.of(null);
+        }
+
+        void resolveKey(int resolvedKey) {
+            this.symbolKey = resolvedKey;
+            this.record.setSymbolKey(resolvedKey);
+        }
+
+        private boolean advanceMultiKey() {
+            // Try remaining keys in cached partition
+            if (cachedPartitionIndex >= 0) {
+                currentKeyIdx++;
+                while (currentKeyIdx < multiKeys.size()) {
+                    if (tryOpenKey(cachedPartitionIndex, multiKeys.getQuick(currentKeyIdx), cachedRowLo, cachedRowHi)) {
+                        return true;
+                    }
+                    currentKeyIdx++;
+                }
+            }
+            // Advance to next partition and try all keys
+            while (true) {
+                PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    cachedPartitionIndex = -1;
+                    return false;
+                }
+                cachedPartitionIndex = frame.getPartitionIndex();
+                cachedRowLo = frame.getRowLo();
+                cachedRowHi = frame.getRowHi();
+                currentKeyIdx = 0;
+                while (currentKeyIdx < multiKeys.size()) {
+                    if (tryOpenKey(cachedPartitionIndex, multiKeys.getQuick(currentKeyIdx), cachedRowLo, cachedRowHi)) {
+                        return true;
+                    }
+                    currentKeyIdx++;
+                }
+            }
+        }
+
+        private boolean advanceSingleKey() {
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
                     return false;
                 }
-                int partitionIndex = frame.getPartitionIndex();
-                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
-                        partitionIndex,
-                        indexColumnIndex,
-                        BitmapIndexReader.DIR_FORWARD
-                );
-                RowCursor rowCursor = indexReader.getCursor(
-                        true,
-                        symbolKey,
-                        frame.getRowLo(),
-                        frame.getRowHi() - 1
-                );
-                if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                    currentRowCursor = crc;
-                    record.of(crc);
+                if (tryOpenKey(frame.getPartitionIndex(), symbolKey, frame.getRowLo(), frame.getRowHi())) {
                     return true;
                 }
-                // Fallback: not a covering reader — still iterate row IDs but without sidecar data
-                if (rowCursor instanceof CoveringRowCursor crc2) {
-                    currentRowCursor = crc2;
-                    record.of(crc2);
-                    return true;
-                }
-                // Non-CoveringRowCursor partition — skip to next
             }
+        }
+
+        private boolean tryOpenKey(int partitionIndex, int rawSymbolKey, long rowLo, long rowHi) {
+            BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                    partitionIndex,
+                    indexColumnIndex,
+                    BitmapIndexReader.DIR_FORWARD
+            );
+            RowCursor rowCursor = indexReader.getCursor(
+                    true,
+                    TableUtils.toIndexKey(rawSymbolKey),
+                    rowLo,
+                    rowHi - 1
+            );
+            if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                currentRowCursor = crc;
+                record.of(crc);
+                record.setSymbolKey(rawSymbolKey);
+                return true;
+            }
+            return false;
         }
     }
 
@@ -245,9 +403,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      */
     private static class CoveringRecord implements Record {
         private final int[] queryColToIncludeIdx;
-        private final int symbolKey;
         private CoveringRowCursor cursor;
         private long rowId;
+        private int symbolKey;
         private SymbolTable symbolTable;
 
         CoveringRecord(int[] queryColToIncludeIdx, int symbolKey) {
@@ -371,6 +529,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         void setRowId(long rowId) {
             this.rowId = rowId;
+        }
+
+        void setSymbolKey(int key) {
+            this.symbolKey = key;
         }
 
         void setSymbolTable(SymbolTable symbolTable) {

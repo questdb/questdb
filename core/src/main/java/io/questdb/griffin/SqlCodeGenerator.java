@@ -1416,12 +1416,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Nullable
     private static int[] buildCoveringIndexMapping(
             TableReader reader,
-            int keyColumnIndex,
+            int keyReaderColIdx,
             IntList columnIndexes,
             RecordMetadata queryMeta
     ) {
-        // keyColumnIndex is a reader column index; covering indices are writer column indices.
-        int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyColumnIndex).getCoveringColumnIndices();
+        // keyReaderColIdx is the reader column index of the indexed symbol column.
+        int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyReaderColIdx).getCoveringColumnIndices();
         if (coveringIndices == null || coveringIndices.length == 0) {
             return null;
         }
@@ -1432,7 +1432,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int[] mapping = new int[queryColCount];
         for (int q = 0; q < queryColCount; q++) {
             int readerColIdx = columnIndexes.getQuick(q);
-            if (readerColIdx == keyColumnIndex) {
+            if (readerColIdx == keyReaderColIdx) {
                 mapping[q] = -1; // symbol column — value known from WHERE key
                 continue;
             }
@@ -8388,15 +8388,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
 
                             // Check if covering index can serve all selected columns
-                            if (filter == null && symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                            if (filter == null) {
+                                int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                 int[] coveringMapping = buildCoveringIndexMapping(
-                                        reader, keyColumnIndex, columnIndexes, queryMeta
+                                        reader, keyReaderColIdx, columnIndexes, queryMeta
                                 );
                                 if (coveringMapping != null) {
                                     return new CoveringIndexRecordCursorFactory(
                                             queryMeta,
                                             dfcFactory,
-                                            keyColumnIndex,
+                                            keyReaderColIdx,
                                             symbolKey,
                                             symbolFunc,
                                             columnIndexes,
@@ -8435,6 +8436,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     supportsRandomAccess,
                                     false
                             );
+                        }
+
+                        // Check if covering index can serve IN-list queries
+                        if (filter == null && !orderByKeyColumn) {
+                            int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                            int[] coveringMapping = buildCoveringIndexMapping(
+                                    reader, keyReaderColIdx, columnIndexes, queryMeta
+                            );
+                            if (coveringMapping != null) {
+                                return new CoveringIndexRecordCursorFactory(
+                                        queryMeta,
+                                        dfcFactory,
+                                        keyReaderColIdx,
+                                        SymbolTable.VALUE_NOT_FOUND,
+                                        null,
+                                        columnIndexes,
+                                        columnSizeShifts,
+                                        coveringMapping,
+                                        intrinsicModel.keyValueFuncs,
+                                        reader
+                                );
+                            }
                         }
 
                         if (orderByKeyColumn) {
