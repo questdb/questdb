@@ -256,22 +256,31 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         AlpCompression.decompressInts(keyBlockAddr, decodedInts[c], decodeWorkspace);
                         break;
                     }
-                    default: {
-                        // SHORT, BYTE: stored uncompressed with count header
-                        int shift = ColumnType.pow2SizeOf(colType);
+                    case ColumnType.SHORT:
+                    case ColumnType.GEOSHORT: {
                         if (decodedInts[c] == null || decodedInts[c].length < count) {
                             decodedInts[c] = new int[count];
                         }
                         long rawAddr = keyBlockAddr + 4; // skip count header
                         for (int i = 0; i < count; i++) {
-                            if (shift == 1) {
-                                decodedInts[c][i] = Unsafe.getUnsafe().getShort(rawAddr + (long) i * Short.BYTES);
-                            } else {
-                                decodedInts[c][i] = Unsafe.getUnsafe().getByte(rawAddr + i);
-                            }
+                            decodedInts[c][i] = Unsafe.getUnsafe().getShort(rawAddr + (long) i * Short.BYTES);
                         }
                         break;
                     }
+                    case ColumnType.BYTE:
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.GEOBYTE: {
+                        if (decodedInts[c] == null || decodedInts[c].length < count) {
+                            decodedInts[c] = new int[count];
+                        }
+                        long rawAddr = keyBlockAddr + 4; // skip count header
+                        for (int i = 0; i < count; i++) {
+                            decodedInts[c][i] = Unsafe.getUnsafe().getByte(rawAddr + i);
+                        }
+                        break;
+                    }
+                    default:
+                        throw new UnsupportedOperationException("unsupported sidecar column type: " + ColumnType.nameOf(colType));
                 }
             }
             decodedStride = stride;

@@ -2649,4 +2649,61 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testCoveringLatestOnMultiKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_mk (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_mk VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T12:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0),
+                    ('2024-01-02T12:00:00', 'C', 4.0),
+                    ('2024-01-03T00:00:00', 'B', 5.0),
+                    ('2024-01-03T12:00:00', 'A', 6.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // LATEST ON with IN list: latest A is 6.0 (day 3), latest B is 5.0 (day 3)
+            assertSql("""
+                    price
+                    6.0
+                    5.0
+                    """, "SELECT price FROM t_latest_mk WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnMultiKeyWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_mk_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_mk_sym VALUES
+                    ('2024-01-01T00:00:00', 'A', 'cold', 1.0),
+                    ('2024-01-01T12:00:00', 'B', 'hot', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 'warm', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym\ttag\tprice
+                    A\twarm\t3.0
+                    B\thot\t2.0
+                    """, "SELECT sym, tag, price FROM t_latest_mk_sym WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym");
+        });
+    }
 }

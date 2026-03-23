@@ -5559,6 +5559,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
+                    // Check if covering index can serve LATEST ON multi-key
+                    if (filter == null) {
+                        int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
+                        int[] coveringMapping = buildCoveringIndexMapping(
+                                reader, keyReaderColIdx, columnIndexes, metadata
+                        );
+                        if (coveringMapping != null) {
+                            return new CoveringIndexRecordCursorFactory(
+                                    metadata,
+                                    partitionFrameCursorFactory,
+                                    keyReaderColIdx,
+                                    SymbolTable.VALUE_NOT_FOUND,
+                                    null,
+                                    columnIndexes,
+                                    columnSizeShifts,
+                                    coveringMapping,
+                                    intrinsicModel.keyValueFuncs,
+                                    reader,
+                                    true
+                            );
+                        }
+                    }
+
                     return new LatestByValuesIndexedFilteredRecordCursorFactory(
                             configuration,
                             metadata,

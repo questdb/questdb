@@ -122,6 +122,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             ObjList<Function> keyValueFuncs,
             TableReader reader
     ) {
+        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, columnSizeShifts, queryColToIncludeIdx, keyValueFuncs, reader, false);
+    }
+
+    public CoveringIndexRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory dfcFactory,
+            int indexColumnIndex,
+            int symbolKey,
+            Function symbolFunction,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
+            @NotNull int[] queryColToIncludeIdx,
+            ObjList<Function> keyValueFuncs,
+            TableReader reader,
+            boolean latestBy
+    ) {
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
@@ -129,7 +145,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
-        this.latestBy = false;
+        this.latestBy = latestBy;
         this.keyValueFuncs = keyValueFuncs;
         this.resolvedKeys = keyValueFuncs != null ? new IntList(keyValueFuncs.size()) : null;
         int multiKeyCapacity = 0;
@@ -143,7 +159,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes, false);
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes, latestBy);
     }
 
     @Override
@@ -331,9 +347,37 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean hasNextLatestBy() {
+            if (multiKeys != null) {
+                return hasNextLatestByMultiKey();
+            }
+            return hasNextLatestBySingleKey();
+        }
+
+        private boolean hasNextLatestByMultiKey() {
+            while (currentKeyIdx < multiKeys.size()) {
+                int rawSymbolKey = multiKeys.getQuick(currentKeyIdx);
+                frameCursor.toTop(); // each key scans from the latest partition
+                if (findLatestRow(rawSymbolKey)) {
+                    currentKeyIdx++;
+                    return true;
+                }
+                currentKeyIdx++;
+            }
+            return false;
+        }
+
+        private boolean hasNextLatestBySingleKey() {
             if (latestByDone) {
                 return false;
             }
+            if (findLatestRow(symbolKey)) {
+                latestByDone = true;
+                return true;
+            }
+            return false;
+        }
+
+        private boolean findLatestRow(int rawSymbolKey) {
             // Partitions iterate DESC (latest first). Find the first partition
             // with data for this key, iterate forward to the last row in that
             // partition, and return it as the LATEST ON result.
@@ -349,7 +393,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 );
                 RowCursor rowCursor = indexReader.getCursor(
                         true,
-                        TableUtils.toIndexKey(symbolKey),
+                        TableUtils.toIndexKey(rawSymbolKey),
                         frame.getRowLo(),
                         frame.getRowHi() - 1
                 );
@@ -361,8 +405,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     if (lastRowId >= 0) {
                         record.of(crc);
                         record.setRowId(lastRowId);
-                        record.setSymbolKey(symbolKey);
-                        latestByDone = true;
+                        record.setSymbolKey(rawSymbolKey);
                         return true;
                     }
                 }

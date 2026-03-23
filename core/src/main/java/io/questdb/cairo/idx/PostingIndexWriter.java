@@ -1194,11 +1194,16 @@ public class PostingIndexWriter implements IndexWriter {
             case ColumnType.INT:
             case ColumnType.SYMBOL:
                 return AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspace);
-            default:
-                // SHORT, BYTE: count header + raw copy
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.BYTE:
+            case ColumnType.BOOLEAN:
+            case ColumnType.GEOBYTE:
                 Unsafe.getUnsafe().putInt(destBuf, valueCount);
                 Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
                 return 4 + (valueCount << shift);
+            default:
+                throw new UnsupportedOperationException("unsupported sidecar column type: " + ColumnType.nameOf(colType));
         }
     }
 
