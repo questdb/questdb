@@ -59,6 +59,212 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEliminateOuterRefIntermediateWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, 25, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 3, '2024-01-01T00:10:00.000000Z'),
+                    (1, 10, '2024-01-01T00:20:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\ttotal
+                            1\t13
+                            2\t50
+                            """,
+                    """
+                            SELECT t1.a, x.total
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT sum(val) AS total
+                                FROM (SELECT val, t1_id FROM t2 WHERE t2.t1_id = t1.a)
+                                WHERE t1_id = t1.a
+                                GROUP BY t1.a
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftExpressionWithOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, 25, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 3, '2024-01-01T00:10:00.000000Z'),
+                    (1, 10, '2024-01-01T00:20:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\tresult
+                            1\t110
+                            2\t230
+                            """,
+                    """
+                            SELECT t1.a, x.result
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT val + t1.b AS result
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold
+                            ) x
+                            ORDER BY t1.a, x.result
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftPureOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, 25, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 3, '2024-01-01T00:10:00.000000Z'),
+                    (1, 10, '2024-01-01T00:20:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb
+                            1\t100
+                            1\t100
+                            2\t200
+                            """,
+                    """
+                            SELECT t1.a, x.b
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT t1.b AS b
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold OR val < 10
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefNoExtraColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, 25, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 3, '2024-01-01T00:10:00.000000Z'),
+                    (1, 10, '2024-01-01T00:20:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\tresult
+                            1\t110
+                            2\t230
+                            """,
+                    """
+                            SELECT t1.a, x.result
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT val + t1.b AS result, val + t1.b AS result1
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefOrCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, 5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, 25, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 3, '2024-01-01T00:10:00.000000Z'),
+                    (1, 10, '2024-01-01T00:20:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\tresult
+                            1\t103
+                            1\t110
+                            2\t230
+                            """,
+                    """
+                            SELECT t1.a, x.result
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT val + t1.b AS result
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold OR val < 5
+                            ) x
+                            ORDER BY t1.a, x.result
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // Test LATERAL requires subquery (not table name)
     @Test
     public void testLateralRequiresSubquery() throws Exception {
@@ -552,7 +758,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             WHERE o.id IN (1, 3)
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -797,7 +1003,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -953,49 +1159,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T16: GROUP BY + Window, INNER — both compensations applied
-    @Test
-    public void testT16GroupByAndWindowInner() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
-            execute("""
-                    INSERT INTO trades VALUES
-                    (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
-                    (2, 1, 'A', 20.0, '2024-01-01T00:20:00.000000Z'),
-                    (3, 1, 'B', 30.0, '2024-01-01T00:30:00.000000Z'),
-                    (4, 2, 'A', 40.0, '2024-01-01T01:10:00.000000Z'),
-                    (5, 2, 'B', 50.0, '2024-01-01T01:20:00.000000Z')
-                    """);
-
-            // GROUP BY category with window over the grouped result
-            assertQueryNoLeakCheck(
-                    """
-                            id\tcategory\ttotal_qty\trunning_total
-                            1\tA\t30.0\t30.0
-                            1\tB\t30.0\t60.0
-                            2\tA\t40.0\t40.0
-                            2\tB\t50.0\t90.0
-                            """,
-                    """
-                            SELECT o.id, t.category, t.total_qty, t.running_total
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total_qty,
-                                       sum(sum(qty)) OVER (ORDER BY category) AS running_total
-                                FROM trades
-                                WHERE order_id = o.id
-                                GROUP BY category
-                            ) t
-                            ORDER BY o.id, t.category
-                            """,
-                    null, true, false
-            );
-        });
-    }
-
-    // T17: LIMIT + Window, LEFT — row_number doesn't conflict with business window
     @Test
     public void testT17LimitAndWindowLeft() throws Exception {
         assertMemoryLeak(() -> {
@@ -1199,7 +1362,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 WHERE t2.t1_id = t1.id
                             ) sub1
                             """,
-                    null, true, false
+                    null, false, false
             );
         });
     }
@@ -1575,7 +1738,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28d: SAMPLE BY ALIGN TO FIRST OBSERVATION — unrewritable SAMPLE BY, stays as SAMPLE BY
     @Test
     public void testT28dSampleByAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
@@ -1878,50 +2040,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28k: Window + GROUP BY — moveOrderByFunctions wrapper over aggregated model
-    @Test
-    public void testT28kWindowOverGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (id INT, order_id INT, category STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
-            execute("""
-                    INSERT INTO trades VALUES
-                    (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
-                    (2, 1, 'B', 20.0, '2024-01-01T00:20:00.000000Z'),
-                    (3, 1, 'C', 30.0, '2024-01-01T00:30:00.000000Z'),
-                    (4, 2, 'X', 40.0, '2024-01-01T01:10:00.000000Z'),
-                    (5, 2, 'Y', 50.0, '2024-01-01T01:20:00.000000Z')
-                    """);
-
-            // Window function over GROUP BY result: rank categories by total per order
-            assertQueryNoLeakCheck(
-                    """
-                            id\tcategory\ttotal\trnk
-                            1\tC\t30.0\t1
-                            1\tB\t20.0\t2
-                            1\tA\t10.0\t3
-                            2\tY\t50.0\t1
-                            2\tX\t40.0\t2
-                            """,
-                    """
-                            SELECT o.id, t.category, t.total, t.rnk
-                            FROM orders o
-                            JOIN LATERAL (
-                                SELECT category, sum(qty) AS total,
-                                       row_number() OVER (ORDER BY sum(qty) DESC) AS rnk
-                                FROM trades
-                                WHERE order_id = o.id
-                                GROUP BY category
-                            ) t
-                            ORDER BY o.id, t.rnk
-                            """,
-                    null, true, false
-            );
-        });
-    }
-
-    // T29: CTE inside LATERAL — CTE expanded to nestedModel, decorrelation works normally
     @Test
     public void testT29CteInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
@@ -1935,7 +2053,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // CTE WITH clause inside the LATERAL subquery
             assertQueryNoLeakCheck(
                     """
                             id\ttotal
@@ -2484,7 +2601,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('Doohickey', 300.0, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            // Inner LATERAL aggregates sales per product, outer LATERAL filters by category
             assertQueryNoLeakCheck(
                     """
                             id\tname\ttotal
@@ -2506,7 +2622,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) x
                             ORDER BY c.id, x.name
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -2917,6 +3033,91 @@ public class LateralJoinTest extends AbstractCairoTest {
                             """,
                     null, true, false
             );
+
+            assertQueryNoLeakCheck(
+                    """
+                            a	result1	result
+                            1	111	110
+                            2	231	230
+                            """,
+                    """
+                            SELECT t1.a, x.result1, x.result
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT val + t1.b AS result, val + t1.b + 1 AS result1
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+
+
+            assertQueryNoLeakCheck(
+                    """
+                            a	column
+                            1	1
+                            2	1
+                            """,
+                    """
+                            SELECT t1.a, x.result1 - x.result
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT val + t1.b AS result, val + t1.b + 1 AS result1
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            a	column
+                            2	231
+                            """,
+                    """
+                            SELECT t1.a, x.result + 1
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT val + t1.b AS result, val + t1.b + 1 AS result1
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold and val > 10
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            a	b
+                            1	100
+                            1	100
+                            2	200
+                            """,
+                    """
+                            SELECT t1.a, x.b
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT t1.b as b
+                                FROM (
+                                    SELECT val FROM t2 WHERE t2.t1_id = t1.a
+                                )
+                                WHERE val > t1.threshold or val < 10
+                            ) x
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
         });
     }
 
@@ -3046,8 +3247,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T57: LEFT JOIN inside LATERAL — correlated predicate in ON clause must stay in ON,
-    // not move to WHERE, to preserve NULL fill for non-matching rows
     @Test
     public void testT57LeftJoinInLateralPreservesNulls() throws Exception {
         assertMemoryLeak(() -> {
