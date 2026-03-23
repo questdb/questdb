@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,7 +48,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -65,6 +66,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -905,20 +907,15 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testInvalidNonStructureChangeMakeWalWriterDistressed() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 Assert.assertEquals(1, walWriter.getWalId());
 
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         return 0;
-                    }
-
-                    @Override
-                    public SqlExecutionContext getSqlExecutionContext() {
-                        return sqlExecutionContext;
                     }
 
                     @Override
@@ -932,11 +929,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return false;
                     }
                 };
-                dodgyAlterOp.withContext(sqlExecutionContext);
+                dodgyAlterOp.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
 
                 try {
                     walWriter.apply(dodgyAlterOp, true);
@@ -946,19 +948,19 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(tableName)) {
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 // Wal Writer 1 is not pooled
                 Assert.assertEquals(2, walWriter.getWalId());
             }
 
-            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("""
                     x\tsym\tts\tsym2
                     1\tAB\t2022-02-24T00:00:00.000000Z\tEF
                     1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """, tableName.getTableName());
+                    """, tableToken.getTableName());
         });
     }
 
