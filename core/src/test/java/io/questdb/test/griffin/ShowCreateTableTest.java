@@ -211,6 +211,96 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET(default, ZSTD(3))) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \td DOUBLE PARQUET(default, zstd(3))
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetCompressionLevelZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(PLAIN, GZIP(0))) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(plain, gzip(0))
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetCompressionUncompressed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET(default, UNCOMPRESSED)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \td DOUBLE PARQUET(default, uncompressed)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetCompressionWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, s SYMBOL PARQUET(default, ZSTD)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ts SYMBOL PARQUET(default, zstd)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(delta_binary_packed)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3))) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(delta_binary_packed, zstd(3))
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
     public void testPartitioning() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");

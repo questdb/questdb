@@ -750,6 +750,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
+    }
+
+    @Override
     public int getPartitionEncoderParquetDataPageSize() {
         return 0; // use default (1024*1024) bytes
     }
