@@ -3066,12 +3066,15 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE VIEW v1 AS (SELECT c2, max(c1) FROM t GROUP BY c2)");
             execute("CREATE VIEW v2 AS (SELECT v1.max, v1.c2 FROM t t0 LEFT JOIN v1 ON t0.c1 = v1.max)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             c2
                             10
                             """,
-                    "SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1"
+                    "SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1",
+                    null,
+                    false,
+                    true
             );
         });
     }
