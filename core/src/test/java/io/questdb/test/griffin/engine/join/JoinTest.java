@@ -2804,66 +2804,6 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinInnerPostJoinFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected = """
-                    c\ta\tb\td\tcolumn
-                    1\t120\t39\t0\t159
-                    1\t120\t42\t0\t162
-                    1\t120\t71\t0\t191
-                    1\t120\t6\t0\t126
-                    1\t120\t39\t50\t159
-                    1\t120\t42\t50\t162
-                    1\t120\t71\t50\t191
-                    1\t120\t6\t50\t126
-                    5\t251\t47\t198\t298
-                    5\t251\t44\t198\t295
-                    5\t251\t7\t198\t258
-                    5\t251\t47\t279\t298
-                    5\t251\t44\t279\t295
-                    5\t251\t7\t279\t258
-                    """;
-
-            execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
-            execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
-            execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
-
-            // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d", null, true, false);
-
-            execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
-            execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
-            execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
-
-            assertQueryNoLeakCheck(
-                    expected +
-                            "7\t253\t35\t228\t288\n" +
-                            "7\t253\t14\t228\t267\n" +
-                            "7\t253\t35\t723\t288\n" +
-                            "7\t253\t14\t723\t267\n" +
-                            "9\t100\t63\t456\t163\n" +
-                            "9\t100\t19\t456\t119\n" +
-                            "9\t100\t38\t456\t138\n" +
-                            "9\t100\t8\t456\t108\n" +
-                            "9\t100\t63\t667\t163\n" +
-                            "9\t100\t19\t667\t119\n" +
-                            "9\t100\t38\t667\t138\n" +
-                            "9\t100\t8\t667\t108\n",
-                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d",
-                    null,
-                    true,
-                    false
-            );
-
-        });
-    }
-
-    @Test
-    public void testJoinInnerPostJoinFilterFF() throws Exception {
-        testFullFat(this::testJoinInnerPostJoinFilter0);
-    }
-
-    @Test
     public void testJoinInnerPostJoinAndConstFilter() throws Exception {
         // Regression test for https://github.com/questdb/questdb/issues/6762
         // When WHERE has both a column-referencing condition (postJoinWhereClause)
@@ -2950,6 +2890,66 @@ public class JoinTest extends AbstractCairoTest {
                                     Frame forward scan on: t
                     """);
         });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    c\ta\tb\td\tcolumn
+                    1\t120\t39\t0\t159
+                    1\t120\t42\t0\t162
+                    1\t120\t71\t0\t191
+                    1\t120\t6\t0\t126
+                    1\t120\t39\t50\t159
+                    1\t120\t42\t50\t162
+                    1\t120\t71\t50\t191
+                    1\t120\t6\t50\t126
+                    5\t251\t47\t198\t298
+                    5\t251\t44\t198\t295
+                    5\t251\t7\t198\t258
+                    5\t251\t47\t279\t298
+                    5\t251\t44\t279\t295
+                    5\t251\t7\t279\t258
+                    """;
+
+            execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
+            execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
+            execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
+
+            // filter is applied to intermediate join result
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d", null, true, false);
+
+            execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
+            execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
+            execute("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
+
+            assertQueryNoLeakCheck(
+                    expected +
+                            "7\t253\t35\t228\t288\n" +
+                            "7\t253\t14\t228\t267\n" +
+                            "7\t253\t35\t723\t288\n" +
+                            "7\t253\t14\t723\t267\n" +
+                            "9\t100\t63\t456\t163\n" +
+                            "9\t100\t19\t456\t119\n" +
+                            "9\t100\t38\t456\t138\n" +
+                            "9\t100\t8\t456\t108\n" +
+                            "9\t100\t63\t667\t163\n" +
+                            "9\t100\t19\t667\t119\n" +
+                            "9\t100\t38\t667\t138\n" +
+                            "9\t100\t8\t667\t108\n",
+                    "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d",
+                    null,
+                    true,
+                    false
+            );
+
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinFilterFF() throws Exception {
+        testFullFat(this::testJoinInnerPostJoinFilter0);
     }
 
     @Test
@@ -3049,6 +3049,25 @@ public class JoinTest extends AbstractCairoTest {
                     null,
                     true,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
+        // Reproducer for: InvalidColumnException when joining a table with a
+        // multi-level view where the ON clause uses different column names on
+        // each side (t.c1 = v.max). Requires: (1) multi-level view chain with
+        // a JOIN inside, (2) different column names in the outer join ON clause,
+        // and (3) a WHERE clause on the master table's join column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 INT, c2 INT)");
+            execute("CREATE VIEW v1 AS (SELECT c2, max(c1) FROM t GROUP BY c2)");
+            execute("CREATE VIEW v2 AS (SELECT v1.max, v1.c2 FROM t t0 LEFT JOIN v1 ON t0.c1 = v1.max)");
+
+            assertSql(
+                    "c2\n",
+                    "SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1"
             );
         });
     }
