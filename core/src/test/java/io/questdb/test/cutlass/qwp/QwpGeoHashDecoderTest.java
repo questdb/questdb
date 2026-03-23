@@ -126,9 +126,9 @@ public class QwpGeoHashDecoderTest {
             offset += flagSize;
 
             // Write null bitmap (rows 1 and 3 are null)
-            QwpNullBitmap.fillNoneNull(address + offset, rowCount);
-            QwpNullBitmap.setNull(address + offset, 1);
-            QwpNullBitmap.setNull(address + offset, 3);
+            QwpNullBitmapTestUtil.fillNoneNull(address + offset, rowCount);
+            QwpNullBitmapTestUtil.setNull(address + offset, 1);
+            QwpNullBitmapTestUtil.setNull(address + offset, 3);
             offset += bitmapSize;
 
             // Write precision varint

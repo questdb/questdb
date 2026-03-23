@@ -175,7 +175,7 @@ public class QwpSymbolDecoderTest {
 
             // Null bitmap (all nulls)
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            QwpNullBitmap.fillAllNull(pos, rowCount);
+            QwpNullBitmapTestUtil.fillAllNull(pos, rowCount);
             pos += bitmapSize;
 
             // Empty dictionary (size = 0)
