@@ -550,8 +550,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 // Continuation frames are part of a fragmented message we never started
                 // tracking. Reject so the sender knows data was not ingested.
                     rejectFragmentedFrame(context, state, opcode);
-            case WebSocketOpcode.TEXT ->
-                    rejectTextFrame(context, state);
+            case WebSocketOpcode.TEXT -> rejectTextFrame(context, state);
             case WebSocketOpcode.PING -> handlePing(context, state, payload, length);
             case WebSocketOpcode.PONG -> LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
             case WebSocketOpcode.CLOSE -> {
