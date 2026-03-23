@@ -27,6 +27,7 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -86,7 +87,7 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
         builder.addColumnToList(columName, 0, ColumnType.SYMBOL, symbolCapacity, tempRnd.nextBoolean(),
                 tempRnd.nextBoolean(), tempRnd.nextInt(), false);
         AlterOperation alterOp = builder.build();
-        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)) {
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
             alterOp.withSqlStatement(
                     "ALTER TABLE " + wApi.getTableToken().getTableName() + " ALTER COLUMN "
                             + columName + " SYMBOL CAPACITY " + symbolCapacity);
