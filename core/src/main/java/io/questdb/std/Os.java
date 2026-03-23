@@ -256,9 +256,7 @@ public final class Os {
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
-            throw new FatalError("Native library not found: " + lib
-                    + ". Build native libraries with 'mvn package' (requires CMake and Rust toolchain)"
-                    + ", or set -Dquestdb.libs.dir to point to pre-built libraries.");
+            throw new FatalError("Native library not found: " + lib + ", build with 'mvn package' or set -Dquestdb.libs.dir");
         }
         loadLib(lib, is);
     }
