@@ -58,11 +58,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final StringSink rejectMsg = new StringSink();
-    private final QwpStreamingDecoder streamingDecoder;
+    private QwpStreamingDecoder streamingDecoder;
     // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
-    private final QwpTudCache tudCache;
-    private final QwpWalAppender walAppender;
+    private QwpTudCache tudCache;
+    private QwpWalAppender walAppender;
     // Buffer to accumulate incoming data
     private long bufferAddress;
     private int bufferPosition;
@@ -142,9 +142,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     @Override
     public void close() {
-        Misc.free(tudCache);
-        Misc.free(streamingDecoder);
-        Misc.free(walAppender);
+        tudCache = Misc.free(tudCache);
+        streamingDecoder = Misc.free(streamingDecoder);
+        walAppender = Misc.free(walAppender);
         if (bufferAddress != 0) {
             Unsafe.free(bufferAddress, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferAddress = 0;
