@@ -6409,12 +6409,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropQwpUdpReceiverConfiguration implements QwpUdpReceiverConfiguration {
         @Override
-        public boolean getAutoCreateNewColumns() {
+        public boolean isAutoCreateNewColumns() {
             return ilpAutoCreateNewColumns;
         }
 
         @Override
-        public boolean getAutoCreateNewTables() {
+        public boolean isAutoCreateNewTables() {
             return ilpAutoCreateNewTables;
         }
 
@@ -6479,7 +6479,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean ownThread() {
+        public boolean isOwnThread() {
             return qwpUdpOwnThread;
         }
 

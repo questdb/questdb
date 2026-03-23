@@ -89,7 +89,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean ownThread() {
+        public boolean isOwnThread() {
             return false;
         }
     };

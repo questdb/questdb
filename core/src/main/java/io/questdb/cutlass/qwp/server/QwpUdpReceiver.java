@@ -128,7 +128,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_ILP_RSS);
 
             walAppender = new QwpWalAppender(
-                    configuration.getAutoCreateNewColumns(),
+                    configuration.isAutoCreateNewColumns(),
                     engine.getConfiguration().getMaxFileNameLength()
             );
 
@@ -136,12 +136,12 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     new LineHttpProcessorConfiguration() {
                         @Override
                         public boolean autoCreateNewColumns() {
-                            return configuration.getAutoCreateNewColumns();
+                            return configuration.isAutoCreateNewColumns();
                         }
 
                         @Override
                         public boolean autoCreateNewTables() {
-                            return configuration.getAutoCreateNewTables();
+                            return configuration.isAutoCreateNewTables();
                         }
 
                         @Override
@@ -218,8 +218,8 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             tudCache = new QwpTudCache(
                     engine,
-                    configuration.getAutoCreateNewColumns(),
-                    configuration.getAutoCreateNewTables(),
+                    configuration.isAutoCreateNewColumns(),
+                    configuration.isAutoCreateNewTables(),
                     defaultColumnTypes,
                     configuration.getDefaultPartitionBy()
             );
@@ -230,7 +230,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             this.walAppender = walAppender;
             this.tudCache = tudCache;
 
-            if (!configuration.ownThread() && workerPool != null) {
+            if (!configuration.isOwnThread() && workerPool != null) {
                 workerPool.assign(this);
                 logStarted();
             }
@@ -353,7 +353,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     public void start() {
-        if (configuration.ownThread() && running.compareAndSet(false, true)) {
+        if (configuration.isOwnThread() && running.compareAndSet(false, true)) {
             Thread thread = new Thread(() -> {
                 started.countDown();
                 try {

@@ -28,9 +28,9 @@ import io.questdb.network.NetworkFacade;
 
 public interface QwpUdpReceiverConfiguration {
 
-    boolean getAutoCreateNewColumns();
+    boolean isAutoCreateNewColumns();
 
-    boolean getAutoCreateNewTables();
+    boolean isAutoCreateNewTables();
 
     int getBindIPv4Address();
 
@@ -56,7 +56,7 @@ public interface QwpUdpReceiverConfiguration {
 
     boolean isUnicast();
 
-    boolean ownThread();
+    boolean isOwnThread();
 
     int ownThreadAffinity();
 }

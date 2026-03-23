@@ -63,7 +63,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean ownThread() {
+        public boolean isOwnThread() {
             return false;
         }
     };
@@ -79,7 +79,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean ownThread() {
+        public boolean isOwnThread() {
             return false;
         }
     };

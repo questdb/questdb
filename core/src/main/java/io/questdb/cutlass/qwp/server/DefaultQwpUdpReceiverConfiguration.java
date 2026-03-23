@@ -32,12 +32,12 @@ import io.questdb.network.NetworkFacadeImpl;
 public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfiguration {
 
     @Override
-    public boolean getAutoCreateNewColumns() {
+    public boolean isAutoCreateNewColumns() {
         return true;
     }
 
     @Override
-    public boolean getAutoCreateNewTables() {
+    public boolean isAutoCreateNewTables() {
         return true;
     }
 
@@ -102,7 +102,7 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     }
 
     @Override
-    public boolean ownThread() {
+    public boolean isOwnThread() {
         return true;
     }
 
