@@ -45,6 +45,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.pt.PayloadTransformStore;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableReader;
@@ -84,6 +85,8 @@ import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.ops.CopyImportFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreatePayloadTransformOperation;
+import io.questdb.griffin.engine.ops.CreatePayloadTransformOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -193,6 +196,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
+    private LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls;
+    private boolean overrideDeclare;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final Path renamePath;
@@ -370,6 +375,45 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public CompiledQuery compileWithOverrides(
+            @NotNull CharSequence sqlText,
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull LowerCaseCharSequenceObjHashMap<CharSequence> overrideValues
+    ) throws SqlException {
+        clear();
+        // Build ExpressionNode declarations from string values after clear(),
+        // so they're allocated from the fresh pool.
+        this.externalDecls = new LowerCaseCharSequenceObjHashMap<>();
+        ObjList<CharSequence> keys = overrideValues.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence varName = keys.getQuick(i);
+            CharSequence value = overrideValues.get(varName);
+            ExpressionNode lhs = sqlNodePool.next().of(ExpressionNode.LITERAL, varName, 0, 0);
+            ExpressionNode rhs = sqlNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
+            ExpressionNode assign = sqlNodePool.next().of(ExpressionNode.OPERATION, ":=", 100, 0);
+            assign.paramCount = 2;
+            assign.lhs = lhs;
+            assign.rhs = rhs;
+            this.externalDecls.put(varName, assign);
+        }
+        this.overrideDeclare = true;
+
+        lexer.of(sqlText);
+        isSingleQueryMode = true;
+
+        compileInner(executionContext, sqlText, true);
+
+        if (!executionContext.isValidationOnly()) {
+            CharSequence tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+        }
+
+        return compiledQuery;
+    }
+
+    @Override
     public void close() {
         if (closed) {
             throw new IllegalStateException("close was already called");
@@ -509,6 +553,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
+            case OperationCodes.CREATE_PAYLOAD_TRANSFORM ->
+                    executeCreatePayloadTransform((CreatePayloadTransformOperation) op, executionContext);
+            case OperationCodes.DROP_PAYLOAD_TRANSFORM ->
+                    executeDropPayloadTransform((GenericDropOperation) op, executionContext);
             default ->
                     throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
         };
@@ -1836,6 +1884,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         functionParser.clear();
         compiledQuery.clear();
         columnNames.clear();
+        externalDecls = null;
+        overrideDeclare = false;
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -2818,6 +2868,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
+            } else if (isPayloadKeyword(tok)) {
+                // DROP PAYLOAD TRANSFORM [ IF EXISTS ] name [;]
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isTransformKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected TRANSFORM");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.getPosition(), "expected ").put("[IF EXISTS] transform-name");
+                }
+                boolean hasIfExists = false;
+                int namePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS transform-name");
+                    }
+                    hasIfExists = true;
+                    namePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "transform name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence transformName = unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_PAYLOAD_TRANSFORM);
+                dropOperationBuilder.setEntityName(transformName);
+                dropOperationBuilder.setEntityNamePosition(namePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
             } else if (isAllKeyword(tok)) {
                 // DROP ALL[;] or legacy DROP ALL TABLES [;]
                 tok = SqlUtil.fetchNext(lexer);
@@ -2842,7 +2930,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        final ExecutionModel model = externalDecls != null
+                ? parser.parse(lexer, executionContext, this, externalDecls, overrideDeclare)
+                : parser.parse(lexer, executionContext, this);
         try {
             if (model.getModelType() != ExecutionModel.EXPLAIN) {
                 return compileExecutionModel0(executionContext, model);
@@ -3654,6 +3744,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_PAYLOAD_TRANSFORM:
+                    compiledQuery.ofCreatePayloadTransform(((CreatePayloadTransformOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
@@ -4381,6 +4475,121 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private boolean executeCreatePayloadTransform(
+            CreatePayloadTransformOperation op,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+            final PayloadTransformStore store = engine.getPayloadTransformStore();
+            store.init(executionContext);
+
+            // Check if transform already exists
+            if (store.isTransformExists(executionContext, op.getName())) {
+                if (op.isReplace()) {
+                    // Drop existing transform first
+                    store.dropTransform(executionContext, op.getName());
+                } else if (op.ignoreIfExists()) {
+                    QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+                    return false;
+                } else {
+                    throw SqlException.$(op.getNamePosition(), "payload transform already exists [name=").put(op.getName()).put(']');
+                }
+            }
+
+            // Validate target table exists
+            final TableToken targetToken = executionContext.getTableTokenIfExists(op.getTargetTable());
+            if (targetToken == null) {
+                throw SqlException.$(op.getTargetTablePosition(), "target table does not exist [name=").put(op.getTargetTable()).put(']');
+            }
+
+            // Validate the SELECT SQL: must be a SELECT with no real table references
+            validateTransformSql(executionContext, op);
+
+            // If DLQ specified and table doesn't exist, create it
+            if (op.getDlqTable() != null) {
+                final TableToken dlqToken = executionContext.getTableTokenIfExists(op.getDlqTable());
+                if (dlqToken == null) {
+                    createDlqTable(executionContext, op);
+                }
+            }
+
+            // Write the transform definition to the system table
+            store.createTransform(
+                    executionContext,
+                    op.getName(),
+                    op.getTargetTable(),
+                    op.getSelectSql(),
+                    op.getDlqTable(),
+                    op.getDlqPartitionBy(),
+                    op.getDlqTtlValue(),
+                    op.getDlqTtlUnit()
+            );
+
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+            return true;
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                ((CairoException) th).position(op.getNamePosition());
+            }
+            QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
+    private void createDlqTable(SqlExecutionContext executionContext, CreatePayloadTransformOperation op) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            final QueryBuilder query = compiler.query();
+            query.$("CREATE TABLE IF NOT EXISTS \"")
+                    .$(op.getDlqTable())
+                    .$("\" (" +
+                            "ts TIMESTAMP, " +
+                            "transform_name SYMBOL, " +
+                            "payload VARCHAR, " +
+                            "query VARCHAR, " +
+                            "stage SYMBOL, " +
+                            "error VARCHAR" +
+                            ") TIMESTAMP(ts)");
+            if (op.getDlqPartitionBy() >= 0) {
+                query.$(" PARTITION BY ")
+                        .$(PartitionBy.toString(op.getDlqPartitionBy()));
+            }
+            if (op.getDlqTtlValue() > 0 && op.getDlqTtlUnit() != null) {
+                query.$(" TTL ").$((int) op.getDlqTtlValue())
+                        .$(' ').$(op.getDlqTtlUnit());
+            }
+            query.$(" WAL");
+            query.createTable(executionContext);
+        }
+    }
+
+    private boolean executeDropPayloadTransform(
+            GenericDropOperation op,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        try {
+            final PayloadTransformStore store = engine.getPayloadTransformStore();
+            store.init(executionContext);
+
+            if (!store.isTransformExists(executionContext, op.getEntityName())) {
+                if (op.ifExists()) {
+                    return false;
+                }
+                throw SqlException.$(op.getEntityNamePosition(), "payload transform does not exist [name=").put(op.getEntityName()).put(']');
+            }
+
+            store.dropTransform(executionContext, op.getEntityName());
+            return true;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
     private boolean executeDropAllTables(DropAllOperation op, SqlExecutionContext executionContext) {
         // collect failures
         dropAllTablesFailures.clear();
@@ -4968,6 +5177,67 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return token;
     }
 
+    private void validateNoTableReferences(QueryModel model) throws SqlException {
+        ExpressionNode tableName = model.getTableNameExpr();
+        if (tableName != null && tableName.type == ExpressionNode.LITERAL) {
+            throw SqlException.$(tableName.position, "payload transform must not reference tables [table=").put(tableName.token).put(']');
+        }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel jm = joinModels.getQuick(i);
+            if (jm != model) {
+                validateNoTableReferences(jm);
+            }
+        }
+
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            validateNoTableReferences(nested);
+        }
+
+        QueryModel union = model.getUnionModel();
+        if (union != null) {
+            validateNoTableReferences(union);
+        }
+    }
+
+    private void validateTransformSql(SqlExecutionContext executionContext, CreatePayloadTransformOperation op) throws SqlException {
+        lexer.of(op.getSelectSql());
+        clear();
+
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(op.getSelectSqlPosition(), "SELECT query expected");
+        }
+        lexer.unparseLast();
+
+        final int selectSqlPosition = op.getSelectSqlPosition();
+        try {
+            ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+
+            if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                throw SqlException.$(0, "payload transform requires a SELECT query");
+            }
+
+            QueryModel queryModel = (QueryModel) executionModel;
+            validateNoTableReferences(queryModel);
+
+            queryModel = optimiser.optimise(queryModel, executionContext, this);
+            try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
+                // factory created and freed - SQL is valid
+            }
+        } catch (SqlException e) {
+            e.setPosition(e.getPosition() + selectSqlPosition);
+            throw e;
+        }
+    }
+
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
         int columnNameListSize = model.getColumnNameList().size();
@@ -5066,9 +5336,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!isReplaceKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("'replace' expected");
         }
-        tok = expectToken(lexer, "'view'");
+        tok = expectToken(lexer, "'view' or 'payload'");
+        if (isPayloadKeyword(tok)) {
+            // CREATE OR REPLACE PAYLOAD TRANSFORM - let parseCreate() handle it
+            lexerToFirstToken(lexer, rollbackPosition);
+            return;
+        }
         if (!isViewKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'view' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'view' or 'payload' expected");
         }
 
         final int viewNamePosition = lexer.getPosition();

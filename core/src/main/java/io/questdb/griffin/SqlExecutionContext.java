@@ -299,4 +299,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default void toSink(@NotNull CharSink<?> sink) {
     }
+
+    default CharSequence getPayload() {
+        return null;
+    }
 }

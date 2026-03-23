@@ -8,5 +8,7 @@ public class OperationCodes {
     public static final int DROP_MAT_VIEW = CREATE_MAT_VIEW + 1;
     public static final int CREATE_VIEW = DROP_MAT_VIEW + 1;
     public static final int DROP_VIEW = CREATE_VIEW + 1;
-    public static final int MAX = DROP_VIEW;
+    public static final int CREATE_PAYLOAD_TRANSFORM = DROP_VIEW + 1;
+    public static final int DROP_PAYLOAD_TRANSFORM = CREATE_PAYLOAD_TRANSFORM + 1;
+    public static final int MAX = DROP_PAYLOAD_TRANSFORM;
 }

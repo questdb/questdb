@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
+import io.questdb.griffin.engine.ops.CreatePayloadTransformOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
@@ -116,6 +117,7 @@ public class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<ExportModel> copyModelPool;
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
+    private final CreatePayloadTransformOperationBuilderImpl createPayloadTransformOperationBuilder = new CreatePayloadTransformOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
@@ -1224,14 +1226,19 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
+        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'payload' or 'or replace'");
+        boolean isReplace = false;
         if (isOrKeyword(tok)) {
             // we need to skip OR REPLACE, it is handled in an executor
             expectTok(lexer, "replace");
-            tok = tok(lexer, "'view'");
+            isReplace = true;
+            tok = tok(lexer, "'view' or 'payload'");
         }
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
+        }
+        if (isPayloadKeyword(tok)) {
+            return parseCreatePayloadTransform(lexer, isReplace);
         }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
@@ -1240,6 +1247,116 @@ public class SqlParser {
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    // CREATE [OR REPLACE] PAYLOAD TRANSFORM name INTO target_table
+    //   [DLQ dlq_table [PARTITION BY unit] [TTL value unit]]
+    //   AS SELECT ...
+    private ExecutionModel parseCreatePayloadTransform(GenericLexer lexer, boolean isReplace) throws SqlException {
+        expectTok(lexer, "transform");
+        final CreatePayloadTransformOperationBuilderImpl builder = createPayloadTransformOperationBuilder;
+        builder.clear();
+        builder.setReplace(isReplace);
+
+        CharSequence tok = tok(lexer, "transform name or 'if'");
+        if (isIfKeyword(tok)) {
+            if (isNotKeyword(tok(lexer, "'not'")) && isExistsKeyword(tok(lexer, "'exists'"))) {
+                builder.setIgnoreIfExists(true);
+                tok = tok(lexer, "transform name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        }
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        builder.setName(GenericLexer.unquote(tok));
+        builder.setNamePosition(lexer.lastTokenPosition());
+
+        // INTO target_table
+        tok = tok(lexer, "'into'");
+        if (!isIntoKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'into' expected");
+        }
+        tok = tok(lexer, "target table name");
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        builder.setTargetTable(GenericLexer.unquote(tok));
+        builder.setTargetTablePosition(lexer.lastTokenPosition());
+
+        // Optional DLQ clause
+        tok = tok(lexer, "'dlq' or 'as'");
+        if (isDlqKeyword(tok)) {
+            tok = tok(lexer, "DLQ table name");
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            builder.setDlqTable(GenericLexer.unquote(tok));
+
+            tok = tok(lexer, "'partition' or 'ttl' or 'as'");
+            if (isPartitionKeyword(tok)) {
+                expectTok(lexer, "by");
+                tok = tok(lexer, "partition unit");
+                int partitionBy = PartitionBy.fromString(tok);
+                if (partitionBy < 0) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid partition type");
+                }
+                builder.setDlqPartitionBy(partitionBy);
+                tok = tok(lexer, "'ttl' or 'as'");
+            }
+            if (isTtlKeyword(tok)) {
+                tok = tok(lexer, "TTL value");
+                try {
+                    builder.setDlqTtlValue(Numbers.parseLong(tok));
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid TTL value");
+                }
+                tok = tok(lexer, "TTL unit");
+                builder.setDlqTtlUnit(GenericLexer.immutableOf(tok));
+                tok = tok(lexer, "'as'");
+            }
+        }
+
+        // AS SELECT ...
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        int startOfQuery = lexer.getPosition();
+        tok = tok(lexer, "'(' or 'select'");
+        boolean enclosedInParentheses = Chars.equals(tok, '(');
+        if (enclosedInParentheses) {
+            startOfQuery = lexer.getPosition();
+        }
+        // Consume all remaining tokens until end of statement
+        int endOfQuery;
+        if (enclosedInParentheses) {
+            int depth = 1;
+            while (depth > 0) {
+                tok = tok(lexer, "query body");
+                if (Chars.equals(tok, '(')) {
+                    depth++;
+                } else if (Chars.equals(tok, ')')) {
+                    depth--;
+                }
+            }
+            endOfQuery = lexer.getPosition() - 1;
+        } else {
+            // Consume all remaining tokens
+            while ((tok = optTok(lexer)) != null) {
+                if (Chars.equals(tok, ';')) {
+                    break;
+                }
+            }
+            endOfQuery = lexer.getPosition();
+            // Trim trailing whitespace
+            while (endOfQuery > startOfQuery) {
+                char c = lexer.getContent().charAt(endOfQuery - 1);
+                if (c == ';' || c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                    endOfQuery--;
+                } else {
+                    break;
+                }
+            }
+        }
+        builder.setSelectSql(Chars.toString(lexer.getContent(), startOfQuery, endOfQuery));
+        builder.setSelectSqlPosition(startOfQuery);
+        return builder;
     }
 
     private ExecutionModel parseCreateMatView(
@@ -2501,6 +2618,9 @@ public class SqlParser {
                     } else {
                         throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
                     }
+                } else if (isPayloadKeyword(tok)) {
+                    expectTok(lexer, "transforms");
+                    showKind = QueryModel.SHOW_PAYLOAD_TRANSFORMS;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -3972,8 +4092,17 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        return parseSelectWithOverrides(lexer, sqlParserCallback, decls, false);
+    }
+
+    private ExecutionModel parseSelectWithOverrides(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
+        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, overrideDeclare);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             model.recordViews(recordedViews);
@@ -5036,6 +5165,7 @@ public class SqlParser {
         windowExpressionPool.clear();
         createViewOperationBuilder.clear();
         createMatViewOperationBuilder.clear();
+        createPayloadTransformOperationBuilder.clear();
         createTableOperationBuilder.clear();
         createTableColumnModelPool.clear();
         renameTableModelPool.clear();
@@ -5096,6 +5226,16 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        return parse(lexer, executionContext, sqlParserCallback, null, false);
+    }
+
+    ExecutionModel parse(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls,
+            boolean overrideDeclare
+    ) throws SqlException {
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
@@ -5108,7 +5248,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
+            return parseSelectWithOverrides(lexer, sqlParserCallback, externalDecls, overrideDeclare);
         }
 
         if (isCreateKeyword(tok)) {
@@ -5116,7 +5256,7 @@ public class SqlParser {
         }
 
         if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback, null);
+            return parseUpdate(lexer, sqlParserCallback, externalDecls);
         }
 
         if (isRenameKeyword(tok)) {
@@ -5124,7 +5264,7 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, null);
+            return parseInsert(lexer, sqlParserCallback, externalDecls);
         }
 
         if (isCopyKeyword(tok)) {
@@ -5132,7 +5272,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
+            return parseWith(lexer, sqlParserCallback, externalDecls);
         }
 
         if (isCompileKeyword(tok)) {
@@ -5143,7 +5283,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelectWithOverrides(lexer, sqlParserCallback, externalDecls, overrideDeclare);
     }
 
     QueryModel parseAsSubQuery(

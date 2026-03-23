@@ -96,6 +96,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
+    private CharSequence payload;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
@@ -290,6 +291,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getPageFrameMinRows() {
         return pageFrameMinRows;
+    }
+
+    @Override
+    public CharSequence getPayload() {
+        return payload;
     }
 
     @Override
@@ -488,6 +494,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
         this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
+    }
+
+    public void setPayload(CharSequence payload) {
+        this.payload = payload;
     }
 
     @Override

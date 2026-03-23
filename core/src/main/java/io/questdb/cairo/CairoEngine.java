@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.pt.PayloadTransformStore;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -219,6 +220,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private final PayloadTransformStore payloadTransformStore;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -265,6 +267,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewGraph = createMatViewGraph();
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
+            this.payloadTransformStore = new PayloadTransformStore(this);
             this.dataID = DataID.open(configuration);
 
             // IMPORTANT: Do not reorder statements!
@@ -310,6 +313,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
             case CREATE_MAT_VIEW:
+            case CREATE_PAYLOAD_TRANSFORM:
             case CREATE_VIEW:
             case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
@@ -596,6 +600,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
+        Misc.free(payloadTransformStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
         Misc.free(walLocker);
@@ -890,6 +895,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public PartitionOverwriteControl getPartitionOverwriteControl() {
         return partitionOverwriteControl;
+    }
+
+    public PayloadTransformStore getPayloadTransformStore() {
+        return payloadTransformStore;
     }
 
     @TestOnly
