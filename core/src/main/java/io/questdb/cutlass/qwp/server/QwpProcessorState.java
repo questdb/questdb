@@ -47,13 +47,10 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 /**
  * State management for QWP v1 processing.
  */
 public class QwpProcessorState implements QuietCloseable, ConnectionAware {
-    private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
@@ -160,7 +157,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (Throwable th) {
             tudCache.setDistressed();
             currentStatus = Status.INTERNAL_ERROR;
-            ERROR_COUNT.incrementAndGet();
             String msg = th.getMessage();
             error.put("commit error: ");
             if (msg != null) {
@@ -339,7 +335,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } else {
             error.put("(no error message)");
         }
-        ERROR_COUNT.incrementAndGet();
         this.fd = fd;
         LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$(errorText).$(']').$();
     }
