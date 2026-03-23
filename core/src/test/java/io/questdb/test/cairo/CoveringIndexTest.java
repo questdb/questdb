@@ -2706,4 +2706,134 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT sym, tag, price FROM t_latest_mk_sym WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym");
         });
     }
+
+    @Test
+    public void testDistinctSymFromPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-02T00:00:00', 'C', 4.0),
+                    ('2024-01-02T01:00:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym
+                    A
+                    B
+                    C
+                    """, "SELECT DISTINCT sym FROM t_distinct");
+        });
+    }
+
+    @Test
+    public void testDistinctSymExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_plan (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_plan VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Optimizer rewrites DISTINCT → GROUP BY + count(*), but we intercept in
+            // generateSelectGroupBy and replace the entire chain with PostingIndexDistinct
+            assertPlanNoLeakCheck(
+                    "SELECT DISTINCT sym FROM t_distinct_plan",
+                    """
+                            PostingIndexDistinct on: sym
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testDistinctSymAfterDropPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_drop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_drop VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'C', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Drop partition containing B — B's symbol table key persists but has no rows
+            execute("ALTER TABLE t_distinct_drop DROP PARTITION LIST '2024-01-01'");
+            engine.releaseAllWriters();
+
+            // B should NOT appear — only C has data
+            assertSql("""
+                    sym
+                    C
+                    """, "SELECT DISTINCT sym FROM t_distinct_drop");
+        });
+    }
+
+    @Test
+    public void testDistinctSymMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0),
+                    ('2024-01-03T00:00:00', 'A', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // A appears in 2 partitions, B in 1 — should still return just A, B
+            assertSql("""
+                    sym
+                    A
+                    B
+                    """, "SELECT DISTINCT sym FROM t_distinct_mp");
+        });
+    }
+
+    @Test
+    public void testDistinctSymEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            assertSql("""
+                    sym
+                    """, "SELECT DISTINCT sym FROM t_distinct_empty");
+        });
+    }
 }

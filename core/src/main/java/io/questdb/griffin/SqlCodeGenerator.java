@@ -300,6 +300,7 @@ import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
@@ -6752,6 +6753,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // DISTINCT→GROUP BY rewrite: the GROUP BY model has a single LITERAL column (the key).
+            // If that column is a SYMBOL with posting index, enumerate keys via index instead of full scan.
+            if (columns.size() == 1 && columns.getQuick(0).getAst().type == LITERAL) {
+                CharSequence colName = columns.getQuick(0).getAst().token;
+                QueryModel tableModel = model.getNestedModel();
+                while (tableModel != null && tableModel.getTableName() == null) {
+                    tableModel = tableModel.getNestedModel();
+                }
+                if (tableModel != null && tableModel.getWhereClause() == null
+                        && tableModel.getLatestBy().size() == 0) {
+                    TableToken tableToken = executionContext.getTableTokenIfExists(tableModel.getTableName());
+                    if (tableToken != null) {
+                        try (TableReader reader = executionContext.getReader(tableToken, tableModel.getMetadataVersion())) {
+                            TableRecordMetadata tableMeta = reader.getMetadata();
+                            int colIdx = tableMeta.getColumnIndexQuiet(colName);
+                            if (colIdx >= 0 && ColumnType.tagOf(tableMeta.getColumnType(colIdx)) == ColumnType.SYMBOL
+                                    && tableMeta.getColumnIndexType(colIdx) == IndexType.POSTING) {
+                                GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
+                                distinctMeta.add(new TableColumnMetadata(
+                                        Chars.toString(colName),
+                                        tableMeta.getColumnType(colIdx),
+                                        tableMeta.getColumnIndexType(colIdx),
+                                        tableMeta.getIndexValueBlockCapacity(colIdx),
+                                        tableMeta.isSymbolTableStatic(colIdx),
+                                        null, -1, false, 0,
+                                        tableMeta.getColumnMetadata(colIdx).isSymbolCacheFlag(),
+                                        tableMeta.getColumnMetadata(colIdx).getSymbolCapacity()
+                                ));
+                                IntList colIndexes = new IntList();
+                                colIndexes.add(colIdx);
+                                IntList colSizeShifts = new IntList();
+                                colSizeShifts.add(2);
+                                ExpressionNode viewExpr = tableModel.getViewNameExpr();
+                                PartitionFrameCursorFactory dfcFactory = new FullPartitionFrameCursorFactory(
+                                        tableToken,
+                                        tableModel.getMetadataVersion(),
+                                        GenericRecordMetadata.copyOfNew(tableMeta),
+                                        ORDER_ASC,
+                                        getViewName(viewExpr),
+                                        getViewPosition(viewExpr),
+                                        tableModel.isUpdate()
+                                );
+                                return new PostingIndexDistinctRecordCursorFactory(
+                                        distinctMeta, dfcFactory, colIdx, 0, colIndexes, colSizeShifts
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             tempKeyIndexesInBase.clear();
             tempKeyIndex.clear();
             arrayColumnTypes.clear();
@@ -8106,6 +8158,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // and don't need optimisation for query validation.
             return new EmptyTableRecordCursorFactory(queryMeta, metadata.getTableToken());
         }
+
+        // Note: DISTINCT optimization is handled in generateSelectGroupBy, not here.
+        // The optimizer rewrites DISTINCT to GROUP BY + count(*) before reaching this point.
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
