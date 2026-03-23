@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -5585,6 +5586,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void finishO3Commit(long partitionTimestampHiLimit) {
         if (!o3InError) {
             updateO3ColumnTops();
+            rebuildCoveringSidecarsForO3Partitions();
         }
         if (!isEmptyTable()
                 && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
@@ -9275,6 +9277,116 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             todo = -1;
         }
         return todo;
+    }
+
+    private void rebuildCoveringSidecarsForO3Partitions() {
+        // O3 rebuilds posting indexes via pool IndexWriters that have no covering
+        // configuration. After the merge, sidecar files are missing. Re-open each
+        // affected partition's posting index, configure covering from the merged
+        // column files, and commit to trigger seal which writes sidecar files.
+        if (o3PartitionUpdateSink == null) {
+            return;
+        }
+        boolean hasCoveringIndex = false;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                    && metadata.getColumnIndexType(i) == IndexType.POSTING) {
+                int[] coveringCols = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+                if (coveringCols != null && coveringCols.length > 0) {
+                    hasCoveringIndex = true;
+                    break;
+                }
+            }
+        }
+        if (!hasCoveringIndex) {
+            return;
+        }
+
+        long blockIndex = -1;
+        while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
+            long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
+            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+            if (partitionTimestamp == -1L) {
+                continue;
+            }
+            // Skip the last partition — it will be handled by openPartition() + normal seal
+            if (partitionTimestamp == txWriter.getLastPartitionTimestamp()) {
+                continue;
+            }
+            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+            setStateForTimestamp(path, partitionTimestamp);
+            int plen = path.size();
+            try {
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                            || metadata.getColumnIndexType(colIdx) != IndexType.POSTING) {
+                        continue;
+                    }
+                    int[] coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.length == 0) {
+                        continue;
+                    }
+
+                    int coverCount = coveringCols.length;
+                    long[] addrs = new long[coverCount];
+                    long[] tops = new long[coverCount];
+                    int[] shifts = new int[coverCount];
+                    int[] types = new int[coverCount];
+                    long[] mappedSizes = new long[coverCount];
+                    boolean mapped = true;
+
+                    try {
+                        // Map covered column files read-only from the O3 partition
+                        for (int c = 0; c < coverCount; c++) {
+                            int covCol = coveringCols[c];
+                            int covType = metadata.getColumnType(covCol);
+                            types[c] = covType;
+                            shifts[c] = ColumnType.pow2SizeOf(covType);
+                            tops[c] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
+                            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+                            LPSZ colFile = TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
+                            long fd = ff.openRO(colFile);
+                            if (fd < 0) {
+                                mapped = false;
+                                break;
+                            }
+                            long fileSize = ff.length(fd);
+                            if (fileSize > 0) {
+                                long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                                addrs[c] = addr;
+                                mappedSizes[c] = fileSize;
+                            }
+                            ff.close(fd);
+                        }
+
+                        if (mapped) {
+                            CharSequence colName = metadata.getColumnName(colIdx);
+                            long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                            long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, colIdx);
+                            ColumnIndexer indexer = indexers.getQuick(colIdx);
+                            if (indexer != null) {
+                                indexer.configureFollowerAndWriter(
+                                        path.trimTo(plen), colName, colNameTxn,
+                                        getPrimaryColumn(colIdx), columnTop
+                                );
+                                indexer.configureCovering(addrs, tops, shifts, coveringCols, types, coverCount);
+                                if (indexer.getWriter() instanceof PostingIndexWriter piw) {
+                                    piw.rebuildSidecars();
+                                }
+                            }
+                        }
+                    } finally {
+                        for (int c = 0; c < coverCount; c++) {
+                            if (addrs[c] != 0) {
+                                ff.munmap(addrs[c], mappedSizes[c], MemoryTag.MMAP_DEFAULT);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                path.trimTo(pathSize);
+            }
+        }
     }
 
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, CharSequence columnName) {

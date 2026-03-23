@@ -90,6 +90,22 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void configureCovering(
+            long[] coveredColumnAddrs,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount
+    ) {
+        if (writer instanceof PostingIndexWriter) {
+            ((PostingIndexWriter) writer).configureCovering(
+                    coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
+                    coveredColumnIndices, coveredColumnTypes, coverCount);
+        }
+    }
+
+    @Override
     public void configureFollowerAndWriter(
             Path path,
             CharSequence name,

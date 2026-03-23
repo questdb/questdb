@@ -726,13 +726,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseAllWriters();
 
-            // O3-created WAL partitions may have incorrect covering sidecar data.
-            // Including ts forces the non-covering path for correctness.
+            // O3 partitions have their covering sidecars rebuilt after the merge
             assertSql("""
-                    ts\tprice\tqty
-                    2024-01-01T00:00:00.000000Z\t10.5\t100
-                    2024-01-02T00:00:00.000000Z\t20.5\t200
-                    """, "SELECT ts, price, qty FROM t_o3 WHERE sym = 'A'");
+                    price\tqty
+                    10.5\t100
+                    20.5\t200
+                    """, "SELECT price, qty FROM t_o3 WHERE sym = 'A'");
         });
     }
 

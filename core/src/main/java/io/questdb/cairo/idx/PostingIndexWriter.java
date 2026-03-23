@@ -299,6 +299,34 @@ public class PostingIndexWriter implements IndexWriter {
      * Seal the index: decode all generations, merge, re-encode into a single generation.
      * Uses incremental seal (dirty-stride) when gen 0 is dense and remaining gens are sparse.
      */
+    /**
+     * Rebuilds covering sidecar files for an already-sealed posting index.
+     * Called after O3 merge, which rebuilds the posting index but doesn't
+     * write sidecar files (the O3 pool writer has no covering configuration).
+     */
+    public void rebuildSidecars() {
+        if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
+            return;
+        }
+        // Only process if the gen is already dense (sealed)
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        if (gen0KeyCount < 0) {
+            // Not yet sealed (sparse gen) — regular seal() will handle sidecars
+            return;
+        }
+        // Open sidecar files and re-seal to write sidecar data
+        if (sidecarMems != null) {
+            closeSidecarMems();
+        }
+        if (partitionPath != null) {
+            try (Path p = new Path().of(partitionPath)) {
+                openSidecarFiles(p, indexName, columnNameTxn);
+            }
+        }
+        sealFull();
+    }
+
     public void seal() {
         flushAllPending();
 

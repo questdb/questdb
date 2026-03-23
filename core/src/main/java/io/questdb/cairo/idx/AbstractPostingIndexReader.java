@@ -259,14 +259,23 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             coverCount = count;
 
             sidecarMems = new MemoryMR[count];
+            boolean allSidecarsPresent = true;
             for (int c = 0; c < count; c++) {
                 LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
                 if (ff.exists(pcFile)) {
                     sidecarMems[c] = Vm.getCMRInstance();
                     long fileLen = ff.length(pcFile);
                     ((MemoryCMR) sidecarMems[c]).of(ff, pcFile, ff.getMapPageSize(), fileLen, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                } else {
+                    allSidecarsPresent = false;
                 }
                 path.trimTo(plen);
+            }
+            if (!allSidecarsPresent) {
+                // Incomplete sidecar data (e.g., O3 rebuild without covering).
+                // Disable covering so the FallbackRecord reads column files.
+                closeSidecarMems();
+                coverCount = 0;
             }
         } catch (Throwable e) {
             LOG.error().$("failed to open sidecar files").$((Throwable) e).$();
