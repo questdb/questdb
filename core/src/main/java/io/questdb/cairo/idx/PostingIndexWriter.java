@@ -1192,6 +1192,7 @@ public class PostingIndexWriter implements IndexWriter {
             case ColumnType.FLOAT:
             case ColumnType.GEOINT:
             case ColumnType.INT:
+            case ColumnType.SYMBOL:
                 return AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspace);
             default:
                 // SHORT, BYTE: count header + raw copy

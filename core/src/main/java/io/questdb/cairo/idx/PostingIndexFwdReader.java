@@ -245,7 +245,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     }
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
-                    case ColumnType.GEOINT: {
+                    case ColumnType.GEOINT:
+                    case ColumnType.SYMBOL: {
                         if (decodedInts[c] == null || decodedInts[c].length < count) {
                             decodedInts[c] = new int[count];
                         }

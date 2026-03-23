@@ -2395,4 +2395,121 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, extra FROM t_in_fallback WHERE sym IN ('A', 'B')");
         });
     }
+
+    @Test
+    public void testCoveringQuerySymbolIncludeColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_sym_incl (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_sym_incl VALUES
+                    ('2024-01-01T00:00:00', 'A', 'hot', 10.5),
+                    ('2024-01-01T01:00:00', 'B', 'cold', 20.5),
+                    ('2024-01-01T02:00:00', 'A', 'warm', 11.5)
+                    """);
+            engine.releaseAllWriters();
+
+            // tag is a SYMBOL column in INCLUDE — covering index should resolve it
+            assertSql("""
+                    tag\tprice
+                    hot\t10.5
+                    warm\t11.5
+                    """, "SELECT tag, price FROM t_sym_incl WHERE sym = 'A'");
+
+            assertSql("""
+                    tag\tprice
+                    cold\t20.5
+                    """, "SELECT tag, price FROM t_sym_incl WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringQuerySymbolIncludeWithInList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_sym_incl_in (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_sym_incl_in VALUES
+                    ('2024-01-01T00:00:00', 'A', 'hot'),
+                    ('2024-01-01T01:00:00', 'B', 'cold'),
+                    ('2024-01-01T02:00:00', 'A', 'warm'),
+                    ('2024-01-01T03:00:00', 'C', 'cool')
+                    """);
+            engine.releaseAllWriters();
+
+            // SYMBOL include with IN list
+            assertSql("""
+                    sym\ttag
+                    A\thot
+                    A\twarm
+                    B\tcold
+                    """, "SELECT sym, tag FROM t_sym_incl_in WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCoveringQuerySymbolIncludeNullValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_sym_incl_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag),
+                        tag SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_sym_incl_null VALUES
+                    ('2024-01-01T00:00:00', 'A', 'hot'),
+                    ('2024-01-01T01:00:00', 'A', NULL),
+                    ('2024-01-01T02:00:00', 'A', 'cold')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    tag
+                    hot
+                    \n\
+                    cold
+                    """, "SELECT tag FROM t_sym_incl_null WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQuerySymbolIncludeMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_sym_incl_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_sym_incl_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 'hot', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 'cold', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 'warm', 3.0),
+                    ('2024-01-02T01:00:00', 'B', 'cool', 4.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym\ttag\tprice
+                    A\thot\t1.0
+                    A\twarm\t3.0
+                    """, "SELECT sym, tag, price FROM t_sym_incl_mp WHERE sym = 'A'");
+        });
+    }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -89,7 +90,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.columnSizeShifts = columnSizeShifts;
         this.keyValueFuncs = null;
         this.resolvedKeys = null;
-        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0);
+        int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes);
     }
 
     public CoveringIndexRecordCursorFactory(
@@ -123,7 +125,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 resolvedKeys.add(key);
             }
         }
-        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity);
+        int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes);
     }
 
     @Override
@@ -212,10 +215,33 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return 0;
     }
 
+    private static int[] findSymbolIncludeCols(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+        int count = 0;
+        for (int q = 0; q < queryColToIncludeIdx.length; q++) {
+            if (queryColToIncludeIdx[q] >= 0 && ColumnType.tagOf(metadata.getColumnType(q)) == ColumnType.SYMBOL) {
+                count++;
+            }
+        }
+        if (count == 0) {
+            return null;
+        }
+        int[] result = new int[count];
+        int idx = 0;
+        for (int q = 0; q < queryColToIncludeIdx.length; q++) {
+            if (queryColToIncludeIdx[q] >= 0 && ColumnType.tagOf(metadata.getColumnType(q)) == ColumnType.SYMBOL) {
+                result[idx++] = q;
+            }
+        }
+        return result;
+    }
+
     private static class CoveringCursor implements RecordCursor {
+        private final IntList columnIndexes;
         private final int indexColumnIndex;
         private final IntList multiKeys;
         private final CoveringRecord record;
+        private final int[] symbolIncludeCols;
+        private final SymbolTable[] symTablesCache;
         private int cachedPartitionIndex;
         private long cachedRowHi;
         private long cachedRowLo;
@@ -225,11 +251,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int symbolKey;
         private TableReader tableReader;
 
-        CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx, int multiKeyCapacity) {
+        CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx,
+                        int multiKeyCapacity, int[] symbolIncludeCols, IntList columnIndexes) {
             this.indexColumnIndex = indexColumnIndex;
             this.symbolKey = symbolKey;
             this.record = new CoveringRecord(queryColToIncludeIdx, symbolKey);
             this.multiKeys = multiKeyCapacity > 0 ? new IntList(multiKeyCapacity) : null;
+            this.symbolIncludeCols = symbolIncludeCols;
+            this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
+            this.columnIndexes = columnIndexes;
             this.cachedPartitionIndex = -1;
         }
 
@@ -314,6 +344,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.cachedPartitionIndex = -1;
             this.record.of(null);
             this.record.setSymbolTable(tableReader.getSymbolMapReader(indexColumnIndex));
+            if (symbolIncludeCols != null) {
+                for (int i = 0, n = symbolIncludeCols.length; i < n; i++) {
+                    int col = symbolIncludeCols[i];
+                    symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
+                }
+                record.setIncludeSymbolTables(symTablesCache);
+            }
         }
 
         void ofEmpty() {
@@ -404,6 +441,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private static class CoveringRecord implements Record {
         private final int[] queryColToIncludeIdx;
         private CoveringRowCursor cursor;
+        private SymbolTable[] includeSymbolTables;
         private long rowId;
         private int symbolKey;
         private SymbolTable symbolTable;
@@ -506,6 +544,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (includeIdx == -1 && symbolTable != null) {
                 return symbolTable.valueOf(symbolKey);
             }
+            if (includeIdx >= 0 && cursor != null && includeSymbolTables != null) {
+                SymbolTable st = includeSymbolTables[col];
+                if (st != null) {
+                    return st.valueOf(cursor.getCoveredInt(includeIdx));
+                }
+            }
             return null;
         }
 
@@ -525,6 +569,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         void of(CoveringRowCursor cursor) {
             this.cursor = cursor;
+        }
+
+        void setIncludeSymbolTables(SymbolTable[] tables) {
+            this.includeSymbolTables = tables;
         }
 
         void setRowId(long rowId) {
