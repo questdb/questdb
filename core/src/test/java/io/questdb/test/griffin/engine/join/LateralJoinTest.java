@@ -2814,7 +2814,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 20, 3, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // Wrapper SELECT references t1.b (outer), content WHERE has equality t2.t1_id = t1.a
             assertQueryNoLeakCheck(
                     """
                             a\tresult
