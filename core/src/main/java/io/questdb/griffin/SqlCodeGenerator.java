@@ -5488,6 +5488,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
 
                         if (filter == null) {
+                            // Check if covering index can serve LATEST ON
+                            int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
+                            int[] coveringMapping = buildCoveringIndexMapping(
+                                    reader, keyReaderColIdx, columnIndexes, metadata
+                            );
+                            if (coveringMapping != null) {
+                                return new CoveringIndexRecordCursorFactory(
+                                        metadata,
+                                        partitionFrameCursorFactory,
+                                        keyReaderColIdx,
+                                        symbol,
+                                        symbolValueFunc,
+                                        columnIndexes,
+                                        columnSizeShifts,
+                                        coveringMapping,
+                                        true
+                                );
+                            }
+
                             if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                                 rcf = new LatestByValueDeferredIndexedRowCursorFactory(
                                         latestByIndex,

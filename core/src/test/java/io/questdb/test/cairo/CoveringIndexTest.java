@@ -2512,4 +2512,141 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT sym, tag, price FROM t_sym_incl_mp WHERE sym = 'A'");
         });
     }
+
+    @Test
+    public void testCoveringLatestOnSingleKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T12:00:00', 'A', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0),
+                    ('2024-01-02T12:00:00', 'B', 4.0),
+                    ('2024-01-03T00:00:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // LATEST ON should return the latest row for sym='A' (from last partition)
+            assertSql("""
+                    price
+                    5.0
+                    """, "SELECT price FROM t_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0, 100),
+                    ('2024-01-01T12:00:00', 'B', 20.0, 200),
+                    ('2024-01-02T00:00:00', 'A', 30.0, 300),
+                    ('2024-01-03T00:00:00', 'B', 40.0, 400)
+                    """);
+            engine.releaseAllWriters();
+
+            // Latest A is in partition 2024-01-02
+            assertSql("""
+                    price\tqty
+                    30.0\t300
+                    """, "SELECT price, qty FROM t_latest_mp WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+
+            // Latest B is in partition 2024-01-03
+            assertSql("""
+                    price\tqty
+                    40.0\t400
+                    """, "SELECT price, qty FROM t_latest_mp WHERE sym = 'B' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnWithSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_sym VALUES
+                    ('2024-01-01T00:00:00', 'A', 'cold', 1.0),
+                    ('2024-01-02T00:00:00', 'A', 'hot', 2.0),
+                    ('2024-01-03T00:00:00', 'A', 'warm', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym\ttag\tprice
+                    A\twarm\t3.0
+                    """, "SELECT sym, tag, price FROM t_latest_sym WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnNonExistentKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_ne (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_ne VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    """, "SELECT price FROM t_latest_ne WHERE sym = 'MISSING' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_plan (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_plan VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT price FROM t_latest_plan WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
+                    """
+                            SelectedRecord
+                                CoveringIndex latest on: sym
+                                  filter: sym='A'
+                            """
+            );
+        });
+    }
 }

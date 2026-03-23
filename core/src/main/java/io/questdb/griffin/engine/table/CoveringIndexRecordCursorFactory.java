@@ -66,6 +66,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
     private final int keyQueryPosition;
+    private final boolean latestBy;
     private final ObjList<Function> keyValueFuncs;
     private final RecordMetadata metadata;
     private final IntList resolvedKeys;
@@ -81,6 +82,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @NotNull IntList columnSizeShifts,
             @NotNull int[] queryColToIncludeIdx
     ) {
+        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, columnSizeShifts, queryColToIncludeIdx, false);
+    }
+
+    public CoveringIndexRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory dfcFactory,
+            int indexColumnIndex,
+            int symbolKey,
+            Function symbolFunction,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
+            @NotNull int[] queryColToIncludeIdx,
+            boolean latestBy
+    ) {
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
@@ -88,10 +103,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
+        this.latestBy = latestBy;
         this.keyValueFuncs = null;
         this.resolvedKeys = null;
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes);
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes, latestBy);
     }
 
     public CoveringIndexRecordCursorFactory(
@@ -113,6 +129,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
+        this.latestBy = false;
         this.keyValueFuncs = keyValueFuncs;
         this.resolvedKeys = keyValueFuncs != null ? new IntList(keyValueFuncs.size()) : null;
         int multiKeyCapacity = 0;
@@ -126,7 +143,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
-        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes);
+        this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes, false);
     }
 
     @Override
@@ -140,7 +157,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
-                PartitionFrameCursorFactory.ORDER_ASC
+                latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
         );
 
         if (resolvedKeys != null) {
@@ -197,7 +214,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("CoveringIndex");
+        sink.type(latestBy ? "CoveringIndex latest" : "CoveringIndex");
         sink.meta("on").putColumnName(keyQueryPosition);
         if (keyValueFuncs != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
@@ -238,6 +255,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private static class CoveringCursor implements RecordCursor {
         private final IntList columnIndexes;
         private final int indexColumnIndex;
+        private final boolean latestBy;
         private final IntList multiKeys;
         private final CoveringRecord record;
         private final int[] symbolIncludeCols;
@@ -248,11 +266,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private CoveringRowCursor currentRowCursor;
         private int currentKeyIdx;
         private PartitionFrameCursor frameCursor;
+        private boolean latestByDone;
         private int symbolKey;
         private TableReader tableReader;
 
         CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx,
-                        int multiKeyCapacity, int[] symbolIncludeCols, IntList columnIndexes) {
+                        int multiKeyCapacity, int[] symbolIncludeCols, IntList columnIndexes,
+                        boolean latestBy) {
             this.indexColumnIndex = indexColumnIndex;
             this.symbolKey = symbolKey;
             this.record = new CoveringRecord(queryColToIncludeIdx, symbolKey);
@@ -260,6 +280,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.symbolIncludeCols = symbolIncludeCols;
             this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
             this.columnIndexes = columnIndexes;
+            this.latestBy = latestBy;
             this.cachedPartitionIndex = -1;
         }
 
@@ -289,6 +310,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (frameCursor == null) {
                 return false;
             }
+            if (latestBy) {
+                return hasNextLatestBy();
+            }
             while (true) {
                 if (currentRowCursor != null && currentRowCursor.hasNext()) {
                     record.setRowId(currentRowCursor.next());
@@ -301,6 +325,45 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 } else {
                     if (!advanceSingleKey()) {
                         return false;
+                    }
+                }
+            }
+        }
+
+        private boolean hasNextLatestBy() {
+            if (latestByDone) {
+                return false;
+            }
+            // Partitions iterate DESC (latest first). Find the first partition
+            // with data for this key, iterate forward to the last row in that
+            // partition, and return it as the LATEST ON result.
+            while (true) {
+                PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    return false;
+                }
+                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                        frame.getPartitionIndex(),
+                        indexColumnIndex,
+                        BitmapIndexReader.DIR_FORWARD
+                );
+                RowCursor rowCursor = indexReader.getCursor(
+                        true,
+                        TableUtils.toIndexKey(symbolKey),
+                        frame.getRowLo(),
+                        frame.getRowHi() - 1
+                );
+                if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                    long lastRowId = -1;
+                    while (crc.hasNext()) {
+                        lastRowId = crc.next();
+                    }
+                    if (lastRowId >= 0) {
+                        record.of(crc);
+                        record.setRowId(lastRowId);
+                        record.setSymbolKey(symbolKey);
+                        latestByDone = true;
+                        return true;
                     }
                 }
             }
@@ -334,6 +397,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             currentRowCursor = null;
             currentKeyIdx = 0;
             cachedPartitionIndex = -1;
+            latestByDone = false;
         }
 
         void of(PartitionFrameCursor frameCursor) {
@@ -342,6 +406,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.currentRowCursor = null;
             this.currentKeyIdx = 0;
             this.cachedPartitionIndex = -1;
+            this.latestByDone = false;
             this.record.of(null);
             this.record.setSymbolTable(tableReader.getSymbolMapReader(indexColumnIndex));
             if (symbolIncludeCols != null) {
@@ -397,12 +462,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean advanceSingleKey() {
+            if (latestBy && latestByDone) {
+                return false;
+            }
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
                     return false;
                 }
                 if (tryOpenKey(frame.getPartitionIndex(), symbolKey, frame.getRowLo(), frame.getRowHi())) {
+                    if (latestBy) {
+                        latestByDone = true;
+                    }
                     return true;
                 }
             }
