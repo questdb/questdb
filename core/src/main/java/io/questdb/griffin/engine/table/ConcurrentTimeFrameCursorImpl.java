@@ -112,6 +112,16 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     }
 
     @Override
+    public long getPageFrameRowHi() {
+        return currentPageFrameRowHi;
+    }
+
+    @Override
+    public long getPageFrameRowLo() {
+        return currentPageFrameRowLo;
+    }
+
+    @Override
     public int getTimestampIndex() {
         return timestampIndex;
     }
@@ -257,7 +267,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         if (currentPageFrameLocalIndex >= 0 && partitionIndex == currentCachePartition
                 && rowInPartition >= currentPageFrameRowLo && rowInPartition < currentPageFrameRowHi
                 && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameLocalIndex) {
-            ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, currentPageFrameRowLo);
+            ((PageFrameMemoryRecord) record).setRowIndex(rowInPartition - currentPageFrameRowLo);
             return;
         }
         navigateToRow(record, partitionIndex, rowInPartition);
@@ -269,7 +279,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         if (currentPageFrameLocalIndex >= 0 && frameIndex == currentCachePartition
                 && rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi
                 && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameLocalIndex) {
-            ((TimeFrameMemoryRecord) record).setRowIndex(frameIndex, rowIndex, currentPageFrameRowLo);
+            ((PageFrameMemoryRecord) record).setRowIndex(rowIndex - currentPageFrameRowLo);
             return;
         }
         navigateToRow(record, frameIndex, rowIndex);
@@ -279,7 +289,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public void recordAtRowIndex(Record record, long rowIndex) {
         // Same-page-frame fast path for within-partition linear scans.
         if (rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi) {
-            ((TimeFrameMemoryRecord) record).setRowIndex(rowIndex, currentPageFrameRowLo);
+            ((PageFrameMemoryRecord) record).setRowIndex(rowIndex - currentPageFrameRowLo);
             return;
         }
         navigateToRow(record, timeFrame.getFrameIndex(), rowIndex);
@@ -357,7 +367,8 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
         // Navigate using partition-local page frame index (the pool has per-partition cache)
         frameMemoryPool.navigateTo(lo, (PageFrameMemoryRecord) record);
-        ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pfRowLo);
+        ((PageFrameMemoryRecord) record).setRowIndex(rowInPartition - pfRowLo);
+        ((TimeFrameMemoryRecord) record).setPageFrameContext(partitionIndex, pfRowLo);
 
         currentPageFrameLocalIndex = lo;
         currentPageFrameRowLo = pfRowLo;
@@ -365,8 +376,8 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     }
 
     private void switchToPartition(int partitionIndex) {
-        PageFrameAddressCache cache = sharedState.ensurePartitionOpened(partitionIndex);
         if (currentCachePartition != partitionIndex) {
+            PageFrameAddressCache cache = sharedState.ensurePartitionOpened(partitionIndex);
             frameMemoryPool.switchAddressCache(cache);
             record.clear(); // force re-navigation (resets frameIndex to -1)
             currentCachePartition = partitionIndex;

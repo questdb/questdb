@@ -148,6 +148,16 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public long getPageFrameRowHi() {
+        return currentPageFrameRowHi;
+    }
+
+    @Override
+    public long getPageFrameRowLo() {
+        return currentPageFrameRowLo;
+    }
+
+    @Override
     public int getTimestampIndex() {
         return metadata.getTimestampIndex();
     }
@@ -280,10 +290,12 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (currentPageFrameGlobalIndex >= 0 && partitionIndex == currentPartition
                 && rowInPartition >= currentPageFrameRowLo && rowInPartition < currentPageFrameRowHi
                 && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameGlobalIndex) {
-            ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, currentPageFrameRowLo);
+            ((PageFrameMemoryRecord) record).setRowIndex(rowInPartition - currentPageFrameRowLo);
             return;
         }
-        ensurePartitionOpened(partitionIndex);
+        if (partitionIndex != currentPartition) {
+            ensurePartitionOpened(partitionIndex);
+        }
         navigateToRow(record, partitionIndex, rowInPartition);
     }
 
@@ -293,10 +305,12 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (currentPageFrameGlobalIndex >= 0 && frameIndex == currentPartition
                 && rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi
                 && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameGlobalIndex) {
-            ((TimeFrameMemoryRecord) record).setRowIndex(frameIndex, rowIndex, currentPageFrameRowLo);
+            ((PageFrameMemoryRecord) record).setRowIndex(rowIndex - currentPageFrameRowLo);
             return;
         }
-        ensurePartitionOpened(frameIndex);
+        if (frameIndex != currentPartition) {
+            ensurePartitionOpened(frameIndex);
+        }
         navigateToRow(record, frameIndex, rowIndex);
     }
 
@@ -304,7 +318,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     public void recordAtRowIndex(Record record, long rowIndex) {
         // Same-page-frame fast path for within-partition linear scans.
         if (rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi) {
-            ((TimeFrameMemoryRecord) record).setRowIndex(rowIndex, currentPageFrameRowLo);
+            ((PageFrameMemoryRecord) record).setRowIndex(rowIndex - currentPageFrameRowLo);
             return;
         }
         navigateToRow(record, timeFrame.getFrameIndex(), rowIndex);
@@ -439,7 +453,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         final long pageFrameRowHi = pageFrameCumulativeRows.get(pageFrameIndex);
 
         frameMemoryPool.navigateTo(pageFrameIndex, (PageFrameMemoryRecord) record);
-        ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pageFrameRowLo);
+        ((PageFrameMemoryRecord) record).setRowIndex(rowInPartition - pageFrameRowLo);
+        ((TimeFrameMemoryRecord) record).setPageFrameContext(partitionIndex, pageFrameRowLo);
 
         currentPageFrameGlobalIndex = pageFrameIndex;
         currentPageFrameRowLo = pageFrameRowLo;

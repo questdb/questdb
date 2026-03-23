@@ -28,6 +28,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
@@ -175,6 +176,10 @@ public class HorizonJoinTimeFrameHelper {
         masterKey.commit();
         final long masterHash = masterKey.hash();
 
+        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
+        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
+        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
+
         while (true) {
             final long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
             backwardScanRows++;
@@ -185,7 +190,15 @@ public class HorizonJoinTimeFrameHelper {
             }
 
             // Position record at current row
-            timeFrameCursor.recordAtRowIndex(record, rowIndex);
+            if (pfRecord != null && rowIndex >= pfRowLo) {
+                pfRecord.setRowIndex(rowIndex - pfRowLo);
+            } else {
+                timeFrameCursor.recordAtRowIndex(record, rowIndex);
+                if (pfRecord != null) {
+                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
+                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
+                }
+            }
 
             // Add key to map only if not already present (we want latest/highest rowId)
             final MapKey slaveKey = keyToRowIdMap.withKey();
@@ -230,6 +243,8 @@ public class HorizonJoinTimeFrameHelper {
                 }
                 rowIndex = timeFrame.getRowHi() - 1;
                 timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+                pfRowLo = timeFrameCursor.getPageFrameRowLo();
+                pfRowHi = timeFrameCursor.getPageFrameRowHi();
             }
         }
 
@@ -532,6 +547,9 @@ public class HorizonJoinTimeFrameHelper {
         int frameIndex = startFrameIndex;
         long rowIndex = startRowIndex;
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
+        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
+        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
 
         while (true) {
             long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
@@ -542,7 +560,15 @@ public class HorizonJoinTimeFrameHelper {
             }
 
             // Position record and cache the key
-            timeFrameCursor.recordAtRowIndex(record, rowIndex);
+            if (pfRecord != null && rowIndex < pfRowHi) {
+                pfRecord.setRowIndex(rowIndex - pfRowLo);
+            } else {
+                timeFrameCursor.recordAtRowIndex(record, rowIndex);
+                if (pfRecord != null) {
+                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
+                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
+                }
+            }
             MapKey key = keyToRowIdMap.withKey();
             key.put(record, slaveAsOfJoinMapSink);
             MapValue value = key.createValue();
@@ -574,6 +600,8 @@ public class HorizonJoinTimeFrameHelper {
                 frameIndex = timeFrame.getFrameIndex();
                 rowIndex = timeFrame.getRowLo();
                 timeFrameCursor.recordAt(record, frameIndex, rowIndex);
+                pfRowLo = timeFrameCursor.getPageFrameRowLo();
+                pfRowHi = timeFrameCursor.getPageFrameRowHi();
             }
         }
     }
@@ -671,13 +699,40 @@ public class HorizonJoinTimeFrameHelper {
         }
 
         // Linear scan for small range
-        for (long r = low; r <= high; r++) {
-            timeFrameCursor.recordAtRowIndex(record, r);
-            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-            if (timestamp <= targetTimestamp) {
-                result = r;
+        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
+        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
+        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
+        long r = low;
+        outer:
+        while (r <= high) {
+            if (pfRecord != null) {
+                final long innerEnd = Math.min(high + 1, pfRowHi);
+                long localR = r - pfRowLo;
+                while (r < innerEnd) {
+                    pfRecord.setRowIndex(localR);
+                    long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                    if (timestamp <= targetTimestamp) {
+                        result = r;
+                    } else {
+                        break outer;
+                    }
+                    r++;
+                    localR++;
+                }
+                if (r <= high) {
+                    timeFrameCursor.recordAtRowIndex(record, r);
+                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
+                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
+                }
             } else {
-                break;
+                timeFrameCursor.recordAtRowIndex(record, r);
+                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                if (timestamp <= targetTimestamp) {
+                    result = r;
+                } else {
+                    break;
+                }
+                r++;
             }
         }
 
@@ -713,19 +768,46 @@ public class HorizonJoinTimeFrameHelper {
      * - negative value: need binary search, encoded as -(last scanned row) - 1
      */
     private long linearScanAsOf(long targetTimestamp, long rowLo) {
-        long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
+        final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         long result = Long.MIN_VALUE;
+        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
+        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
+        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
 
-        for (long r = rowLo; r < scanHi; r++) {
-            timeFrameCursor.recordAtRowIndex(record, r);
-            // Scale slave timestamp to common unit for cross-resolution support
-            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-
-            if (timestamp <= targetTimestamp) {
-                result = r;
+        long r = rowLo;
+        while (r < scanHi) {
+            if (pfRecord != null) {
+                // Two-level loop: iterate within page frame bounds without
+                // per-row page-frame checks. Only the inner bound comparison
+                // and a setRowIndex store happen per row — matching the old
+                // per-page-frame cursor's per-row cost.
+                final long innerEnd = Math.min(scanHi, pfRowHi);
+                long localR = r - pfRowLo;
+                while (r < innerEnd) {
+                    pfRecord.setRowIndex(localR);
+                    long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                    if (timestamp <= targetTimestamp) {
+                        result = r;
+                    } else {
+                        return result;
+                    }
+                    r++;
+                    localR++;
+                }
+                if (r < scanHi) {
+                    timeFrameCursor.recordAtRowIndex(record, r);
+                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
+                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
+                }
             } else {
-                // Found first row > target, return previous row if any
-                return result;
+                timeFrameCursor.recordAtRowIndex(record, r);
+                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                if (timestamp <= targetTimestamp) {
+                    result = r;
+                } else {
+                    return result;
+                }
+                r++;
             }
         }
 

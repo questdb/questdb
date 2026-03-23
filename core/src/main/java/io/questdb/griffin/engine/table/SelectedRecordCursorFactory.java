@@ -256,6 +256,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getPageFrameRowHi() {
+            return delegate.getPageFrameRowHi();
+        }
+
+        @Override
+        public long getPageFrameRowLo() {
+            return delegate.getPageFrameRowLo();
+        }
+
+        @Override
         public Record getRecord() {
             return delegate.getRecord();
         }
@@ -541,6 +551,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return baseCursor.getIndexReaderForCurrentFrame(columnCrossIndex.getQuick(columnIndex), direction);
+        }
+
+        @Override
+        public long getPageFrameRowHi() {
+            return baseCursor.getPageFrameRowHi();
+        }
+
+        @Override
+        public long getPageFrameRowLo() {
+            return baseCursor.getPageFrameRowLo();
         }
 
         @Override

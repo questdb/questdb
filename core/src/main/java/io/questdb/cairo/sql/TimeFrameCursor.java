@@ -138,6 +138,23 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     TimeFrame getTimeFrame();
 
+    /**
+     * Returns the first partition-local row of the current page frame.
+     * Valid after any {@link #recordAt} or {@link #recordAtRowIndex} call.
+     * Used by callers to bypass per-row bounds checking when iterating
+     * within a single page frame.
+     */
+    long getPageFrameRowLo();
+
+    /**
+     * Returns one past the last partition-local row of the current page frame.
+     * Valid after any {@link #recordAt} or {@link #recordAtRowIndex} call.
+     * Callers can iterate while {@code rowIndex < getPageFrameRowHi()} and
+     * use {@code record.setRowIndex(rowIndex - getPageFrameRowLo())} directly,
+     * avoiding the bounds check in {@link #recordAtRowIndex}.
+     */
+    long getPageFrameRowHi();
+
     int getTimestampIndex();
 
     /**

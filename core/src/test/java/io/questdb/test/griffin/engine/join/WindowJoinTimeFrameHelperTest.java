@@ -898,6 +898,16 @@ public class WindowJoinTimeFrameHelperTest {
         }
 
         @Override
+        public long getPageFrameRowHi() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getPageFrameRowLo() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Record getRecord() {
             return record;
         }

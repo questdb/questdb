@@ -33,10 +33,16 @@ import io.questdb.std.Rows;
  * bits set. Use this record type in time frame cursor implementations so
  * that callers that store and later replay row IDs get correctly marked
  * partition-level values.
+ * <p>
+ * The page frame context ({@code partitionIndex} and {@code pageFrameRowLo})
+ * is set once per page frame switch via {@link #setPageFrameContext}. The
+ * partition-local row for {@link #getRowId()} is reconstructed on demand
+ * from {@code rowIndex + pageFrameRowLo} to avoid an extra field store on
+ * the hot per-row path.
  */
 public class TimeFrameMemoryRecord extends PageFrameMemoryRecord {
+    private long pageFrameRowLo;
     private int partitionIndex;
-    private long partitionLocalRow;
 
     public TimeFrameMemoryRecord(byte letter) {
         super(letter);
@@ -44,25 +50,18 @@ public class TimeFrameMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getRowId() {
-        return Rows.toRowID(partitionIndex, partitionLocalRow) | TimeFrameCursor.TIME_FRAME_ROW_ID_MARKER;
+        return Rows.toRowID(partitionIndex, rowIndex + pageFrameRowLo) | TimeFrameCursor.TIME_FRAME_ROW_ID_MARKER;
     }
 
     /**
-     * Sets the row index within the page frame and updates partition-local row.
-     * Does not change the partition index.
+     * Sets the page frame context for this record. Called once per page frame
+     * switch from the cursor's navigateToRow method.
+     *
+     * @param partitionIndex partition index
+     * @param pageFrameRowLo first partition-local row of the current page frame
      */
-    public void setRowIndex(long partitionRowIndex, long pageFrameRowLo) {
-        super.setRowIndex(partitionRowIndex - pageFrameRowLo);
-        this.partitionLocalRow = partitionRowIndex;
-    }
-
-    /**
-     * Sets the row index within the page frame and updates both partition index
-     * and partition-local row.
-     */
-    public void setRowIndex(int partitionIndex, long partitionRowIndex, long pageFrameRowLo) {
-        super.setRowIndex(partitionRowIndex - pageFrameRowLo);
+    public void setPageFrameContext(int partitionIndex, long pageFrameRowLo) {
         this.partitionIndex = partitionIndex;
-        this.partitionLocalRow = partitionRowIndex;
+        this.pageFrameRowLo = pageFrameRowLo;
     }
 }

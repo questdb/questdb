@@ -224,6 +224,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getPageFrameRowHi() {
+            return delegate.getPageFrameRowHi();
+        }
+
+        @Override
+        public long getPageFrameRowLo() {
+            return delegate.getPageFrameRowLo();
+        }
+
+        @Override
         public Record getRecord() {
             return extraNullColumnRecord;
         }
@@ -517,6 +527,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
+        }
+
+        @Override
+        public long getPageFrameRowHi() {
+            return baseCursor.getPageFrameRowHi();
+        }
+
+        @Override
+        public long getPageFrameRowLo() {
+            return baseCursor.getPageFrameRowLo();
         }
 
         @Override
