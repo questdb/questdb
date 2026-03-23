@@ -179,8 +179,8 @@ public class TableUtilsTest extends AbstractTest {
 
     @Test
     public void testGetMaxTimestampWallClockDisabled() {
-        TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
-        TxReader txReader = new TxReader(FF) {
+        final TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+        final TxReader txReader = new TxReader(FF) {
             {
                 maxTimestamp = driver.fromDays(19_723) + driver.fromHours(48);
             }
