@@ -175,47 +175,51 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 columnIndexes,
                 latestBy ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
         );
-
-        if (resolvedKeys != null) {
-            // Multi-key path (IN list)
-            SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-            cursor.multiKeys.clear();
-            boolean hasAnyKey = false;
-            for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                int key = resolvedKeys.getQuick(i);
-                if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                    CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
-                    key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+        try {
+            if (resolvedKeys != null) {
+                // Multi-key path (IN list)
+                SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+                cursor.multiKeys.clear();
+                boolean hasAnyKey = false;
+                for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                    int key = resolvedKeys.getQuick(i);
+                    if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
+                        CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
+                        key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                    }
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        cursor.multiKeys.add(key);
+                        hasAnyKey = true;
+                    }
                 }
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    cursor.multiKeys.add(key);
-                    hasAnyKey = true;
+                if (!hasAnyKey) {
+                    Misc.free(frameCursor);
+                    cursor.ofEmpty();
+                    return cursor;
                 }
-            }
-            if (!hasAnyKey) {
-                Misc.free(frameCursor);
-                cursor.ofEmpty();
+                cursor.of(frameCursor);
                 return cursor;
+            }
+
+            // Single-key path
+            int resolvedKey = cursor.symbolKey;
+            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+                SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+                CharSequence symValue = symbolFunction.getStrA(null);
+                resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+                    Misc.free(frameCursor);
+                    cursor.ofEmpty();
+                    return cursor;
+                }
+                cursor.resolveKey(resolvedKey);
             }
             cursor.of(frameCursor);
             return cursor;
+        } catch (Throwable th) {
+            Misc.free(frameCursor);
+            throw th;
         }
-
-        // Single-key path
-        int resolvedKey = cursor.symbolKey;
-        if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
-            SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-            CharSequence symValue = symbolFunction.getStrA(null);
-            resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
-                Misc.free(frameCursor);
-                cursor.ofEmpty();
-                return cursor;
-            }
-            cursor.resolveKey(resolvedKey);
-        }
-        cursor.of(frameCursor);
-        return cursor;
     }
 
     @Override
@@ -245,6 +249,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return q;
             }
         }
+        assert false : "indexed column not found in columnIndexes";
         return 0;
     }
 
@@ -505,18 +510,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean advanceSingleKey() {
-            if (latestBy && latestByDone) {
-                return false;
-            }
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
                     return false;
                 }
                 if (tryOpenKey(frame.getPartitionIndex(), symbolKey, frame.getRowLo(), frame.getRowHi())) {
-                    if (latestBy) {
-                        latestByDone = true;
-                    }
                     return true;
                 }
             }

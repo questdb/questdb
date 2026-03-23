@@ -88,7 +88,12 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 columnIndexes,
                 PartitionFrameCursorFactory.ORDER_ASC
         );
-        cursor.of(frameCursor);
+        try {
+            cursor.of(frameCursor);
+        } catch (Throwable th) {
+            Misc.free(frameCursor);
+            throw th;
+        }
         return cursor;
     }
 
@@ -112,7 +117,10 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         private final DistinctRecord record = new DistinctRecord();
         private final int queryColumnPosition;
         private final int readerColumnIndex;
-        private int currentKey;
+        private boolean[] foundKeys;
+        private int foundCount;
+        private int nextKeyToReturn;
+        private boolean isScanned;
         private PartitionFrameCursor frameCursor;
         private int symbolCount;
         private TableReader tableReader;
@@ -144,34 +152,48 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public boolean hasNext() {
-            while (currentKey < symbolCount) {
-                int key = currentKey++;
-                int indexKey = TableUtils.toIndexKey(key);
-                // Check if this key has any rows in any partition
-                frameCursor.toTop();
-                while (true) {
-                    PartitionFrame frame = frameCursor.next();
-                    if (frame == null) {
-                        break;
-                    }
-                    BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
-                            frame.getPartitionIndex(),
-                            readerColumnIndex,
-                            BitmapIndexReader.DIR_FORWARD
-                    );
-                    RowCursor rowCursor = indexReader.getCursor(
-                            true,
-                            indexKey,
-                            frame.getRowLo(),
-                            frame.getRowHi() - 1
-                    );
-                    if (rowCursor.hasNext()) {
-                        record.symbolKey = key;
-                        return true;
-                    }
+            if (!isScanned) {
+                scanPartitions();
+                isScanned = true;
+            }
+            while (nextKeyToReturn < symbolCount) {
+                int key = nextKeyToReturn++;
+                if (foundKeys[key]) {
+                    record.symbolKey = key;
+                    return true;
                 }
             }
             return false;
+        }
+
+        private void scanPartitions() {
+            // Outer = partitions (each opened once), inner = keys.
+            // Each partition's index reader is obtained once and checked for all unfound keys.
+            while (foundCount < symbolCount) {
+                PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    return;
+                }
+                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                        frame.getPartitionIndex(),
+                        readerColumnIndex,
+                        BitmapIndexReader.DIR_FORWARD
+                );
+                for (int key = 0; key < symbolCount; key++) {
+                    if (!foundKeys[key]) {
+                        RowCursor rowCursor = indexReader.getCursor(
+                                true,
+                                TableUtils.toIndexKey(key),
+                                frame.getRowLo(),
+                                frame.getRowHi() - 1
+                        );
+                        if (rowCursor.hasNext()) {
+                            foundKeys[key] = true;
+                            foundCount++;
+                        }
+                    }
+                }
+            }
         }
 
         @Override
@@ -196,7 +218,12 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public void toTop() {
-            currentKey = 0;
+            nextKeyToReturn = 0;
+            isScanned = false;
+            foundCount = 0;
+            if (foundKeys != null) {
+                java.util.Arrays.fill(foundKeys, false);
+            }
         }
 
         void of(PartitionFrameCursor frameCursor) {
@@ -205,7 +232,15 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             SymbolMapReader smr = tableReader.getSymbolMapReader(readerColumnIndex);
             this.symbolCount = smr.getSymbolCount();
             this.record.symbolTable = smr;
-            this.currentKey = 0;
+            this.nextKeyToReturn = 0;
+            this.isScanned = false;
+            this.foundCount = 0;
+            if (foundKeys == null || foundKeys.length < symbolCount) {
+                foundKeys = new boolean[symbolCount];
+            } else {
+                java.util.Arrays.fill(foundKeys, 0, symbolCount, false);
+            }
+            this.nextKeyToReturn = 0;
         }
     }
 
