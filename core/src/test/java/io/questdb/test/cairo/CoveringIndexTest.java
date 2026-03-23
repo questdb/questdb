@@ -2938,4 +2938,392 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ==================== Coverage gap tests ====================
+
+    @Test
+    public void testCoveringMultiCommitSamePartition() throws Exception {
+        // Multiple commits to the same partition, then seal.
+        // Verifies covering data is correct after multi-gen seal.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_multi_commit (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T00:00:00', 'A', 10.0)");
+            drainWalQueue();
+            execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T01:00:00', 'A', 11.0)");
+            drainWalQueue();
+            execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T02:00:00', 'B', 20.0)");
+            drainWalQueue();
+            engine.releaseAllWriters(); // seal merges all 3 gens
+
+            assertSql("""
+                    price
+                    10.0
+                    11.0
+                    """, "SELECT price FROM t_multi_commit WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testO3MultiPartitionSidecarRebuild() throws Exception {
+        // Gap 15/16: O3 affecting multiple partitions. Verifies sidecar rebuild
+        // handles multiple O3-affected partitions correctly.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Insert day 3 first
+            execute("""
+                    INSERT INTO t_o3_multi VALUES
+                    ('2024-01-03T00:00:00', 'A', 30.0),
+                    ('2024-01-03T12:00:00', 'B', 31.0)
+                    """);
+            drainWalQueue();
+            // O3: insert day 1 and day 2 (both before day 3)
+            execute("""
+                    INSERT INTO t_o3_multi VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T12:00:00', 'B', 11.0),
+                    ('2024-01-02T00:00:00', 'A', 20.0),
+                    ('2024-01-02T12:00:00', 'B', 21.0)
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            // All 3 partitions should return correct covered values
+            assertSql("""
+                    price
+                    10.0
+                    20.0
+                    30.0
+                    """, "SELECT price FROM t_o3_multi WHERE sym = 'A'");
+
+            assertSql("""
+                    price
+                    11.0
+                    21.0
+                    31.0
+                    """, "SELECT price FROM t_o3_multi WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testO3WithNullCoveredValues() throws Exception {
+        // Gap 18: O3 with NULL values in covered columns
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_null VALUES
+                    ('2024-01-02T00:00:00', 'A', 20.0)
+                    """);
+            drainWalQueue();
+            // O3: insert day 1 with NULL price
+            execute("""
+                    INSERT INTO t_o3_null VALUES
+                    ('2024-01-01T00:00:00', 'A', NULL)
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    null
+                    20.0
+                    """, "SELECT price FROM t_o3_null WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testO3WithSymbolIncludeColumn() throws Exception {
+        // Gap 17 extended: O3 with SYMBOL INCLUDE columns
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_sym VALUES
+                    ('2024-01-02T00:00:00', 'A', 'hot', 20.0)
+                    """);
+            drainWalQueue();
+            // O3: insert day 1
+            execute("""
+                    INSERT INTO t_o3_sym VALUES
+                    ('2024-01-01T00:00:00', 'A', 'cold', 10.0)
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym\ttag\tprice
+                    A\tcold\t10.0
+                    A\thot\t20.0
+                    """, "SELECT sym, tag, price FROM t_o3_sym WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testLatestOnMultiPartitionManyCommits() throws Exception {
+        // LATEST ON after multiple commits across 3 partitions
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_3p (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_3p VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'A', 1.5),
+                    ('2024-01-02T00:00:00', 'A', 2.0),
+                    ('2024-01-03T00:00:00', 'A', 3.0),
+                    ('2024-01-03T01:00:00', 'B', 4.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    3.0
+                    """, "SELECT price FROM t_latest_3p WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testLatestOnManyKeys() throws Exception {
+        // Gap 4: LATEST ON with 5+ keys
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_5k (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_5k VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'C', 3.0),
+                    ('2024-01-01T03:00:00', 'D', 4.0),
+                    ('2024-01-01T04:00:00', 'E', 5.0),
+                    ('2024-01-02T00:00:00', 'A', 10.0),
+                    ('2024-01-02T01:00:00', 'C', 30.0),
+                    ('2024-01-02T02:00:00', 'E', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price
+                    10.0
+                    2.0
+                    30.0
+                    4.0
+                    50.0
+                    """, "SELECT price FROM t_latest_5k WHERE sym IN ('A','B','C','D','E') LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testDistinctAfterDropAllPartitions() throws Exception {
+        // Gap 12: DISTINCT when symbolCount>0 but 0 rows
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_dropall (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_dropall VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+            execute("ALTER TABLE t_distinct_dropall DROP PARTITION LIST '2024-01-01', '2024-01-02'");
+            engine.releaseAllWriters();
+
+            // symbolCount=2 but no data anywhere — should return empty
+            assertSql("""
+                    sym
+                    """, "SELECT DISTINCT sym FROM t_distinct_dropall");
+        });
+    }
+
+    @Test
+    public void testDistinctHighCardinality() throws Exception {
+        // Gap 13: DISTINCT with >256 keys (crosses stride boundary)
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_hc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            StringBuilder sb = new StringBuilder("INSERT INTO t_distinct_hc VALUES ");
+            for (int i = 0; i < 300; i++) {
+                if (i > 0) sb.append(',');
+                sb.append("('2024-01-01T").append(String.format("%02d", i / 60)).append(':')
+                        .append(String.format("%02d", i % 60)).append(":00', 'K").append(i).append("', ").append(i).append(".0)");
+            }
+            execute(sb.toString());
+            engine.releaseAllWriters();
+
+            // Should return 300 distinct keys
+            try (var factory = select("SELECT DISTINCT sym FROM t_distinct_hc");
+                 var cursor = factory.getCursor(sqlExecutionContext)) {
+                int count = 0;
+                while (cursor.hasNext()) {
+                    count++;
+                }
+                assertEquals(300, count);
+            }
+        });
+    }
+
+    @Test
+    public void testDistinctWalO3() throws Exception {
+        // Gap 14: DISTINCT on WAL table with O3 inserts
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_o3 VALUES
+                    ('2024-01-02T00:00:00', 'B', 2.0),
+                    ('2024-01-02T01:00:00', 'C', 3.0)
+                    """);
+            drainWalQueue();
+            // O3: insert day 1
+            execute("""
+                    INSERT INTO t_distinct_o3 VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0)
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            // Key order depends on symbol table insertion order: B=0, C=1, A=2
+            // (B and C inserted first, then A via O3)
+            assertSql("""
+                    sym
+                    B
+                    C
+                    A
+                    """, "SELECT DISTINCT sym FROM t_distinct_o3");
+        });
+    }
+
+    @Test
+    public void testInListWithDuplicateKeys() throws Exception {
+        // Gap 11: IN-list with duplicate keys
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_dup (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_dup VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // SQL engine deduplicates IN-list values — 'A' appears once
+            assertSql("""
+                    price
+                    10.0
+                    20.0
+                    """, "SELECT price FROM t_in_dup WHERE sym IN ('A', 'A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCoveringToTopReScan() throws Exception {
+        // Gap 8: toTop() re-scan via CROSS JOIN
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_totop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_totop VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'A', 11.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // CROSS JOIN forces re-scan — each left row paired with all right rows
+            assertSql("""
+                    price\tx
+                    10.0\t1
+                    10.0\t2
+                    11.0\t1
+                    11.0\t2
+                    """, """
+                    SELECT t.price, x.x
+                    FROM (SELECT price FROM t_totop WHERE sym = 'A') t
+                    CROSS JOIN (SELECT x FROM long_sequence(2)) x
+                    """);
+        });
+    }
+
+    @Test
+    public void testSeekToLastEmptyPartition() throws Exception {
+        // Gap 6: LATEST ON where key exists in day 1 but not day 2.
+        // seekToLast in day 2 returns -1, cursor tries day 1.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_seek_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_seek_empty VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // A exists in day 1 only. LATEST ON scans day 2 first (DESC),
+            // finds 0 rows for A, falls to day 1.
+            assertSql("""
+                    price
+                    1.0
+                    """, "SELECT price FROM t_seek_empty WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
 }
