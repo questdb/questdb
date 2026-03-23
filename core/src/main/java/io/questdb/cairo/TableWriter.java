@@ -4473,11 +4473,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // No column top change: hard link existing index files.
                     if (
                             !linkFile(ff,
-                            keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
-                            keyFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
+                                    keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                                    keyFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
                             ) || !linkFile(ff,
-                            valueFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
-                            valueFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
+                                    valueFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                                    valueFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
                             )) {
                         throw CairoException.critical(0)
                                 .put("index files do not exist [path=")
