@@ -461,12 +461,11 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub ON true
                             ORDER BY o.id, sub.val
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
 
-    // UNION branch with aggregate at deeper nesting level
     @Test
     public void testLateralWithUnionDeepAggregate() throws Exception {
         assertMemoryLeak(() -> {
@@ -510,7 +509,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub
                             ORDER BY t1.x, sub.val
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -559,7 +558,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub
                             ORDER BY t1.x, sub.val
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -912,7 +911,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1307,7 +1306,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             LATERAL (SELECT qty FROM trades) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1490,7 +1489,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1714,11 +1713,11 @@ public class LateralJoinTest extends AbstractCairoTest {
             // SAMPLE BY rewritten to GROUP BY; order 3 has no trades → LEFT fills NULLs
             assertQueryNoLeakCheck(
                     """
-                            id\tts\ttotal
-                            1\t2024-01-01T00:00:00.000000Z\t10.0
-                            1\t2024-01-01T00:30:00.000000Z\t20.0
-                            2\t2024-01-01T01:00:00.000000Z\t30.0
-                            3\tnull\tnull
+                            id	ts	total
+                            1	2024-01-01T00:00:00.000000Z	10.0
+                            1	2024-01-01T00:30:00.000000Z	20.0
+                            2	2024-01-01T01:00:00.000000Z	30.0
+                            3		null
                             """,
                     """
                             SELECT o.id, t.ts, t.total
@@ -2905,7 +2904,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
