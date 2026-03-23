@@ -554,10 +554,7 @@ public class QwpWalAppender implements QuietCloseable {
                                         tsCursor.getValueCount(), 8, tsCursor.getNullBitmapAddress(), rowCount);
                             }
                         } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (ilpType == TYPE_TIMESTAMP || ilpType == TYPE_TIMESTAMP_NANOS) {
-                                appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
-                                        fixedCursor.getValueCount(), 8, fixedCursor.getNullBitmapAddress(), rowCount);
-                            } else if (isIntegerWireType(ilpType)) {
+                            if (isIntegerWireType(ilpType)) {
                                 // Integer → timestamp: raw epoch offset
                                 appender.putIntegerToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
                             } else {
