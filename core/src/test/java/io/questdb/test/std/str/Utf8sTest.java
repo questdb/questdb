@@ -1220,6 +1220,93 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testStrCpyUtf8() {
+        final int bufSize = 64;
+        long mem = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // empty string
+            Assert.assertEquals(0, Utf8s.strCpyUtf8("", mem, bufSize));
+
+            // maxBytes = 0
+            Assert.assertEquals(0, Utf8s.strCpyUtf8("hello", mem, 0));
+
+            // pure ASCII
+            int n = Utf8s.strCpyUtf8("hello", mem, bufSize);
+            Assert.assertEquals(5, n);
+            Assert.assertEquals("hello", readUtf8(mem, n));
+
+            // 2-byte UTF-8 (Latin, Cyrillic, etc.)
+            n = Utf8s.strCpyUtf8("\u00e9\u00fc", mem, bufSize); // é ü
+            Assert.assertEquals(4, n);
+            Assert.assertEquals("\u00e9\u00fc", readUtf8(mem, n));
+
+            // 3-byte UTF-8 (CJK, etc.)
+            n = Utf8s.strCpyUtf8("\u4e16\u754c", mem, bufSize); // 世界
+            Assert.assertEquals(6, n);
+            Assert.assertEquals("\u4e16\u754c", readUtf8(mem, n));
+
+            // 4-byte UTF-8 (surrogate pair: emoji U+1F600)
+            String emoji = "\uD83D\uDE00";
+            n = Utf8s.strCpyUtf8(emoji, mem, bufSize);
+            Assert.assertEquals(4, n);
+            Assert.assertEquals(emoji, readUtf8(mem, n));
+
+            // lone high surrogate replaced with '?'
+            n = Utf8s.strCpyUtf8("\uD83Da", mem, bufSize);
+            Assert.assertEquals(2, n);
+            Assert.assertEquals("?a", readUtf8(mem, n));
+
+            // lone low surrogate replaced with '?'
+            n = Utf8s.strCpyUtf8("\uDE00b", mem, bufSize);
+            Assert.assertEquals(2, n);
+            Assert.assertEquals("?b", readUtf8(mem, n));
+
+            // mixed: ASCII + 2-byte + 3-byte + 4-byte
+            String mixed = "A\u00e9\u4e16\uD83D\uDE00";
+            n = Utf8s.strCpyUtf8(mixed, mem, bufSize);
+            Assert.assertEquals(1 + 2 + 3 + 4, n);
+            Assert.assertEquals(mixed, readUtf8(mem, n));
+
+            // truncation: ASCII at boundary
+            n = Utf8s.strCpyUtf8("abcdef", mem, 3);
+            Assert.assertEquals(3, n);
+            Assert.assertEquals("abc", readUtf8(mem, n));
+
+            // truncation: 2-byte char doesn't fit
+            n = Utf8s.strCpyUtf8("a\u00e9b", mem, 2);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            // truncation: 3-byte char doesn't fit
+            n = Utf8s.strCpyUtf8("a\u4e16b", mem, 3);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            // truncation: 4-byte char (surrogate pair) doesn't fit
+            n = Utf8s.strCpyUtf8("a\uD83D\uDE00b", mem, 4);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            // truncation: 2-byte char fits exactly
+            n = Utf8s.strCpyUtf8("a\u00e9", mem, 3);
+            Assert.assertEquals(3, n);
+            Assert.assertEquals("a\u00e9", readUtf8(mem, n));
+
+            // truncation: 3-byte char fits exactly
+            n = Utf8s.strCpyUtf8("a\u4e16", mem, 4);
+            Assert.assertEquals(4, n);
+            Assert.assertEquals("a\u4e16", readUtf8(mem, n));
+
+            // truncation: 4-byte char fits exactly
+            n = Utf8s.strCpyUtf8("a\uD83D\uDE00", mem, 5);
+            Assert.assertEquals(5, n);
+            Assert.assertEquals("a\uD83D\uDE00", readUtf8(mem, n));
+        } finally {
+            Unsafe.free(mem, bufSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testUtf8CharDecode() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(8)) {
             testUtf8Char("A", sink, false); // 1 byte
@@ -1435,6 +1522,14 @@ public class Utf8sTest {
             Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
         }
         return buf + bytes.length;
+    }
+
+    private static String readUtf8(long addr, int len) {
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = Unsafe.getUnsafe().getByte(addr + i);
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static void testUtf8Char(String x, MutableUtf8Sink sink, boolean failExpected) {
