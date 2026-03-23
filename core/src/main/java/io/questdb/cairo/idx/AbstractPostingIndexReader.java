@@ -371,6 +371,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     private void readIndexMetadataFromBestPage() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
+            Unsafe.getUnsafe().loadFence();
             long memSize = keyMem.size();
             long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
             long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;

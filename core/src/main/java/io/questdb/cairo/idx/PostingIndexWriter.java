@@ -2156,6 +2156,7 @@ public class PostingIndexWriter implements IndexWriter {
         int gen0KeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         int gen0MinKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
         int gen0MaxKey = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+        Unsafe.getUnsafe().storeFence();
         writeMetadataPage(genCount,
                 keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
                 0, 0L, gen0Size, gen0KeyCount, gen0MinKey, gen0MaxKey);
