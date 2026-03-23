@@ -360,6 +360,38 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
+    private static void generateConvertPartitionToNative(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
+    private static void generateConvertPartitionToParquet(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
     private static void generateDropParquetEncoding(
             ObjList<FuzzTransaction> transactionList,
             int metadataVersion,
@@ -391,38 +423,6 @@ public class FuzzTransactionGenerator {
             transactionList.add(transaction);
             return;
         }
-    }
-
-    private static void generateConvertPartitionToNative(
-            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
-    ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
-        FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
-        transaction.waitBarrierVersion = waitBarrierVersion;
-        transaction.structureVersion = metadataVersion;
-        transaction.waitAllDone = true;
-        transactionList.add(transaction);
-    }
-
-    private static void generateConvertPartitionToParquet(
-            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
-    ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
-        FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
-        transaction.waitBarrierVersion = waitBarrierVersion;
-        transaction.structureVersion = metadataVersion;
-        transaction.waitAllDone = true;
-        transactionList.add(transaction);
     }
 
     private static void generateDropPartition(

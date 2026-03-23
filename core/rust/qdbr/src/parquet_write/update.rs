@@ -119,6 +119,7 @@ pub struct ParquetUpdater {
     result_file_size: u64,
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
+    target_col_id_to_pos: Option<HashMap<i32, usize>>,
 }
 
 impl ParquetUpdater {
@@ -287,6 +288,7 @@ impl ParquetUpdater {
             result_file_size: 0,
             result_unused_bytes: 0,
             target_qdb_meta: None,
+            target_col_id_to_pos: None,
         })
     }
 
@@ -535,6 +537,19 @@ impl ParquetUpdater {
                 .push(QdbMetaCol { column_type, column_top: 0, format, ascii: None });
         }
 
+        // Cache column_id → target schema position map for use during
+        // copy_row_group_with_null_columns(). The target schema is invariant
+        // across all row group copies, so building this once avoids a HashMap
+        // allocation per row group.
+        let target_fields = self.parquet_file.schema().fields();
+        self.target_col_id_to_pos = Some(
+            target_fields
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))
+                .collect(),
+        );
+
         self.target_qdb_meta = Some(qdb_meta);
         Ok(())
     }
@@ -600,14 +615,16 @@ impl ParquetUpdater {
         let new_offset = self.parquet_file.current_offset();
         let offset_delta = new_offset as i64 - rg_start as i64;
 
-        // Build column_id → target schema position map.
+        // Use the cached column_id → target schema position map built in
+        // set_target_schema(). This avoids a HashMap allocation per row group.
         let target_fields = self.parquet_file.schema().fields();
         let old_fields = self.file_metadata.schema_descr.fields();
-        let target_col_id_to_target_pos: HashMap<i32, usize> = target_fields
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f): (usize, &ParquetType)| f.get_field_info().id.map(|id| (id, i)))
-            .collect();
+        let target_col_id_to_pos = self.target_col_id_to_pos.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "copy_row_group_with_null_columns: target schema not set"
+            )
+        })?;
 
         // Merge existing and null column chunks in target schema order.
         let target_col_count = target_fields.len();
@@ -620,7 +637,7 @@ impl ParquetUpdater {
             let id = old_fields
                 .get(old_pos)
                 .and_then(|f: &ParquetType| f.get_field_info().id);
-            if let Some(&target_pos) = id.and_then(|id| target_col_id_to_target_pos.get(&id)) {
+            if let Some(&target_pos) = id.and_then(|id| target_col_id_to_pos.get(&id)) {
                 let mut col_chunk = col_meta.into_thrift();
                 adjust_column_chunk_offsets(&mut col_chunk, offset_delta);
                 merged_cols[target_pos] = Some(col_chunk);

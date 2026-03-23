@@ -22,6 +22,10 @@ You are a senior QuestDB engineer performing a blocking code review. QuestDB is 
   requires physically impossible conditions (billions of columns, corrupted JNI inputs, values that no caller can
   produce), it is not a real finding — drop it. Focus on bugs that real workloads can trigger, not theoretical edge
   cases that exist only in the type system.
+- **QuestDB runs with Java assertions enabled (`-ea`).** Assertions are a valid guard for invariants that indicate
+  corruption or internal bugs. Do NOT flag `assert` as insufficient — it is the preferred mechanism for conditions
+  that should never occur in a non-corrupt database. Only flag an `assert` if the condition can plausibly be triggered
+  by normal (non-corrupt) user operations.
 
 ## Step 1: Gather PR context
 
@@ -78,16 +82,20 @@ For each finding in the draft report:
 1. **Read the actual source code** at the exact lines cited. Do not rely on the agent's description alone.
 2. **Trace the full code path**: follow callers, inheritance hierarchies, and runtime types. A method called on a base-class reference may dispatch to a subclass override (e.g., `PartitionDescriptor.clear()` vs `OwnedMemoryPartitionDescriptor.clear()`).
 3. **Check both sides of JNI/FFI boundaries**: if a finding involves Java↔Rust interaction, read both the Java caller and the Rust JNI function. Verify ownership transfer, error propagation, and cleanup on both sides.
-4. **For resource leak claims**: trace every allocation to its corresponding free/close on ALL code paths (happy path, error path, finally blocks). Check for polymorphic `close()`/`clear()` overrides.
-5. **For Rust panic claims**: verify whether the panic site is actually reachable. Trace control flow backwards — a preceding guard or early return may make it unreachable.
-6. **For Rust panic claims**: if panic is caused by invaid JNI call, verfiy if there is a realistic sceanario where JAVA
-   can pass invalid parameters.
-7. **For Rust numeric overflow claims** check how realistic is the overflow. Keep in mind that QuestDB operates on
-   billion or few trillion rows at most. Thousands of tables and thousands of columns but not billions.
-9. **For performance claims**: verify at which scenario the performance is measurable. Downgrade performance claims to
-   nits if they save a paper clip on a cargo ship. GC allocations are exceptions — even a single allocation on a hot
-   path is worth flagging.
-8. **Classify each finding** as:
+4. **For resource leak claims**: trace every allocation to its corresponding free/close on ALL code paths (happy path,
+   error path, finally blocks). Check for polymorphic `close()`/`clear()` overrides. Before claiming a leak between
+   allocation and cleanup registration, verify that the intervening code can actually throw.
+5. **For Rust panic claims**: verify whether the panic site is actually reachable. Trace control flow backwards — a
+   preceding guard or early return may make it unreachable.
+6. **For Rust panic claims via JNI**: trace the Java caller to check whether it can actually pass parameters that
+   trigger the panic. If every caller validates inputs before the JNI call, the panic is unreachable — drop it.
+7. **For Rust numeric overflow claims**: check whether the overflow is reachable at realistic scale. QuestDB handles
+   billions to a few trillion rows, thousands of tables, and thousands of columns — not billions of columns or
+   quintillions of rows. If overflow requires values beyond that scale, drop it.
+8. **For performance claims**: check whether the cost is measurable in a realistic scenario. Downgrade to a nit if the
+   saving is negligible relative to the surrounding work. Exception: GC allocations on a hot path are always worth
+   flagging, even a single one.
+9. **Classify each finding** as:
     - **CONFIRMED** — the bug is real and reproducible via the traced code path
     - **FALSE POSITIVE** — the code is actually correct (explain why)
     - **CONFIRMED with nuance** — the issue exists but is less severe than stated (explain)

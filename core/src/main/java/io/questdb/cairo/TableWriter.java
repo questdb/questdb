@@ -3398,11 +3398,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
+    private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
-                return;
+                return true;
             } else if (ff.exists(to)) {
                 LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
                 try {
@@ -3415,14 +3415,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // when this is false.
                         LOG.info().$("cannot delete file to create link with the same name," +
                                 " assuming already correctly linked [path=").$(to).$(", linkSrc=").$(from).I$();
-                        return;
+                        return true;
                     } else {
                         throw e;
                     }
                 }
                 if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                     LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
-                    return;
+                    return true;
                 }
             }
 
@@ -3432,6 +3432,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", to=").put(to)
                     .put(']');
         }
+        return false;
     }
 
     @NotNull
@@ -4470,14 +4471,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 } else {
                     // No column top change: hard link existing index files.
-                    linkFile(ff,
+                    if (
+                            !linkFile(ff,
                             keyFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
                             keyFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
-                    );
-                    linkFile(ff,
+                            ) || !linkFile(ff,
                             valueFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
                             valueFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
-                    );
+                            )) {
+                        throw CairoException.critical(0)
+                                .put("index files do not exist [path=")
+                                .put(path.trimTo(srcDirLen))
+                                .put(']');
+                    }
                 }
             }
         } finally {
