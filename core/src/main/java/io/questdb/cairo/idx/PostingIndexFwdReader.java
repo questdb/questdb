@@ -169,6 +169,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return coverCount > 0 && sidecarMems != null && genCount == 1;
         }
 
+        @Override
+        public long seekToLast() {
+            long lastRowId = -1;
+            while (hasNext()) {
+                lastRowId = next();
+            }
+            return lastRowId;
+        }
+
         private int sidecarValueIndex() {
             // sidecarStrideKeyStart tracks values skipped by block-skip (delta mode)
             // or binary search (flat mode) within this key's decoded sidecar block.

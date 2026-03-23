@@ -45,4 +45,11 @@ public interface CoveringRowCursor extends RowCursor {
     short getCoveredShort(int includeIdx);
 
     boolean hasCovering();
+
+    /**
+     * Positions the cursor at the last row, returning its row ID.
+     * After this call, getCoveredXxx() returns values for the last row.
+     * Returns -1 if the cursor has no rows.
+     */
+    long seekToLast();
 }

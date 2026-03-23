@@ -726,8 +726,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseAllWriters();
 
-            // Both partitions should have correct values (ts forces non-covering path
-            // since O3-created WAL partitions may lack covering sidecar data)
+            // O3-created WAL partitions may have incorrect covering sidecar data.
+            // Including ts forces the non-covering path for correctness.
             assertSql("""
                     ts\tprice\tqty
                     2024-01-01T00:00:00.000000Z\t10.5\t100
@@ -2834,6 +2834,109 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("""
                     sym
                     """, "SELECT DISTINCT sym FROM t_distinct_empty");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_bind VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-02T00:00:00', 'A', 2.0),
+                    ('2024-01-02T12:00:00', 'B', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "A");
+            assertSql("""
+                    price
+                    2.0
+                    """, "SELECT price FROM t_latest_bind WHERE sym = :sym LATEST ON ts PARTITION BY sym");
+
+            // Re-execute with different value
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "B");
+            assertSql("""
+                    price
+                    3.0
+                    """, "SELECT price FROM t_latest_bind WHERE sym = :sym LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testDistinctSymWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_wal VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'C', 3.0)
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym
+                    A
+                    B
+                    C
+                    """, "SELECT DISTINCT sym FROM t_distinct_wal");
+        });
+    }
+
+    @Test
+    public void testDistinctSymBitmapFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // BITMAP index (not POSTING) should NOT use PostingIndexDistinct
+            execute("""
+                    CREATE TABLE t_distinct_bmp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_bmp VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Should still return correct results via GROUP BY path
+            assertSql("""
+                    sym
+                    A
+                    B
+                    """, "SELECT DISTINCT sym FROM t_distinct_bmp");
+
+            // Plan should NOT show PostingIndexDistinct
+            assertPlanNoLeakCheck(
+                    "SELECT DISTINCT sym FROM t_distinct_bmp",
+                    """
+                            GroupBy vectorized: true workers: 1
+                              keys: [sym]
+                              values: [count(*)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t_distinct_bmp
+                            """
+            );
         });
     }
 }

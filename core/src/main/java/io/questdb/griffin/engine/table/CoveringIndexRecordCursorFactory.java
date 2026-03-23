@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexReader;
@@ -274,11 +275,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static class CoveringCursor implements RecordCursor {
+        private Record activeRecord;
         private final IntList columnIndexes;
+        private final CoveringRecord coveringRecord;
+        private final FallbackRecord fallbackRecord;
         private final int indexColumnIndex;
         private final boolean latestBy;
         private final IntList multiKeys;
-        private final CoveringRecord record;
         private final int[] symbolIncludeCols;
         private final SymbolTable[] symTablesCache;
         private int cachedPartitionIndex;
@@ -296,7 +299,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         boolean latestBy) {
             this.indexColumnIndex = indexColumnIndex;
             this.symbolKey = symbolKey;
-            this.record = new CoveringRecord(queryColToIncludeIdx, symbolKey);
+            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, symbolKey);
+            this.fallbackRecord = new FallbackRecord(queryColToIncludeIdx, symbolKey, columnIndexes);
             this.multiKeys = multiKeyCapacity > 0 ? new IntList(multiKeyCapacity) : null;
             this.symbolIncludeCols = symbolIncludeCols;
             this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
@@ -313,7 +317,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecord() {
-            return record;
+            return activeRecord;
         }
 
         @Override
@@ -336,7 +340,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             while (true) {
                 if (currentRowCursor != null && currentRowCursor.hasNext()) {
-                    record.setRowId(currentRowCursor.next());
+                    long rowId = currentRowCursor.next();
+                    coveringRecord.setRowId(rowId);
+                    fallbackRecord.setRowId(rowId);
                     return true;
                 }
                 if (multiKeys != null) {
@@ -402,15 +408,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         frame.getRowLo(),
                         frame.getRowHi() - 1
                 );
-                if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                    long lastRowId = -1;
-                    while (crc.hasNext()) {
-                        lastRowId = crc.next();
-                    }
+                if (rowCursor instanceof CoveringRowCursor crc) {
+                    long lastRowId = crc.seekToLast();
                     if (lastRowId >= 0) {
-                        record.of(crc);
-                        record.setRowId(lastRowId);
-                        record.setSymbolKey(rawSymbolKey);
+                        if (crc.hasCovering()) {
+                            coveringRecord.of(crc);
+                            coveringRecord.setSymbolKey(rawSymbolKey);
+                            coveringRecord.setRowId(lastRowId);
+                            activeRecord = coveringRecord;
+                        } else {
+                            fallbackRecord.of(tableReader, frame.getPartitionIndex());
+                            fallbackRecord.setSymbolKey(rawSymbolKey);
+                            fallbackRecord.setRowId(lastRowId);
+                            activeRecord = fallbackRecord;
+                        }
                         return true;
                     }
                 }
@@ -455,14 +466,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.currentKeyIdx = 0;
             this.cachedPartitionIndex = -1;
             this.latestByDone = false;
-            this.record.of(null);
-            this.record.setSymbolTable(tableReader.getSymbolMapReader(indexColumnIndex));
+            this.activeRecord = coveringRecord;
+            this.coveringRecord.of(null);
+            SymbolTable indexSymbolTable = tableReader.getSymbolMapReader(indexColumnIndex);
+            this.coveringRecord.setSymbolTable(indexSymbolTable);
+            this.fallbackRecord.setSymbolTable(indexSymbolTable);
             if (symbolIncludeCols != null) {
                 for (int i = 0, n = symbolIncludeCols.length; i < n; i++) {
                     int col = symbolIncludeCols[i];
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
-                record.setIncludeSymbolTables(symTablesCache);
+                coveringRecord.setIncludeSymbolTables(symTablesCache);
+                fallbackRecord.setIncludeSymbolTables(symTablesCache);
             }
         }
 
@@ -470,12 +485,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.frameCursor = null;
             this.tableReader = null;
             this.currentRowCursor = null;
-            this.record.of(null);
+            this.activeRecord = coveringRecord;
+            this.coveringRecord.of(null);
         }
 
         void resolveKey(int resolvedKey) {
             this.symbolKey = resolvedKey;
-            this.record.setSymbolKey(resolvedKey);
+            this.coveringRecord.setSymbolKey(resolvedKey);
+            this.fallbackRecord.setSymbolKey(resolvedKey);
         }
 
         private boolean advanceMultiKey() {
@@ -533,10 +550,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     rowLo,
                     rowHi - 1
             );
-            if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+            if (rowCursor instanceof CoveringRowCursor crc) {
                 currentRowCursor = crc;
-                record.of(crc);
-                record.setSymbolKey(rawSymbolKey);
+                if (crc.hasCovering()) {
+                    coveringRecord.of(crc);
+                    coveringRecord.setSymbolKey(rawSymbolKey);
+                    activeRecord = coveringRecord;
+                } else {
+                    fallbackRecord.of(tableReader, partitionIndex);
+                    fallbackRecord.setSymbolKey(rawSymbolKey);
+                    activeRecord = fallbackRecord;
+                }
                 return true;
             }
             return false;
@@ -707,4 +731,160 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return queryColToIncludeIdx[col];
         }
     }
+
+    /**
+     * Fallback record that reads covered column values from column files via
+     * TableReader when sidecar data is unavailable (unsealed partitions).
+     * Zero per-row branching — the cursor swaps between CoveringRecord and
+     * FallbackRecord at partition boundaries.
+     */
+    private static class FallbackRecord implements Record {
+        private final IntList columnIndexes;
+        private final int[] queryColToIncludeIdx;
+        private SymbolTable[] includeSymbolTables;
+        private int partitionIndex;
+        private long rowId;
+        private int symbolKey;
+        private SymbolTable symbolTable;
+        private TableReader tableReader;
+
+        FallbackRecord(int[] queryColToIncludeIdx, int symbolKey, IntList columnIndexes) {
+            this.queryColToIncludeIdx = queryColToIncludeIdx;
+            this.symbolKey = symbolKey;
+            this.columnIndexes = columnIndexes;
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return getByte(col) != 0;
+        }
+
+        @Override
+        public byte getByte(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getByte(rowId);
+            }
+            return 0;
+        }
+
+        @Override
+        public long getDate(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public double getDouble(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getDouble(rowId * Double.BYTES);
+            }
+            return Double.NaN;
+        }
+
+        @Override
+        public float getFloat(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getFloat(rowId * Float.BYTES);
+            }
+            return Float.NaN;
+        }
+
+        @Override
+        public int getInt(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getInt(rowId * Integer.BYTES);
+            }
+            return Integer.MIN_VALUE;
+        }
+
+        @Override
+        public long getLong(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getLong(rowId * Long.BYTES);
+            }
+            return Long.MIN_VALUE;
+        }
+
+        @Override
+        public long getRowId() {
+            return rowId;
+        }
+
+        @Override
+        public short getShort(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getShort(rowId * Short.BYTES);
+            }
+            return 0;
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            return null;
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return null;
+        }
+
+        @Override
+        public CharSequence getSymA(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx == -1 && symbolTable != null) {
+                return symbolTable.valueOf(symbolKey);
+            }
+            if (includeIdx >= 0 && includeSymbolTables != null) {
+                SymbolTable st = includeSymbolTables[col];
+                if (st != null) {
+                    return st.valueOf(getInt(col));
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence getSymB(int col) {
+            return getSymA(col);
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return getLong(col);
+        }
+
+        void of(TableReader reader, int partitionIndex) {
+            this.tableReader = reader;
+            this.partitionIndex = partitionIndex;
+        }
+
+        void setIncludeSymbolTables(SymbolTable[] tables) {
+            this.includeSymbolTables = tables;
+        }
+
+        void setRowId(long rowId) {
+            this.rowId = rowId;
+        }
+
+        void setSymbolKey(int key) {
+            this.symbolKey = key;
+        }
+
+        void setSymbolTable(SymbolTable symbolTable) {
+            this.symbolTable = symbolTable;
+        }
+
+        private MemoryCR columnMem(int col) {
+            int readerCol = columnIndexes.getQuick(col);
+            int colBase = tableReader.getColumnBase(partitionIndex);
+            return tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
+        }
+
+        private int getIncludeIdx(int col) {
+            if (col < 0 || col >= queryColToIncludeIdx.length) {
+                return -2;
+            }
+            return queryColToIncludeIdx[col];
+        }
+    }
 }
+
