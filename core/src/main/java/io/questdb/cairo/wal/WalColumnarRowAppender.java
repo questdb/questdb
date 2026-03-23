@@ -1020,12 +1020,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
             } else {
                 strSink.clear();
-                int bits = cursor.getPrecision();
-                if (bits < 0) {
-                    GeoHashes.appendCharsUnsafe(cursor.getGeoHash(), -bits, strSink);
-                } else {
-                    GeoHashes.appendBinaryStringUnsafe(cursor.getGeoHash(), bits, strSink);
-                }
+                GeoHashes.appendBinaryStringUnsafe(cursor.getGeoHash(), cursor.getPrecision(), strSink);
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
@@ -1045,12 +1040,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, null);
             } else {
                 utf8Sink.clear();
-                int bits = cursor.getPrecision();
-                if (bits < 0) {
-                    GeoHashes.appendCharsUnsafe(cursor.getGeoHash(), -bits, utf8Sink);
-                } else {
-                    GeoHashes.appendBinaryStringUnsafe(cursor.getGeoHash(), bits, utf8Sink);
-                }
+                GeoHashes.appendBinaryStringUnsafe(cursor.getGeoHash(), cursor.getPrecision(), utf8Sink);
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
