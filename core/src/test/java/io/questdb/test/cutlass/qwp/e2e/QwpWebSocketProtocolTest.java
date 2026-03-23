@@ -54,8 +54,23 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testCloseFrameExtensionCode2000RespondsWithProtocolError() throws Exception {
+        sendCloseAndAssertResponseCode(createClosePayload(2000), WebSocketCloseCode.PROTOCOL_ERROR);
+    }
+
+    @Test
+    public void testCloseFrameExtensionCode2999RespondsWithProtocolError() throws Exception {
+        sendCloseAndAssertResponseCode(createClosePayload(2999), WebSocketCloseCode.PROTOCOL_ERROR);
+    }
+
+    @Test
     public void testCloseFrameNoPayloadRespondsWithNormalClosure() throws Exception {
         sendCloseAndAssertResponseCode(new byte[0], WebSocketCloseCode.NORMAL_CLOSURE);
+    }
+
+    @Test
+    public void testCloseFrameReservedCode1004RespondsWithProtocolError() throws Exception {
+        sendCloseAndAssertResponseCode(createClosePayload(1004), WebSocketCloseCode.PROTOCOL_ERROR);
     }
 
     @Test
