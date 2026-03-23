@@ -255,24 +255,32 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case ADD_COLUMN -> securityContext.authorizeAlterTableAddColumn(tableToken);
             case DROP_COLUMN -> securityContext.authorizeAlterTableDropColumn(tableToken, getAuthColumnNames());
             case RENAME_COLUMN -> securityContext.authorizeAlterTableRenameColumn(tableToken, getAuthColumnNames());
-            case CHANGE_COLUMN_TYPE -> securityContext.authorizeAlterTableAlterColumnType(tableToken, getAuthColumnNames());
-            case CHANGE_SYMBOL_CAPACITY -> securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, getAuthColumnNames());
+            case CHANGE_COLUMN_TYPE ->
+                    securityContext.authorizeAlterTableAlterColumnType(tableToken, getAuthColumnNames());
+            case CHANGE_SYMBOL_CAPACITY ->
+                    securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, getAuthColumnNames());
             case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthColumnNames());
             case DROP_INDEX -> securityContext.authorizeAlterTableDropIndex(tableToken, getAuthColumnNames());
-            case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE -> securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
-            case DROP_PARTITION, FORCE_DROP_PARTITION, SQUASH_PARTITIONS -> securityContext.authorizeAlterTableDropPartition(tableToken);
+            case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE ->
+                    securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
+            case DROP_PARTITION, FORCE_DROP_PARTITION, SQUASH_PARTITIONS ->
+                    securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL,
-                 SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING -> securityContext.authorizeAlterTableSetParam(tableToken);
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
+                    securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
-            // TODO: need to add new permissions for CONVERT_PARTITION_TO_PARQUET and CONVERT_PARTITION_TO_NATIVE,
-            //  and also new authorize...() methods on SecurityContext.
-            //  authorizeAlterTableSetType() is for changing the type of the table to WAL/non-WAL.
-            //case CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE -> securityContext.authorizeAlterTableSetType(tableToken);
+            // TODO: need to add new permissions for CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE,
+            //  SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING
+            //  and also need new authorize...() methods on SecurityContext.
+            //case CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE ->
+            //        securityContext.authorizeAlterTableSetType(tableToken);
+            //case SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING ->
+            //        securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
-            case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH -> securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
+            case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
+                    securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
             default -> {
                 // DO_NOTHING, RENAME_TABLE (handled by engine directly)
             }
