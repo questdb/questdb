@@ -146,8 +146,8 @@ public final class QwpSchemaHash {
                     hasher.update((byte) (0x80 | (c & 0x3F)));
                 }
             }
-            // Wire type code: type | (nullable ? 0x80 : 0)
-            byte wireType = (byte) (col.getTypeCode() | (col.isNullable() ? 0x80 : 0));
+            // Wire type code
+            byte wireType = col.getTypeCode();
             hasher.update(wireType);
         }
 

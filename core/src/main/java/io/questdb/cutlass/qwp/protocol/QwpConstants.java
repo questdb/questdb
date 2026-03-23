@@ -235,14 +235,6 @@ public final class QwpConstants {
      */
     public static final byte TYPE_LONG_ARRAY = 0x12;
     /**
-     * Mask for type code without nullable flag.
-     */
-    public static final byte TYPE_MASK = 0x7F;
-    /**
-     * High bit indicating nullable column.
-     */
-    public static final byte TYPE_NULLABLE_FLAG = (byte) 0x80;
-    /**
      * Column type: SHORT (int16, little-endian).
      */
     public static final byte TYPE_SHORT = 0x03;
@@ -291,8 +283,7 @@ public final class QwpConstants {
      * @return size in bytes, 0 for bit-packed (BOOLEAN), or -1 for variable-width types
      */
     public static int getFixedTypeSize(byte typeCode) {
-        int code = typeCode & TYPE_MASK;
-        return switch (code) {
+        return switch (typeCode) {
             case TYPE_BOOLEAN -> 0; // Special: bit-packed
             case TYPE_BYTE -> 1;
             case TYPE_SHORT, TYPE_CHAR -> 2;
@@ -312,9 +303,7 @@ public final class QwpConstants {
      * @return type name
      */
     public static String getTypeName(byte typeCode) {
-        int code = typeCode & TYPE_MASK;
-        boolean nullable = (typeCode & TYPE_NULLABLE_FLAG) != 0;
-        String name = switch (code) {
+        return switch (typeCode) {
             case TYPE_BOOLEAN -> "BOOLEAN";
             case TYPE_BYTE -> "BYTE";
             case TYPE_SHORT -> "SHORT";
@@ -337,9 +326,8 @@ public final class QwpConstants {
             case TYPE_DECIMAL64 -> "DECIMAL64";
             case TYPE_DECIMAL128 -> "DECIMAL128";
             case TYPE_DECIMAL256 -> "DECIMAL256";
-            default -> "UNKNOWN(" + code + ")";
+            default -> "UNKNOWN(" + typeCode + ")";
         };
-        return nullable ? name + "?" : name;
     }
 
     /**
@@ -349,22 +337,13 @@ public final class QwpConstants {
      * @return true if fixed-width
      */
     public static boolean isFixedWidthType(byte typeCode) {
-        int code = typeCode & TYPE_MASK;
-        return code == TYPE_BOOLEAN ||
-                code == TYPE_BYTE ||
-                code == TYPE_SHORT ||
-                code == TYPE_CHAR ||
-                code == TYPE_INT ||
-                code == TYPE_LONG ||
-                code == TYPE_FLOAT ||
-                code == TYPE_DOUBLE ||
-                code == TYPE_TIMESTAMP ||
-                code == TYPE_TIMESTAMP_NANOS ||
-                code == TYPE_DATE ||
-                code == TYPE_UUID ||
-                code == TYPE_LONG256 ||
-                code == TYPE_DECIMAL64 ||
-                code == TYPE_DECIMAL128 ||
-                code == TYPE_DECIMAL256;
+        return switch (typeCode) {
+            case TYPE_BOOLEAN, TYPE_BYTE, TYPE_SHORT, TYPE_CHAR,
+                 TYPE_INT, TYPE_LONG, TYPE_FLOAT, TYPE_DOUBLE,
+                 TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE,
+                 TYPE_UUID, TYPE_LONG256,
+                 TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> true;
+            default -> false;
+        };
     }
 }

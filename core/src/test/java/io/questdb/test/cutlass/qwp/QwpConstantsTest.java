@@ -91,12 +91,9 @@ public class QwpConstantsTest {
         Assert.assertEquals("DECIMAL256", QwpConstants.getTypeName(TYPE_DECIMAL256));
         Assert.assertEquals("CHAR", QwpConstants.getTypeName(TYPE_CHAR));
 
-        // Test nullable types
-        byte nullableInt = (byte) (TYPE_INT | TYPE_NULLABLE_FLAG);
-        Assert.assertEquals("INT?", QwpConstants.getTypeName(nullableInt));
-
-        byte nullableString = (byte) (TYPE_STRING | TYPE_NULLABLE_FLAG);
-        Assert.assertEquals("STRING?", QwpConstants.getTypeName(nullableString));
+        // Type codes with high bit set are unknown — the high bit is not used
+        byte badInt = (byte) (TYPE_INT | 0x80);
+        Assert.assertTrue(QwpConstants.getTypeName(badInt).startsWith("UNKNOWN"));
     }
 
     @Test
@@ -173,16 +170,6 @@ public class QwpConstantsTest {
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 8) & 0xFF), expected[1]);
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 16) & 0xFF), expected[2]);
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 24) & 0xFF), expected[3]);
-    }
-
-    @Test
-    public void testNullableFlag() {
-        Assert.assertEquals((byte) 0x80, TYPE_NULLABLE_FLAG);
-        Assert.assertEquals(0x7F, TYPE_MASK);
-
-        // Test nullable type extraction
-        byte nullableInt = (byte) (TYPE_INT | TYPE_NULLABLE_FLAG);
-        Assert.assertEquals(TYPE_INT, nullableInt & TYPE_MASK);
     }
 
     @Test

@@ -33,7 +33,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <p>
  * Wire format:
  * <pre>
- * [null bitmap if nullable]: ceil(rowCount/8) bytes
+ * [if null bitmap is present]: ceil(rowCount/8) bytes
  * [scale: 1 byte] - shared for entire column
  * [values]: (rowCount - nullCount) * valueSize bytes, big-endian
  * </pre>
@@ -64,7 +64,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     private int currentValueIndex;
     // Wire pointers
     private long nullBitmapAddress;
-    private boolean nullable;
     private byte scale;
     // Configuration
     private byte typeCode;
@@ -75,7 +74,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (nullable && nullBitmapAddress != 0) {
+        if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -94,7 +93,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = TYPE_DECIMAL64;
-        nullable = false;
         valueSize = 8;
         scale = 0;
         nullBitmapAddress = 0;
@@ -192,19 +190,25 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
      * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
-     * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) throws QwpParseException {
+    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode) throws QwpParseException {
         this.typeCode = typeCode;
-        this.nullable = nullable;
         this.valueSize = getDecimalValueSize(typeCode);
 
         int offset = 0;
-        int nullCount = 0;
 
-        if (nullable) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "decimal column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -212,11 +216,13 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
                         "decimal column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
         // Read scale byte
@@ -252,8 +258,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     }
 
     private static int getDecimalValueSize(byte typeCode) {
-        int type = typeCode & TYPE_MASK;
-        return switch (type) {
+        return switch (typeCode) {
             case TYPE_DECIMAL64 -> 8;
             case TYPE_DECIMAL128 -> 16;
             case TYPE_DECIMAL256 -> 32;
@@ -262,8 +267,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     }
 
     private void readCurrentValue(long address) {
-        int type = typeCode & TYPE_MASK;
-        switch (type) {
+        switch (typeCode) {
             case TYPE_DECIMAL64:
                 // Big-endian
                 currentValue64 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));

@@ -115,12 +115,20 @@ public final class QwpNullBitmap {
     public static int countNulls(long address, int rowCount) {
         int count = 0;
         int fullBytes = rowCount >>> 3;
+        int fullLongs = fullBytes >>> 3;
+        int tailBytes = fullBytes & 7;
         int remainingBits = rowCount & 7;
 
-        // Count full bytes
-        for (int i = 0; i < fullBytes; i++) {
-            byte b = Unsafe.getUnsafe().getByte(address + i);
-            count += Integer.bitCount(b & 0xFF);
+        // Count 8 bytes at a time
+        long addr = address;
+        for (int i = 0; i < fullLongs; i++) {
+            count += Long.bitCount(Unsafe.getUnsafe().getLong(addr));
+            addr += 8;
+        }
+
+        // Count remaining full bytes
+        for (int i = 0; i < tailBytes; i++) {
+            count += Integer.bitCount(Unsafe.getUnsafe().getByte(addr + i) & 0xFF);
         }
 
         // Count remaining bits in last partial byte

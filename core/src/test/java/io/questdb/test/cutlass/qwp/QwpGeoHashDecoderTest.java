@@ -105,12 +105,12 @@ public class QwpGeoHashDecoderTest {
         int nullCount = 2;
         int nonNullCount = rowCount - nullCount;
 
+        int flagSize = 1;
         int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
         int precisionVarintSize = 1;
-        int packedSize = bitmapSize + precisionVarintSize + nonNullCount * valueSize;
+        int packedSize = flagSize + bitmapSize + precisionVarintSize + nonNullCount * valueSize;
 
-        // Allocate extra space so the buggy cursor doesn't read past the buffer
-        int allocSize = bitmapSize + precisionVarintSize + rowCount * valueSize;
+        int allocSize = packedSize + 10; // extra space for safety
 
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -119,23 +119,30 @@ public class QwpGeoHashDecoderTest {
                 Unsafe.getUnsafe().putByte(address + i, (byte) 0);
             }
 
+            int offset = 0;
+
+            // Write null bitmap flag
+            Unsafe.getUnsafe().putByte(address + offset, (byte) 1); // null bitmap present
+            offset += flagSize;
+
             // Write null bitmap (rows 1 and 3 are null)
-            QwpNullBitmap.fillNoneNull(address, rowCount);
-            QwpNullBitmap.setNull(address, 1);
-            QwpNullBitmap.setNull(address, 3);
+            QwpNullBitmap.fillNoneNull(address + offset, rowCount);
+            QwpNullBitmap.setNull(address + offset, 1);
+            QwpNullBitmap.setNull(address + offset, 3);
+            offset += bitmapSize;
 
             // Write precision varint
-            QwpVarint.encode(address + bitmapSize, precision);
+            QwpVarint.encode(address + offset, precision);
+            offset += precisionVarintSize;
 
             // Write packed values (only non-null rows)
-            long valuesStart = address + bitmapSize + precisionVarintSize;
-            Unsafe.getUnsafe().putByte(valuesStart, (byte) 22);      // row 0
-            Unsafe.getUnsafe().putByte(valuesStart + 1, (byte) 31);  // row 2
-            Unsafe.getUnsafe().putByte(valuesStart + 2, (byte) 21);  // row 4
+            Unsafe.getUnsafe().putByte(address + offset, (byte) 22);      // row 0
+            Unsafe.getUnsafe().putByte(address + offset + 1, (byte) 31);  // row 2
+            Unsafe.getUnsafe().putByte(address + offset + 2, (byte) 21);  // row 4
 
             // Initialize cursor
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
-            int consumed = cursor.of(address, allocSize, rowCount, true);
+            int consumed = cursor.of(address, allocSize, rowCount);
 
             // Verify bytes consumed matches packed format
             Assert.assertEquals("Bytes consumed should match packed format size", packedSize, consumed);
@@ -169,14 +176,14 @@ public class QwpGeoHashDecoderTest {
 
     @Test
     public void testDecodeEmptyColumn() throws QwpParseException {
-        // The cursor always parses the precision varint, even for 0 rows.
-        // Allocate a buffer with valid precision for 0 rows.
-        int allocSize = QwpVarint.encodedLength(5);
+        // no null bitmap + precision varint, 0 rows
+        int allocSize = 1 + QwpVarint.encodedLength(5); // flag byte + precision
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            QwpVarint.encode(address, 5);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            QwpVarint.encode(address + 1, 5);
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
-            int consumed = cursor.of(address, allocSize, 0, false);
+            int consumed = cursor.of(address, allocSize, 0);
             Assert.assertEquals(allocSize, consumed);
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
@@ -288,32 +295,17 @@ public class QwpGeoHashDecoderTest {
     }
 
     @Test
-    public void testDecodeThrowsOnInsufficientDataForValues() {
-        int precisionVarintSize = QwpVarint.encodedLength(10);
-        int allocSize = precisionVarintSize + 4; // only 4 bytes for values, need 10
-        long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpVarint.encode(address, 10);
-
-            QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
-            Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, allocSize, 5, false));
-        } finally {
-            Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testDecodeInvalidPrecisionTooLarge() {
         int allocSize = 10;
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             // Encode precision = 61 (invalid, max is 60)
-            QwpVarint.encode(address, 61);
+            QwpVarint.encode(address + 1, 61);
 
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
             Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, allocSize, 1, false));
+                    cursor.of(address, allocSize, 1));
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -324,12 +316,13 @@ public class QwpGeoHashDecoderTest {
         int allocSize = 10;
         long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             // Encode precision = 0 (invalid)
-            QwpVarint.encode(address, 0);
+            QwpVarint.encode(address + 1, 0);
 
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
             Assert.assertThrows(QwpParseException.class, () ->
-                    cursor.of(address, allocSize, 1, false));
+                    cursor.of(address, allocSize, 1));
         } finally {
             Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -399,6 +392,23 @@ public class QwpGeoHashDecoderTest {
     }
 
     @Test
+    public void testDecodeThrowsOnInsufficientDataForValues() {
+        int precisionVarintSize = QwpVarint.encodedLength(10);
+        int allocSize = 1 + precisionVarintSize + 4; // flag byte + precision + only 4 bytes for values
+        long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            QwpVarint.encode(address + 1, 10);
+
+            QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
+            Assert.assertThrows(QwpParseException.class, () ->
+                    cursor.of(address, allocSize, 5));
+        } finally {
+            Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testDecodeVariablePrecision() throws Exception {
         assertMemoryLeak(() -> {
             // GEOBYTE boundary
@@ -430,7 +440,7 @@ public class QwpGeoHashDecoderTest {
                 QwpTableBuffer.ColumnBuffer geoCol = buffer.getOrCreateColumn("location", TYPE_GEOHASH, false);
                 QwpTableBuffer.ColumnBuffer longCol = buffer.getOrCreateColumn("id", TYPE_LONG, false);
                 QwpTableBuffer.ColumnBuffer dblCol = buffer.getOrCreateColumn("value", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     geoCol.addGeoHash(geoValues[i], precision);
@@ -684,7 +694,7 @@ public class QwpGeoHashDecoderTest {
             QwpTableBuffer buffer = new QwpTableBuffer("test_geohash");
 
             QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
             for (int i = 0; i < values.length; i++) {
                 col.addGeoHash(values[i], precision);
@@ -727,7 +737,7 @@ public class QwpGeoHashDecoderTest {
             QwpTableBuffer buffer = new QwpTableBuffer("test_geohash");
 
             QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, true);
-            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
             for (int i = 0; i < values.length; i++) {
                 if (nulls[i]) {

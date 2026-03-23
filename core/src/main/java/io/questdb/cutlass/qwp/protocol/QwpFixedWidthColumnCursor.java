@@ -35,7 +35,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <p>
  * Wire format:
  * <pre>
- * [null bitmap if nullable]: ceil(rowCount/8) bytes
+ * [if null bitmap is present]: ceil(rowCount/8) bytes
  * [values]: (rowCount - nullCount) * valueSize bytes
  * </pre>
  */
@@ -56,10 +56,10 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     private int currentValueIndex;  // Index into non-null values
     // Wire pointers
     private long nullBitmapAddress;
-    private boolean nullable;
     private int rowCount;
     // Configuration
     private byte typeCode;
+    private int valueCount;
     private int valueSize;
     private long valuesAddress;
 
@@ -67,7 +67,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() {
         currentRow++;
 
-        if (nullable && nullBitmapAddress != 0) {
+        if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -86,8 +86,8 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = 0;
-        nullable = false;
         rowCount = 0;
+        valueCount = 0;
         valueSize = 0;
         nullBitmapAddress = 0;
         valuesAddress = 0;
@@ -144,12 +144,12 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     }
 
     /**
-     * Returns the address of the null bitmap, or 0 if not nullable.
+     * Returns the address of the null bitmap, or 0 if no null bitmap.
      * <p>
      * Used for bulk columnar writes to determine which positions need
      * null sentinel values.
      *
-     * @return the memory address of null bitmap, or 0 if not nullable
+     * @return the memory address of null bitmap, or 0 if no null bitmap
      */
     public long getNullBitmapAddress() {
         return nullBitmapAddress;
@@ -196,10 +196,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      * @return count of non-null values
      */
     public int getValueCount() {
-        if (!nullable || nullBitmapAddress == 0) {
-            return rowCount;
-        }
-        return rowCount - QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
+        return valueCount;
     }
 
     /**
@@ -231,11 +228,10 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress address of column data (starts at null bitmap if nullable, else values)
+     * @param dataAddress address of column data
      * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
      * @param typeCode    column type code
-     * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
@@ -243,18 +239,24 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
             long dataAddress,
             int dataLength,
             int rowCount,
-            byte typeCode,
-            boolean nullable
+            byte typeCode
     ) throws QwpParseException {
         this.typeCode = typeCode;
-        this.nullable = nullable;
         this.rowCount = rowCount;
         this.valueSize = QwpConstants.getFixedTypeSize(typeCode);
 
         int offset = 0;
-        int nullCount = 0;
 
-        if (nullable) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "fixed-width column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -262,14 +264,17 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
                         "fixed-width column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
-        int valueCount = rowCount - nullCount;
+        this.valueCount = rowCount - nullCount;
+        int valueCount = this.valueCount;
         long valuesSize = (long) valueCount * valueSize;
         if (offset + valuesSize > dataLength) {
             throw QwpParseException.create(
@@ -292,8 +297,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     }
 
     private void readCurrentValue(long address) {
-        int type = typeCode & TYPE_MASK;
-        switch (type) {
+        switch (typeCode) {
             case TYPE_BYTE:
                 currentLong = Unsafe.getUnsafe().getByte(address);
                 break;

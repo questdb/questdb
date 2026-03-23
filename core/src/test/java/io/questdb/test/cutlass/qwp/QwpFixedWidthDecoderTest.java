@@ -48,23 +48,25 @@ public class QwpFixedWidthDecoderTest {
         byte[] values = {1, 2, 3, -128, 127, 0};
         int rowCount = values.length;
 
-        long address = Unsafe.malloc(rowCount, MemoryTag.NATIVE_DEFAULT);
+        int size = 1 + rowCount; // flag byte + values
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putByte(address + i, values[i]);
+                Unsafe.getUnsafe().putByte(address + 1 + i, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, rowCount, rowCount, TYPE_BYTE, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_BYTE);
 
-            Assert.assertEquals(rowCount, consumed);
+            Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
                 cursor.advanceRow();
                 Assert.assertFalse(cursor.isNull());
                 Assert.assertEquals(values[i], (byte) cursor.getLong());
             }
         } finally {
-            Unsafe.free(address, rowCount, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -79,7 +81,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BYTE, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -133,7 +135,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DATE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addLong(values[i]);
@@ -179,7 +181,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addDouble(values[i]);
@@ -225,7 +227,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addDouble(values[i]);
@@ -271,7 +273,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -314,9 +316,16 @@ public class QwpFixedWidthDecoderTest {
 
     @Test
     public void testDecodeEmptyColumn() throws QwpParseException {
-        QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-        int consumed = cursor.of(0, 0, 0, TYPE_LONG, false);
-        Assert.assertEquals(0, consumed);
+        int size = 1;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            int consumed = cursor.of(address, size, 0, TYPE_LONG);
+            Assert.assertEquals(1, consumed);
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -329,7 +338,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addFloat(values[i]);
@@ -375,7 +384,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addFloat(values[i]);
@@ -419,7 +428,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -462,15 +471,17 @@ public class QwpFixedWidthDecoderTest {
     public void testDecodeInsufficientDataForNullBitmap() {
         QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
 
-        // 10 rows need 2 bytes for null bitmap, but we only provide 1
-        long address = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        // null bitmap flag=1 but only 1 byte left, not enough for bitmap (10 rows need 2 bytes)
+        int size = 2;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            cursor.of(address, 1, 10, TYPE_LONG, true);
+            Unsafe.getUnsafe().putByte(address, (byte) 1); // null bitmap present
+            cursor.of(address, size, 10, TYPE_LONG);
             Assert.fail("expected QwpParseException for truncated null bitmap");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
         } finally {
-            Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -478,11 +489,12 @@ public class QwpFixedWidthDecoderTest {
     public void testDecodeInsufficientDataForValues() {
         QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
 
-        // 10 long values need 80 bytes, we provide 40
-        int size = 40;
+        // no null bitmap + 10 long values need 80 bytes, we provide 41 (1 for flag + 40 for data)
+        int size = 41;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            cursor.of(address, size, 10, TYPE_LONG, false);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            cursor.of(address, size, 10, TYPE_LONG);
             Assert.fail("expected QwpParseException for truncated values");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -496,15 +508,16 @@ public class QwpFixedWidthDecoderTest {
         int[] values = {1, 65_536, -1, Integer.MAX_VALUE, Integer.MIN_VALUE, 0};
         int rowCount = values.length;
 
-        int size = rowCount * 4;
+        int size = 1 + rowCount * 4; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putInt(address + (long) i * 4, values[i]);
+                Unsafe.getUnsafe().putInt(address + 1 + (long) i * 4, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, size, rowCount, TYPE_INT, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_INT);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -528,7 +541,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_INT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -573,15 +586,16 @@ public class QwpFixedWidthDecoderTest {
     @Test
     public void testDecodeLargeColumn() throws QwpParseException {
         int rowCount = 100_000;
-        int size = rowCount * 8;
+        int size = 1 + rowCount * 8; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putLong(address + (long) i * 8, i);
+                Unsafe.getUnsafe().putLong(address + 1 + (long) i * 8, i);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, size, rowCount, TYPE_LONG, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_LONG);
 
             Assert.assertEquals(size, consumed);
 
@@ -608,22 +622,23 @@ public class QwpFixedWidthDecoderTest {
     @Test
     public void testDecodeLong256Column() throws QwpParseException {
         int rowCount = 2;
-        int size = rowCount * 32;
+        int size = 1 + rowCount * 32; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             // Row 0: little-endian LONG256 (4 longs, least significant first)
-            Unsafe.getUnsafe().putLong(address, 0x3333333344444444L);       // l0 (least significant)
-            Unsafe.getUnsafe().putLong(address + 8, 0x1111111122222222L);   // l1
-            Unsafe.getUnsafe().putLong(address + 16, 0xFEDCBA9876543210L);  // l2
-            Unsafe.getUnsafe().putLong(address + 24, 0x0123456789ABCDEFL);  // l3 (most significant)
+            Unsafe.getUnsafe().putLong(address + 1, 0x3333333344444444L);       // l0 (least significant)
+            Unsafe.getUnsafe().putLong(address + 1 + 8, 0x1111111122222222L);   // l1
+            Unsafe.getUnsafe().putLong(address + 1 + 16, 0xFEDCBA9876543210L);  // l2
+            Unsafe.getUnsafe().putLong(address + 1 + 24, 0x0123456789ABCDEFL);  // l3 (most significant)
 
             // Row 1: all zeros
             for (int i = 0; i < 32; i++) {
-                Unsafe.getUnsafe().putByte(address + 32 + i, (byte) 0);
+                Unsafe.getUnsafe().putByte(address + 1 + 32 + i, (byte) 0);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, size, rowCount, TYPE_LONG256, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_LONG256);
 
             Assert.assertEquals(size, consumed);
 
@@ -650,15 +665,16 @@ public class QwpFixedWidthDecoderTest {
         long[] values = {1L, 4_294_967_296L, -1L, Long.MAX_VALUE, Long.MIN_VALUE, 0L};
         int rowCount = values.length;
 
-        int size = rowCount * 8;
+        int size = 1 + rowCount * 8; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putLong(address + (long) i * 8, values[i]);
+                Unsafe.getUnsafe().putLong(address + 1 + (long) i * 8, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, size, rowCount, TYPE_LONG, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_LONG);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -682,7 +698,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_LONG, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -726,15 +742,16 @@ public class QwpFixedWidthDecoderTest {
         short[] values = {1, 256, -1, Short.MAX_VALUE, Short.MIN_VALUE, 0};
         int rowCount = values.length;
 
-        int size = rowCount * 2;
+        int size = 1 + rowCount * 2; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putShort(address + (long) i * 2, values[i]);
+                Unsafe.getUnsafe().putShort(address + 1 + (long) i * 2, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            int consumed = cursor.of(address, size, rowCount, TYPE_SHORT, false);
+            int consumed = cursor.of(address, size, rowCount, TYPE_SHORT);
 
             Assert.assertEquals(size, consumed);
             for (int i = 0; i < rowCount; i++) {
@@ -758,7 +775,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SHORT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -807,7 +824,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_TIMESTAMP, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addLong(values[i]);
@@ -853,7 +870,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_UUID, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     col.addUuid(hiValues[i], loValues[i]);
@@ -902,7 +919,7 @@ public class QwpFixedWidthDecoderTest {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_UUID, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
 
                 for (int i = 0; i < rowCount; i++) {
                     if (nulls[i]) {
@@ -945,7 +962,7 @@ public class QwpFixedWidthDecoderTest {
 
     private static int findColumnIndex(QwpTableBlockCursor table, byte typeCode) {
         for (int c = 0; c < table.getColumnCount(); c++) {
-            if ((table.getColumnDef(c).getTypeCode() & TYPE_MASK) == typeCode) {
+            if (table.getColumnDef(c).getTypeCode() == typeCode) {
                 return c;
             }
         }

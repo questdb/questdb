@@ -37,35 +37,18 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
 public final class QwpColumnDef {
     private final String name;
     private final byte[] nameUtf8;
-    private final boolean nullable;
     private final byte typeCode;
 
     /**
      * Creates a column definition.
      *
      * @param name     the column name (UTF-8)
-     * @param typeCode the QWP v1 type code (0x01-0x0F, optionally OR'd with 0x80 for nullable)
+     * @param typeCode the QWP v1 type code (0x01-0x16)
      */
     public QwpColumnDef(String name, byte typeCode) {
         this.name = name;
         this.nameUtf8 = name.getBytes(StandardCharsets.UTF_8);
-        // Extract nullable flag (high bit) and base type
-        this.nullable = (typeCode & 0x80) != 0;
-        this.typeCode = (byte) (typeCode & 0x7F);
-    }
-
-    /**
-     * Creates a column definition with explicit nullable flag.
-     *
-     * @param name     the column name
-     * @param typeCode the base type code (0x01-0x0F)
-     * @param nullable whether the column is nullable
-     */
-    public QwpColumnDef(String name, byte typeCode, boolean nullable) {
-        this.name = name;
-        this.nameUtf8 = name.getBytes(StandardCharsets.UTF_8);
-        this.typeCode = (byte) (typeCode & 0x7F);
-        this.nullable = nullable;
+        this.typeCode = typeCode;
     }
 
     @Override
@@ -74,7 +57,6 @@ public final class QwpColumnDef {
         if (o == null || getClass() != o.getClass()) return false;
         QwpColumnDef that = (QwpColumnDef) o;
         return typeCode == that.typeCode &&
-                nullable == that.nullable &&
                 name.equals(that.name);
     }
 
@@ -107,7 +89,7 @@ public final class QwpColumnDef {
     }
 
     /**
-     * Gets the base type code (without nullable flag).
+     * Gets the base type code (without null bitmap flag).
      *
      * @return type code 0x01-0x0F
      */
@@ -123,19 +105,18 @@ public final class QwpColumnDef {
     }
 
     /**
-     * Gets the wire type code (with nullable flag if applicable).
+     * Gets the wire type code.
      *
      * @return type code as sent on wire
      */
     public byte getWireTypeCode() {
-        return nullable ? (byte) (typeCode | 0x80) : typeCode;
+        return typeCode;
     }
 
     @Override
     public int hashCode() {
         int result = name.hashCode();
         result = 31 * result + typeCode;
-        result = 31 * result + (nullable ? 1 : 0);
         return result;
     }
 
@@ -146,21 +127,9 @@ public final class QwpColumnDef {
         return QwpConstants.isFixedWidthType(typeCode);
     }
 
-    /**
-     * Returns true if this column is nullable.
-     */
-    public boolean isNullable() {
-        return nullable;
-    }
-
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(name).append(':').append(getTypeName());
-        if (nullable) {
-            sb.append('?');
-        }
-        return sb.toString();
+        return name + ':' + getTypeName();
     }
 
     /**

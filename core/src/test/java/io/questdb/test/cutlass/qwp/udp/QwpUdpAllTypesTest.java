@@ -171,7 +171,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     tb.getOrCreateColumn("b_darr", TYPE_DOUBLE_ARRAY, true).addDoubleArray(new double[]{1.0, 2.0, 3.0});
                     tb.getOrCreateColumn("b_ts", TYPE_TIMESTAMP, true).addLong(1_705_276_800_000_000L);
                     tb.getOrCreateColumn("b_tsns", TYPE_TIMESTAMP_NANOS, true).addLong(1_705_276_800_000_000_123L);
-                    tb.getOrCreateColumn("", TYPE_TIMESTAMP, true).addLong(1_000_000L);
+                    tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP).addLong(1_000_000L);
                     tb.nextRow();
                 });
                 drainReceiver(receiver);
@@ -226,7 +226,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_byte", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_BYTE, false);
                     col.addByte((byte) 42);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -250,7 +250,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_char", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_CHAR, false);
                     col.addShort((short) 'A');
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -275,7 +275,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_date", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_DATE, true);
                     col.addLong(1_705_276_800_000L);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -453,7 +453,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_float", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_FLOAT, false);
                     col.addFloat(3.14f);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -477,7 +477,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_geo", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_GEOHASH, true);
                     col.addGeoHash(GeoHashes.fromString("s24se0"), 30);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -501,7 +501,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_int", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_INT, false);
                     col.addInt(12_345);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -528,7 +528,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                             0x1111111111111111L, 0x2222222222222222L,
                             0x3333333333333333L, 0x4444444444444444L
                     );
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -573,7 +573,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_short", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_SHORT, false);
                     col.addShort((short) 1234);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -824,7 +824,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_uuid", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_UUID, true);
                     col.addUuid(0x550e8400e29b41d4L, 0xa716446655440000L);
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });
@@ -848,7 +848,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 sendDirectRow("t_varchar", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_VARCHAR, true);
                     col.addString("hello varchar");
-                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateColumn("", TYPE_TIMESTAMP, true);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                     ts.addLong(1_000_000L);
                     tb.nextRow();
                 });

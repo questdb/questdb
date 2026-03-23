@@ -119,7 +119,7 @@ stages:
           jdk: "1.17"
         condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
         pool:
-          name: "hetzner-docker"
+          name: "hetzner-incus"
         timeoutInMinutes: 30
         steps:
           - template: templates/client-integration-tests.yml

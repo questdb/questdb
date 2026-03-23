@@ -190,27 +190,25 @@ public class QwpSchemaHashTest {
     }
 
     @Test
-    public void testNullableFlagAffectsHash() {
+    public void testDifferentTypeCodesProduceDifferentHashes() {
         String[] names = {"value"};
 
-        // Non-nullable
         byte[] types1 = {0x05}; // LONG
-        // Nullable (high bit set)
-        byte[] types2 = {(byte) 0x85}; // LONG | 0x80
+        byte[] types2 = {0x06}; // DOUBLE
 
         long hash1 = QwpSchemaHash.computeSchemaHash(names, types1);
         long hash2 = QwpSchemaHash.computeSchemaHash(names, types2);
 
-        Assert.assertNotEquals("Nullable flag should affect hash", hash1, hash2);
+        Assert.assertNotEquals("Different types should produce different hashes", hash1, hash2);
     }
 
     @Test
     public void testSchemaHashDirectInvalidSurrogatePair() {
         ObjList<QwpColumnDef> invalidCols = new ObjList<>();
-        invalidCols.add(new QwpColumnDef("\uD800X", TYPE_LONG, false));
+        invalidCols.add(new QwpColumnDef("\uD800X", TYPE_LONG));
 
         ObjList<QwpColumnDef> expectedCols = new ObjList<>();
-        expectedCols.add(new QwpColumnDef("?X", TYPE_LONG, false));
+        expectedCols.add(new QwpColumnDef("?X", TYPE_LONG));
 
         long hashInvalid = QwpSchemaHash.computeSchemaHashDirect(invalidCols);
         long hashExpected = QwpSchemaHash.computeSchemaHashDirect(expectedCols);

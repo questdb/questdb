@@ -73,14 +73,12 @@ public class QwpColumnDefTest {
         Assert.assertEquals(QwpConstants.TYPE_CHAR, col.getTypeCode());
     }
 
-    @Test
-    public void testValidateNullableCharType() throws QwpParseException {
-        // TYPE_CHAR with nullable flag must also pass
-        byte nullableChar = (byte) (QwpConstants.TYPE_CHAR | QwpConstants.TYPE_NULLABLE_FLAG);
-        QwpColumnDef col = new QwpColumnDef("ch", nullableChar);
+    @Test(expected = QwpParseException.class)
+    public void testValidateRejectsHighBit() throws QwpParseException {
+        // The high bit is not a valid part of the type code
+        byte badType = (byte) (QwpConstants.TYPE_CHAR | 0x80);
+        QwpColumnDef col = new QwpColumnDef("ch", badType);
         col.validate();
-        Assert.assertTrue(col.isNullable());
-        Assert.assertEquals(QwpConstants.TYPE_CHAR, col.getTypeCode());
     }
 
     @Test(expected = QwpParseException.class)

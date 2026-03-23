@@ -54,8 +54,7 @@ public class QwpSenderBenchmark {
     private static final String TABLE_NAME = "complex_types";
 
     public static void main(String[] args) throws Exception {
-        dropTable();
-        createTable();
+        recreateTable();
         long tookNs = insertRows();
         System.out.printf("Inserted %,d rows in %,d ms%n", ROW_COUNT, TimeUnit.NANOSECONDS.toMillis(tookNs));
         validateContents();
@@ -88,9 +87,10 @@ public class QwpSenderBenchmark {
 
     // --- data generation helpers, all keyed off the 1-based row index i ---
 
-    private static void createTable() throws Exception {
+    private static void recreateTable() throws Exception {
         try (Connection conn = createConnection();
              Statement st = conn.createStatement()) {
+            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
             st.execute("""
                     CREATE TABLE complex_types (
                         ts TIMESTAMP,
@@ -104,13 +104,6 @@ public class QwpSenderBenchmark {
                         dbl_arr2d DOUBLE[][],
                         is_even BOOLEAN
                     ) TIMESTAMP(ts) PARTITION BY HOUR WAL""");
-        }
-    }
-
-    private static void dropTable() throws Exception {
-        try (Connection conn = createConnection();
-             Statement st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
         }
     }
 

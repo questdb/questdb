@@ -41,14 +41,15 @@ public class QwpCursorBoundsCheckTest {
 
     @Test
     public void testArrayCursorRejectsTruncatedData() {
-        int bufferSize = 4;
+        int bufferSize = 5;
         long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
-            Unsafe.getUnsafe().putByte(address, (byte) 1);
+            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.getUnsafe().putByte(address + 1, (byte) 1); // nDims=1
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
-            cursor.of(address, bufferSize, 1, TYPE_DOUBLE_ARRAY, false);
+            cursor.of(address, bufferSize, 1, TYPE_DOUBLE_ARRAY);
             Assert.fail("expected QwpParseException for truncated array data");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -63,9 +64,10 @@ public class QwpCursorBoundsCheckTest {
         long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
+            // null bitmap flag is already 0 from setMemory
 
             QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
-            cursor.of(address, bufferSize, 1000, false);
+            cursor.of(address, bufferSize, 1000);
             Assert.fail("expected QwpParseException for inflated rowCount");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -82,7 +84,7 @@ public class QwpCursorBoundsCheckTest {
             Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
 
             QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
-            cursor.of(address, bufferSize, 100, TYPE_DECIMAL64, false);
+            cursor.of(address, bufferSize, 100, TYPE_DECIMAL64);
             Assert.fail("expected QwpParseException for inflated rowCount");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -99,7 +101,7 @@ public class QwpCursorBoundsCheckTest {
             Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-            cursor.of(address, bufferSize, 1000, TYPE_LONG, false);
+            cursor.of(address, bufferSize, 1000, TYPE_LONG);
             Assert.fail("expected QwpParseException for inflated rowCount");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -137,25 +139,26 @@ public class QwpCursorBoundsCheckTest {
 
     @Test
     public void testStringCursorRejectsAttackerControlledOffset() throws QwpParseException {
-        // 1 non-null string row: offset array = 8 bytes, string data = 5 bytes
-        int legitimateSize = 13;
+        // 1 non-null string row: flag(0) + offset array (8 bytes) + string data (5 bytes)
+        int legitimateSize = 14;
         int bufferSize = 256;
         long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             Unsafe.getUnsafe().setMemory(address, bufferSize, (byte) 0);
-            Unsafe.getUnsafe().putInt(address, 0);
-            Unsafe.getUnsafe().putInt(address + 4, 5);
+            // byte 0: null bitmap flag = 0 (already zero from setMemory)
+            Unsafe.getUnsafe().putInt(address + 1, 0);
+            Unsafe.getUnsafe().putInt(address + 5, 5);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            int consumed = cursor.of(address, legitimateSize, 1, TYPE_STRING, false);
-            Assert.assertEquals(13, consumed);
+            int consumed = cursor.of(address, legitimateSize, 1, TYPE_STRING);
+            Assert.assertEquals(14, consumed);
 
             // Attacker sets offset[1] = 200 — claims 200 bytes of string data
-            Unsafe.getUnsafe().putInt(address + 4, 200);
+            Unsafe.getUnsafe().putInt(address + 5, 200);
 
             cursor = new QwpStringColumnCursor();
             try {
-                cursor.of(address, legitimateSize, 1, TYPE_STRING, false);
+                cursor.of(address, legitimateSize, 1, TYPE_STRING);
                 Assert.fail("expected QwpParseException for out-of-bounds string offset");
             } catch (QwpParseException e) {
                 Assert.assertTrue(e.getMessage().contains("truncated"));
@@ -174,7 +177,7 @@ public class QwpCursorBoundsCheckTest {
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
             // rowCount=100 needs (101)*4 = 404 bytes for offset array alone
-            cursor.of(address, bufferSize, 100, TYPE_STRING, false);
+            cursor.of(address, bufferSize, 100, TYPE_STRING);
             Assert.fail("expected QwpParseException for inflated rowCount");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));

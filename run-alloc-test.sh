@@ -35,6 +35,7 @@
 #   --warmup=N               Warmup rows
 #   --report=N               Report interval
 #   --no-warmup              Skip warmup
+#   --no-drop                Don't drop/recreate the table (for parallel clients)
 #
 
 set -e
@@ -62,6 +63,11 @@ find_jars() {
     SLF4J_JAR=$(find "$HOME/.m2/repository/org/slf4j/slf4j-api" -name "slf4j-api-*.jar" \
                 ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
                 2>/dev/null | sort -V | tail -1)
+
+    # Find PostgreSQL JDBC driver JAR (for table setup via PgWire)
+    PG_JAR=$(find "$HOME/.m2/repository/org/postgresql/postgresql" -name "postgresql-*.jar" \
+             ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
+             2>/dev/null | sort -V | tail -1)
 }
 
 # Check if JARs exist
@@ -173,7 +179,7 @@ case "$1" in
         done
 
         echo "Running ILP test client..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" $DEBUG_FLAG \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" $DEBUG_FLAG \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "${CLIENT_ARGS[@]}"
         ;;
@@ -192,19 +198,19 @@ case "$1" in
         fi
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-alloc-profile-${PROTOCOL}.collapsed"
+        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-alloc-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with allocation profiling..."
-        echo "Output: $PROFILE_OUTPUT (collapsed stacks format)"
+        echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
-        java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,collapsed" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,jfr" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
-        echo "Profile saved to: $PROFILE_OUTPUT"
-        echo ""
-        echo "Top allocation sites:"
-        sort -t' ' -k2 -rn "$PROFILE_OUTPUT" | head -30
+        echo "Allocation profile saved to: $PROFILE_OUTPUT"
+        echo "View with: jfr print $PROFILE_OUTPUT | head -100"
+        echo "Or open in JDK Mission Control (jmc)"
+        echo "Or convert to flamegraph: $ASYNC_PROFILER_HOME/bin/asprof --jfrstackdepth 512 convert $PROFILE_OUTPUT -o ilp-alloc-flame.html"
         ;;
 
     cpu)
@@ -226,7 +232,7 @@ case "$1" in
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=cpu,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -256,7 +262,7 @@ case "$1" in
         echo "This captures time spent waiting (I/O, locks, sleep) in addition to CPU time."
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=wall,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -286,7 +292,7 @@ case "$1" in
         echo "This captures thread contention on synchronized blocks and locks."
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=lock,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -321,7 +327,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -361,7 +367,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -390,17 +396,17 @@ case "$1" in
         echo "Found QuestDB server PID: $SERVER_PID"
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/server-alloc-profile-${PROTOCOL}.collapsed"
+        PROFILE_OUTPUT="$SCRIPT_DIR/server-alloc-profile-${PROTOCOL}.jfr"
         echo "Profiling SERVER allocations during client test..."
-        echo "Output: $PROFILE_OUTPUT (collapsed stacks format)"
+        echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
 
         # Start profiler on server (alloc=1k means track allocations >= 1KB)
-        "$ASPROF" start -e alloc --alloc 1k -o collapsed -f "$PROFILE_OUTPUT" "$SERVER_PID"
+        "$ASPROF" start -e alloc --alloc 1k -o jfr -f "$PROFILE_OUTPUT" "$SERVER_PID"
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -409,9 +415,9 @@ case "$1" in
 
         echo ""
         echo "Server allocation profile saved to: $PROFILE_OUTPUT"
-        echo ""
-        echo "Top allocation sites:"
-        sort -t' ' -k2 -rn "$PROFILE_OUTPUT" | head -30
+        echo "View with: jfr print $PROFILE_OUTPUT | head -100"
+        echo "Or open in JDK Mission Control (jmc)"
+        echo "Or convert to flamegraph: $ASPROF --jfrstackdepth 512 convert $PROFILE_OUTPUT -o server-alloc-flame.html"
         ;;
 
     server-lock)
@@ -440,7 +446,7 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
@@ -464,7 +470,7 @@ case "$1" in
         echo "Output: $JFR_OUTPUT"
         echo ""
         java -XX:StartFlightRecording=filename="$JFR_OUTPUT",settings=profile \
-             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
              io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
@@ -485,7 +491,7 @@ case "$1" in
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
-            java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+            java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR:$PG_JAR" \
                  io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
                  --protocol="$protocol" "$@"
             echo ""
@@ -500,7 +506,7 @@ case "$1" in
         echo "Commands:"
         echo "  server              Start QuestDB server"
         echo "  client [options]    Run test client"
-        echo "  profile [options]   Run with async-profiler allocation tracking (collapsed format)"
+        echo "  profile [options]   Run with async-profiler allocation tracking (JFR format)"
         echo "  cpu [options]       Run with CPU profiling - find hot methods (JFR format)"
         echo "  wall [options]      Run with wall-clock profiling - find I/O waits and blocking (JFR format)"
         echo "  lock [options]      Run with lock contention profiling - find thread contention (JFR format)"
@@ -530,6 +536,7 @@ case "$1" in
         echo "  --warmup=N               Warmup rows (default: 100000)"
         echo "  --report=N               Report progress every N rows (default: 1000000)"
         echo "  --no-warmup              Skip warmup phase"
+        echo "  --no-drop                Don't drop/recreate the table (for parallel clients)"
         echo ""
         echo "Examples:"
         echo "  Terminal 1: $0 server"

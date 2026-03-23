@@ -224,7 +224,7 @@ public class QwpWalAppender implements QuietCloseable {
      * @return human-readable type name
      */
     private static String getIlpTypeName(byte ilpType) {
-        return switch (ilpType & TYPE_MASK) {
+        return switch (ilpType) {
             case TYPE_BOOLEAN -> "BOOLEAN";
             case TYPE_BYTE -> "BYTE";
             case TYPE_SHORT -> "SHORT";
@@ -257,9 +257,8 @@ public class QwpWalAppender implements QuietCloseable {
      * Other cross-family coercions (e.g., UUID→SHORT) are rejected to prevent silent data corruption.
      */
     private static boolean isFixedTypeCoercionAllowed(byte ilpType, int columnType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
         int colTag = ColumnType.tagOf(columnType);
-        return switch (wireType) {
+        return switch (ilpType) {
             case TYPE_BYTE, TYPE_SHORT, TYPE_INT, TYPE_LONG -> colTag == ColumnType.BYTE
                     || colTag == ColumnType.SHORT || colTag == ColumnType.INT || colTag == ColumnType.LONG
                     || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE
@@ -281,17 +280,15 @@ public class QwpWalAppender implements QuietCloseable {
      * Checks whether the ILP wire type is a floating-point type (FLOAT, DOUBLE).
      */
     private static boolean isFloatWireType(byte ilpType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
-        return wireType == TYPE_FLOAT || wireType == TYPE_DOUBLE;
+        return ilpType == TYPE_FLOAT || ilpType == TYPE_DOUBLE;
     }
 
     /**
      * Checks whether the ILP wire type is an integer type (BYTE, SHORT, INT, LONG).
      */
     private static boolean isIntegerWireType(byte ilpType) {
-        byte wireType = (byte) (ilpType & TYPE_MASK);
-        return wireType == TYPE_BYTE || wireType == TYPE_SHORT
-                || wireType == TYPE_INT || wireType == TYPE_LONG;
+        return ilpType == TYPE_BYTE || ilpType == TYPE_SHORT
+                || ilpType == TYPE_INT || ilpType == TYPE_LONG;
     }
 
     /**
@@ -557,8 +554,7 @@ public class QwpWalAppender implements QuietCloseable {
                                         tsCursor.getValueCount(), 8, tsCursor.getNullBitmapAddress(), rowCount);
                             }
                         } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            byte wireType = (byte) (ilpType & TYPE_MASK);
-                            if (wireType == TYPE_TIMESTAMP || wireType == TYPE_TIMESTAMP_NANOS) {
+                            if (ilpType == TYPE_TIMESTAMP || ilpType == TYPE_TIMESTAMP_NANOS) {
                                 appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
                                         fixedCursor.getValueCount(), 8, fixedCursor.getNullBitmapAddress(), rowCount);
                             } else if (isIntegerWireType(ilpType)) {
@@ -577,7 +573,7 @@ public class QwpWalAppender implements QuietCloseable {
                         if (cursor instanceof QwpStringColumnCursor strCursor) {
                             appender.putCharColumn(columnIndex, strCursor, rowCount);
                         } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor
-                                && (ilpType & TYPE_MASK) == TYPE_CHAR) {
+                                && ilpType == TYPE_CHAR) {
                             // TYPE_CHAR wire (2 bytes) → CHAR column (2 bytes): direct copy
                             appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
                                     fixedCursor.getValueCount(), fixedCursor.getValueSize(),

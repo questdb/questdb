@@ -56,8 +56,6 @@ Most numeric types use **little-endian** byte ordering:
 ### Big-Endian (exceptions)
 
 The following types use **big-endian** byte ordering:
-- `UUID` (16 bytes)
-- `LONG256` (32 bytes)
 - `DECIMAL64`, `DECIMAL128`, `DECIMAL256` (unscaled values)
 
 ---
@@ -131,7 +129,8 @@ Offset  Size  Type    Field           Description
 | 0 | `0x01` | LZ4 compression enabled |
 | 1 | `0x02` | Zstd compression enabled |
 | 2 | `0x04` | Gorilla timestamp encoding enabled |
-| 3-7 | | Reserved (must be 0) |
+| 3 | `0x08` | Delta symbol dictionary mode enabled |
+| 4-7 | | Reserved (must be 0) |
 
 **Constraint**: Bits 0 and 1 are mutually exclusive (cannot have both LZ4 and Zstd).
 
@@ -142,6 +141,7 @@ Offset  Size  Type    Field           Description
 │ Message Header (12 bytes)               │
 ├─────────────────────────────────────────┤
 │ Payload (variable)                      │
+│   ├─ [Delta Symbol Dictionary] (if 0x08)│
 │   ├─ Table Block 0                      │
 │   ├─ Table Block 1                      │
 │   └─ ... Table Block N-1                │
@@ -149,6 +149,25 @@ Offset  Size  Type    Field           Description
 ```
 
 If compression is enabled, the entire payload is compressed as one unit.
+
+When `FLAG_DELTA_SYMBOL_DICT` (0x08) is set, a delta symbol dictionary appears
+at the start of the payload, before any table blocks:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ delta_start:    varint   Starting global ID for this delta   │
+│ delta_count:    varint   Number of new entries               │
+│ For each new entry:                                          │
+│   name_length:  varint   UTF-8 byte length                   │
+│   name_bytes:   bytes    UTF-8 encoded symbol string         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The client maintains a global symbol dictionary mapping symbol strings to
+sequential integer IDs (starting from 0). On each batch, only newly added
+symbols (the "delta") are transmitted. The server accumulates these entries
+across batches for the lifetime of the connection. Symbol columns in delta
+mode contain varint-encoded global IDs instead of per-column dictionaries.
 
 ---
 
@@ -235,8 +254,8 @@ The server caches schemas by XXH64 hash. If the hash is not found, the server re
 | 9 | `0x09` | SYMBOL | var | N/A | Dictionary-encoded string |
 | 10 | `0x0A` | TIMESTAMP | 8 | LE | Microseconds since epoch |
 | 11 | `0x0B` | DATE | 8 | LE | Milliseconds since epoch |
-| 12 | `0x0C` | UUID | 16 | **BE** | RFC 4122 UUID |
-| 13 | `0x0D` | LONG256 | 32 | **BE** | 256-bit integer |
+| 12 | `0x0C` | UUID | 16 | LE | RFC 4122 UUID |
+| 13 | `0x0D` | LONG256 | 32 | LE | 256-bit integer |
 | 14 | `0x0E` | GEOHASH | var | N/A | Geospatial hash |
 | 15 | `0x0F` | VARCHAR | var | N/A | Length-prefixed UTF-8 (aux storage) |
 | 16 | `0x10` | TIMESTAMP_NANOS | 8 | LE | Nanoseconds since epoch |
@@ -245,27 +264,20 @@ The server caches schemas by XXH64 hash. If the hash is not found, the server re
 | 19 | `0x13` | DECIMAL64 | 8 | **BE** | Decimal (18 digits precision) |
 | 20 | `0x14` | DECIMAL128 | 16 | **BE** | Decimal (38 digits precision) |
 | 21 | `0x15` | DECIMAL256 | 32 | **BE** | Decimal (77 digits precision) |
+| 22 | `0x16` | CHAR | 2 | LE | Single UTF-16 code unit |
 
 > **Note**: Type codes 0x11-0x15 (arrays and decimals) are defined in the protocol constants but may have limited support in current implementations. Check server capabilities before using these types.
-
-### Nullable Flag
-
-The high bit (`0x80`) of the type code indicates a nullable column:
-
-```
-type_code = base_type | 0x80  // nullable
-type_code = base_type         // not nullable
-```
-
-To extract the base type: `base_type = type_code & 0x7F`
 
 ---
 
 ## 8. Null Bitmap
 
-For nullable columns, a null bitmap precedes the column data.
+Each column's data section begins with a 1-byte **null flag**:
 
-### Format
+- `0x00` — no null values; no bitmap follows.
+- Any nonzero value — a null bitmap follows immediately after the flag byte.
+
+### Bitmap Format
 
 - **Size**: `ceil(row_count / 8)` bytes
 - **Bit order**: LSB first within each byte
@@ -296,6 +308,16 @@ bit_index = row_index % 8
 is_null = (bitmap[byte_index] & (1 << bit_index)) != 0
 ```
 
+### Column Data Layout (all types)
+
+```
+┌───────────────────────────────────────────────────────┐
+│ null_flag:     uint8     0=no nulls, nonzero=bitmap   │
+│ [null bitmap:  ceil(row_count/8) bytes if flag != 0]  │
+│ [type-specific encoded values for non-null rows]      │
+└───────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## 9. Column Data Encoding
@@ -306,7 +328,7 @@ For BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, TIMESTAMP, TIMESTAMP_NANOS, DATE, UUI
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]               │
 ├─────────────────────────────────────────┤
 │ Values (only non-null rows)             │
 │   value[0], value[1], ... value[N-1]    │
@@ -322,7 +344,7 @@ Booleans are bit-packed, 8 values per byte, LSB first:
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]               │
 ├─────────────────────────────────────────┤
 │ Packed boolean values                   │
 │   Size: ceil((row_count - null_count) / 8) bytes │
@@ -333,7 +355,7 @@ Booleans are bit-packed, 8 values per byte, LSB first:
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]               │
 ├─────────────────────────────────────────┤
 │ Offset array: (value_count + 1) × 4 bytes │
 │   offset[0] = 0                         │
@@ -353,7 +375,7 @@ Dictionary-encoded strings for low-cardinality columns:
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]               │
 ├─────────────────────────────────────────┤
 │ dictionary_size: varint                 │
 ├─────────────────────────────────────────┤
@@ -374,7 +396,23 @@ Dictionary-encoded strings for low-cardinality columns:
 
 ### Timestamp Type (`0x0A`)
 
-Timestamps support two encoding modes indicated by a flag byte:
+When `FLAG_GORILLA` (0x04) is set in the message header flags, timestamp columns
+include a 1-byte encoding flag after the null bitmap. When `FLAG_GORILLA` is
+**not** set, there is no encoding flag — timestamps are written as plain
+uncompressed int64 arrays.
+
+#### Without FLAG_GORILLA (no encoding flag):
+
+```
+┌─────────────────────────────────────────┐
+│ [Null flag + bitmap (see §8)]           │
+├─────────────────────────────────────────┤
+│ Timestamp values (non-null only):       │
+│   value_count × int64 (LE)              │
+└─────────────────────────────────────────┘
+```
+
+#### With FLAG_GORILLA (encoding flag present):
 
 | Flag | Mode | Description |
 |------|------|-------------|
@@ -385,7 +423,7 @@ Timestamps support two encoding modes indicated by a flag byte:
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]           │
 ├─────────────────────────────────────────┤
 │ encoding_flag: uint8 (0x00)             │
 ├─────────────────────────────────────────┤
@@ -398,7 +436,7 @@ Timestamps support two encoding modes indicated by a flag byte:
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]           │
 ├─────────────────────────────────────────┤
 │ encoding_flag: uint8 (0x01)             │
 ├─────────────────────────────────────────┤
@@ -418,9 +456,9 @@ D = (t[n] - t[n-1]) - (t[n-1] - t[n-2])
 
 Encoding:
   D == 0:              '0'                    (1 bit)
-  D in [-63, 64]:      '10' + 7-bit signed    (9 bits)
-  D in [-255, 256]:    '110' + 9-bit signed   (12 bits)
-  D in [-2047, 2048]:  '1110' + 12-bit signed (16 bits)
+  D in [-64, 63]:      '10' + 7-bit signed    (9 bits)
+  D in [-256, 255]:    '110' + 9-bit signed   (12 bits)
+  D in [-2048, 2047]:  '1110' + 12-bit signed (16 bits)
   otherwise:           '1111' + 32-bit signed (36 bits)
 ```
 
@@ -444,11 +482,11 @@ N-dimensional arrays of DOUBLE or LONG:
 
 ### Decimal Types (`0x13`, `0x14`, `0x15`)
 
-> **Implementation Status**: Decimal types are defined in the protocol but may have limited support. The scale handling described below is the intended design; check actual implementation for current support.
-
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]           │
+├─────────────────────────────────────────┤
+│ scale: uint8                            │
 ├─────────────────────────────────────────┤
 │ Unscaled values (big-endian):           │
 │   DECIMAL64:  8 bytes × value_count     │
@@ -457,23 +495,26 @@ N-dimensional arrays of DOUBLE or LONG:
 └─────────────────────────────────────────┘
 ```
 
-Decimal values are stored as big-endian two's complement integers. The scale (number of decimal places) must be agreed upon out-of-band or via table schema.
+Decimal values are stored as big-endian two's complement integers. The scale
+(number of decimal places) is a 1-byte prefix in the column data section,
+shared by all values in the column.
 
 ### GeoHash Type (`0x0E`)
 
 ```
 ┌─────────────────────────────────────────┐
-│ [Null bitmap if nullable]               │
+│ [Null flag + bitmap (see §8)]           │
 ├─────────────────────────────────────────┤
 │ precision_bits: varint (1-60)           │
 ├─────────────────────────────────────────┤
-│ Packed geohash values:                  │
+│ Packed geohash values (non-null only):  │
 │   bytes_per_value = ceil(precision/8)   │
-│   total = bytes_per_value × row_count   │
+│   total = bytes_per_value × value_count │
 └─────────────────────────────────────────┘
 ```
 
-> **Note**: Unlike other types, GeoHash stores values for ALL rows (including nulls). The null bitmap only indicates which values should be treated as null when reading.
+Like other types, only non-null values are stored. The null bitmap indicates
+which row indices are null.
 
 ---
 
@@ -497,14 +538,29 @@ When Zstd flag is set:
 
 ## 11. Response Format
 
-### Response Header
+### Response Format
+
+Every response includes a 1-byte status code and an 8-byte sequence number
+that correlates the response with the original request.
+
+**OK Response (9 bytes):**
 
 ```
-┌─────────────────────────────────────────┐
-│ status_code: uint8                      │
-├─────────────────────────────────────────┤
-│ [Error payload if status != 0x00]       │
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ status:    uint8   (0x00)                             │
+│ sequence:  int64 LE       Request sequence number     │
+└──────────────────────────────────────────────────────┘
+```
+
+**Error Response (11 + msg_len bytes):**
+
+```
+┌──────────────────────────────────────────────────────┐
+│ status:    uint8          Status code                 │
+│ sequence:  int64 LE       Request sequence number     │
+│ msg_len:   uint16 LE      Error message length        │
+│ msg_bytes: bytes          UTF-8 error message         │
+└──────────────────────────────────────────────────────┘
 ```
 
 ### Status Codes
@@ -520,15 +576,11 @@ When Zstd flag is set:
 | 6 | `0x06` | INTERNAL_ERROR | Server error | No |
 | 7 | `0x07` | OVERLOADED | Back-pressure | Yes |
 
-### Error Payload (status != 0x00)
+### Partial Failure Payload (status 0x01)
 
-For non-partial errors:
-```
-error_message_length: varint
-error_message: UTF-8 bytes
-```
+At the WAL appender layer, partial failures use a different encoding with
+varints for per-table error details:
 
-For PARTIAL status (0x01):
 ```
 failed_table_count: varint
 For each failed table:
@@ -596,16 +648,18 @@ XX XX XX XX  # Payload length (LE uint32)
 74 73        # "ts" UTF-8
 0A           # Type: TIMESTAMP (not nullable)
 
-# Column 0 data (LONG, 2 values, 16 bytes)
+# Column 0 data (LONG, no nulls, 2 values)
+00                       # null_flag: 0x00 (no nulls)
 01 00 00 00 00 00 00 00  # id=1
 02 00 00 00 00 00 00 00  # id=2
 
-# Column 1 data (DOUBLE, 2 values, 16 bytes)
+# Column 1 data (DOUBLE, no nulls, 2 values)
+00                       # null_flag: 0x00 (no nulls)
 CD CC CC CC CC CC F4 3F  # value=1.3
 9A 99 99 99 99 99 01 40  # value=2.2
 
-# Column 2 data (TIMESTAMP, 2 values, 17 bytes)
-00                       # encoding_flag: 0x00 (uncompressed)
+# Column 2 data (TIMESTAMP, no nulls, uncompressed, 2 values)
+00                       # null_flag: 0x00 (no nulls)
 00 E4 0B 54 02 00 00 00  # ts=10000000000 microseconds
 80 1A 06 00 00 00 00 00  # ts=400000 microseconds
 ```
@@ -615,7 +669,8 @@ CD CC CC CC CC CC F4 3F  # value=1.3
 Table with nullable STRING column, 4 rows where row 1 is null:
 
 ```
-# Null bitmap for 4 rows where row 1 is null
+# Null flag + bitmap for 4 rows where row 1 is null
+01           # null_flag: nonzero = bitmap follows
 02           # 0b00000010 - bit 1 set
 
 # Offset array (3 non-null values = 4 offsets)
@@ -635,6 +690,9 @@ Table with nullable STRING column, 4 rows where row 1 is null:
 3 rows with values: "us", "eu", "us"
 
 ```
+# Null flag
+00           # null_flag: 0x00 (no nulls)
+
 # Dictionary
 02           # Dictionary size: 2 entries
 
@@ -656,13 +714,14 @@ Table with nullable STRING column, 4 rows where row 1 is null:
 
 The authoritative implementation is in QuestDB's Java codebase:
 
-- `core/src/main/java/io/questdb/cutlass/http/qwp/QwpConstants.java` - Protocol constants
-- `core/src/main/java/io/questdb/cutlass/http/qwp/QwpMessageHeader.java` - Header parsing
-- `core/src/main/java/io/questdb/cutlass/http/qwp/QwpTableHeader.java` - Table header parsing
-- `core/src/main/java/io/questdb/cutlass/http/qwp/QwpVarint.java` - Varint encoding/decoding
-- `core/src/main/java/io/questdb/cutlass/http/qwp/QwpNullBitmap.java` - Null bitmap utilities
-- `core/src/main/java/io/questdb/cutlass/http/qwp/Qwp*Decoder.java` - Type-specific decoders
-- `core/src/main/java/io/questdb/cutlass/line/tcp/ArrayBinaryFormatParser.java` - Array parsing
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpConstants.java` - Protocol constants
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpMessageHeader.java` - Header parsing
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpTableHeader.java` - Table header parsing
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpVarint.java` - Varint encoding/decoding
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpNullBitmap.java` - Null bitmap utilities
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpSchema.java` - Schema parsing and caching
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpMessageCursor.java` - Message/table iteration
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/Qwp*ColumnCursor.java` - Type-specific decoders
 
 ---
 

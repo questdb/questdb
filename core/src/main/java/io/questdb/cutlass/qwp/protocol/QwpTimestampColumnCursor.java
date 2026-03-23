@@ -54,7 +54,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     private boolean gorillaEnabled;
     // Wire pointers
     private long nullBitmapAddress;
-    private boolean nullable;
     private long secondTimestamp;
     // Configuration
     private byte typeCode;
@@ -65,7 +64,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     public boolean advanceRow() throws QwpParseException {
         currentRow++;
 
-        if (nullable && nullBitmapAddress != 0) {
+        if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 return true;
@@ -93,7 +92,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = 0;
-        nullable = false;
         gorillaEnabled = false;
         nullBitmapAddress = 0;
         valuesAddress = 0;
@@ -114,9 +112,9 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     }
 
     /**
-     * Returns the address of the null bitmap, or 0 if not nullable.
+     * Returns the address of the null bitmap, or 0 if no null bitmap.
      *
-     * @return the memory address of null bitmap, or 0 if not nullable
+     * @return the memory address of null bitmap, or 0 if no null bitmap
      */
     public long getNullBitmapAddress() {
         return nullBitmapAddress;
@@ -166,7 +164,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      * @param dataLength     available bytes
      * @param rowCount       number of rows
      * @param typeCode       column type code (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
-     * @param nullable       whether column is nullable
      * @param gorillaEnabled whether Gorilla encoding is enabled
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
@@ -176,16 +173,22 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
             int dataLength,
             int rowCount,
             byte typeCode,
-            boolean nullable,
             boolean gorillaEnabled
     ) throws QwpParseException {
         this.typeCode = typeCode;
-        this.nullable = nullable;
 
         int offset = 0;
-        int nullCount = 0;
 
-        if (nullable) {
+        // Read null bitmap flag
+        if (offset >= dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "timestamp column data truncated: expected null bitmap flag"
+            );
+        }
+        int nullCount;
+        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+            offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
                 throw QwpParseException.create(
@@ -193,11 +196,13 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                         "timestamp column data truncated: expected null bitmap"
                 );
             }
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            this.nullBitmapAddress = dataAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
+            offset++;
             this.nullBitmapAddress = 0;
+            nullCount = 0;
         }
 
         this.valueCount = rowCount - nullCount;
