@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -612,20 +612,27 @@ class LateralJoinRewriter {
             ObjList<CharSequence> countColAliases
     ) throws SqlException {
         ObjList<ExpressionNode> groupBy = inner.getGroupBy();
-        for (int i = 0, n = groupingCols.size(); i < n; i++) {
-            ExpressionNode col = groupingCols.getQuick(i);
-            boolean isFound = false;
-            for (int j = 0, m = groupBy.size(); j < m; j++) {
-                if (expressionsEqual(groupBy.getQuick(j), col)) {
-                    isFound = true;
-                    break;
+        if (groupBy != null && groupBy.size() > 0) {
+            for (int i = 0, n = groupingCols.size(); i < n; i++) {
+                ExpressionNode col = groupingCols.getQuick(i);
+                boolean isFound = false;
+                for (int j = 0, m = groupBy.size(); j < m; j++) {
+                    if (expressionsEqual(groupBy.getQuick(j), col)) {
+                        isFound = true;
+                        break;
+                    }
+                }
+                if (!isFound) {
+                    inner.addGroupBy(ExpressionNode.deepClone(expressionNodePool, col));
                 }
             }
-            if (!isFound) {
-                inner.addGroupBy(ExpressionNode.deepClone(expressionNodePool, col));
+
+            for (int i = 0, n = groupingCols.size(); i < n; i++) {
+                ExpressionNode col = groupingCols.getQuick(i);
+                ensureColumnInSelect(inner, col, col.token);
             }
-            ensureColumnInSelect(inner, col, col.token);
         }
+
         if (isLeftJoin) {
             rewriteCountForLeftJoin(inner, countColAliases);
         }
@@ -1286,8 +1293,21 @@ class LateralJoinRewriter {
                 break;
             }
         }
-        if (!isAllEqualities && !isSimpleInnerChain(topInner, dataSourceLayer)) {
-            return;
+
+        CharSequence lateralAlias = joinModel.getAlias() != null
+                ? joinModel.getAlias().token : null;
+        ExpressionNode simpleChainCriteria = null;
+        if (!isAllEqualities) {
+            if (!isSimpleInnerChain(topInner, dataSourceLayer)) {
+                return;
+            }
+            simpleChainCriteria = buildLateralOnFromOuterRefCriteria(
+                    outerRefJm.getJoinCriteria(), outerRefAlias, outerRefCols,
+                    topInner, lateralAlias
+            );
+            if (simpleChainCriteria == null) {
+                return;
+            }
         }
 
         // 4. Top-down scan all layers, remove/rewrite __outer_ref columns
@@ -1338,11 +1358,9 @@ class LateralJoinRewriter {
         }
 
         // 6. Rebuild lateral join's ON criteria
-        CharSequence lateralAlias = joinModel.getAlias() != null
-                ? joinModel.getAlias().token : null;
-        ExpressionNode newCriteria = null;
+        ExpressionNode newCriteria;
         if (isAllEqualities) {
-            // All equality: build ON from outerToInnerAlias mappings
+            newCriteria = null;
             for (int j = 0, m = outerRefCols.size(); j < m; j++) {
                 QueryColumn refCol = outerRefCols.getQuick(j);
                 outerRefColSink.clear();
@@ -1363,11 +1381,7 @@ class LateralJoinRewriter {
                 }
             }
         } else {
-            // Simple chain with mixed conditions: rebuild ON from all __outer_ref join conditions
-            newCriteria = buildLateralOnFromOuterRefCriteria(
-                    outerRefJm.getJoinCriteria(), outerRefAlias, outerRefCols,
-                    topInner, lateralAlias
-            );
+            newCriteria = simpleChainCriteria;
         }
         joinModel.setJoinCriteria(newCriteria);
 
@@ -1382,6 +1396,9 @@ class LateralJoinRewriter {
             CharSequence preferredAlias
     ) throws SqlException {
         ObjList<QueryColumn> cols = model.getBottomUpColumns();
+        if (cols.size() == 0 || isWildcard(cols)) {
+            return preferredAlias;
+        }
         for (int i = 0, n = cols.size(); i < n; i++) {
             QueryColumn existing = cols.getQuick(i);
             if (expressionsEqual(existing.getAst(), colExpr)) {

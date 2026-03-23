@@ -1406,7 +1406,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T27: GROUP BY outer ref, INNER — outer ref in GROUP BY rewritten
     @Test
     public void testT27GroupByOuterRef() throws Exception {
         assertMemoryLeak(() -> {
@@ -1427,9 +1426,9 @@ public class LateralJoinTest extends AbstractCairoTest {
             // GROUP BY includes outer ref o.category — rewriteGroupByExpressions rewrites it
             assertQueryNoLeakCheck(
                     """
-                            id\tcategory\ttotal
-                            1\tX\t30.0
-                            2\tY\t30.0
+                            id	cat	total
+                            1	X	30.0
+                            2	Y	30.0
                             """,
                     """
                             SELECT o.id, t.cat, t.total
@@ -2255,7 +2254,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -2881,7 +2880,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T53: Wrapper-layer correlation — both wrapper SELECT and WHERE reference outer columns
     @Test
     public void testT53WrapperSelectAndWhereCorrelation() throws Exception {
         assertMemoryLeak(() -> {
@@ -2900,7 +2898,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            // Wrapper SELECT has t1.b, wrapper WHERE has t1.threshold, content WHERE has t1.a
             assertQueryNoLeakCheck(
                     """
                             a\tresult
