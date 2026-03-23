@@ -1039,9 +1039,7 @@ fn generate_null_column_chunk_bytes(
 /// the single node's repetition.  For nested LIST groups (arrays) this
 /// walks down to the leaf, e.g. `["col_name", "list", "element"]`,
 /// accumulating levels at each nesting step.
-fn collect_leaf_info(
-    parquet_type: &ParquetType,
-) -> (Vec<String>, i16, i16, (Type, Option<i32>)) {
+fn collect_leaf_info(parquet_type: &ParquetType) -> (Vec<String>, i16, i16, (Type, Option<i32>)) {
     let mut path = Vec::new();
     let mut max_rep_level: i16 = 0;
     let mut max_def_level: i16 = 0;
