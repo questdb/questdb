@@ -4662,6 +4662,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 updateQueryModel,
                 executionContext
         );
+        final RecordMetadata updateMetadata = recordCursorFactory.getMetadata();
+        final int updateColumnCount = updateMetadata.getColumnCount();
+        final ObjList<CharSequence> updateColumnNames = new ObjList<>(updateColumnCount);
+        for (int i = 0; i < updateColumnCount; i++) {
+            updateColumnNames.add(updateMetadata.getColumnName(i));
+        }
 
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
@@ -4669,7 +4675,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     selectQueryModel.getTableId(),
                     selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
-                    recordCursorFactory
+                    recordCursorFactory,
+                    updateColumnNames
             );
         } else {
             recordCursorFactory.close();
@@ -4682,7 +4689,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateTableToken,
                     metadata.getTableId(),
                     metadata.getMetadataVersion(),
-                    lexer.getPosition()
+                    lexer.getPosition(),
+                    updateColumnNames
             );
         }
     }
