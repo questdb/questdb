@@ -760,13 +760,13 @@ public final class PostingIndexUtils {
                 blockBitWidths = new int[blockCapacity];
             }
             if (nativeResidualsAddr == 0 && PostingIndexNative.isNativeAvailable()) {
-                nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
         }
 
         public void close() {
             if (nativeResidualsAddr != 0) {
-                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 nativeResidualsAddr = 0;
             }
         }

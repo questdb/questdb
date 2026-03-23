@@ -334,12 +334,12 @@ public class PostingIndexWriter implements IndexWriter {
                             long fd = ff.openRO(pcFile);
                             if (fd >= 0) {
                                 try {
-                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
                                     if (mapped > 0) {
-                                        savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_DEFAULT);
+                                        savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
                                         savedSidecarSizes[c] = fileLen;
                                         Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
-                                        ff.munmap(mapped, fileLen, MemoryTag.MMAP_DEFAULT);
+                                        ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
                                     }
                                 } finally {
                                     ff.close(fd);
@@ -395,7 +395,7 @@ public class PostingIndexWriter implements IndexWriter {
             if (savedSidecarBufs != null) {
                 for (int c = 0; c < savedSidecarBufs.length; c++) {
                     if (savedSidecarBufs[c] != 0) {
-                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
                     }
                 }
             }
@@ -408,7 +408,7 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void sealIncremental(long[] savedSidecarBufs, long[] savedSidecarSizes) {
         int sc = PostingIndexUtils.strideCount(keyCount);
-        long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_DEFAULT);
+        long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_INDEX_READER);
         int dirtyCount;
         try {
             Unsafe.getUnsafe().setMemory(dirtyStridesAddr, sc, (byte) 0);
@@ -430,18 +430,18 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
         } catch (Throwable t) {
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
             throw t;
         }
 
         // If all strides are dirty, fall back to full seal (no savings).
         // Free savedSidecarBufs since sealFull rebuilds sidecars from scratch.
         if (dirtyCount == sc) {
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
             if (savedSidecarBufs != null) {
                 for (int c = 0; c < savedSidecarBufs.length; c++) {
                     if (savedSidecarBufs[c] != 0) {
-                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
                         savedSidecarBufs[c] = 0;
                     }
                 }
@@ -488,11 +488,11 @@ public class PostingIndexWriter implements IndexWriter {
         long[] oldSidecarSizes = null;
 
         try {
-            strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
-            bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
-            localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_DEFAULT);
-            mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_DEFAULT);
-            copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_DEFAULT);
+            strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+            bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_INDEX_READER);
+            localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
+            copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
 
             // Pre-allocate seal-path arrays to avoid per-stride allocations
             int preAllocPerKey = maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount;
@@ -523,7 +523,7 @@ public class PostingIndexWriter implements IndexWriter {
                 for (int c = 0; c < coverCount; c++) {
                     sidecarMems[c].jumpTo(0);
                     sidecarMems[c].truncate();
-                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
+                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                     for (int i = 0; i < siSize; i += Integer.BYTES) {
                         sidecarMems[c].putInt(0);
                     }
@@ -582,10 +582,10 @@ public class PostingIndexWriter implements IndexWriter {
                             long neededBuf = (long) totalStrideVals * Long.BYTES;
                             if (neededBuf > incrSidecarBufSize) {
                                 if (incrSidecarBuf != 0) {
-                                    Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_DEFAULT);
+                                    Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                                 }
                                 incrSidecarBufSize = neededBuf;
-                                incrSidecarBuf = Unsafe.malloc(incrSidecarBufSize, MemoryTag.NATIVE_DEFAULT);
+                                incrSidecarBuf = Unsafe.malloc(incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                             }
                             for (int c = 0; c < coverCount; c++) {
                                 Unsafe.getUnsafe().putInt(
@@ -633,35 +633,35 @@ public class PostingIndexWriter implements IndexWriter {
                     0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
         } finally {
             if (copyBuf != 0) {
-                Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
             }
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
             if (strideIndexBuf != 0) {
-                Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
             }
             if (bpTrialBuf != 0) {
-                Unsafe.free(bpTrialBuf, maxBPStrideDataSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(bpTrialBuf, maxBPStrideDataSize, MemoryTag.NATIVE_INDEX_READER);
             }
             if (localHeaderBuf != 0) {
-                Unsafe.free(localHeaderBuf, maxHeaderSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(localHeaderBuf, maxHeaderSize, MemoryTag.NATIVE_INDEX_READER);
             }
             if (mergedValuesAddr != 0) {
-                Unsafe.free(mergedValuesAddr, mergedValuesSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(mergedValuesAddr, mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
             }
             if (incrSidecarBuf != 0) {
-                Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
             }
             if (incrSidecarSiBufs != null) {
                 for (int c = 0; c < coverCount; c++) {
                     if (incrSidecarSiBufs[c] != 0) {
-                        Unsafe.free(incrSidecarSiBufs[c], siSize, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(incrSidecarSiBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
                     }
                 }
             }
             if (oldSidecarBufs != null) {
                 for (int c = 0; c < coverCount; c++) {
                     if (oldSidecarBufs[c] != 0) {
-                        Unsafe.free(oldSidecarBufs[c], oldSidecarSizes[c], MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(oldSidecarBufs[c], oldSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
                     }
                 }
             }
@@ -732,12 +732,12 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.getUnsafe().copyMemory(srcAddr, copyBuf, strideSize);
             valueMem.putBlockOfBytes(copyBuf, strideSize);
         } else {
-            long tmpBuf = Unsafe.malloc(strideSize, MemoryTag.NATIVE_DEFAULT);
+            long tmpBuf = Unsafe.malloc(strideSize, MemoryTag.NATIVE_INDEX_READER);
             try {
                 Unsafe.getUnsafe().copyMemory(srcAddr, tmpBuf, strideSize);
                 valueMem.putBlockOfBytes(tmpBuf, strideSize);
             } finally {
-                Unsafe.free(tmpBuf, strideSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(tmpBuf, strideSize, MemoryTag.NATIVE_INDEX_READER);
             }
         }
     }
@@ -941,7 +941,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        long packedBuf = Unsafe.malloc(flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_DEFAULT);
+        long packedBuf = Unsafe.malloc(flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_INDEX_READER);
         try {
             if (flatDataSize > 0) {
                 Unsafe.getUnsafe().setMemory(packedBuf, flatDataSize, (byte) 0);
@@ -968,7 +968,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             valueMem.putBlockOfBytes(packedBuf, flatDataSize);
         } finally {
-            Unsafe.free(packedBuf, flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(packedBuf, flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_INDEX_READER);
         }
 
         long headerAddr = valueMem.addressOf(headerFilePos);
@@ -1119,7 +1119,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             // Pre-allocate compress buffer for the largest key in this column type
             int compressBufSize = maxKeyCount > 0 ? AlpCompression.maxCompressedSize(maxKeyCount, colType) : 0;
-            long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_DEFAULT) : 0;
+            long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER) : 0;
 
             try {
                 // Write key offsets placeholder, then compress each key's values
@@ -1173,7 +1173,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             } finally {
                 if (compressBuf != 0) {
-                    Unsafe.free(compressBuf, compressBufSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(compressBuf, compressBufSize, MemoryTag.NATIVE_INDEX_READER);
                 }
             }
         }
@@ -1221,7 +1221,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;
-        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_DEFAULT);
+        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
         try {
             Unsafe.getUnsafe().setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
 
@@ -1288,10 +1288,10 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             // Phase 2: Decode all values grouped by key into a flat buffer
-            long allValuesAddr = Unsafe.malloc(totalValueCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long allValuesAddr = Unsafe.malloc(totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             try {
                 long keyOffsetsSize = (long) keyCount * Long.BYTES;
-                long keyOffsetsAddr = Unsafe.malloc(keyOffsetsSize, MemoryTag.NATIVE_DEFAULT);
+                long keyOffsetsAddr = Unsafe.malloc(keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
                 try {
                     // Compute per-key write offsets
                     long writeOffset = 0;
@@ -1492,11 +1492,11 @@ public class PostingIndexWriter implements IndexWriter {
                         }
     
                         // Allocate stride index buffer
-                        long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
+                        long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                         int maxDeltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE);
                         int maxFlatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE);
                         int maxLocalHeaderSize = Math.max(maxDeltaHeaderSize, maxFlatHeaderSize);
-                        long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
+                        long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
     
                         // Per-key delta sizes within a stride (to compute total delta data size)
                         int[] bpKeySizes = strideBpKeySizes;
@@ -1513,7 +1513,7 @@ public class PostingIndexWriter implements IndexWriter {
                         if (coverCount > 0 && sidecarMems != null) {
                             sidecarStrideIndexBufs = new long[coverCount];
                             for (int c = 0; c < coverCount; c++) {
-                                sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_DEFAULT);
+                                sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                                 // Reserve stride index space in sidecar file
                                 for (int i = 0; i < siSize; i += Integer.BYTES) {
                                     sidecarMems[c].putInt(0);
@@ -1537,10 +1537,10 @@ public class PostingIndexWriter implements IndexWriter {
                                 }
                                 if (strideTrialSize > bpTrialBufSize) {
                                     if (bpTrialBuf != 0) {
-                                        Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_DEFAULT);
+                                        Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                                     }
                                     bpTrialBufSize = strideTrialSize;
-                                    bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_DEFAULT);
+                                    bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                                 }
     
                                 // Trial delta encode all keys in stride
@@ -1639,10 +1639,10 @@ public class PostingIndexWriter implements IndexWriter {
                                     long neededBuf = (long) totalStrideValues * Long.BYTES;
                                     if (neededBuf > sidecarBufSize) {
                                         if (sidecarBuf != 0) {
-                                            Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_DEFAULT);
+                                            Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                                         }
                                         sidecarBufSize = neededBuf;
-                                        sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_DEFAULT);
+                                        sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                                     }
                                     for (int c = 0; c < coverCount; c++) {
                                         Unsafe.getUnsafe().putInt(
@@ -1677,20 +1677,20 @@ public class PostingIndexWriter implements IndexWriter {
                             }
                         } finally {
                             if (bpTrialBuf != 0) {
-                                Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_DEFAULT);
+                                Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                             }
                             if (sidecarBuf != 0) {
-                                Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_DEFAULT);
+                                Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
                             }
                             if (sidecarStrideIndexBufs != null) {
                                 for (int c = 0; c < coverCount; c++) {
                                     if (sidecarStrideIndexBufs[c] != 0) {
-                                        Unsafe.free(sidecarStrideIndexBufs[c], siSize, MemoryTag.NATIVE_DEFAULT);
+                                        Unsafe.free(sidecarStrideIndexBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
                                     }
                                 }
                             }
-                            Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_DEFAULT);
-                            Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_DEFAULT);
+                            Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                            Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
                         }
     
                         genCount = 1;
@@ -1700,13 +1700,13 @@ public class PostingIndexWriter implements IndexWriter {
                     }
     
                 } finally {
-                    Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
                 }
             } finally {
-                Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
         } finally {
-            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
         }
     }
 
@@ -2138,12 +2138,12 @@ public class PostingIndexWriter implements IndexWriter {
         long dst = valueMem.addressOf(0);
         if (gen0Size > gen0Offset) {
             // Regions overlap — use a temp buffer since Unsafe.copyMemory is not memmove.
-            long tmpBuf = Unsafe.malloc(gen0Size, MemoryTag.NATIVE_DEFAULT);
+            long tmpBuf = Unsafe.malloc(gen0Size, MemoryTag.NATIVE_INDEX_READER);
             try {
                 Unsafe.getUnsafe().copyMemory(src, tmpBuf, gen0Size);
                 Unsafe.getUnsafe().copyMemory(tmpBuf, dst, gen0Size);
             } finally {
-                Unsafe.free(tmpBuf, gen0Size, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(tmpBuf, gen0Size, MemoryTag.NATIVE_INDEX_READER);
             }
         } else {
             Unsafe.getUnsafe().copyMemory(src, dst, gen0Size);
@@ -2169,10 +2169,10 @@ public class PostingIndexWriter implements IndexWriter {
         long valBufSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long countBufSize = (long) keyCapacity * Integer.BYTES;
 
-        pendingValuesAddr = Unsafe.malloc(valBufSize, MemoryTag.NATIVE_DEFAULT);
+        pendingValuesAddr = Unsafe.malloc(valBufSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingValuesAddr, valBufSize, (byte) 0);
 
-        pendingCountsAddr = Unsafe.malloc(countBufSize, MemoryTag.NATIVE_DEFAULT);
+        pendingCountsAddr = Unsafe.malloc(countBufSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingCountsAddr, countBufSize, (byte) 0);
 
         activeKeyIds = new int[keyCapacity];
@@ -2219,10 +2219,10 @@ public class PostingIndexWriter implements IndexWriter {
         // Reuse header buffer, growing if needed
         if (headerSize > flushHeaderBufCapacity) {
             if (flushHeaderBuf != 0) {
-                Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_INDEX_READER);
             }
             flushHeaderBufCapacity = Math.max(headerSize, flushHeaderBufCapacity * 2);
-            flushHeaderBuf = Unsafe.malloc(flushHeaderBufCapacity, MemoryTag.NATIVE_DEFAULT);
+            flushHeaderBuf = Unsafe.malloc(flushHeaderBufCapacity, MemoryTag.NATIVE_INDEX_READER);
         }
 
         Unsafe.getUnsafe().setMemory(flushHeaderBuf, headerSize, (byte) 0);
@@ -2284,7 +2284,7 @@ public class PostingIndexWriter implements IndexWriter {
                         long oldSize = (long) curCap * Long.BYTES;
                         long newSize = (long) newCap * Long.BYTES;
                         long oldAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-                        long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_DEFAULT);
+                        long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_INDEX_READER);
                         Unsafe.getUnsafe().putLong(spillKeyAddrsAddr + (long) key * Long.BYTES, newAddr);
                         Unsafe.getUnsafe().putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
                     }
@@ -2355,7 +2355,7 @@ public class PostingIndexWriter implements IndexWriter {
             long oldSize = (long) curCap * Long.BYTES;
             long newSize = (long) newCap * Long.BYTES;
             long oldAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-            long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_DEFAULT);
+            long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().putLong(spillKeyAddrsAddr + (long) key * Long.BYTES, newAddr);
             Unsafe.getUnsafe().putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
         }
@@ -2377,18 +2377,18 @@ public class PostingIndexWriter implements IndexWriter {
             long addrsSize = (long) cap * Long.BYTES;
             long countsSize = (long) cap * Integer.BYTES;
             long capsSize = (long) cap * Integer.BYTES;
-            spillKeyAddrsAddr = Unsafe.malloc(addrsSize, MemoryTag.NATIVE_DEFAULT);
+            spillKeyAddrsAddr = Unsafe.malloc(addrsSize, MemoryTag.NATIVE_INDEX_READER);
             try {
-                spillKeyCountsAddr = Unsafe.malloc(countsSize, MemoryTag.NATIVE_DEFAULT);
+                spillKeyCountsAddr = Unsafe.malloc(countsSize, MemoryTag.NATIVE_INDEX_READER);
                 try {
-                    spillKeyCapacitiesAddr = Unsafe.malloc(capsSize, MemoryTag.NATIVE_DEFAULT);
+                    spillKeyCapacitiesAddr = Unsafe.malloc(capsSize, MemoryTag.NATIVE_INDEX_READER);
                 } catch (Throwable e) {
-                    Unsafe.free(spillKeyCountsAddr, countsSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(spillKeyCountsAddr, countsSize, MemoryTag.NATIVE_INDEX_READER);
                     spillKeyCountsAddr = 0;
                     throw e;
                 }
             } catch (Throwable e) {
-                Unsafe.free(spillKeyAddrsAddr, addrsSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(spillKeyAddrsAddr, addrsSize, MemoryTag.NATIVE_INDEX_READER);
                 spillKeyAddrsAddr = 0;
                 throw e;
             }
@@ -2400,17 +2400,17 @@ public class PostingIndexWriter implements IndexWriter {
             int newCap = Math.max(keyCapacity, needed);
             long oldAddrsSize = (long) spillArraysCapacity * Long.BYTES;
             long newAddrsSize = (long) newCap * Long.BYTES;
-            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_DEFAULT);
+            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
 
             long oldCountsSize = (long) spillArraysCapacity * Integer.BYTES;
             long newCountsSize = (long) newCap * Integer.BYTES;
-            spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_DEFAULT);
+            spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
 
             long oldCapsSize = (long) spillArraysCapacity * Integer.BYTES;
             long newCapsSize = (long) newCap * Integer.BYTES;
-            spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_DEFAULT);
+            spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
 
             spillArraysCapacity = newCap;
@@ -2440,11 +2440,11 @@ public class PostingIndexWriter implements IndexWriter {
 
     private void freeNativeBuffers() {
         if (pendingValuesAddr != 0) {
-            Unsafe.free(pendingValuesAddr, (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(pendingValuesAddr, (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             pendingValuesAddr = 0;
         }
         if (pendingCountsAddr != 0) {
-            Unsafe.free(pendingCountsAddr, (long) keyCapacity * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(pendingCountsAddr, (long) keyCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
             pendingCountsAddr = 0;
         }
         if (spillKeyAddrsAddr != 0) {
@@ -2452,20 +2452,20 @@ public class PostingIndexWriter implements IndexWriter {
                 long addr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) i * Long.BYTES);
                 if (addr != 0) {
                     int cap = Unsafe.getUnsafe().getInt(spillKeyCapacitiesAddr + (long) i * Integer.BYTES);
-                    Unsafe.free(addr, (long) cap * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(addr, (long) cap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
             }
-            Unsafe.free(spillKeyAddrsAddr, (long) spillArraysCapacity * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(spillKeyAddrsAddr, (long) spillArraysCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             spillKeyAddrsAddr = 0;
-            Unsafe.free(spillKeyCountsAddr, (long) spillArraysCapacity * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(spillKeyCountsAddr, (long) spillArraysCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
             spillKeyCountsAddr = 0;
-            Unsafe.free(spillKeyCapacitiesAddr, (long) spillArraysCapacity * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(spillKeyCapacitiesAddr, (long) spillArraysCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
             spillKeyCapacitiesAddr = 0;
             spillArraysCapacity = 0;
             hasSpillData = false;
         }
         if (flushHeaderBuf != 0) {
-            Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(flushHeaderBuf, flushHeaderBufCapacity, MemoryTag.NATIVE_INDEX_READER);
             flushHeaderBuf = 0;
             flushHeaderBufCapacity = 0;
         }
@@ -2478,12 +2478,12 @@ public class PostingIndexWriter implements IndexWriter {
 
         long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
-        pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_DEFAULT);
+        pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingValuesAddr + oldValSize, newValSize - oldValSize, (byte) 0);
 
         long oldCountSize = (long) keyCapacity * Integer.BYTES;
         long newCountSize = (long) newCapacity * Integer.BYTES;
-        pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_DEFAULT);
+        pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
 
         activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
