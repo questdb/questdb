@@ -10463,12 +10463,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void syncColumns() {
         final int commitMode = configuration.getCommitMode();
+        // Always commit indexers: PostingIndexWriter buffers add() calls in native
+        // memory and only publishes them to the memory-mapped files during commit().
+        // Without this, readers see keyCount=0 until the writer is closed (seal).
+        // BitmapIndexWriter.commit() is a no-op in NOSYNC mode, so this is safe.
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).getWriter().commit();
+        }
         if (commitMode != CommitMode.NOSYNC) {
             final boolean async = commitMode == CommitMode.ASYNC;
             syncColumns0(async);
-            for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-                denseIndexers.getQuick(i).sync(async);
-            }
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 denseSymbolMapWriters.getQuick(i).sync(async);
             }

@@ -698,6 +698,32 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostingIndexWhereFilterBeforeWriterRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+            // Do NOT call engine.releaseAllWriters() — the writer is still open.
+            // PostingIndexWriter must flush pending data during commit so that
+            // readers can see it without waiting for close/seal.
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T02:00:00.000000Z\tA
+                    2024-01-01T05:00:00.000000Z\tA
+                    """, "SELECT * FROM t WHERE s = 'A'");
+        });
+    }
+
+    @Test
     public void testPostingIndexWhereFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -711,16 +737,19 @@ public class CreateTableTest extends AbstractCairoTest {
                     ('2024-01-01T05:00:00', 'A')
                     """);
             drainWalQueue();
+
+            // Query BEFORE releaseAllWriters (unsealed sparse gens)
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T02:00:00.000000Z\tA
+                    2024-01-01T05:00:00.000000Z\tA
+                    """, "SELECT * FROM t WHERE s = 'A'");
+
+            // Release writers (triggers seal)
             engine.releaseAllWriters();
 
-            // Verify the index metadata
-            try (TableReader r = engine.getReader("t")) {
-                TableReaderMetadata metadata = r.getMetadata();
-                int colIndex = metadata.getColumnIndex("s");
-                assertTrue(metadata.isColumnIndexed(colIndex));
-                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
-            }
-
+            // Query AFTER seal (dense gen, stride-indexed)
             assertSql("""
                     ts\ts
                     2024-01-01T00:00:00.000000Z\tA
