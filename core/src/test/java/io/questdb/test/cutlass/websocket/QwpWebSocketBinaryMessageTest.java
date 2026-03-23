@@ -64,6 +64,92 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testWebSocketAcceptsZeroRowBatch() throws Exception {
+        // A crafted QWP message with rowCount=0 must not crash the server or
+        // corrupt WAL state.  After the zero-row message, real rows sent on a
+        // fresh connection must land in the table.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create the table so the zero-row message targets an existing table
+                serverMain.execute("CREATE TABLE zero_row_test (" +
+                        "value LONG, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // --- Step 1: send a crafted zero-row QWP message ---
+                URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
+                CountDownLatch openLatch = new CountDownLatch(1);
+                CountDownLatch binaryLatch = new CountDownLatch(1);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                HttpClient client = HttpClient.newHttpClient();
+                WebSocket.Listener listener = new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
+                        binaryLatch.countDown();
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                    }
+
+                    @Override
+                    public void onError(WebSocket webSocket, Throwable err) {
+                        error.set(err);
+                        openLatch.countDown();
+                        binaryLatch.countDown();
+                    }
+
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                        openLatch.countDown();
+                        webSocket.request(1);
+                    }
+                };
+
+                WebSocket webSocket = client.newWebSocketBuilder()
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .buildAsync(uri, listener)
+                        .get(10, TimeUnit.SECONDS);
+
+                Assert.assertTrue("WebSocket should open", openLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertNull("No error on open", error.get());
+
+                // Build a minimal valid QWP message with 0 rows:
+                //   12-byte header  +  table-header (name + rowCount=0 + columnCount=0)
+                ByteBuffer zeroRowMsg = buildZeroRowQwpMessage("zero_row_test");
+                webSocket.sendBinary(zeroRowMsg, true).get(5, TimeUnit.SECONDS);
+
+                // The server should reply with an ACK (binary frame).
+                Assert.assertTrue("Should receive ACK for zero-row message",
+                        binaryLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertNull("No error after zero-row message", error.get());
+
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done")
+                        .get(5, TimeUnit.SECONDS);
+
+                // --- Step 2: send real rows on a fresh connection ---
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < 5; i++) {
+                        sender.table("zero_row_test")
+                                .longColumn("value", i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("zero_row_test");
+                serverMain.assertSql(
+                        "SELECT count() FROM zero_row_test",
+                        "count\n5\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testWebSocketCloseHandshake() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -492,5 +578,47 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    /**
+     * Builds a minimal valid QWP v1 binary message with 0 rows and 0 columns
+     * for the given table name. Wire format:
+     * <pre>
+     *   [12-byte header: magic "QWP1", version, flags, tableCount=1, payloadLength]
+     *   [table header:  varint(nameLen), name bytes, varint(rowCount=0),
+     *                   varint(columnCount=0), schemaMode=FULL(0x00)]
+     * </pre>
+     */
+    private static ByteBuffer buildZeroRowQwpMessage(String tableName) {
+        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
+        // Table header: varint(nameLen) + name + varint(0) + varint(0) + byte(0x00)
+        // For short names, varint is 1 byte each.
+        int tableHeaderLen = 1 + nameBytes.length + 1 + 1 + 1;
+        int totalLen = 12 + tableHeaderLen;
+
+        ByteBuffer buf = ByteBuffer.allocate(totalLen);
+        // ILP4 header
+        buf.put((byte) 'Q');
+        buf.put((byte) 'W');
+        buf.put((byte) 'P');
+        buf.put((byte) '1');
+        buf.put((byte) 1);         // version
+        buf.put((byte) 0);         // flags
+        buf.putShort((short) 1);   // tableCount
+        buf.putInt(tableHeaderLen); // payloadLength
+
+        // Table header: name
+        buf.put((byte) nameBytes.length); // varint(nameLen) — fits in 1 byte
+        buf.put(nameBytes);
+
+        // rowCount = 0, columnCount = 0
+        buf.put((byte) 0);
+        buf.put((byte) 0);
+
+        // schemaMode = FULL
+        buf.put((byte) 0x00);
+
+        buf.flip();
+        return buf;
     }
 }
