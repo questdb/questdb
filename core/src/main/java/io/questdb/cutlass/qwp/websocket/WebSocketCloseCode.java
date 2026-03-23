@@ -58,6 +58,12 @@ public final class WebSocketCloseCode {
      * The endpoint is terminating the connection due to a protocol error.
      */
     public static final int PROTOCOL_ERROR = 1002;
+    /**
+     * Unsupported data (1003).
+     * The endpoint received a type of data it cannot accept
+     * (e.g., a binary-only endpoint received a text message).
+     */
+    public static final int UNSUPPORTED_DATA = 1003;
 
     private WebSocketCloseCode() {
         // Constants class

@@ -116,6 +116,17 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTextFrameRejectedWithUnsupportedData() throws Exception {
+        sendFrameAndAssertCloseResponse(
+                WebSocketOpcode.TEXT,
+                "hello".getBytes(StandardCharsets.UTF_8),
+                true,
+                WebSocketCloseCode.UNSUPPORTED_DATA,
+                "text"
+        );
+    }
+
+    @Test
     public void testWebSocketUpgradeSucceeds() throws Exception {
         runInContext((port) -> {
             byte[] keyBytes = new byte[16];

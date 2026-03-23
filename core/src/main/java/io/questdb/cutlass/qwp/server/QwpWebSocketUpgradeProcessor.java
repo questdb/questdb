@@ -551,7 +551,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 // tracking. Reject so the sender knows data was not ingested.
                     rejectFragmentedFrame(context, state, opcode);
             case WebSocketOpcode.TEXT ->
-                    LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
+                    rejectTextFrame(context, state);
             case WebSocketOpcode.PING -> handlePing(context, state, payload, length);
             case WebSocketOpcode.PONG -> LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
             case WebSocketOpcode.CLOSE -> {
@@ -669,6 +669,33 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                         bufferAddr, bufferSize,
                         WebSocketCloseCode.PROTOCOL_ERROR,
                         "fragmented WebSocket frames are not supported"
+                );
+                if (written > 0) {
+                    rawSocket.send(written);
+                }
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                // Best effort — we're disconnecting anyway.
+            }
+        }
+        throw ServerDisconnectException.INSTANCE;
+    }
+
+    private void rejectTextFrame(HttpConnectionContext context, QwpProcessorState state)
+            throws ServerDisconnectException {
+        LOG.error()
+                .$("WebSocket text frame rejected, QWP accepts only binary frames [fd=").$(context.getFd())
+                .I$();
+
+        // Best-effort CLOSE with 1003 (Unsupported Data) per RFC 6455 Section 7.4.1.
+        if (state.isSendReady()) {
+            try {
+                HttpRawSocket rawSocket = context.getRawResponseSocket();
+                long bufferAddr = rawSocket.getBufferAddress();
+                int bufferSize = rawSocket.getBufferSize();
+                int written = WebSocketFrameWriter.writeCloseFrame(
+                        bufferAddr, bufferSize,
+                        WebSocketCloseCode.UNSUPPORTED_DATA,
+                        "text frames are not supported, QWP requires binary frames"
                 );
                 if (written > 0) {
                     rawSocket.send(written);
