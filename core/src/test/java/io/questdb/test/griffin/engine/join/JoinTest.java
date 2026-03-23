@@ -3055,7 +3055,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
-        // Reproducer for: InvalidColumnException when joining a table with a
+        // reproducer for: InvalidColumnException when joining a table with a
         // multi-level view where the ON clause uses different column names on
         // each side (t.c1 = v.max). Requires: (1) multi-level view chain with
         // a JOIN inside, (2) different column names in the outer join ON clause,
