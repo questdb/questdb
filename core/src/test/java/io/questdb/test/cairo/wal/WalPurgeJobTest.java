@@ -403,6 +403,97 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableMetadataNpeForNonDroppedTableRethrows() throws Exception {
+        // When getTableMetadata() throws a non-CairoException and the table is
+        // NOT dropped, fetchSequencerPairs() must re-throw the exception rather
+        // than silently swallowing it.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldThrowNpe.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    // Throw NPE without dropping the table to simulate a
+                    // non-drop-related failure during metadata access.
+                    throw new NullPointerException("simulated: non-drop-related NPE");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldThrowNpe.set(true);
+
+            // fetchSequencerPairs() must re-throw because the table is not dropped.
+            try {
+                drainPurgeJob();
+                Assert.fail("Expected NullPointerException to propagate");
+            } catch (NullPointerException e) {
+                Assert.assertTrue(e.getMessage().contains("simulated"));
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataPoolSlotReleasedAfterNpe() throws Exception {
+        // When newTenant() in AbstractMultiTenantPool.get0() throws a
+        // non-CairoException, the pool slot must be released so subsequent
+        // getTableMetadata() calls can succeed.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldThrowNpe.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: pool slot leak test");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldThrowNpe.set(true);
+
+            // First call throws NPE during tenant creation in get0().
+            TableToken tableToken = engine.verifyTableName(tableName);
+            try {
+                engine.getTableMetadata(tableToken).close();
+                Assert.fail("Expected NullPointerException");
+            } catch (NullPointerException e) {
+                Assert.assertTrue(e.getMessage().contains("simulated"));
+            }
+
+            // Second call must succeed, proving the pool slot was released
+            // by the Throwable catch in get0() and not permanently leaked.
+            try (var metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertTrue(metadata.getColumnCount() > 0);
+            }
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
