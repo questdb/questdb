@@ -248,7 +248,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void authorize() {
         final SecurityContext securityContext = this.securityContext;
         if (securityContext == null) {
-            return;
+            throw CairoException.nonCritical()
+                    .put("alter security context is empty [table=")
+                    .put(getTableToken().getTableName())
+                    .put(']');
         }
         final TableToken tableToken = getTableToken();
         switch (command) {

@@ -86,13 +86,13 @@ public class UpdateOperation extends AbstractOperation {
     public void authorize() {
         final SecurityContext securityContext = this.securityContext;
         if (securityContext == null) {
-            throw CairoException.critical(0)
+            throw CairoException.nonCritical()
                     .put("update security context is empty [table=")
                     .put(getTableToken().getTableName())
                     .put(']');
         }
         if (updateColumnNames.size() == 0) {
-            throw CairoException.critical(0)
+            throw CairoException.nonCritical()
                     .put("update authorization columns are empty [table=")
                     .put(getTableToken().getTableName())
                     .put(']');

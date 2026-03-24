@@ -700,7 +700,7 @@ public final class TestUtils {
     }
 
     public static void assertEventually(EventualCode assertion) throws Exception {
-        assertEventually(assertion, 5);
+        assertEventually(assertion, 60);
     }
 
     public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {

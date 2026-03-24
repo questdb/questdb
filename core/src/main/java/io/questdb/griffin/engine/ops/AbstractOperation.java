@@ -138,8 +138,10 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlText = sqlStatement;
     }
 
-    // operations have to be authorized before executed,
-    // if the operation is cached, it has to be re-authorized on every run
+    /**
+     * Authorizes the operation against the current security context.
+     * Cached operations must be re-authorized on every execution.
+     */
     abstract void authorize();
 
     void init(
