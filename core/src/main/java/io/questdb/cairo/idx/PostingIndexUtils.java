@@ -307,14 +307,14 @@ public final class PostingIndexUtils {
         long pos = srcAddr + 4;
 
         ctx.ensureCapacity(blockCount);
-        int[] valueCounts = ctx.valueCounts;
+        long valueCountsAddr = ctx.valueCountsAddr;
         long firstValuesAddr = ctx.firstValuesAddr;
         long minDeltasAddr = ctx.minDeltasAddr;
-        int[] bitWidths = ctx.bitWidths;
+        long bitWidthsAddr = ctx.bitWidthsAddr;
         long blockDeltasAddr = ctx.blockDeltasAddr;
 
         for (int b = 0; b < blockCount; b++) {
-            valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+            Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
         pos += blockCount;
 
@@ -331,14 +331,14 @@ public final class PostingIndexUtils {
         pos += (long) blockCount * Long.BYTES;
 
         for (int b = 0; b < blockCount; b++) {
-            bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+            Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
         pos += blockCount;
 
         int destIdx = 0;
         for (int b = 0; b < blockCount; b++) {
-            int count = valueCounts[b];
-            int bitWidth = bitWidths[b];
+            int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
+            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
@@ -376,14 +376,14 @@ public final class PostingIndexUtils {
         long pos = srcAddr + 4;
 
         ctx.ensureCapacity(blockCount);
-        int[] valueCounts = ctx.valueCounts;
+        long valueCountsAddr = ctx.valueCountsAddr;
         long firstValuesAddr = ctx.firstValuesAddr;
         long minDeltasAddr = ctx.minDeltasAddr;
-        int[] bitWidths = ctx.bitWidths;
+        long bitWidthsAddr = ctx.bitWidthsAddr;
         long blockDeltasAddr = ctx.blockDeltasAddr;
 
         for (int b = 0; b < blockCount; b++) {
-            valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+            Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
         pos += blockCount;
 
@@ -400,14 +400,14 @@ public final class PostingIndexUtils {
         pos += (long) blockCount * Long.BYTES;
 
         for (int b = 0; b < blockCount; b++) {
-            bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+            Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
         pos += blockCount;
 
         int destIdx = 0;
         for (int b = 0; b < blockCount; b++) {
-            int count = valueCounts[b];
-            int bitWidth = bitWidths[b];
+            int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
+            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
@@ -466,10 +466,10 @@ public final class PostingIndexUtils {
 
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         long deltasAddr = ctx.deltasAddr;
-        int[] valueCounts = ctx.blockValueCounts;
+        long valueCountsAddr = ctx.blockValueCountsAddr;
         long blockFirstValuesAddr = ctx.blockFirstValuesAddr;
         long blockMinDeltasAddr = ctx.blockMinDeltasAddr;
-        int[] bitWidths = ctx.blockBitWidths;
+        long bitWidthsAddr = ctx.blockBitWidthsAddr;
         long residualsAddr = ctx.residualsAddr;
 
         // Compute deltas
@@ -484,7 +484,7 @@ public final class PostingIndexUtils {
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
             int blockSize = blockEnd - blockStart;
 
-            valueCounts[b] = blockSize;
+            Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, blockSize);
             Unsafe.getUnsafe().putLong(blockFirstValuesAddr + (long) b * Long.BYTES, values[blockStart]);
 
             // Compute min/max delta for deltas[blockStart+1..blockEnd-1] only.
@@ -506,7 +506,7 @@ public final class PostingIndexUtils {
 
             Unsafe.getUnsafe().putLong(blockMinDeltasAddr + (long) b * Long.BYTES, minD);
             long range = maxD - minD;
-            bitWidths[b] = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
+            Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, range == 0 ? 0 : BitpackUtils.bitsNeeded(range));
         }
 
         // Write encoded data
@@ -518,7 +518,7 @@ public final class PostingIndexUtils {
 
         // valueCounts[] (blockCount × 1B)
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putByte(pos + b, (byte) valueCounts[b]);
+            Unsafe.getUnsafe().putByte(pos + b, (byte) Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES));
         }
         pos += blockCount;
 
@@ -538,7 +538,7 @@ public final class PostingIndexUtils {
 
         // bitWidths[] (blockCount × 1B)
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putByte(pos + b, (byte) bitWidths[b]);
+            Unsafe.getUnsafe().putByte(pos + b, (byte) Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES));
         }
         pos += blockCount;
 
@@ -548,7 +548,7 @@ public final class PostingIndexUtils {
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
             int blockSize = blockEnd - blockStart;
             int numDeltas = blockSize - 1;
-            int bitWidth = bitWidths[b];
+            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
 
             if (bitWidth > 0 && numDeltas > 0) {
                 long minD = Unsafe.getUnsafe().getLong(blockMinDeltasAddr + (long) b * Long.BYTES);
@@ -598,10 +598,10 @@ public final class PostingIndexUtils {
 
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         long deltasAddr = ctx.deltasAddr;
-        int[] valueCounts = ctx.blockValueCounts;
+        long valueCountsAddr = ctx.blockValueCountsAddr;
         long blockFirstValuesAddr = ctx.blockFirstValuesAddr;
         long blockMinDeltasAddr = ctx.blockMinDeltasAddr;
-        int[] bitWidths = ctx.blockBitWidths;
+        long bitWidthsAddr = ctx.blockBitWidthsAddr;
         long residualsAddr = ctx.residualsAddr;
 
         // Compute deltas — reading directly from native memory
@@ -619,7 +619,7 @@ public final class PostingIndexUtils {
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
             int blockSize = blockEnd - blockStart;
 
-            valueCounts[b] = blockSize;
+            Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, blockSize);
             Unsafe.getUnsafe().putLong(blockFirstValuesAddr + (long) b * Long.BYTES,
                     Unsafe.getUnsafe().getLong(srcAddr + (long) blockStart * Long.BYTES));
 
@@ -640,7 +640,7 @@ public final class PostingIndexUtils {
 
             Unsafe.getUnsafe().putLong(blockMinDeltasAddr + (long) b * Long.BYTES, minD);
             long range = maxD - minD;
-            bitWidths[b] = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
+            Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, range == 0 ? 0 : BitpackUtils.bitsNeeded(range));
         }
 
         // Write encoded data
@@ -650,7 +650,7 @@ public final class PostingIndexUtils {
         pos += 4;
 
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putByte(pos + b, (byte) valueCounts[b]);
+            Unsafe.getUnsafe().putByte(pos + b, (byte) Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES));
         }
         pos += blockCount;
 
@@ -667,7 +667,7 @@ public final class PostingIndexUtils {
         pos += (long) blockCount * Long.BYTES;
 
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putByte(pos + b, (byte) bitWidths[b]);
+            Unsafe.getUnsafe().putByte(pos + b, (byte) Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES));
         }
         pos += blockCount;
 
@@ -676,7 +676,7 @@ public final class PostingIndexUtils {
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
             int blockSize = blockEnd - blockStart;
             int numDeltas = blockSize - 1;
-            int bitWidth = bitWidths[b];
+            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
 
             if (bitWidth > 0 && numDeltas > 0) {
                 long minD = Unsafe.getUnsafe().getLong(blockMinDeltasAddr + (long) b * Long.BYTES);
@@ -773,10 +773,10 @@ public final class PostingIndexUtils {
      */
     public static class EncodeContext {
         long deltasAddr;
-        int[] blockValueCounts;
+        long blockValueCountsAddr;
         long blockFirstValuesAddr;
         long blockMinDeltasAddr;
-        int[] blockBitWidths;
+        long blockBitWidthsAddr;
         long residualsAddr;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
@@ -813,9 +813,23 @@ public final class PostingIndexUtils {
                 }
                 blockFirstValuesAddr = newFirstAddr;
                 blockMinDeltasAddr = newMinAddr;
+                long newValueCountsAddr = Unsafe.malloc((long) newBc * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newBitWidthsAddr;
+                try {
+                    newBitWidthsAddr = Unsafe.malloc((long) newBc * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newValueCountsAddr, (long) newBc * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (blockValueCountsAddr != 0) {
+                    Unsafe.free(blockValueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (blockBitWidthsAddr != 0) {
+                    Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                blockValueCountsAddr = newValueCountsAddr;
+                blockBitWidthsAddr = newBitWidthsAddr;
                 blockCapacity = newBc;
-                blockValueCounts = new int[newBc];
-                blockBitWidths = new int[newBc];
             }
             if (residualsAddr == 0) {
                 residualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -839,6 +853,14 @@ public final class PostingIndexUtils {
                 Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockMinDeltasAddr = 0;
             }
+            if (blockValueCountsAddr != 0) {
+                Unsafe.free(blockValueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockValueCountsAddr = 0;
+            }
+            if (blockBitWidthsAddr != 0) {
+                Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBitWidthsAddr = 0;
+            }
             if (residualsAddr != 0) {
                 Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 residualsAddr = 0;
@@ -854,10 +876,10 @@ public final class PostingIndexUtils {
      * Reusable workspace for decodeKey to avoid per-call allocations.
      */
     public static class DecodeContext {
-        int[] valueCounts;
+        long valueCountsAddr;
         long firstValuesAddr;
         long minDeltasAddr;
-        int[] bitWidths;
+        long bitWidthsAddr;
         long blockDeltasAddr;
         private int blockCapacity;
 
@@ -880,9 +902,23 @@ public final class PostingIndexUtils {
                 }
                 firstValuesAddr = newFirstAddr;
                 minDeltasAddr = newMinAddr;
+                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newBitWidthsAddr;
+                try {
+                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (valueCountsAddr != 0) {
+                    Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (bitWidthsAddr != 0) {
+                    Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                valueCountsAddr = newValueCountsAddr;
+                bitWidthsAddr = newBitWidthsAddr;
                 blockCapacity = newCapacity;
-                valueCounts = new int[newCapacity];
-                bitWidths = new int[newCapacity];
             }
             if (blockDeltasAddr == 0) {
                 blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -897,6 +933,14 @@ public final class PostingIndexUtils {
             if (minDeltasAddr != 0) {
                 Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 minDeltasAddr = 0;
+            }
+            if (valueCountsAddr != 0) {
+                Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                valueCountsAddr = 0;
+            }
+            if (bitWidthsAddr != 0) {
+                Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                bitWidthsAddr = 0;
             }
             if (blockDeltasAddr != 0) {
                 Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);

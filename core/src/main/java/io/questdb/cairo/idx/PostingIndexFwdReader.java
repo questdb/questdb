@@ -93,10 +93,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int totalValueCount;
         // Block metadata arrays (pre-allocated, grown as needed)
         private int metadataCapacity = 256;
-        private int[] valueCounts = new int[256];
+        private long valueCountsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long firstValuesAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long minDeltasAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        private int[] bitWidths = new int[256];
+        private long bitWidthsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long packedDataAddr;
         // Flat mode batch state (for count > BLOCK_CAPACITY)
         private boolean flatMode;
@@ -508,8 +508,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private void decodeNextBlock() {
             int b = currentBlock;
-            int count = valueCounts[b];
-            int bitWidth = bitWidths[b];
+            int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
+            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
@@ -555,9 +555,23 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 firstValuesAddr = newFirstAddr;
                 minDeltasAddr = newMinAddr;
+                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newBitWidthsAddr;
+                try {
+                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (valueCountsAddr != 0) {
+                    Unsafe.free(valueCountsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (bitWidthsAddr != 0) {
+                    Unsafe.free(bitWidthsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                valueCountsAddr = newValueCountsAddr;
+                bitWidthsAddr = newBitWidthsAddr;
                 metadataCapacity = newCapacity;
-                valueCounts = new int[newCapacity];
-                bitWidths = new int[newCapacity];
             }
         }
 
@@ -587,6 +601,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (minDeltasAddr != 0) {
                 Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 minDeltasAddr = 0;
+            }
+            if (valueCountsAddr != 0) {
+                Unsafe.free(valueCountsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                valueCountsAddr = 0;
+            }
+            if (bitWidthsAddr != 0) {
+                Unsafe.free(bitWidthsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                bitWidthsAddr = 0;
             }
             if (decodeWorkspaceAddr != 0) {
                 Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -786,7 +808,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             ensureMetadataCapacity(blockCount);
 
             for (int b = 0; b < blockCount; b++) {
-                valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+                Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
             }
             pos += blockCount;
 
@@ -803,7 +825,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             pos += (long) blockCount * Long.BYTES;
 
             for (int b = 0; b < blockCount; b++) {
-                bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+                Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
             }
             pos += blockCount;
 
@@ -836,9 +858,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // skipped values in the sidecar offset calculation
             int skippedValueCount = 0;
             for (int b = 0; b < startBlock; b++) {
-                int numDeltas = valueCounts[b] - 1;
-                packedDataStart += BitpackUtils.packedDataSize(numDeltas, bitWidths[b]);
-                skippedValueCount += valueCounts[b];
+                int vc = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
+                int numDeltas = vc - 1;
+                packedDataStart += BitpackUtils.packedDataSize(numDeltas, Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES));
+                skippedValueCount += vc;
             }
             this.sidecarStrideKeyStart += skippedValueCount;
 

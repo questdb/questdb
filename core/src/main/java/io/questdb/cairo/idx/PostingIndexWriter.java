@@ -494,13 +494,33 @@ public class PostingIndexWriter implements IndexWriter {
         // can conditionally free only those that were successfully allocated.
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
         int maxPerKey = estimateMaxPerKey(valueMem.addressOf(gen0FileOffset), gen0KeyCount, gen0SiSize);
-        long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(maxPerKey, PostingIndexUtils.BLOCK_CAPACITY * genCount));
+        // Scan sparse gens for actual max per-key count — the spill mechanism
+        // can produce counts >> BLOCK_CAPACITY, so BLOCK_CAPACITY * genCount
+        // is not a safe upper bound.
+        int sparseMaxPerKey = 0;
+        for (int g = 1; g < genCount; g++) {
+            long gDirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+            long gFileOffset = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+            long gDataSize = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_SIZE);
+            int gKeyCount = keyMem.getInt(gDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            if (gKeyCount >= 0 || gDataSize == 0) continue; // dense or empty
+            int activeKeys = -gKeyCount;
+            valueMem.extend(gFileOffset + gDataSize);
+            long gAddr = valueMem.addressOf(gFileOffset);
+            long countsBase = gAddr + (long) activeKeys * Integer.BYTES;
+            for (int i = 0; i < activeKeys; i++) {
+                int c = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+                if (c > sparseMaxPerKey) sparseMaxPerKey = c;
+            }
+        }
+        int maxMergedPerKey = maxPerKey + sparseMaxPerKey * (genCount - 1);
+        long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(maxMergedPerKey, PostingIndexUtils.BLOCK_CAPACITY));
         long maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
         int maxHeaderSize = Math.max(
                 PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
                 PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE)
         );
-        long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * (maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount);
+        long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * maxMergedPerKey;
         long mergedValuesSize = Math.max(maxPerStride, 1024) * Long.BYTES;
         long copyBufSize = gen0DataSize;
         long copyBufAllocSize = copyBufSize > 0 ? copyBufSize : 1;
@@ -525,7 +545,7 @@ public class PostingIndexWriter implements IndexWriter {
             copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
 
             // Pre-allocate seal-path arrays to avoid per-stride allocations
-            int preAllocPerKey = maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount;
+            int preAllocPerKey = maxMergedPerKey;
             if (preAllocPerKey > unpackBatchCapacity) {
                 if (unpackBatchAddr != 0) {
                     Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
