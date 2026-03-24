@@ -139,6 +139,24 @@ class LateralJoinRewriter {
         return set;
     }
 
+    private static CharSequence findExistingOuterRefAlias(
+            QueryModel model, CharSequence outerRefColAlias, CharSequence outerRefModelAlias
+    ) {
+        ObjList<QueryColumn> cols = model.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            QueryColumn col = cols.getQuick(i);
+            ExpressionNode ast = col.getAst();
+            if (ast != null && ast.type == ExpressionNode.LITERAL
+                    && Chars.startsWith(ast.token, outerRefModelAlias)) {
+                if (Chars.equalsIgnoreCase(ast.token, outerRefColAlias)
+                        || Chars.endsWith(ast.token, "." + outerRefColAlias)) {
+                    return col.getAlias();
+                }
+            }
+        }
+        return null;
+    }
+
     private static CharSequence findOuterRefAliasInChain(QueryModel model) {
         QueryModel m = model;
         while (m != null) {
@@ -1516,6 +1534,22 @@ class LateralJoinRewriter {
         }
     }
 
+    private CharSequence lookupOuterRefAlias(
+            CharSequence token,
+            CharSequence outerRefAlias,
+            LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap
+    ) {
+        CharSequence result = aliasMap.get(token);
+        if (result != null) {
+            return result;
+        }
+        int dot = Chars.indexOf(token, '.');
+        if (dot > 0 && Chars.startsWith(token, outerRefAlias)) {
+            CharSequence unqualified = token.subSequence(dot + 1, token.length());
+            return aliasMap.get(unqualified);
+        }
+        return null;
+    }
 
     private CharSequence propagateColumnUp(
             CharSequence columnName,
@@ -2013,7 +2047,7 @@ class LateralJoinRewriter {
             if (ast != null
                     && ast.type == ExpressionNode.LITERAL
                     && Chars.startsWith(ast.token, outerRefAlias)) {
-                CharSequence innerEquiv = aliasMap.get(ast.token);
+                CharSequence innerEquiv = lookupOuterRefAlias(ast.token, outerRefAlias, aliasMap);
                 if (innerEquiv != null) {
                     col.of(col.getAlias(), expressionNodePool.next().of(
                             ExpressionNode.LITERAL, innerEquiv, ast.precedence, ast.position
@@ -2025,6 +2059,27 @@ class LateralJoinRewriter {
                 ExpressionNode rewritten = rewriteOuterRefs(ast, aliasMap);
                 if (rewritten != ast) {
                     col.of(col.getAlias(), rewritten);
+                }
+            }
+
+            if (col instanceof WindowExpression we) {
+                rewriteOuterRefExprs(we.getPartitionBy(), outerRefAlias, aliasMap);
+            }
+        }
+    }
+
+    private void rewriteOuterRefExprs(
+            ObjList<ExpressionNode> exprs,
+            CharSequence outerRefAlias,
+            LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap
+    ) {
+        for (int i = 0, n = exprs.size(); i < n; i++) {
+            ExpressionNode node = exprs.getQuick(i);
+            if (node != null && node.type == ExpressionNode.LITERAL
+                    && Chars.startsWith(node.token, outerRefAlias)) {
+                CharSequence innerEquiv = lookupOuterRefAlias(node.token, outerRefAlias, aliasMap);
+                if (innerEquiv != null) {
+                    node.token = innerEquiv;
                 }
             }
         }
@@ -2531,10 +2586,13 @@ class LateralJoinRewriter {
                     QueryColumn refCol = outerRefCols.getQuick(j);
                     CharSequence innerCol = outerToInnerAlias.get(refCol.getAlias());
                     if (innerCol != null) {
-                        ExpressionNode innerNode = expressionNodePool.next().of(
-                                ExpressionNode.LITERAL, innerCol, 0, 0
-                        );
-                        CharSequence selectAlias = ensureColumnInSelect(branchTop, innerNode, innerCol);
+                        CharSequence selectAlias = findExistingOuterRefAlias(branchTop, refCol.getAlias(), outerRefAlias);
+                        if (selectAlias == null) {
+                            ExpressionNode innerNode = expressionNodePool.next().of(
+                                    ExpressionNode.LITERAL, innerCol, 0, 0
+                            );
+                            selectAlias = ensureColumnInSelect(branchTop, innerNode, innerCol);
+                        }
                         CharSequence qualifiedInner = qualifyWithAlias(lateralAlias, selectAlias);
                         ExpressionNode qualifiedInnerNode = expressionNodePool.next().of(
                                 ExpressionNode.LITERAL, qualifiedInner, 0, 0

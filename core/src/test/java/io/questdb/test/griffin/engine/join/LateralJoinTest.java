@@ -2367,7 +2367,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, true
+                    null, true, false
             );
         });
     }
@@ -2708,7 +2708,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
