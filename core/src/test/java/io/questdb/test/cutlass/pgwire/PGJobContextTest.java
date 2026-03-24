@@ -4027,7 +4027,6 @@ if __name__ == "__main__":
     @Test
     public void testExplainPlanWithBindVariables() throws Exception {
         sharedQueryWorkerCount = 2; // Set to 1 to enable parallel query plans
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
         try {
             assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
                 try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
@@ -4111,7 +4110,6 @@ if __name__ == "__main__":
     @Test
     public void testExplainPlanWithWhitespaces() throws Exception {
         sharedQueryWorkerCount = 2; // Set to 1 to enable parallel query plans
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, true);
         try {
             assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
                 try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
@@ -9813,7 +9811,7 @@ create table tab as (
     @Test
     public void testSelectStringInWithBindVariables() throws Exception {
         sharedQueryWorkerCount = 2; // Set to 1 to enable parallel query plans
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
+
         try {
             assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
                 connection.setAutoCommit(false);
