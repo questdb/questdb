@@ -105,7 +105,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         };
     }
 
-
     public static RecordMetadata generateColumnTypeChange(
             ObjList<FuzzTransaction> transactionList,
             long estimatedTotalRowCount,
