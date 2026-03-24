@@ -1321,7 +1321,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 1;
-            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 32 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 32 bytes, little-endian]
             int dataLength = 1 + 1 + rowCount * 32;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
@@ -1329,10 +1329,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // 256-bit value with hl=1 overflows 128-bit decimal
                 long offset = 2;
-                Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, Long.reverseBytes(1L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12_345L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset, 0L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, 1L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, 0L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, 12_345L);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256);
@@ -1366,24 +1366,24 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 2;
-            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 32 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 32 bytes, little-endian]
             int dataLength = 1 + 1 + rowCount * 32;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
-                // Value 1: 12345 (= 123.45), sign-extended to 256-bit big-endian (hh, hl, lh, ll)
+                // Value 1: 12345 (= 123.45), sign-extended to 256-bit little-endian (hh, hl, lh, ll)
                 long offset = 2;
-                Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(0L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(12_345L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset, 0L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, 0L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, 0L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, 12_345L);
                 // Value 2: -9999 (= -99.99), sign-extended
                 offset = 34;
-                Unsafe.getUnsafe().putLong(dataAddress + offset, Long.reverseBytes(-1L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, Long.reverseBytes(-1L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(-1L));
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(-9999L));
+                Unsafe.getUnsafe().putLong(dataAddress + offset, -1L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, -1L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, -1L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, -9999L);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256);
@@ -1427,15 +1427,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 2;
-            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 8 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 8 bytes, little-endian]
             int dataLength = 1 + 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
-                // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
-                Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(12_345L));
-                Unsafe.getUnsafe().putLong(dataAddress + 10, Long.reverseBytes(-9999L));
+                // Values: 12345 (= 123.45), -9999 (= -99.99) in little-endian
+                Unsafe.getUnsafe().putLong(dataAddress + 2, 12_345L);
+                Unsafe.getUnsafe().putLong(dataAddress + 10, -9999L);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64);
@@ -1479,14 +1479,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 1;
-            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 8 bytes, big-endian]
+            // Wire format: [null bitmap flag (0)][scale: 1 byte][values: rowCount * 8 bytes, little-endian]
             int dataLength = 1 + 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Value: 40_000 overflows short range for DECIMAL16
-                Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(40_000L));
+                Unsafe.getUnsafe().putLong(dataAddress + 2, 40_000L);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64);
@@ -1539,7 +1539,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 long valuesAddr = bitmapAddr + bitmapSize + 1;
                 for (int i = 0; i < unscaledValues.length; i++) {
-                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, Long.reverseBytes(unscaledValues[i]));
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, unscaledValues[i]);
                 }
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
@@ -1586,7 +1586,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // Value: 3_000_000_000 overflows int range for DECIMAL32
-                Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(3_000_000_000L));
+                Unsafe.getUnsafe().putLong(dataAddress + 2, 3_000_000_000L);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64);
@@ -1639,7 +1639,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 long valuesAddr = bitmapAddr + bitmapSize + 1;
                 for (int i = 0; i < unscaledValues.length; i++) {
-                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, Long.reverseBytes(unscaledValues[i]));
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, unscaledValues[i]);
                 }
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
@@ -1687,9 +1687,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 // Wire scale = 2
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
-                // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
-                Unsafe.getUnsafe().putLong(dataAddress + 2, Long.reverseBytes(12_345L));
-                Unsafe.getUnsafe().putLong(dataAddress + 10, Long.reverseBytes(-9999L));
+                // Values: 12345 (= 123.45), -9999 (= -99.99) in little-endian
+                Unsafe.getUnsafe().putLong(dataAddress + 2, 12_345L);
+                Unsafe.getUnsafe().putLong(dataAddress + 10, -9999L);
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64);
@@ -1732,7 +1732,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            // Decimal64 wire format: null bitmap flag + null bitmap + scale byte + big-endian values
+            // Decimal64 wire format: null bitmap flag + null bitmap + scale byte + little-endian values
             // Values: 1.50 (unscaled=150, scale=2), -3.75 (unscaled=-375, scale=2), null
             byte scale = 2;
             long[] unscaledValues = {150, -375};
@@ -1750,7 +1750,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 long valuesAddr = bitmapAddr + bitmapSize + 1;
                 for (int i = 0; i < unscaledValues.length; i++) {
-                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, Long.reverseBytes(unscaledValues[i]));
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, unscaledValues[i]);
                 }
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
@@ -1806,7 +1806,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 long valuesAddr = bitmapAddr + bitmapSize + 1;
                 for (int i = 0; i < unscaledValues.length; i++) {
-                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, Long.reverseBytes(unscaledValues[i]));
+                    Unsafe.getUnsafe().putLong(valuesAddr + (long) i * 8, unscaledValues[i]);
                 }
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
