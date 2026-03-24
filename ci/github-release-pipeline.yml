@@ -102,6 +102,9 @@ stages:
             displayName: "Install GraalVM Community 17.0.9 (Windows, SHA256 verified)"
             condition: eq( variables['os'], 'Windows')
 
+          - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+            displayName: "Ensure Rust is installed"
+
           - task: Maven@3
             displayName: "Building QuestDB"
             inputs:

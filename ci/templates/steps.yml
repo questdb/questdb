@@ -153,7 +153,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
       options:
-        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(

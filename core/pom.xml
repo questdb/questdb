@@ -38,10 +38,10 @@
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>1.2.0</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
-        <qdbr.release>false</qdbr.release>
+        <qdbr.release>true</qdbr.release>
 
         <!--
-        For production builds, use -P qdbr-release
+        For debug builds, use -P qdbr-debug
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
@@ -683,15 +683,15 @@
             </dependencies>
         </profile>
         <profile>
-            <id>qdbr-release</id>
+            <id>qdbr-debug</id>
             <properties>
-                <qdbr.release>true</qdbr.release>
+                <qdbr.release>false</qdbr.release>
             </properties>
         </profile>
         <profile>
             <id>qdbr-coverage</id>
             <properties>
-                <qdr.release>false</qdr.release>
+                <qdbr.release>false</qdbr.release>
                 <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
             </properties>
             <build>
