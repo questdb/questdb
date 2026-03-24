@@ -773,14 +773,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
             coveringColumnIndices = new int[coveringColumnNames.size()];
             for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
-                int covIdx = metadata.getColumnIndexQuiet(coveringColumnNames.get(i));
+                CharSequence covName = coveringColumnNames.get(i);
+                int covIdx = metadata.getColumnIndexQuiet(covName);
                 if (covIdx == -1) {
-                    throw CairoException.invalidMetadataRecoverable("INCLUDE column does not exist", coveringColumnNames.get(i));
+                    throw CairoException.invalidMetadataRecoverable("INCLUDE column does not exist", covName);
+                }
+                if (covIdx == columnIndex) {
+                    throw CairoException.invalidMetadataRecoverable("INCLUDE must not contain the indexed column", covName);
+                }
+                for (int j = 0; j < i; j++) {
+                    if (coveringColumnIndices[j] == covIdx) {
+                        throw CairoException.invalidMetadataRecoverable("duplicate column in INCLUDE", covName);
+                    }
                 }
                 int covType = ColumnType.tagOf(metadata.getColumnType(covIdx));
                 if (ColumnType.isVarSize(covType) || covType == ColumnType.LONG256
                         || covType == ColumnType.UUID || covType == ColumnType.GEOHASH) {
-                    throw CairoException.invalidMetadataRecoverable("INCLUDE column must be a fixed-size numeric type", coveringColumnNames.get(i));
+                    throw CairoException.invalidMetadataRecoverable("INCLUDE column must be a fixed-size numeric type", covName);
                 }
                 coveringColumnIndices[i] = covIdx;
             }

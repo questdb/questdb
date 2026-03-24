@@ -75,6 +75,217 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexWithInclude() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("ALTER TABLE t_alter ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            try (TableReader r = engine.getReader("t_alter")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                assertTrue(metadata.isColumnIndexed(symIdx));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
+                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull(coveringCols);
+                assertEquals(2, coveringCols.length);
+                assertEquals(metadata.getColumnIndex("price"), coveringCols[0]);
+                assertEquals(metadata.getColumnIndex("qty"), coveringCols[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeCoveringQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_q (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("ALTER TABLE t_alter_q ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            // Insert AFTER adding index so sidecar data is written
+            execute("""
+                    INSERT INTO t_alter_q VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T02:00:00', 'A', 3.5, 30)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_alter_q WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeDuplicateColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dup (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_dup ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, price)");
+                fail("Should have thrown");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().contains("duplicate column in INCLUDE"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_empty ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE ()");
+                fail("Should have thrown SqlException");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage().contains("at least one column name expected in INCLUDE"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeNonExistentColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_noexist (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_noexist ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (ghost)");
+                fail("Should have thrown");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().contains("INCLUDE column does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeOnBitmapFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bitmap (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_bitmap ALTER COLUMN sym ADD INDEX TYPE BITMAP INCLUDE (price)");
+                fail("Should have thrown SqlException");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage().contains("INCLUDE is only supported for POSTING index type"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeSelfReference() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_self (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_self ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (sym)");
+                fail("Should have thrown");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().contains("INCLUDE must not contain the indexed column"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeUnsupportedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_varchar (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        name VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_varchar ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (name)");
+                fail("Should have thrown");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().contains("INCLUDE column must be a fixed-size numeric type"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexWithIncludeWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("ALTER TABLE t_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+
+            // Verify metadata has covering index configuration
+            try (TableReader r = engine.getReader("t_wal")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                assertTrue(metadata.isColumnIndexed(symIdx));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
+                int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertNotNull(coveringCols);
+                assertEquals(2, coveringCols.length);
+            }
+
+            // Non-covering query (SELECT * includes ts, which is not in INCLUDE)
+            execute("""
+                    INSERT INTO t_wal VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.5, 20)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    ts\tsym\tprice\tqty
+                    2024-01-01T00:00:00.000000Z\tA\t1.5\t10
+                    """, "SELECT * FROM t_wal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
     public void testIncludeOnlyValidWithPosting() throws Exception {
         assertMemoryLeak(() -> {
             try {

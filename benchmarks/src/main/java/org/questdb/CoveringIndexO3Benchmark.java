@@ -119,8 +119,8 @@ public class CoveringIndexO3Benchmark {
 
     @TearDown(Level.Trial)
     public void tearDownEngine() {
-        compiler.close();
-        engine.close();
+        Misc.free(compiler);
+        Misc.free(engine);
         drainNativeResources();
         checkMemoryLeaks(memBefore);
     }
@@ -159,11 +159,14 @@ public class CoveringIndexO3Benchmark {
         long totalAfter = 0;
         StringBuilder leaks = new StringBuilder();
         for (int i = 0; i < MemoryTag.SIZE; i++) {
+            if (i == MemoryTag.NATIVE_SQL_COMPILER) {
+                continue; // pooled, not released immediately
+            }
             long after = Unsafe.getMemUsedByTag(i);
             totalBefore += before[i];
             totalAfter += after;
             long diff = after - before[i];
-            if (diff != 0 && i != MemoryTag.NATIVE_SQL_COMPILER) {
+            if (diff != 0) {
                 leaks.append(String.format("  %-30s %+,d bytes (was %,d, now %,d)%n",
                         MemoryTag.nameOf(i), diff, before[i], after));
             }

@@ -2377,11 +2377,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 if (!Chars.equals(tok, '(')) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
                                 }
+                                tok = expectToken(lexer, "column name");
+                                if (Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "at least one column name expected in INCLUDE");
+                                }
                                 do {
-                                    tok = expectToken(lexer, "column name");
                                     coveringColumnNames.add(GenericLexer.immutableOf(unquote(tok)));
                                     tok = expectToken(lexer, "',' or ')'");
-                                } while (Chars.equals(tok, ','));
+                                    if (Chars.equals(tok, ',')) {
+                                        tok = expectToken(lexer, "column name");
+                                    }
+                                } while (!Chars.equals(tok, ')'));
                                 if (!Chars.equals(tok, ')')) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
                                 }
