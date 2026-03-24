@@ -261,6 +261,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // Returns table transaction number
     @Override
     public long apply(UpdateOperation operation) {
+        operation.authorize();
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
