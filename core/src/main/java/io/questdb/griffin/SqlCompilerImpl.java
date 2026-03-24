@@ -1145,7 +1145,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence columnName,
             TableRecordMetadata metadata,
             int indexValueBlockSize,
-            byte indexType
+            byte indexType,
+            @Nullable ObjList<CharSequence> coveringColumnNames
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1167,7 +1168,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 metadata.getTableId(),
                 columnName,
                 Numbers.ceilPow2(indexValueBlockSize),
-                indexType
+                indexType,
+                coveringColumnNames
         );
         securityContext.authorizeAlterTableAddIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
@@ -2016,7 +2018,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             columnName,
                             tableMetadata,
                             indexValueBlockSize,
-                            indexType
+                            indexType,
+                            null
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     expectKeyword(lexer, "index");
@@ -2351,6 +2354,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         tok = SqlUtil.fetchNext(lexer);
                         int indexValueCapacity = -1;
                         byte indexType = IndexType.BITMAP;
+                        ObjList<CharSequence> coveringColumnNames = null;
 
                         if (tok != null && !isSemicolon(tok)) {
                             // ADD INDEX TYPE POSTING
@@ -2363,7 +2367,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 indexType = parsedType;
                                 tok = SqlUtil.fetchNext(lexer);
                             }
-                            // tok might be CAPACITY, semicolon, or null
+                            // tok might be INCLUDE, CAPACITY, semicolon, or null
+                            if (tok != null && !isSemicolon(tok) && SqlKeywords.isIncludeKeyword(tok)) {
+                                if (indexType != IndexType.POSTING) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
+                                }
+                                coveringColumnNames = new ObjList<>();
+                                tok = expectToken(lexer, "'('");
+                                if (!Chars.equals(tok, '(')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+                                }
+                                do {
+                                    tok = expectToken(lexer, "column name");
+                                    coveringColumnNames.add(GenericLexer.immutableOf(unquote(tok)));
+                                    tok = expectToken(lexer, "',' or ')'");
+                                } while (Chars.equals(tok, ','));
+                                if (!Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+                                }
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
                             if (tok != null && !isSemicolon(tok)) {
                                 if (!isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
@@ -2391,7 +2414,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnName,
                                 tableMetadata,
                                 indexValueCapacity,
-                                indexType
+                                indexType,
+                                coveringColumnNames
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index' or 'parquet'");

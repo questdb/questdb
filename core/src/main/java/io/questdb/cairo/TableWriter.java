@@ -734,6 +734,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+        addIndex(columnName, indexValueBlockSize, indexType, null);
+    }
+
+    @Override
+    public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -763,11 +768,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.invalidMetadataRecoverable("cannot create index, column type is not SYMBOL", columnName);
         }
 
+        // Resolve covering column names to indices before writing the index
+        int[] coveringColumnIndices = null;
+        if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
+            coveringColumnIndices = new int[coveringColumnNames.size()];
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                int covIdx = metadata.getColumnIndexQuiet(coveringColumnNames.get(i));
+                if (covIdx == -1) {
+                    throw CairoException.invalidMetadataRecoverable("INCLUDE column does not exist", coveringColumnNames.get(i));
+                }
+                int covType = ColumnType.tagOf(metadata.getColumnType(covIdx));
+                if (ColumnType.isVarSize(covType) || covType == ColumnType.LONG256
+                        || covType == ColumnType.UUID || covType == ColumnType.GEOHASH) {
+                    throw CairoException.invalidMetadataRecoverable("INCLUDE column must be a fixed-size numeric type", coveringColumnNames.get(i));
+                }
+                coveringColumnIndices[i] = covIdx;
+            }
+        }
+
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
         writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
         columnMetadata.setIndexType(indexType);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+        columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
         // set the index flag in metadata and create new _meta.swp
         rewriteAndSwapMetadata(metadata);

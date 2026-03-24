@@ -86,13 +86,16 @@ public class UnpackBenchmark {
         long packedAddr = Unsafe.malloc(packedSize, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().setMemory(packedAddr, packedSize, (byte) 0);
 
-        long[] values = new long[TOTAL_VALUES];
+        long valuesSize = (long) TOTAL_VALUES * Long.BYTES;
+        long valuesAddr = Unsafe.malloc(valuesSize, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < TOTAL_VALUES; i++) {
-            values[i] = minValue + (i % (maxOffset + 1));
+            Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES,
+                    minValue + (i % (maxOffset + 1)));
         }
-        BitpackUtils.packValues(values, TOTAL_VALUES, minValue, bitWidth, packedAddr);
+        BitpackUtils.packValues(valuesAddr, TOTAL_VALUES, minValue, bitWidth, packedAddr);
 
-        long[] dest = new long[batchSize];
+        long destSize = (long) batchSize * Long.BYTES;
+        long destAddr = Unsafe.malloc(destSize, MemoryTag.NATIVE_DEFAULT);
         long totalElapsed = 0;
         int totalMeasurements = 0;
 
@@ -100,12 +103,12 @@ public class UnpackBenchmark {
             if (startIndex + batchSize > TOTAL_VALUES) continue;
 
             for (int i = 0; i < WARMUP_ITERS; i++) {
-                BitpackUtils.unpackValuesFrom(packedAddr, startIndex, batchSize, bitWidth, minValue, dest);
+                BitpackUtils.unpackValuesFrom(packedAddr, startIndex, batchSize, bitWidth, minValue, destAddr);
             }
 
             long t0 = System.nanoTime();
             for (int i = 0; i < MEASURE_ITERS; i++) {
-                BitpackUtils.unpackValuesFrom(packedAddr, startIndex, batchSize, bitWidth, minValue, dest);
+                BitpackUtils.unpackValuesFrom(packedAddr, startIndex, batchSize, bitWidth, minValue, destAddr);
             }
             totalElapsed += System.nanoTime() - t0;
             totalMeasurements++;
@@ -113,15 +116,18 @@ public class UnpackBenchmark {
             if (startIndex == START_INDICES[0]) {
                 for (int i = 0; i < Math.min(4, batchSize); i++) {
                     long expected = minValue + ((startIndex + i) % (maxOffset + 1));
-                    if (dest[i] != expected) {
+                    long actual = Unsafe.getUnsafe().getLong(destAddr + (long) i * Long.BYTES);
+                    if (actual != expected) {
                         System.err.printf("MISMATCH at bw=%d start=%d i=%d: expected=%d got=%d%n",
-                                bitWidth, startIndex, i, expected, dest[i]);
+                                bitWidth, startIndex, i, expected, actual);
                         break;
                     }
                 }
             }
         }
 
+        Unsafe.free(destAddr, destSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(valuesAddr, valuesSize, MemoryTag.NATIVE_DEFAULT);
         Unsafe.free(packedAddr, packedSize, MemoryTag.NATIVE_DEFAULT);
         return (double) totalElapsed / (totalMeasurements * MEASURE_ITERS);
     }

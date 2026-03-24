@@ -502,7 +502,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         final CharSequence columnName = activeExtraStrInfo.getStrA(0);
         try {
             byte indexType = extraInfo.size() > 1 ? (byte) extraInfo.get(1) : IndexType.BITMAP;
-            svc.addIndex(columnName, (int) extraInfo.get(0), indexType);
+            int coverCount = extraInfo.size() > 2 ? (int) extraInfo.get(2) : 0;
+            ObjList<CharSequence> coveringColumnNames = null;
+            if (coverCount > 0) {
+                coveringColumnNames = new ObjList<>(coverCount);
+                for (int i = 0; i < coverCount; i++) {
+                    coveringColumnNames.add(activeExtraStrInfo.getStrA(1 + i));
+                }
+            }
+            svc.addIndex(columnName, (int) extraInfo.get(0), indexType, coveringColumnNames);
         } catch (CairoException e) {
             // augment exception with table position
             e.position(tableNamePosition);

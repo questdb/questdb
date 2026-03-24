@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -105,6 +106,10 @@ public interface MetadataService {
     }
 
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType);
+
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+        addIndex(columnName, indexValueBlockSize, indexType);
+    }
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
