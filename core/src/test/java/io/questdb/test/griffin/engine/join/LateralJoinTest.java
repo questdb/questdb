@@ -602,7 +602,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub ON true
                             ORDER BY o.id, sub.val
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -959,7 +959,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1776,7 +1776,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28e: SAMPLE BY FILL(LINEAR) — unrewritable SAMPLE BY with linear interpolation fill
     @Test
     public void testT28eSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
@@ -2515,7 +2514,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) x
                             ORDER BY t1.a, x.b
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
