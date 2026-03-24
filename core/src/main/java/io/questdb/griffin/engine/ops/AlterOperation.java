@@ -762,7 +762,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private ObjList<CharSequence> getAuthColumnNames() {
         authColumnNames.clear();
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
-            authColumnNames.add(activeExtraStrInfo.getStrA(i));
+            authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(i)));
         }
         return authColumnNames;
     }
