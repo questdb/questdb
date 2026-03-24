@@ -2520,7 +2520,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T43: Nested LATERAL - inner LATERAL WHERE references outer-outer column
     @Test
     public void testT43NestedLateralWithCorrelatedWhere() throws Exception {
         assertMemoryLeak(() -> {

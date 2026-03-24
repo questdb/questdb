@@ -88,7 +88,7 @@ class LateralJoinRewriter {
         outerRefId = 0;
         analyzeCorrelation(model, 0);
         decorrelate(model, 0);
-        tryEliminateOuterRefs(model);
+        //tryEliminateOuterRefs(model);
     }
 
     private static boolean allLiteralsBelongTo(
@@ -833,12 +833,13 @@ class LateralJoinRewriter {
             extractCorrelatedPredicates(current.getWhereClause(), branchCorrelated, branchNonCorrelated, depth);
 
             for (int j = 0, m = branchCorrelated.size(); j < m; j++) {
-                ExpressionNode pred = branchCorrelated.getQuick(j);
-                pred = rewriteOuterRefs(pred, outerToInnerAlias);
-                branchNonCorrelated.add(pred);
+                branchCorrelated.setQuick(j, rewriteOuterRefs(branchCorrelated.getQuick(j), outerToInnerAlias));
             }
             current.setWhereClause(conjoin(branchNonCorrelated));
-            moveOuterRefPredsToJoinCriteria(current, branchOuterRef);
+            if (branchCorrelated.size() > 0) {
+                branchOuterRef.setJoinCriteria(conjoin(branchCorrelated));
+                branchOuterRef.setJoinType(QueryModel.JOIN_INNER);
+            }
 
             rewriteSelectExpressions(current, outerToInnerAlias, depth);
             rewriteOrderByExpressions(current, outerToInnerAlias, depth);
@@ -1501,29 +1502,6 @@ class LateralJoinRewriter {
         }
     }
 
-    private void moveOuterRefPredsToJoinCriteria(QueryModel current, QueryModel outerRefJoinModel) {
-        ExpressionNode where = current.getWhereClause();
-        if (where == null || outerRefJoinModel.getAlias() == null) {
-            return;
-        }
-        CharSequence outerRefAlias = outerRefJoinModel.getAlias().token;
-        splitAndPredicates(where, innerJoinCorrelated);
-        correlatedPreds.clear();
-        nonCorrelatedPreds.clear();
-        for (int i = 0, n = innerJoinCorrelated.size(); i < n; i++) {
-            ExpressionNode pred = innerJoinCorrelated.getQuick(i);
-            if (hasOuterRefLiteral(pred, outerRefAlias)) {
-                correlatedPreds.add(pred);
-            } else {
-                nonCorrelatedPreds.add(pred);
-            }
-        }
-        if (correlatedPreds.size() > 0) {
-            outerRefJoinModel.setJoinCriteria(conjoin(correlatedPreds));
-            outerRefJoinModel.setJoinType(QueryModel.JOIN_INNER);
-            current.setWhereClause(conjoin(nonCorrelatedPreds));
-        }
-    }
 
     private CharSequence propagateColumnUp(
             CharSequence columnName,
@@ -2219,14 +2197,33 @@ class LateralJoinRewriter {
         }
         correlatedPreds.clear();
         extractCorrelatedFromInnerJoins(current, correlatedPreds, depth);
+        ExpressionNode joinCrit = null;
         for (int j = 0, m = correlatedPreds.size(); j < m; j++) {
             ExpressionNode rewritten = rewriteOuterRefs(
                     correlatedPreds.getQuick(j), outerToInnerAlias);
-            ExpressionNode w = current.getWhereClause();
-            current.setWhereClause(w != null ? createBinaryOp("and", w, rewritten) : rewritten);
+            joinCrit = joinCrit == null ? rewritten : createBinaryOp("and", joinCrit, rewritten);
         }
 
-        moveOuterRefPredsToJoinCriteria(current, outerRefJoinModel);
+        ExpressionNode where = current.getWhereClause();
+        if (where != null) {
+            splitAndPredicates(where, innerJoinCorrelated);
+            nonCorrelatedPreds.clear();
+            CharSequence outerRefAlias = outerRefJoinModel.getAlias().token;
+            for (int i = 0, n = innerJoinCorrelated.size(); i < n; i++) {
+                ExpressionNode pred = innerJoinCorrelated.getQuick(i);
+                if (hasOuterRefLiteral(pred, outerRefAlias)) {
+                    joinCrit = joinCrit == null ? pred : createBinaryOp("and", joinCrit, pred);
+                } else {
+                    nonCorrelatedPreds.add(pred);
+                }
+            }
+            current.setWhereClause(conjoin(nonCorrelatedPreds));
+        }
+
+        if (joinCrit != null) {
+            outerRefJoinModel.setJoinCriteria(joinCrit);
+            outerRefJoinModel.setJoinType(QueryModel.JOIN_INNER);
+        }
         if (current.getUnionModel() != null) {
             compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
         }
