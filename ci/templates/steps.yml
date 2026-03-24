@@ -159,7 +159,7 @@ steps:
     displayName: "Install sccache (Windows and macOS)"
     condition: or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
     env:
-      SCCACHE_AZURE_BLOB_CONTAINER: $(RUST_CACHE_CONTAINER)
+      SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
       SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
 
   - template: install-llvm.yml
@@ -207,7 +207,7 @@ steps:
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       RUSTC_WRAPPER: $(RUSTC_WRAPPER)
-      SCCACHE_AZURE_BLOB_CONTAINER: $(RUST_CACHE_CONTAINER)
+      SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
       SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
       CARGO_INCREMENTAL: 0
     timeoutInMinutes: 55
