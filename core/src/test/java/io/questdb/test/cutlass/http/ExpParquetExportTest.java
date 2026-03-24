@@ -689,19 +689,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 103501, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103571, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 107317, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 107387, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 113699, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 113839, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 109701, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 109831, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 134752, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 135156, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 106002, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 106096, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 103501, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 103571, params, "test_table");
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
                 });
     }
@@ -1257,6 +1257,22 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "invalid_codec");
                     String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportInvalidCompressionLevel() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE level_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+
+                    params.clear();
+                    params.put("query", "SELECT * FROM level_invalid_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    params.put("compression_level", "-1");
+                    String expectedError = "{\"query\":\"SELECT * FROM level_invalid_test\",\"error\":\"GZIP compression level must be between 0 and 9\",\"position\":0}";
                     testHttpClient.assertGet("/exp", expectedError, params, null, null);
                 });
     }
@@ -2101,7 +2117,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 1962, tableName);
+                    testHttpClient.assertGetParquet("/exp", 1968, tableName);
                 });
     }
 

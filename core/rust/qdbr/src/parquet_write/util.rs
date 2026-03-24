@@ -4,13 +4,16 @@ use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
+use parquet2::encoding::uleb128;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
-use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
+use parquet2::page::{
+    DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, DictPage, Page,
+};
 use parquet2::schema::types::{PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
-use parquet2::write::Version;
+use parquet2::write::{DynIter, Version};
 
 #[derive(Debug)]
 pub struct MaxMin<T> {
@@ -142,17 +145,20 @@ fn is_binary_column_type(primitive_type: &PrimitiveType) -> bool {
     primitive_type.physical_type == PhysicalType::ByteArray && primitive_type.logical_type.is_none()
 }
 
-fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
+pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
     // We only keep 8 initial bytes for the min and max values.
     // Semantics of these Parquet fields are "lower and upper bound".
     // If max_value is longer than 8 bytes, we must choose an 8-byte value that
     // comes just after actual max_value in sort order. We achieve this by
     // converting to integer, incrementing, and converting back to bytes.
-    // TODO: if first 8 bytes are all 0xFFs, it can't be incremented and the
-    //       upper bound will be slightly off!
+    // If the first 8 bytes are all 0xFF, we can't increment the prefix, so we
+    // fall back to the untruncated value (up to 9 bytes from update()).
     let val_slice_be: [u8; SIZEOF_I64] = max_value[..SIZEOF_I64].try_into().unwrap();
-    let upper_bound = i64::from_be_bytes(val_slice_be).saturating_add(1);
-    upper_bound.to_be_bytes().to_vec()
+    let as_u64 = u64::from_be_bytes(val_slice_be);
+    match as_u64.checked_add(1) {
+        Some(inc) => inc.to_be_bytes().to_vec(),
+        None => max_value,
+    }
 }
 
 pub struct ArrayStats {
@@ -246,6 +252,36 @@ pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
     }
 }
 
+/// Encode def levels where every value is present (all 1s).
+/// Uses a single RLE run which is ~3 bytes regardless of row count,
+/// vs the general bitpacked path that scales with row count.
+pub fn encode_all_ones_def_levels(buffer: &mut Vec<u8>, num_rows: usize, version: Version) {
+    match version {
+        Version::V1 => {
+            // 4-byte LE length prefix, then RLE payload
+            let start = buffer.len();
+            buffer.extend_from_slice(&[0; 4]);
+            let payload_start = buffer.len();
+            encode_rle_ones(buffer, num_rows);
+            let payload_len = (buffer.len() - payload_start) as i32;
+            buffer[start..start + 4].copy_from_slice(&payload_len.to_le_bytes());
+        }
+        Version::V2 => {
+            encode_rle_ones(buffer, num_rows);
+        }
+    }
+}
+
+/// Emit an RLE run of `count` ones with bit_width=1.
+/// Format: varint header (count << 1, even = RLE) + 1 value byte (0x01).
+fn encode_rle_ones(buffer: &mut Vec<u8>, count: usize) {
+    let header = (count as u64) << 1; // even = RLE mode
+    let mut container = [0u8; 10];
+    let used = uleb128::encode(header, &mut container);
+    buffer.extend_from_slice(&container[..used]);
+    buffer.push(0x01); // value = 1 in 1 byte (ceil(bit_width/8) = 1)
+}
+
 fn encode_group_levels_v1<I: Iterator<Item = u32>>(
     buffer: &mut Vec<u8>,
     iter: I,
@@ -335,12 +371,88 @@ pub fn build_plain_page(
     ))
 }
 
+/// Build a DynIter yielding [DictPage, DataPage] from pre-built buffers.
+/// This avoids duplicating the DictPage + DataPage assembly in each dict encoder.
+pub fn dict_pages_iter(
+    dict_buffer: Vec<u8>,
+    unique_count: usize,
+    data_page: DataPage,
+) -> DynIter<'static, ParquetResult<Page>> {
+    let dict_page = DictPage::new(dict_buffer, unique_count, false);
+    DynIter::new(
+        [Page::Dict(dict_page), Page::Data(data_page)]
+            .into_iter()
+            .map(Ok),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn encode_dict_rle_pages(
+    dict_buffer: Vec<u8>,
+    dict_entry_count: usize,
+    keys: Vec<u32>,
+    non_null_count: usize,
+    mut data_buffer: Vec<u8>,
+    definition_levels_byte_length: usize,
+    num_rows: usize,
+    null_count: usize,
+    statistics: Option<ParquetStatistics>,
+    primitive_type: PrimitiveType,
+    options: WriteOptions,
+    required: bool,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let max_key = if dict_entry_count == 0 {
+        0u32
+    } else {
+        (dict_entry_count - 1) as u32
+    };
+    let bits_per_key = bit_width(max_key as u64);
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_count,
+        bits_per_key as u32,
+    )?;
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        required,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entry_count
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+}
+
+/// # Safety
+/// - `slice` must be properly aligned for `T`.
+/// - The bytes in `slice` must represent valid values of `T`.
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
     assert_eq!(slice.len() % sizeof_t, 0);
     if slice.is_empty() {
         &[]
     } else {
+        debug_assert!(
+            (slice.as_ptr() as usize).is_multiple_of(mem::align_of::<T>()),
+            "transmute_slice: pointer {:p} is not aligned for {} (align = {})",
+            slice.as_ptr(),
+            std::any::type_name::<T>(),
+            mem::align_of::<T>(),
+        );
+        // SAFETY: Caller guarantees alignment and valid content.
+        // Length divisibility is asserted above.
         slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
     }
 }
@@ -349,8 +461,12 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
 mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+    use parquet2::schema::types::PhysicalType;
+    use parquet2::schema::types::PrimitiveType;
 
-    use crate::parquet_write::util::encode_primitive_def_levels;
+    use crate::parquet_write::util::{
+        binary_upper_bound, encode_primitive_def_levels, BinaryMaxMinStats,
+    };
 
     #[test]
     fn decode_bitmap_v2() {
@@ -419,6 +535,189 @@ mod tests {
         } else {
             panic!()
         };
+    }
+
+    #[test]
+    fn test_binary_upper_bound_normal() {
+        let input = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xAB];
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_all_ff() {
+        let input = vec![0xFF; 9];
+        let result = binary_upper_bound(input);
+        // Can't increment [0xFF; 8], falls back to keeping the 9-byte value
+        assert_eq!(result, vec![0xFF; 9]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_near_max() {
+        let mut input = vec![0xFF; 9];
+        input[7] = 0xFE;
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_high_bit() {
+        // 0x80_00_00_00_00_00_00_00 — would be i64::MIN in signed, but should work correctly
+        // with unsigned arithmetic: result should be 0x80_00_00_00_00_00_00_01
+        let input = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42];
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn test_binary_stats_all_ff_keeps_max() {
+        let primitive_type =
+            PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&[0xFF; 9]);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        // Can't increment [0xFF; 8], falls back to 9-byte value
+        assert!(parquet_stats.max_value.is_some());
+        assert!(parquet_stats.min_value.is_some());
+    }
+    #[test]
+    fn encode_all_ones_v1() {
+        use super::encode_all_ones_def_levels;
+
+        for &num_rows in &[1, 7, 8, 14, 100, 1000, 100_000] {
+            let mut buff = vec![];
+            encode_all_ones_def_levels(&mut buff, num_rows, parquet2::write::Version::V1);
+
+            // V1: first 4 bytes are LE length prefix
+            let length = i32::from_le_bytes(buff[..4].try_into().unwrap()) as usize;
+            assert_eq!(
+                length,
+                buff.len() - 4,
+                "V1 length prefix mismatch for num_rows={num_rows}"
+            );
+
+            // Decode RLE and verify all values are 1
+            let mut decoder = Decoder::new(&buff[4..], 1);
+            let run = decoder.next().unwrap().unwrap();
+            match run {
+                HybridEncoded::Rle(value, count) => {
+                    assert_eq!(
+                        value[0] & 1,
+                        1,
+                        "RLE value should be 1 for num_rows={num_rows}"
+                    );
+                    assert_eq!(
+                        count, num_rows,
+                        "RLE count mismatch for num_rows={num_rows}"
+                    );
+                }
+                HybridEncoded::Bitpacked(_) => {
+                    panic!("expected RLE run, got Bitpacked for num_rows={num_rows}");
+                }
+            }
+            assert!(
+                decoder.next().is_none(),
+                "expected single RLE run for num_rows={num_rows}"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_all_ones_v2() {
+        use super::encode_all_ones_def_levels;
+
+        for &num_rows in &[1, 7, 8, 14, 100, 1000, 100_000] {
+            let mut buff = vec![];
+            encode_all_ones_def_levels(&mut buff, num_rows, parquet2::write::Version::V2);
+
+            // V2: no length prefix, raw RLE payload
+            let mut decoder = Decoder::new(buff.as_slice(), 1);
+            let run = decoder.next().unwrap().unwrap();
+            match run {
+                HybridEncoded::Rle(value, count) => {
+                    assert_eq!(
+                        value[0] & 1,
+                        1,
+                        "RLE value should be 1 for num_rows={num_rows}"
+                    );
+                    assert_eq!(
+                        count, num_rows,
+                        "RLE count mismatch for num_rows={num_rows}"
+                    );
+                }
+                HybridEncoded::Bitpacked(_) => {
+                    panic!("expected RLE run, got Bitpacked for num_rows={num_rows}");
+                }
+            }
+            assert!(
+                decoder.next().is_none(),
+                "expected single RLE run for num_rows={num_rows}"
+            );
+        }
+    }
+
+    /// Verify that encode_all_ones_def_levels produces output that decodes
+    /// identically to encode_primitive_def_levels with all-true input.
+    #[test]
+    fn encode_all_ones_matches_general_encoder() {
+        use super::{encode_all_ones_def_levels, encode_primitive_def_levels};
+
+        for &version in &[parquet2::write::Version::V1, parquet2::write::Version::V2] {
+            for &num_rows in &[1, 14, 100] {
+                let mut general_buf = vec![];
+                encode_primitive_def_levels(
+                    &mut general_buf,
+                    std::iter::repeat_n(true, num_rows),
+                    num_rows,
+                    version,
+                )
+                .unwrap();
+
+                let mut optimized_buf = vec![];
+                encode_all_ones_def_levels(&mut optimized_buf, num_rows, version);
+
+                // The optimized RLE path should be smaller or equal in size.
+                assert!(
+                    optimized_buf.len() <= general_buf.len(),
+                    "optimized should be <= general for num_rows={num_rows}, version={version:?}: {} vs {}",
+                    optimized_buf.len(),
+                    general_buf.len(),
+                );
+
+                // Both should decode to all-ones.
+                let decode = |buf: &[u8], skip_prefix: bool| -> Vec<u8> {
+                    let data = if skip_prefix { &buf[4..] } else { buf };
+                    let decoder = Decoder::new(data, 1);
+                    let mut result = Vec::new();
+                    for run in decoder {
+                        match run.unwrap() {
+                            HybridEncoded::Bitpacked(values) => {
+                                let remaining = num_rows - result.len();
+                                result.extend(
+                                    bitpacked::Decoder::<u8>::try_new(values, 1, remaining)
+                                        .unwrap(),
+                                );
+                            }
+                            HybridEncoded::Rle(value, count) => {
+                                let val = value[0] & 1;
+                                result.extend(std::iter::repeat_n(val, count));
+                            }
+                        }
+                    }
+                    result
+                };
+
+                let is_v1 = matches!(version, parquet2::write::Version::V1);
+                let general_decoded = decode(&general_buf, is_v1);
+                let optimized_decoded = decode(&optimized_buf, is_v1);
+
+                assert_eq!(general_decoded.len(), num_rows);
+                assert_eq!(optimized_decoded.len(), num_rows);
+                assert!(general_decoded.iter().all(|&v| v == 1));
+                assert!(optimized_decoded.iter().all(|&v| v == 1));
+            }
+        }
     }
 
     #[test]

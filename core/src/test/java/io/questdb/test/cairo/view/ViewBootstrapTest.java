@@ -43,7 +43,11 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.cutlass.pgwire.BasePGTest;
 import io.questdb.test.tools.LogCapture;
@@ -54,7 +58,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.test.tools.TestUtils.*;
@@ -443,7 +451,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
-            Assert.assertEquals(6, definition1.getViewToken().getTableId());
             Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
             Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
@@ -456,7 +463,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
-            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+
+            int id1 = definition1.getViewToken().getTableId();
+            int id2 = definition2.getViewToken().getTableId();
+
+            Assert.assertEquals(id1 + 1, id2);
             Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
             Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
@@ -483,8 +494,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -516,8 +527,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -542,7 +553,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
-            Assert.assertEquals(6, definition1.getViewToken().getTableId());
             Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
             Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
@@ -555,7 +565,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
-            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+
+            int id1 = definition1.getViewToken().getTableId();
+            int id2 = definition2.getViewToken().getTableId();
+
+            Assert.assertEquals(id1 + 1, id2);
             Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
             Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
@@ -582,8 +596,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"
@@ -613,7 +627,6 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             final ViewDefinition definition2 = getViewDefinition(VIEW2);
 
             assertNotNull(definition1);
-            Assert.assertEquals(6, definition1.getViewToken().getTableId());
             Assert.assertEquals(VIEW1, definition1.getViewToken().getTableName());
             Assert.assertEquals(0, definition1.getSeqTxn());
             assertEquals(query1, definition1.getViewSql());
@@ -626,7 +639,11 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
             Assert.assertTrue(definition1.getDependencies().get(TABLE1).contains("v"));
 
             assertNotNull(definition2);
-            Assert.assertEquals(7, definition2.getViewToken().getTableId());
+
+            int id1 = definition1.getViewToken().getTableId();
+            int id2 = definition2.getViewToken().getTableId();
+
+            Assert.assertEquals(id1 + 1, id2);
             Assert.assertEquals(VIEW2, definition2.getViewToken().getTableName());
             Assert.assertEquals(0, definition2.getSeqTxn());
             assertEquals(query2, definition2.getViewSql());
@@ -653,8 +670,8 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
                             "]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" +
-                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~7\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
-                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~6\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
+                            "[\"view2\",\"select ts, k2, min(v) as v_min from table2 where v > 6\",\"view2~" + id2 + "\",null,\"valid\",\"2025-06-19T15:00:00.000000Z\"]," +
+                            "[\"view1\",\"select ts, k, max(v) as v_max from table1 where v > 4\",\"view1~" + id1 + "\",\"Invalid column: k\",\"invalid\",\"2025-06-19T15:00:00.000000Z\"]" +
                             "]," +
                             "\"count\":2" +
                             "}"

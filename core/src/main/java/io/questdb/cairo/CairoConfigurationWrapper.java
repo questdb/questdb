@@ -732,8 +732,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return getDelegate().getPartitionEncoderParquetMinCompressionRatio();
+    }
+
+    @Override
     public int getPartitionEncoderParquetDataPageSize() {
         return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return getDelegate().getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+    }
+
+    @Override
+    public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return getDelegate().getPartitionEncoderParquetO3RewriteUnusedRatio();
     }
 
     @Override

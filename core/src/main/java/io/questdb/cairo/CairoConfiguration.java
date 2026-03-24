@@ -462,11 +462,17 @@ public interface CairoConfiguration {
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
+    double getPartitionEncoderParquetMinCompressionRatio();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
 
     int getPartitionEncoderParquetDataPageSize();
+
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+    double getPartitionEncoderParquetO3RewriteUnusedRatio();
 
     int getPartitionEncoderParquetRowGroupSize();
 

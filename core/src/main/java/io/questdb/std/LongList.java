@@ -217,7 +217,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            this.data = Arrays.copyOf(data, newCap);
+            long[] newData = new long[newCap];
+            if (pos > 0) {
+                System.arraycopy(data, 0, newData, 0, Math.min(pos, l));
+            }
+            this.data = newData;
         }
     }
 

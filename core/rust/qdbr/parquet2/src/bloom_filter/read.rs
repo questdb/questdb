@@ -60,6 +60,24 @@ pub fn read<R: Read + Seek>(
     Ok(())
 }
 
+/// Returns the total size in bytes (header + bitset) of the bloom filter for a column.
+/// Returns `Ok(0)` if the column has no bloom filter.
+pub fn total_size<R: Read + Seek>(
+    column_metadata: &ColumnChunkMetaData,
+    reader: &mut R,
+) -> Result<u64, Error> {
+    let offset = match column_metadata.metadata().bloom_filter_offset {
+        Some(off) => off as u64,
+        None => return Ok(0),
+    };
+    reader.seek(SeekFrom::Start(offset))?;
+    let mut prot = TCompactInputProtocol::new(&mut *reader, usize::MAX);
+    let header = BloomFilterHeader::read_from_in_protocol(&mut prot)?;
+    let header_size = reader.stream_position()? - offset;
+    let num_bytes: u64 = header.num_bytes.try_into()?;
+    Ok(header_size + num_bytes)
+}
+
 pub fn read_from_slice<'a>(
     column_metadata: &ColumnChunkMetaData,
     data: &'a [u8],
