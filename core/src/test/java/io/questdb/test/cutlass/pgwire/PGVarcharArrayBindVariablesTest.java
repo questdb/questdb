@@ -94,7 +94,8 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
     public void testBindStrListsVariable() throws Exception {
         assertMemoryLeak(() -> {
             createDummyConfiguration(
-                    "pg.select.cache.enabled=true"
+                    "pg.select.cache.enabled=true",
+                    "cairo.sql.parallel.filter.enabled=true"
             );
 
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
@@ -198,7 +199,8 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
     public void testBindSymbolListsVariable() throws Exception {
         assertMemoryLeak(() -> {
             createDummyConfiguration(
-                    "pg.select.cache.enabled=true"
+                    "pg.select.cache.enabled=true",
+                    "cairo.sql.parallel.filter.enabled=true"
             );
 
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
@@ -438,7 +440,8 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
     public void testBindVarcharListsVariable() throws Exception {
         assertMemoryLeak(() -> {
             createDummyConfiguration(
-                    "pg.select.cache.enabled=true"
+                    "pg.select.cache.enabled=true",
+                    "cairo.sql.parallel.filter.enabled=true"
             );
 
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {

@@ -1229,7 +1229,12 @@ public class PropServerConfigurationTest {
         Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolNetworkConfiguration().getWorkerCount() >= 2);
 
         Assert.assertEquals("shared-query", configuration.getSharedWorkerPoolQueryConfiguration().getPoolName());
-        Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolQueryConfiguration().getWorkerCount() >= 2);
+        if (Runtime.getRuntime().availableProcessors() >= 4) {
+            Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolQueryConfiguration().getWorkerCount() >= 2);
+        } else {
+            // On < 4 cores, parallel SQL is disabled by default, so the query worker pool is not started
+            Assert.assertEquals(0, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+        }
 
         Assert.assertEquals("shared-write", configuration.getSharedWorkerPoolWriteConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolWriteConfiguration().getWorkerCount() >= 2);

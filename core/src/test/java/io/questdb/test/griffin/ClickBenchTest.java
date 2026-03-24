@@ -789,6 +789,9 @@ public class ClickBenchTest extends AbstractCairoTest {
     @Test
     public void testExecutionPlans() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute(DDL);
 
