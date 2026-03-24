@@ -56,7 +56,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
-    private final IntList columnSizeShifts;
+
     private final DistinctCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
     private final RecordMetadata metadata;
@@ -72,7 +72,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.columnIndexes = columnIndexes;
-        this.columnSizeShifts = columnSizeShifts;
+
         this.cursor = new DistinctCursor(readerColumnIndex, queryColumnPosition);
     }
 
@@ -265,7 +265,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public CharSequence getSymB(int col) {
-            return getSymA(col);
+            return symbolTable != null ? symbolTable.valueBOf(symbolKey) : null;
         }
     }
 }

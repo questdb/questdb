@@ -798,7 +798,13 @@ public final class PostingIndexUtils {
             if (bc > blockCapacity) {
                 int newBc = Math.max(bc, blockCapacity * 2);
                 long newFirstAddr = Unsafe.malloc((long) newBc * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newMinAddr = Unsafe.malloc((long) newBc * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr;
+                try {
+                    newMinAddr = Unsafe.malloc((long) newBc * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newFirstAddr, (long) newBc * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
                 if (blockFirstValuesAddr != 0) {
                     Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
@@ -859,7 +865,13 @@ public final class PostingIndexUtils {
             if (blockCount > blockCapacity) {
                 int newCapacity = Math.max(blockCount, blockCapacity * 2);
                 long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr;
+                try {
+                    newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newFirstAddr, (long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
                 if (firstValuesAddr != 0) {
                     Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }

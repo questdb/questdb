@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -66,9 +67,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         if (key < keyCount) {
-            final Cursor c = cachedInstance ? cursor : new Cursor();
-            c.of(key, minValue, maxValue);
-            return c;
+            // Always use cached cursor — posting cursors hold native memory
+            // that cannot be freed through the RowCursor interface.
+            cursor.of(key, minValue, maxValue);
+            return cursor;
         }
 
         return EmptyRowCursor.INSTANCE;
@@ -255,7 +257,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         if (decodedLongs[c] == null || decodedLongs[c].length < count) {
                             decodedLongs[c] = new long[count];
                         }
-                        AlpCompression.decompressLongs(keyBlockAddr, decodedLongs[c]);
+                        AlpCompression.decompressLongs(keyBlockAddr, decodedLongs[c], decodeWorkspaceAddr);
                         break;
                     }
                     case ColumnType.INT:
@@ -768,6 +770,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long pos = encodedAddr;
             int blockCount = Unsafe.getUnsafe().getInt(pos);
+            if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
+                throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
+                        .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
+            }
             pos += 4;
 
             ensureMetadataCapacity(blockCount);

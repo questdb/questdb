@@ -1391,6 +1391,7 @@ public class PostingIndexWriter implements IndexWriter {
                         reencodeUnpackBatchCapacity = maxPerKeyCount;
                         reencodeUnpackBatchAddr = Unsafe.malloc((long) maxPerKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
+                    try {
                     if (maxStrideTotal > packedResidualsCapacity) {
                         if (packedResidualsAddr != 0) {
                             Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -1556,8 +1557,10 @@ public class PostingIndexWriter implements IndexWriter {
                         }
                     }
     
-                    if (reencodeUnpackBatchAddr != 0) {
-                        Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    } finally {
+                        if (reencodeUnpackBatchAddr != 0) {
+                            Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        }
                     }
 
                     // Phase 3: Re-encode into single generation using stride-indexed format

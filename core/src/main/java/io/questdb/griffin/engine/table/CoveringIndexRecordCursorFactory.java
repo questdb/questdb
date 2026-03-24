@@ -62,7 +62,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
-    private final IntList columnSizeShifts;
+
     private final CoveringCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
@@ -103,7 +103,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
-        this.columnSizeShifts = columnSizeShifts;
+
         this.latestBy = latestBy;
         this.keyValueFuncs = null;
         this.resolvedKeys = null;
@@ -145,7 +145,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
-        this.columnSizeShifts = columnSizeShifts;
+
         this.latestBy = latestBy;
         this.keyValueFuncs = keyValueFuncs;
         this.resolvedKeys = keyValueFuncs != null ? new IntList(keyValueFuncs.size()) : null;
@@ -167,6 +167,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     public void close() {
         Misc.free(dfcFactory);
         Misc.free(symbolFunction);
+        Misc.freeObjList(keyValueFuncs);
     }
 
     @Override
@@ -692,7 +693,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public CharSequence getSymB(int col) {
-            return getSymA(col);
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx == -1 && symbolTable != null) {
+                return symbolTable.valueBOf(symbolKey);
+            }
+            if (includeIdx >= 0 && cursor != null && includeSymbolTables != null) {
+                SymbolTable st = includeSymbolTables[col];
+                if (st != null) {
+                    return st.valueBOf(cursor.getCoveredInt(includeIdx));
+                }
+            }
+            return null;
         }
 
         @Override
@@ -844,7 +855,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public CharSequence getSymB(int col) {
-            return getSymA(col);
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx == -1 && symbolTable != null) {
+                return symbolTable.valueBOf(symbolKey);
+            }
+            if (includeIdx >= 0 && includeSymbolTables != null) {
+                SymbolTable st = includeSymbolTables[col];
+                if (st != null) {
+                    return st.valueBOf(getInt(col));
+                }
+            }
+            return null;
         }
 
         @Override

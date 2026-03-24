@@ -351,6 +351,20 @@ public class AlpCompression {
      * Decompress FoR-encoded longs.
      */
     public static int decompressLongs(long srcAddr, long[] output) {
+        int count = Unsafe.getUnsafe().getInt(srcAddr);
+        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            return decompressLongs(srcAddr, output, workspaceAddr);
+        } finally {
+            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
+    }
+
+    /**
+     * Decompress FoR-encoded longs using a pre-allocated native workspace to avoid allocation.
+     * The workspace must have room for count longs (read from the header at srcAddr).
+     */
+    public static int decompressLongs(long srcAddr, long[] output, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
@@ -359,20 +373,15 @@ public class AlpCompression {
         pos += 8;
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
-        long outputAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            if (bw > 0) {
-                BitpackUtils.unpackAllValues(pos, count, bw, forBase, outputAddr);
-            } else {
-                for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(outputAddr + (long) i * Long.BYTES, forBase);
-                }
-            }
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+        } else {
             for (int i = 0; i < count; i++) {
-                output[i] = Unsafe.getUnsafe().getLong(outputAddr + (long) i * Long.BYTES);
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
             }
-        } finally {
-            Unsafe.free(outputAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
+        for (int i = 0; i < count; i++) {
+            output[i] = Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
         }
         pos += packedBytes;
 

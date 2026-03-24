@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.MemoryTag;
@@ -65,9 +66,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         if (key < keyCount) {
-            final Cursor c = cachedInstance ? cursor : new Cursor();
-            c.of(key, minValue, maxValue);
-            return c;
+            // Always use cached cursor — posting cursors hold native memory
+            // that cannot be freed through the RowCursor interface.
+            cursor.of(key, minValue, maxValue);
+            return cursor;
         }
 
         return EmptyRowCursor.INSTANCE;
@@ -474,7 +476,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            readDeltaBlockMetadata(encodedAddr);
+            readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
 
         /**
@@ -507,7 +509,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            readDeltaBlockMetadata(encodedAddr);
+            readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
 
         private void loadSparseGenWithBinarySearch(int gen) {
@@ -545,12 +547,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            readDeltaBlockMetadata(encodedAddr);
+            readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
 
-        private void readDeltaBlockMetadata(long encodedAddr) {
+        private void readDeltaBlockMetadata(long encodedAddr, int totalValueCount) {
             long pos = encodedAddr;
             int blockCount = Unsafe.getUnsafe().getInt(pos);
+            if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
+                throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
+                        .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
+            }
             pos += 4;
 
             ensureMetadataCapacity(blockCount);
