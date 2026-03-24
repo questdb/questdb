@@ -1993,6 +1993,55 @@ class LateralJoinRewriter {
         return false;
     }
 
+    private ExpressionNode resolveOuterColumnInScope(ExpressionNode outerAst, QueryModel joinLayer) {
+        int dot = Chars.indexOf(outerAst.token, '.');
+        if (dot <= 0 || joinLayer.getModelAliasIndex(outerAst.token, 0, dot) >= 0) {
+            return ExpressionNode.deepClone(expressionNodePool, outerAst);
+        }
+        ObjList<QueryModel> joinModels = joinLayer.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            QueryModel jm = joinModels.getQuick(i);
+            if (jm.getAlias() == null || !Chars.startsWith(jm.getAlias().token, OUTER_REF_PREFIX)) {
+                continue;
+            }
+            QueryModel subquery = jm.getNestedModel();
+            if (subquery == null) {
+                continue;
+            }
+            ObjList<QueryColumn> cols = subquery.getBottomUpColumns();
+            for (int j = 0, m = cols.size(); j < m; j++) {
+                ExpressionNode ast = cols.getQuick(j).getAst();
+                if (Chars.equalsIgnoreCase(ast.token, outerAst.token)) {
+                    CharSequence qualified = qualifyWithAlias(
+                            jm.getAlias().token, cols.getQuick(j).getAlias());
+                    return expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, qualified, 0, outerAst.position);
+                }
+            }
+        }
+        return null;
+    }
+
+    private void resolveOuterColumnsInCriteria(ExpressionNode node, QueryModel joinLayer) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            int dot = Chars.indexOf(node.token, '.');
+            if (dot > 0 && joinLayer.getModelAliasIndex(node.token, 0, dot) < 0) {
+                ExpressionNode resolved = resolveOuterColumnInScope(node, joinLayer);
+                if (resolved != null) {
+                    node.token = resolved.token;
+                }
+            }
+        }
+        resolveOuterColumnsInCriteria(node.lhs, joinLayer);
+        resolveOuterColumnsInCriteria(node.rhs, joinLayer);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            resolveOuterColumnsInCriteria(node.args.getQuick(i), joinLayer);
+        }
+    }
+
     private void rewriteCountForLeftJoin(
             QueryModel inner,
             ObjList<CharSequence> countColAliases
@@ -2581,28 +2630,39 @@ class LateralJoinRewriter {
 
         if (joinModel != null) {
             if (isAllEqualities) {
-                ExpressionNode newCriteria = null;
-                for (int j = 0, sz = outerRefCols.size(); j < sz; j++) {
-                    QueryColumn refCol = outerRefCols.getQuick(j);
-                    CharSequence innerCol = outerToInnerAlias.get(refCol.getAlias());
-                    if (innerCol != null) {
-                        CharSequence selectAlias = findExistingOuterRefAlias(branchTop, refCol.getAlias(), outerRefAlias);
-                        if (selectAlias == null) {
-                            ExpressionNode innerNode = expressionNodePool.next().of(
-                                    ExpressionNode.LITERAL, innerCol, 0, 0
+                ExpressionNode existingCrit = joinModel.getJoinCriteria();
+                if (existingCrit != null) {
+                    ExpressionNode rewritten = rewriteOuterRefs(existingCrit, outerToInnerAlias);
+                    resolveOuterColumnsInCriteria(rewritten, joinLayer);
+                    joinModel.setJoinCriteria(rewritten);
+                } else {
+                    ExpressionNode newCriteria = null;
+                    for (int j = 0, sz = outerRefCols.size(); j < sz; j++) {
+                        QueryColumn refCol = outerRefCols.getQuick(j);
+                        CharSequence innerCol = outerToInnerAlias.get(refCol.getAlias());
+                        if (innerCol != null) {
+                            CharSequence selectAlias = findExistingOuterRefAlias(branchTop, refCol.getAlias(), outerRefAlias);
+                            if (selectAlias == null) {
+                                ExpressionNode innerNode = expressionNodePool.next().of(
+                                        ExpressionNode.LITERAL, innerCol, 0, 0
+                                );
+                                selectAlias = ensureColumnInSelect(branchTop, innerNode, innerCol);
+                            }
+                            CharSequence qualifiedInner = qualifyWithAlias(lateralAlias, selectAlias);
+                            ExpressionNode qualifiedInnerNode = expressionNodePool.next().of(
+                                    ExpressionNode.LITERAL, qualifiedInner, 0, 0
                             );
-                            selectAlias = ensureColumnInSelect(branchTop, innerNode, innerCol);
+                            ExpressionNode outerNode = resolveOuterColumnInScope(
+                                    refCol.getAst(), joinLayer);
+                            if (outerNode == null) {
+                                return;
+                            }
+                            ExpressionNode eq = createBinaryOp("=", qualifiedInnerNode, outerNode);
+                            newCriteria = newCriteria == null ? eq : createBinaryOp("and", newCriteria, eq);
                         }
-                        CharSequence qualifiedInner = qualifyWithAlias(lateralAlias, selectAlias);
-                        ExpressionNode qualifiedInnerNode = expressionNodePool.next().of(
-                                ExpressionNode.LITERAL, qualifiedInner, 0, 0
-                        );
-                        ExpressionNode outerNode = ExpressionNode.deepClone(expressionNodePool, refCol.getAst());
-                        ExpressionNode eq = createBinaryOp("=", qualifiedInnerNode, outerNode);
-                        newCriteria = newCriteria == null ? eq : createBinaryOp("and", newCriteria, eq);
                     }
+                    joinModel.setJoinCriteria(newCriteria);
                 }
-                joinModel.setJoinCriteria(newCriteria);
             } else {
                 joinModel.setJoinCriteria(simpleChainCriteria);
             }
