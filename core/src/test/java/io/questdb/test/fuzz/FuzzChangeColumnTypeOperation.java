@@ -87,7 +87,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return switch (columnType) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR, ColumnType.BYTE, ColumnType.BOOLEAN,
                  ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE,
-                 ColumnType.DATE, ColumnType.TIMESTAMP -> true;
+                 ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> true;
             default -> false;
         };
     }

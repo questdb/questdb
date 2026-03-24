@@ -7466,6 +7466,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnlistenSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("UNLISTEN;", 8, "argument expected");
+    }
+
+    @Test
     public void testUseExtensionPoints() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
