@@ -457,12 +457,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    public long renameTable(@NotNull CharSequence oldName, String newTableName) {
+    public long renameTable(@NotNull CharSequence oldName, String newTableName, SecurityContext securityContext) {
         if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
             throw CairoException.tableDoesNotExist(oldName);
         }
         alterOp.clear();
         alterOp.ofRenameTable(tableToken, newTableName);
+        alterOp.withSecurityContext(securityContext);
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
