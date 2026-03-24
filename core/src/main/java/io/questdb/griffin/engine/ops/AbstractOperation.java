@@ -51,6 +51,12 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     private int tableId;
     private long tableVersion;
 
+    /**
+     * Authorizes the operation against the current security context.
+     * Cached operations must be re-authorized on every execution.
+     */
+    public abstract void authorize();
+
     public void clearCommandCorrelationId() {
         setCommandCorrelationId(NO_CORRELATION_ID);
     }
@@ -137,12 +143,6 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     public void withSqlStatement(CharSequence sqlStatement) {
         this.sqlText = sqlStatement;
     }
-
-    /**
-     * Authorizes the operation against the current security context.
-     * Cached operations must be re-authorized on every execution.
-     */
-    abstract void authorize();
 
     void init(
             int cmdType,
