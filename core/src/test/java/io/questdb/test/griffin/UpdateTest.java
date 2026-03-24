@@ -3681,7 +3681,7 @@ public class UpdateTest extends AbstractCairoTest {
             assertQuery(
                     """
                             symCol
-                                                        
+                            
                             ABC
                             VTJ
                             """,
