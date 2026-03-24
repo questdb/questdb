@@ -1656,40 +1656,47 @@ class LateralJoinRewriter {
                     );
                 } else {
                     terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
+                    jn = current.getJoinModels().size();
                 }
                 if (current.getUnionModel() != null) {
                     compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
                 }
             } else {
                 // Join branch (ji > 0)
-                if (jmNested == null) {
-                    continue;
-                }
-                boolean isJmCorrelated = jmNested.isCorrelatedAtDepth(depth);
-                boolean isDelimRequiredForJoinType = jm.getJoinType() == QueryModel.JOIN_RIGHT_OUTER
-                        || jm.getJoinType() == QueryModel.JOIN_FULL_OUTER;
                 boolean hasCorrelatedCriteria = jm.getJoinCriteria() != null
                         && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
-                if (!(isJmCorrelated || isDelimRequiredForJoinType || hasCorrelatedCriteria)) {
-                    continue;
-                }
-                // Extract correlated join criteria, rewrite and push into jm's WHERE
-                ExpressionNode jmCrit = jm.getJoinCriteria();
-                if (hasCorrelatedExprAtDepth(jmCrit, depth)) {
+
+                if (hasCorrelatedCriteria) {
+                    ExpressionNode jmCrit = jm.getJoinCriteria();
                     splitAndPredicates(jmCrit, innerJoinCorrelated);
                     ExpressionNode remainingJoinCrit = null;
                     for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
                         ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
                         if (hasCorrelatedExprAtDepth(pred, depth)) {
                             ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias);
-                            ExpressionNode w = jmNested.getWhereClause();
-                            jmNested.setWhereClause(w != null ? createBinaryOp("and", w, rewritten) : rewritten);
+                            if (jmNested != null) {
+                                ExpressionNode w = jmNested.getWhereClause();
+                                jmNested.setWhereClause(w != null ? createBinaryOp("and", w, rewritten) : rewritten);
+                            } else {
+                                remainingJoinCrit = remainingJoinCrit == null
+                                        ? rewritten : createBinaryOp("and", remainingJoinCrit, rewritten);
+                            }
                         } else {
                             remainingJoinCrit = remainingJoinCrit == null
                                     ? pred : createBinaryOp("and", remainingJoinCrit, pred);
                         }
                     }
                     jm.setJoinCriteria(remainingJoinCrit);
+                }
+
+                if (jmNested == null) {
+                    continue;
+                }
+                boolean isJmCorrelated = jmNested.isCorrelatedAtDepth(depth);
+                boolean isDelimRequiredForJoinType = jm.getJoinType() == QueryModel.JOIN_RIGHT_OUTER
+                        || jm.getJoinType() == QueryModel.JOIN_FULL_OUTER;
+                if (!(isJmCorrelated || isDelimRequiredForJoinType || hasCorrelatedCriteria)) {
+                    continue;
                 }
 
                 characterStore.newEntry();
@@ -2290,9 +2297,22 @@ class LateralJoinRewriter {
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) throws SqlException {
-        current.getJoinModels().add(outerRefJoinModel);
+        ObjList<QueryModel> joinModels = current.getJoinModels();
+        int insertPos = 1;
+        joinModels.add(outerRefJoinModel);
+        for (int si = joinModels.size() - 1; si > insertPos; si--) {
+            joinModels.setQuick(si, joinModels.getQuick(si - 1));
+        }
+        joinModels.setQuick(insertPos, outerRefJoinModel);
         if (outerRefJoinModel.getAlias() != null) {
-            current.addModelAliasIndex(outerRefJoinModel.getAlias(), current.getJoinModels().size() - 1);
+            current.addModelAliasIndex(outerRefJoinModel.getAlias(), insertPos);
+        }
+        for (int si = insertPos + 1, sn = joinModels.size(); si < sn; si++) {
+            QueryModel shifted = joinModels.getQuick(si);
+            ExpressionNode shiftedAlias = shifted.getAlias() != null ? shifted.getAlias() : shifted.getTableNameExpr();
+            if (shiftedAlias != null) {
+                current.getModelAliasIndexes().put(shiftedAlias.token, si);
+            }
         }
         correlatedPreds.clear();
         extractCorrelatedFromInnerJoins(current, correlatedPreds, depth);
@@ -2404,12 +2424,6 @@ class LateralJoinRewriter {
             current = current.getNestedModel();
         }
         if (outerRefJmIndex < 0) {
-            return;
-        }
-
-        // Can't eliminate if dataSourceLayer is flat — after removal, columns can't be resolved
-        if (dataSourceLayer.getBottomUpColumns().size() == 0
-                && dataSourceLayer != branchTop) {
             return;
         }
 
