@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -175,23 +176,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return true if the version is valid (13)
      */
     public static boolean isValidVersion(Utf8Sequence versionHeader) {
-        if (versionHeader == null || versionHeader.size() == 0) {
-            return false;
-        }
-        // Parse the version number
-        try {
-            int version = 0;
-            for (int i = 0; i < versionHeader.size(); i++) {
-                byte b = versionHeader.byteAt(i);
-                if (b < '0' || b > '9') {
-                    return false;
-                }
-                version = version * 10 + (b - '0');
-            }
-            return version == WEBSOCKET_VERSION;
-        } catch (Exception e) {
-            return false;
-        }
+        return versionHeader != null && Numbers.parseNonNegativeIntQuiet(versionHeader) == WEBSOCKET_VERSION;
     }
 
     /**

@@ -44,6 +44,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -572,7 +573,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int clientMaxVersion = QwpConstants.VERSION_1; // default if header absent
         Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_VERSION);
         if (maxVersionHeader != null) {
-            int parsed = parseSmallInt(maxVersionHeader);
+            int parsed = Numbers.parseNonNegativeIntQuiet(maxVersionHeader);
             if (parsed >= QwpConstants.VERSION_1) {
                 clientMaxVersion = parsed;
             }
@@ -595,17 +596,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         return negotiated;
     }
 
-    private static int parseSmallInt(Utf8Sequence seq) {
-        int result = 0;
-        for (int i = 0, n = seq.size(); i < n; i++) {
-            byte b = seq.byteAt(i);
-            if (b < '0' || b > '9') {
-                return -1;
-            }
-            result = result * 10 + (b - '0');
-        }
-        return seq.size() > 0 ? result : -1;
-    }
 
     private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {

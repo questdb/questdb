@@ -1287,6 +1287,14 @@ public final class Numbers {
         return (ipv4 << 8) | num;
     }
 
+    public static int parseNonNegativeIntQuiet(CharSequence sequence) {
+        return parseNonNegativeInt0(sequence, 0, sequence.length());
+    }
+
+    public static int parseNonNegativeIntQuiet(Utf8Sequence sequence) {
+        return parseNonNegativeInt0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
     public static int parseInt(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.instance().put("null string");
@@ -2847,6 +2855,37 @@ public final class Numbers {
 
     private static long pack(int a, int b) {
         return (((long) a) << 32) | (b & 0xffffffffL);
+    }
+
+    private static int parseNonNegativeInt0(CharSequence sequence, final int p, int lim) {
+        if (lim == p) {
+            return -1;
+        }
+
+        int digitCounter = 0;
+        int val = 0;
+        for (int i = p; i < lim; i++) {
+            char c = sequence.charAt(i);
+            if (c == '_') {
+                if (digitCounter == 0) {
+                    return -1;
+                }
+                digitCounter = 0;
+            } else if (c < '0' || c > '9') {
+                return -1;
+            } else {
+                if (val > (Integer.MAX_VALUE / 10)) {
+                    return -1;
+                }
+                int r = val * 10 + (c - '0');
+                if (r < val) {
+                    return -1;
+                }
+                val = r;
+                digitCounter++;
+            }
+        }
+        return digitCounter > 0 ? val : -1;
     }
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
