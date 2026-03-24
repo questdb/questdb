@@ -224,6 +224,9 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             if (foundKeys != null) {
                 java.util.Arrays.fill(foundKeys, false);
             }
+            if (frameCursor != null) {
+                frameCursor.toTop();
+            }
         }
 
         void of(PartitionFrameCursor frameCursor) {
