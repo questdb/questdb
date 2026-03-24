@@ -74,17 +74,6 @@ jobs:
           ln -sf /opt/apache-maven-3.9.9 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
-      - name: Install native build tools
-        run: |
-          yum install -y gcc gcc-c++ make wget rpm-build perl-Env
-          wget https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
-          tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
-          echo "PATH=$(pwd)/cmake-3.29.2-linux-x86_64/bin:$PATH" >> $GITHUB_ENV
-      - name: Install NASM
-        run: |
-          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/linux/nasm-2.16.03-0.fc39.src.rpm
-          rpmbuild --rebuild ./nasm-2.16.03-0.fc39.src.rpm
-          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-0.el7.x86_64.rpm
       - name: Install Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2025-09-24
@@ -151,9 +140,6 @@ jobs:
           ln -sf /opt/apache-maven-3.9.9 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "/opt/maven/bin" >> $GITHUB_PATH
-      - name: Install native build tools
-        run: |
-          dnf install -y gcc gcc-c++ make cmake nasm
       - name: Install Rust toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2025-09-24
