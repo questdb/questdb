@@ -72,7 +72,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         long bufferSize = 256;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key, 1);
 
             // Then the response should be a valid HTTP 101 response
             Assert.assertTrue("Response should be written", written > 0);
@@ -102,7 +102,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         long bufferSize = 10;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key, 1);
 
             // Should return -1 or 0 to indicate failure
             Assert.assertTrue("Should indicate buffer too small", written <= 0);
@@ -127,7 +127,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
             long bufferSize = 256;
             long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+                int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key, 1);
 
                 Assert.assertTrue("Response should be written for key: " + keyStr, written > 0);
 
@@ -152,7 +152,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         long bufferSize = 256;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key, 1);
 
             // Response should be within expected size range
             // HTTP/1.1 101 Switching Protocols\r\n
@@ -176,7 +176,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         long bufferSize = 256;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key, 1);
 
             byte[] responseBytes = new byte[written];
             for (int i = 0; i < written; i++) {

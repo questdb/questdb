@@ -331,7 +331,7 @@ public class QwpMessageHeader {
         }
 
         // Validate version
-        if (version != VERSION_1) {
+        if (version < VERSION_1 || version > MAX_SUPPORTED_VERSION) {
             throw QwpParseException.unsupportedVersion();
         }
 

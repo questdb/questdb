@@ -200,11 +200,11 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     @Test
     public void testResponseSize() {
         String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-        int expectedSize = QwpWebSocketHttpProcessor.responseSize(acceptKey);
+        int expectedSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, 1);
 
         long buf = allocateBuffer(256);
         try {
-            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey);
+            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
             Assert.assertEquals(expectedSize, written);
         } finally {
             freeBuffer(buf, 256);
@@ -265,7 +265,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         long buf = allocateBuffer(256);
         try {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey);
+            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
 
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
@@ -288,7 +288,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
 
         long buf = allocateBuffer(256);
         try {
-            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey);
+            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
 
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
@@ -299,6 +299,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                     Upgrade: websocket\r
                     Connection: Upgrade\r
                     Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+                    X-QWP-Version: 1\r
                     \r
                     """;
             Assert.assertEquals(expected, responseStr);

@@ -29,7 +29,9 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
@@ -152,15 +154,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @param key        the WebSocket key from the client
      * @return the number of bytes written, or -1 if buffer too small
      */
-    public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key) {
+    public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key, int qwpVersion) {
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(key);
-        int requiredSize = QwpWebSocketHttpProcessor.responseSize(acceptKey);
+        int requiredSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, qwpVersion);
 
         if (requiredSize > bufferSize) {
             return -1;
         }
 
-        return QwpWebSocketHttpProcessor.writeResponse(buffer, acceptKey);
+        return QwpWebSocketHttpProcessor.writeResponse(buffer, acceptKey, qwpVersion);
     }
 
     /**
@@ -254,10 +256,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
         state.of(context.getFd(), context.getSecurityContext());
 
-        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(context.getRequestHeader());
+        HttpRequestHeader requestHeader = context.getRequestHeader();
+        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
+
+        // Read QWP version negotiation headers
+        int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
+        state.setNegotiatedVersion((byte) negotiatedVersion);
 
         // Write the 101 Switching Protocols response
-        int bytesWritten = writeHandshakeResponse(bufferAddr, bufferSize, wsKey);
+        int bytesWritten = writeHandshakeResponse(bufferAddr, bufferSize, wsKey, negotiatedVersion);
         if (bytesWritten > 0) {
             try {
                 rawSocket.send(bytesWritten);
@@ -559,6 +566,45 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
             default -> LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
+    }
+
+    private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
+        int clientMaxVersion = QwpConstants.VERSION_1; // default if header absent
+        Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_VERSION);
+        if (maxVersionHeader != null) {
+            int parsed = parseSmallInt(maxVersionHeader);
+            if (parsed >= QwpConstants.VERSION_1) {
+                clientMaxVersion = parsed;
+            }
+        }
+
+        int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
+
+        Utf8Sequence clientId = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_CLIENT_ID);
+        if (clientId != null) {
+            LOG.info().$("QWP version negotiated [fd=").$(fd)
+                    .$(", clientId=").$(clientId)
+                    .$(", clientMax=").$(clientMaxVersion)
+                    .$(", negotiated=").$(negotiated).I$();
+        } else {
+            LOG.info().$("QWP version negotiated [fd=").$(fd)
+                    .$(", clientMax=").$(clientMaxVersion)
+                    .$(", negotiated=").$(negotiated).I$();
+        }
+
+        return negotiated;
+    }
+
+    private static int parseSmallInt(Utf8Sequence seq) {
+        int result = 0;
+        for (int i = 0, n = seq.size(); i < n; i++) {
+            byte b = seq.byteAt(i);
+            if (b < '0' || b > '9') {
+                return -1;
+            }
+            result = result * 10 + (b - '0');
+        }
+        return seq.size() > 0 ? result : -1;
     }
 
     private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)

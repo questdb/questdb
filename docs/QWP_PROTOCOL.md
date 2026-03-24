@@ -11,6 +11,39 @@ QWP uses RFC 6455 WebSocket binary frames. The client initiates an HTTP GET
 request to `/write/v4` with standard WebSocket upgrade headers. After the 101
 Switching Protocols handshake, all communication uses binary frames.
 
+## Version Negotiation
+
+The client and server negotiate the QWP protocol version during the WebSocket
+upgrade handshake.
+
+### Upgrade Request Headers
+
+The client includes two QWP-specific headers in the upgrade request:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-QWP-Max-Version` | No | Maximum QWP version the client supports (positive integer). Defaults to 1 if absent. |
+| `X-QWP-Client-Id` | No | Client identifier string (e.g., `java/1.0.2`, `python/0.9.1`). |
+
+### Upgrade Response Header
+
+The server includes one QWP-specific header in the 101 response:
+
+| Header | Description |
+|--------|-------------|
+| `X-QWP-Version` | The QWP version selected for this connection. |
+
+The server selects the version as `min(clientMax, serverMax)`. The selected
+version is never higher than either side's maximum. The server may also consider
+the `X-QWP-Client-Id` when selecting the version.
+
+### Connection-Level Contract
+
+All QWP messages on a connection must use the negotiated version in the version
+byte (offset 4) of the message header. The server validates every incoming
+message against the negotiated version and rejects any message whose version
+byte does not match with a parse error.
+
 ## Message Format
 
 Every message begins with a fixed 12-byte header followed by a variable-length

@@ -269,6 +269,10 @@ public final class QwpConstants {
      * Current protocol version.
      */
     public static final byte VERSION_1 = 1;
+    /**
+     * Maximum protocol version supported by this build.
+     */
+    public static final byte MAX_SUPPORTED_VERSION = VERSION_1;
 
     private QwpConstants() {
         // utility class

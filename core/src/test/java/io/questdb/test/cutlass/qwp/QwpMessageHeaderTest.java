@@ -358,11 +358,11 @@ public class QwpMessageHeaderTest {
             Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
         }
 
-        // Version 2 (future)
-        byte[] header2 = createValidHeader(2, 0, 1, 100);
+        // Version above MAX_SUPPORTED_VERSION
+        byte[] header255 = createValidHeader(255, 0, 1, 100);
         try {
-            h.parse(header2, 0, header2.length);
-            Assert.fail("Expected exception for version 2");
+            h.parse(header255, 0, header255.length);
+            Assert.fail("Expected exception for version 255");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
         }

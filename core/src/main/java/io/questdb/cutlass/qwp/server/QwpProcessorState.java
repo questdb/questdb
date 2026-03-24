@@ -30,6 +30,7 @@ import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
@@ -74,6 +75,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
+    private byte negotiatedVersion = QwpConstants.VERSION_1;
     private int recvBufferLen;
     private SecurityContext securityContext;
     private SendState sendState = SendState.READY;
@@ -280,6 +282,18 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
 
         try {
+            // Verify the message version matches what was negotiated during the upgrade
+            if (bufferPosition >= QwpConstants.HEADER_SIZE) {
+                byte messageVersion = Unsafe.getUnsafe().getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
+                if (messageVersion != negotiatedVersion) {
+                    rejectMsg.clear();
+                    rejectMsg.put("message version ").put(messageVersion)
+                            .put(" does not match negotiated version ").put(negotiatedVersion);
+                    reject(Status.PARSE_ERROR, rejectMsg, fd);
+                    return;
+                }
+            }
+
             // Decode using streaming decoder with delta symbol dictionary support
             QwpMessageCursor messageCursor = streamingDecoder.decode(
                     bufferAddress, bufferPosition, connectionSymbolDict);
@@ -341,6 +355,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void setHighestProcessedSequence(long highestProcessedSequence) {
         this.highestProcessedSequence = highestProcessedSequence;
+    }
+
+    public void setNegotiatedVersion(byte negotiatedVersion) {
+        this.negotiatedVersion = negotiatedVersion;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {

@@ -52,6 +52,9 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
     // Header names (case-insensitive)
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
+    // QWP version negotiation headers
+    public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
+    public static final Utf8String HEADER_X_QWP_MAX_VERSION = new Utf8String("X-QWP-Max-Version");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
@@ -66,6 +69,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
     private static final ThreadLocal<MessageDigest> SHA1_DIGEST = ThreadLocal.withInitial(() -> {
@@ -201,13 +205,16 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Returns the size of the handshake response for the given accept key.
+     * Returns the size of the handshake response for the given accept key and QWP version.
      *
-     * @param acceptKey the computed accept key
+     * @param acceptKey  the computed accept key
+     * @param qwpVersion the negotiated QWP version number
      * @return the total response size in bytes
      */
-    public static int responseSize(String acceptKey) {
-        return RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
+    public static int responseSize(String acceptKey, int qwpVersion) {
+        return RESPONSE_PREFIX.length + acceptKey.length()
+                + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
+                + RESPONSE_SUFFIX.length;
     }
 
     /**
@@ -259,11 +266,12 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     /**
      * Writes the WebSocket handshake response to the given buffer.
      *
-     * @param buf       the buffer to write to
-     * @param acceptKey the computed Sec-WebSocket-Accept value
+     * @param buf        the buffer to write to
+     * @param acceptKey  the computed Sec-WebSocket-Accept value
+     * @param qwpVersion the negotiated QWP version number
      * @return the number of bytes written
      */
-    public static int writeResponse(long buf, String acceptKey) {
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion) {
         int offset = 0;
 
         // Write prefix
@@ -277,12 +285,27 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             Unsafe.getUnsafe().putByte(buf + offset++, b);
         }
 
+        // Write X-QWP-Version header
+        for (byte b : RESPONSE_AFTER_ACCEPT) {
+            Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+        byte[] versionBytes = Integer.toString(qwpVersion).getBytes(StandardCharsets.US_ASCII);
+        for (byte b : versionBytes) {
+            Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+
         // Write suffix
         for (byte b : RESPONSE_SUFFIX) {
             Unsafe.getUnsafe().putByte(buf + offset++, b);
         }
 
         return offset;
+    }
+
+    private static int digitCount(int value) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3; // QWP version will not exceed 255
     }
 
     @Override

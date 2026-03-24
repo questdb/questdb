@@ -201,6 +201,7 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                 String acceptKey = null;
                 boolean hasUpgradeHeader = false;
                 boolean hasConnectionHeader = false;
+                boolean hasQwpVersionHeader = false;
 
                 while ((line = reader.readLine()) != null && !line.isEmpty()) {
                     if (line.toLowerCase().startsWith("sec-websocket-accept:")) {
@@ -209,6 +210,8 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                         hasUpgradeHeader = line.toLowerCase().contains("websocket");
                     } else if (line.toLowerCase().startsWith("connection:")) {
                         hasConnectionHeader = line.toLowerCase().contains("upgrade");
+                    } else if (line.toLowerCase().startsWith("x-qwp-version:")) {
+                        hasQwpVersionHeader = true;
                     }
                 }
 
@@ -216,6 +219,7 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                 Assert.assertTrue("Should have Connection: Upgrade header", hasConnectionHeader);
                 Assert.assertNotNull("Should have Sec-WebSocket-Accept header", acceptKey);
                 Assert.assertEquals("Accept key should match", computeAcceptKey(wsKey), acceptKey);
+                Assert.assertTrue("Should have X-QWP-Version header", hasQwpVersionHeader);
             }
         });
     }
@@ -423,6 +427,124 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                 "Expected 101 Switching Protocols, got: " + responseStr.split("\r\n")[0],
                 responseStr.startsWith("HTTP/1.1 101")
         );
+    }
+
+    @Test
+    public void testVersionNegotiationDefaultsToOneWhenHeaderAbsent() throws Exception {
+        runInContext((port) -> {
+            byte[] keyBytes = new byte[16];
+            for (int i = 0; i < 16; i++) {
+                keyBytes[i] = (byte) (Math.random() * 256);
+            }
+            String wsKey = Base64.getEncoder().encodeToString(keyBytes);
+
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                OutputStream out = socket.getOutputStream();
+
+                // No X-QWP-Max-Version header
+                String request = "GET /write/v4 HTTP/1.1\r\n" +
+                        "Host: localhost:" + port + "\r\n" +
+                        "Upgrade: websocket\r\n" +
+                        "Connection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: " + wsKey + "\r\n" +
+                        "Sec-WebSocket-Version: 13\r\n" +
+                        "\r\n";
+
+                out.write(request.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+
+                String response = readHttpResponse(socket);
+                Assert.assertTrue("Should be 101", response.startsWith("HTTP/1.1 101"));
+                Assert.assertTrue("Should contain X-QWP-Version: 1",
+                        response.toLowerCase().contains("x-qwp-version: 1"));
+            }
+        });
+    }
+
+    @Test
+    public void testVersionNegotiationReturnsServerMax() throws Exception {
+        runInContext((port) -> {
+            byte[] keyBytes = new byte[16];
+            for (int i = 0; i < 16; i++) {
+                keyBytes[i] = (byte) (Math.random() * 256);
+            }
+            String wsKey = Base64.getEncoder().encodeToString(keyBytes);
+
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                OutputStream out = socket.getOutputStream();
+
+                // Client claims high version — server caps to its max
+                String request = "GET /write/v4 HTTP/1.1\r\n" +
+                        "Host: localhost:" + port + "\r\n" +
+                        "Upgrade: websocket\r\n" +
+                        "Connection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: " + wsKey + "\r\n" +
+                        "Sec-WebSocket-Version: 13\r\n" +
+                        "X-QWP-Max-Version: 99\r\n" +
+                        "\r\n";
+
+                out.write(request.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+
+                String response = readHttpResponse(socket);
+                Assert.assertTrue("Should be 101", response.startsWith("HTTP/1.1 101"));
+                Assert.assertTrue("Should contain X-QWP-Version: 1",
+                        response.toLowerCase().contains("x-qwp-version: 1"));
+            }
+        });
+    }
+
+    @Test
+    public void testVersionNegotiationWithClientId() throws Exception {
+        runInContext((port) -> {
+            byte[] keyBytes = new byte[16];
+            for (int i = 0; i < 16; i++) {
+                keyBytes[i] = (byte) (Math.random() * 256);
+            }
+            String wsKey = Base64.getEncoder().encodeToString(keyBytes);
+
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5000);
+                OutputStream out = socket.getOutputStream();
+
+                String request = "GET /write/v4 HTTP/1.1\r\n" +
+                        "Host: localhost:" + port + "\r\n" +
+                        "Upgrade: websocket\r\n" +
+                        "Connection: Upgrade\r\n" +
+                        "Sec-WebSocket-Key: " + wsKey + "\r\n" +
+                        "Sec-WebSocket-Version: 13\r\n" +
+                        "X-QWP-Max-Version: 1\r\n" +
+                        "X-QWP-Client-Id: test/1.0\r\n" +
+                        "\r\n";
+
+                out.write(request.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+
+                String response = readHttpResponse(socket);
+                Assert.assertTrue("Should be 101", response.startsWith("HTTP/1.1 101"));
+                Assert.assertTrue("Should contain X-QWP-Version: 1",
+                        response.toLowerCase().contains("x-qwp-version: 1"));
+            }
+        });
+    }
+
+    private static String readHttpResponse(Socket socket) throws Exception {
+        InputStream in = socket.getInputStream();
+        StringBuilder response = new StringBuilder();
+        while (true) {
+            int b = in.read();
+            Assert.assertNotEquals("Unexpected end of stream", -1, b);
+            response.append((char) b);
+            int len = response.length();
+            if (len >= 4
+                    && response.charAt(len - 4) == '\r' && response.charAt(len - 3) == '\n'
+                    && response.charAt(len - 2) == '\r' && response.charAt(len - 1) == '\n') {
+                break;
+            }
+        }
+        return response.toString();
     }
 
     private void sendCloseAndAssertResponseCode(byte[] closePayload, int expectedResponseCode) throws Exception {

@@ -725,6 +725,38 @@ The authoritative implementation is in QuestDB's Java codebase:
 
 ---
 
+## Version Negotiation
+
+When QWP operates over WebSocket, the client and server negotiate the protocol
+version during the HTTP upgrade handshake.
+
+### Client Request Headers
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-QWP-Max-Version` | No | Maximum QWP version the client supports. Defaults to 1 if absent. |
+| `X-QWP-Client-Id` | No | Free-form client identifier (e.g., `java/1.0.2`). |
+
+### Server Response Header
+
+| Header | Description |
+|--------|-------------|
+| `X-QWP-Version` | The QWP version selected for this connection. |
+
+The server selects `min(clientMax, serverMax)`. All messages on the connection
+must use the selected version in the version byte (offset 4) of the message
+header. The server validates every incoming message against the negotiated
+version and rejects any message whose version byte does not match with a parse
+error.
+
+### UDP Transport
+
+UDP has no HTTP upgrade handshake. Each datagram is self-describing: the server
+inspects the version byte in the message header and processes or drops the
+datagram accordingly.
+
+---
+
 ## Version History
 
 | Version | Description |
