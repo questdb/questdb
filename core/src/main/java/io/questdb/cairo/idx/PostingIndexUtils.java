@@ -861,6 +861,8 @@ public final class PostingIndexUtils {
                 Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockBitWidthsAddr = 0;
             }
+            blockCapacity = 0;
+            deltaCapacity = 0;
             if (residualsAddr != 0) {
                 Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 residualsAddr = 0;
@@ -869,6 +871,7 @@ public final class PostingIndexUtils {
                 Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 nativeResidualsAddr = 0;
             }
+            residualsCapacity = 0;
         }
     }
 
@@ -946,6 +949,7 @@ public final class PostingIndexUtils {
                 Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockDeltasAddr = 0;
             }
+            blockCapacity = 0;
         }
     }
 
