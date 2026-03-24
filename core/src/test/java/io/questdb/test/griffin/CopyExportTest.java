@@ -724,7 +724,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """,
                                 "select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2020-01-01.parquet')");
                         assertSql("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t504.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-01.parquet\t501.0 B\n" +
                                         "test_table" + File.separator + "2020-01-02.parquet\t586.0 B\n",
                                 "select path, diskSizeHuman from export_files()  order by path");
                     });
@@ -2252,7 +2252,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("insert into test_table values (1, 'hello', 1.5), (2, 'world', 2.5)");
 
             CopyExportRunnable stmt = () -> runAndFetchCopyExportID("copy test_table to 'output13' with format parquet " +
-                    "compression_codec gzip compression_level 10 " +
+                    "compression_codec gzip compression_level 9 " +
                     "row_group_size 5000 data_page_size 8192 " +
                     "statistics_enabled true parquet_version 2", sqlExecutionContext);
 
