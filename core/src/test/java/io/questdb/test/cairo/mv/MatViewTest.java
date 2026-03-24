@@ -6283,6 +6283,68 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNotKeyed15mBerlinSpringForward() throws Exception {
+        // 15m stride = minimum DST gap. canSkipDstGapCorrection returns true for
+        // 15m when (from+offset) % day == 0 (it is here, offset=0).
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 15m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-28T00:00:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed17mAucklandFallBack() throws Exception {
+        // Pacific/Auckland: southern hemisphere, positive offset (NZDT +13 → NZST +12).
+        // Fall-back Apr 4 2021, 03:00 NZDT → 02:00 NZST. 17m forces gap-aware path.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE 'Pacific/Auckland'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-04-03T13:00:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed17mBerlinSpringForward() throws Exception {
+        // 17m stride is coprime with 15m (minimum DST gap), forcing the DST-gap-aware
+        // code path in timestamp_floor_utc. Tests monotonicity across the Europe/Berlin
+        // spring-forward gap (March 28 2021, 02:00 CET → 03:00 CEST).
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-28T00:15:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed17mNewYorkFallBack() throws Exception {
+        // America/New_York: negative-offset DST zone (EDT -4 → EST -5).
+        // Fall-back Nov 7 2021, 02:00 EDT → 01:00 EST. Local 01:00-02:00 repeats.
+        // 17m stride forces gap-aware path.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-11-07T04:30:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1hKolkataWithOffset() throws Exception {
+        // Asia/Kolkata (+05:30) is non-hour-aligned. Combined with non-zero offset,
+        // this is the hardest case for bucket alignment.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '00:15'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-06-01T00:00:00.000000Z", 5 * 60_000_000, 100, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1wBerlinDST() throws Exception {
+        // Week stride with DST timezone. Super-day strides use actual tz offset
+        // (not standard), testing a different code path from sub-day.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1w ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-15T00:00:00.000000Z", 3_600_000_000L, 500, 5);
+        });
+    }
+
+    @Test
     public void testSelfJoinQuery() throws Exception {
         // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.
@@ -7142,6 +7204,30 @@ public class MatViewTest extends AbstractCairoTest {
 
     private static void dropNthTimerMatView(int n) throws SqlException {
         execute("drop materialized view if exists price_1h_" + n + ";");
+    }
+
+    /**
+     * Asserts that a materialized view produces the same result as the standalone
+     * SAMPLE BY query after incremental data insertion. Checks both row-level equality
+     * and total count preservation (no rows lost during refresh).
+     */
+    private void assertMatViewMatchesSampleBy(String viewQuery, String startTsLiteral, long stepMicros, int N, int K) throws Exception {
+        final String viewName = "x_view";
+        final long startTs = timestampType.getDriver().parseFloorLiteral(startTsLiteral);
+        final long step = timestampType.getDriver().fromMicros(stepMicros);
+        updateViewIncrementally(viewQuery, startTs, step, N, K);
+
+        // Capture standalone query result as expected
+        sink.clear();
+        printSql(viewQuery, sink);
+        final String expected = sink.toString();
+
+        // Assert total count preserved (no rows lost during incremental refresh)
+        final String totalExpected = "total\n" + N + "\n";
+        assertQueryNoLeakCheck(totalExpected, "SELECT sum(c)::LONG total FROM " + viewName, null, false, true);
+
+        // Assert mat view matches standalone query row-by-row
+        assertQueryNoLeakCheck(expected, viewName, "k", true, true);
     }
 
     private String copySql(int from, int count) {

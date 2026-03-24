@@ -59,6 +59,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
@@ -458,6 +459,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
+                    viewDefinition.getSamplingIntervalUnit(),
                     refreshIntervals,
                     minTs,
                     maxTs,
@@ -880,6 +882,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long fixedOffset,
+            char samplingIntervalUnit,
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
@@ -890,6 +893,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - fixedTzOffset,
+                    refreshIntervals,
+                    minTs,
+                    maxTs,
+                    step
+            );
+        }
+
+        // For sub-day intervals, timestamp_floor_utc uses standard offset for UTC↔local
+        // and adds the user offset POST-floor. This means bucket key K contains raw data
+        // from [K - userOffset, K - userOffset + stride). Use data-aligned boundaries
+        // (exclude user offset) so that:
+        // 1. Boundaries match raw-data timestamp ranges → overlap check against WAL intervals works
+        // 2. Scan range covers all raw data for each bucket
+        // 3. Output keys (= boundary + userOffset) fall within [boundary, boundary + stride)
+        if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
+            long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            return fixedOffsetIterator.of(
+                    sampler,
+                    -stdOff,
                     refreshIntervals,
                     minTs,
                     maxTs,

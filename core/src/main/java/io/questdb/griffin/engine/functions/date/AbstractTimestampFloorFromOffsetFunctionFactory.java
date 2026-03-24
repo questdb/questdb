@@ -309,22 +309,12 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
     private static long floorWithTz(long timestamp, TimeZoneRules tzRules, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long from, long offset, boolean returnUtc, char unit) {
         if (returnUtc) {
-            if (CommonUtils.isSubDayUnit(unit)) {
-                // Standard-local anchoring: use the standard (non-DST) offset for
-                // UTC<->local conversion to keep bucket widths uniform across DST
-                // transitions, but anchor the floor to standard local time so that
-                // bucket boundaries align to clean local-time marks (e.g. :00 for
-                // 1h stride in India +5:30, not :30).
-                final long stdOff = tzRules.getStandardOffset();
-                final long localTimestamp = timestamp + stdOff;
-                final long result = floorFunc.floor(localTimestamp, stride, from);
-                return result - stdOff + offset;
-            }
-            final long tzOff = tzRules.getOffset(timestamp);
+            // Use the shared conversion strategy from CommonUtils so that
+            // the mat view refresh iterator produces matching bucket boundaries.
+            final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
             final long localTimestamp = timestamp + tzOff;
             final long result = floorFunc.floor(localTimestamp, stride, from);
-            final long resultTzOff = tzRules.getOffset(result - tzOff);
-            return result - resultTzOff + offset;
+            return CommonUtils.offsetFlooredUtcResult(result, tzOff, offset, tzRules, unit);
         }
         final long tzOff = tzRules.getOffset(timestamp);
         final long localTimestamp = timestamp + tzOff;

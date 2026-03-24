@@ -38,6 +38,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -599,6 +601,28 @@ public class SqlUtil {
         final QueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
         return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
+    }
+
+    /**
+     * Extracts the interval/stride expression from a timestamp_floor or
+     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
+     */
+    public static ExpressionNode getTimestampFloorInterval(ExpressionNode ast) {
+        if (ast.paramCount == 3 || ast.paramCount == 5) {
+            return ast.args.getQuick(ast.paramCount - 1);
+        }
+        return ast.lhs;
+    }
+
+    /**
+     * Extracts the timestamp column expression from a timestamp_floor or
+     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
+     */
+    public static ExpressionNode getTimestampFloorTimestampArg(ExpressionNode ast) {
+        if (ast.paramCount == 3 || ast.paramCount == 5) {
+            return ast.args.getQuick(ast.paramCount - 2);
+        }
+        return ast.rhs;
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -1220,6 +1244,16 @@ public class SqlUtil {
             model = model.getNestedModel();
         }
         return true;
+    }
+
+    /**
+     * Returns true if the given expression node is a timestamp_floor or
+     * timestamp_floor_utc function call.
+     */
+    public static boolean isTimestampFloorFunction(ExpressionNode ast) {
+        return ast.type == ExpressionNode.FUNCTION
+                && (Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)
+                || Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token));
     }
 
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
