@@ -2320,9 +2320,9 @@ class LateralJoinRewriter {
             if (node.type == ExpressionNode.OPERATION
                     && Chars.equals(node.token, "=")) {
                 if (isOuterRefToken(node.lhs, outerRefAlias) && isSimpleColumnRef(node.rhs)) {
-                    result.put(node.lhs.token, unqualify(node.rhs.token));
+                    result.put(node.lhs.token, node.rhs.token);
                 } else if (isOuterRefToken(node.rhs, outerRefAlias) && isSimpleColumnRef(node.lhs)) {
-                    result.put(node.rhs.token, unqualify(node.lhs.token));
+                    result.put(node.rhs.token, node.lhs.token);
                 }
             }
         }

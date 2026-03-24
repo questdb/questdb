@@ -415,7 +415,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub ON true
                             ORDER BY o.id
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
