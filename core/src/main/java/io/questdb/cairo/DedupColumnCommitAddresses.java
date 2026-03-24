@@ -59,6 +59,10 @@ public class DedupColumnCommitAddresses implements Closeable {
         return dedupCommitAddr;
     }
 
+    public static int getColType(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getInt(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_TYPE_32);
+    }
+
     public static long getColReserved1(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED1);
     }
@@ -79,8 +83,16 @@ public class DedupColumnCommitAddresses implements Closeable {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED5);
     }
 
+    public static long getColVarData(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_64);
+    }
+
     public static long getColVarDataLen(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
+    }
+
+    public static long getO3VarData(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_64);
     }
 
     public static long getO3VarDataLen(long dedupBlockAddress, int keyIndex) {

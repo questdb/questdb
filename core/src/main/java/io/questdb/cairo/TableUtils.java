@@ -100,6 +100,7 @@ public final class TableUtils {
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
+    public static final String FILE_SUFFIX_N = ".n";
     public static final int INITIAL_TXN = 0;
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -802,6 +803,15 @@ public final class TableUtils {
     public static long getNullLong(int columnType, int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
+        if (columnType == ColumnType.UINT16) {
+            return 0L;
+        }
+        if (columnType == ColumnType.UINT32) {
+            return 0L;
+        }
+        if (columnType == ColumnType.UINT64) {
+            return 0L;
+        }
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT -> 0L;
             case ColumnType.SYMBOL -> Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
@@ -1005,6 +1015,18 @@ public final class TableUtils {
 
     public static LPSZ iFile(Path path, CharSequence columnName) {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static LPSZ nFile(Path path, CharSequence columnName, long columnTxn) {
+        path.concat(columnName).put(FILE_SUFFIX_N);
+        if (columnTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnTxn);
+        }
+        return path.$();
+    }
+
+    public static LPSZ nFile(Path path, CharSequence columnName) {
+        return nFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
     /**
@@ -1796,6 +1818,18 @@ public final class TableUtils {
     }
 
     public static void setNull(int columnType, long addr, long count) {
+        if (columnType == ColumnType.UINT16) {
+            Vect.setMemoryShort(addr, (short) 0, count);
+            return;
+        }
+        if (columnType == ColumnType.UINT32) {
+            Vect.setMemoryInt(addr, 0, count);
+            return;
+        }
+        if (columnType == ColumnType.UINT64) {
+            Vect.setMemoryLong(addr, 0L, count);
+            return;
+        }
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:

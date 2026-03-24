@@ -54,13 +54,22 @@ public class CastVarcharToShortFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToShortFunction {
+        private Utf8Sequence cachedVarchar;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public short getShort(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
+            Utf8Sequence value;
+            if (srcCached) {
+                value = cachedVarchar;
+                srcCached = false;
+            } else {
+                value = arg.getVarcharA(rec);
+            }
             try {
                 if (value == null) {
                     return 0;
@@ -69,6 +78,13 @@ public class CastVarcharToShortFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return 0;
             }
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedVarchar = arg.getVarcharA(rec);
+            srcCached = true;
+            return cachedVarchar == null;
         }
     }
 }

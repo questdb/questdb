@@ -45,13 +45,30 @@ public class CastSymbolToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToByteFunction {
+        private CharSequence cachedStr;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) Numbers.parseIntQuiet(arg.getSymbol(rec));
+            CharSequence value;
+            if (srcCached) {
+                value = cachedStr;
+                srcCached = false;
+            } else {
+                value = arg.getSymbol(rec);
+            }
+            return (byte) Numbers.parseIntQuiet(value);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedStr = arg.getSymbol(rec);
+            srcCached = true;
+            return cachedStr == null;
         }
     }
 }

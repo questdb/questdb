@@ -56,11 +56,13 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
+            if (arg.isNull(rec)) return null;
             return arg.getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
+            if (arg.isNull(rec)) return null;
             return arg.getStrB(rec);
         }
 

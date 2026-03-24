@@ -45,6 +45,7 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
                 mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr + ((long) count - 1) * Byte.BYTES));
+                mapValue.putBool(valueIndex + 2, false);
             }
         }
     }
@@ -68,6 +69,7 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putByte(valueIndex + 1, srcValue.getByte(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 }

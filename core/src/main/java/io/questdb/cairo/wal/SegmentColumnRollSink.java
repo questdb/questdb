@@ -28,7 +28,7 @@ import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.std.LongList;
 
 public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
-    private final int ENTRIES_PER_COLUMN = 6;
+    private final int ENTRIES_PER_COLUMN = 8;
     private final LongList data = new LongList();
     private int baseIndex = -ENTRIES_PER_COLUMN;
 
@@ -47,6 +47,14 @@ public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
 
     public long getDestAuxSize(int columnIndex) {
         return data.get(columnIndex * ENTRIES_PER_COLUMN + 5);
+    }
+
+    public long getDestBitmapFd(int columnIndex) {
+        return data.get(columnIndex * ENTRIES_PER_COLUMN + 6);
+    }
+
+    public long getDestBitmapSize(int columnIndex) {
+        return data.get(columnIndex * ENTRIES_PER_COLUMN + 7);
     }
 
     public long getDestPrimaryFd(int columnIndex) {
@@ -69,6 +77,14 @@ public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
         baseIndex += ENTRIES_PER_COLUMN;
         data.setPos(baseIndex + ENTRIES_PER_COLUMN);
         data.fill(baseIndex, baseIndex + ENTRIES_PER_COLUMN, -1);
+    }
+
+    public void setDestBitmapFd(long fd) {
+        data.extendAndSet(baseIndex + 6, fd);
+    }
+
+    public void setDestBitmapSize(long size) {
+        data.extendAndSet(baseIndex + 7, size);
     }
 
     public void setDestPrimaryFd(long fd) {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -55,23 +56,44 @@ public class LtLongFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LtLongFunction(args.getQuick(0), args.getQuick(1));
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        final boolean unsigned64 = left.getType() == ColumnType.UINT64 || right.getType() == ColumnType.UINT64;
+        final boolean bitmapNull = ColumnType.needsNullBitmap(args.getQuick(0).getType())
+                || ColumnType.needsNullBitmap(args.getQuick(1).getType());
+        return new LtLongFunction(left, right, unsigned64, bitmapNull);
     }
 
     private static class LtLongFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final boolean bitmapNull;
         private final Function left;
         private final Function right;
+        private final boolean unsigned64;
 
-        public LtLongFunction(Function left, Function right) {
+        public LtLongFunction(Function left, Function right, boolean unsigned64, boolean bitmapNull) {
             this.left = left;
             this.right = right;
+            this.unsigned64 = unsigned64;
+            this.bitmapNull = bitmapNull;
         }
 
         @Override
         public boolean getBool(Record rec) {
+            if (unsigned64 || bitmapNull) {
+                if (left.isNull(rec) || right.isNull(rec)) {
+                    return false;
+                }
+            }
+            if (unsigned64) {
+                return Numbers.lessThanUInt64(
+                        left.getLong(rec),
+                        right.getLong(rec),
+                        negated
+                );
+            }
             return Numbers.lessThan(
-                    this.left.getLong(rec),
-                    this.right.getLong(rec),
+                    left.getLong(rec),
+                    right.getLong(rec),
                     negated
             );
         }

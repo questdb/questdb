@@ -45,6 +45,7 @@ import java.nio.ByteOrder;
 
 import static io.questdb.std.Numbers.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class NumbersTest {
@@ -226,6 +227,69 @@ public class NumbersTest {
         assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.NEGATIVE_INFINITY));
         assertEquals(0, Numbers.compare(Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY));
         assertEquals(0, Numbers.compare(Float.NaN, Float.NaN));
+    }
+
+    @Test
+    public void testLessThanUInt16() {
+        // non-negated: a < b
+        assertTrue(Numbers.lessThanUInt16((short) 0, (short) 1, false));
+        assertFalse(Numbers.lessThanUInt16((short) 1, (short) 0, false));
+        assertFalse(Numbers.lessThanUInt16((short) 1, (short) 1, false));
+        // signed boundary: 32767 < 32768 in unsigned
+        assertTrue(Numbers.lessThanUInt16((short) Short.MAX_VALUE, (short) (Short.MAX_VALUE + 1), false));
+        // max unsigned (65535 = -1 as short) is not less than 0
+        assertFalse(Numbers.lessThanUInt16((short) -1, (short) 0, false));
+        // 0 < max unsigned
+        assertTrue(Numbers.lessThanUInt16((short) 0, (short) -1, false));
+
+        // negated: a >= b
+        assertTrue(Numbers.lessThanUInt16((short) 1, (short) 0, true));
+        assertTrue(Numbers.lessThanUInt16((short) 1, (short) 1, true));
+        assertFalse(Numbers.lessThanUInt16((short) 0, (short) 1, true));
+        assertTrue(Numbers.lessThanUInt16((short) -1, (short) 0, true));
+        assertFalse(Numbers.lessThanUInt16((short) 0, (short) -1, true));
+    }
+
+    @Test
+    public void testLessThanUInt32() {
+        // non-negated: a < b
+        assertTrue(Numbers.lessThanUInt32(0, 1, false));
+        assertFalse(Numbers.lessThanUInt32(1, 0, false));
+        assertFalse(Numbers.lessThanUInt32(1, 1, false));
+        // signed boundary: MAX_VALUE < MAX_VALUE+1 in unsigned
+        assertTrue(Numbers.lessThanUInt32(Integer.MAX_VALUE, Integer.MAX_VALUE + 1, false));
+        // max unsigned (0xFFFFFFFF = -1) is not less than 0
+        assertFalse(Numbers.lessThanUInt32(-1, 0, false));
+        // 0 < max unsigned
+        assertTrue(Numbers.lessThanUInt32(0, -1, false));
+
+        // negated: a >= b
+        assertTrue(Numbers.lessThanUInt32(1, 0, true));
+        assertTrue(Numbers.lessThanUInt32(1, 1, true));
+        assertFalse(Numbers.lessThanUInt32(0, 1, true));
+        assertTrue(Numbers.lessThanUInt32(-1, 0, true));
+        assertFalse(Numbers.lessThanUInt32(0, -1, true));
+    }
+
+    @Test
+    public void testLessThanUInt64() {
+        // non-negated: a < b
+        assertTrue(Numbers.lessThanUInt64(0L, 1L, false));
+        assertFalse(Numbers.lessThanUInt64(1L, 0L, false));
+        assertFalse(Numbers.lessThanUInt64(1L, 1L, false));
+        // signed boundary: MAX_VALUE < MAX_VALUE+1 in unsigned
+        assertTrue(Numbers.lessThanUInt64(Long.MAX_VALUE, Long.MAX_VALUE + 1, false));
+        // max unsigned (0xFFFFFFFFFFFFFFFF = -1) is not less than 0
+        assertFalse(Numbers.lessThanUInt64(-1L, 0L, false));
+        // 0 < max unsigned
+        assertTrue(Numbers.lessThanUInt64(0L, -1L, false));
+
+        // negated: a >= b
+        assertTrue(Numbers.lessThanUInt64(1L, 0L, true));
+        assertTrue(Numbers.lessThanUInt64(1L, 1L, true));
+        assertFalse(Numbers.lessThanUInt64(0L, 1L, true));
+        assertTrue(Numbers.lessThanUInt64(-1L, 0L, true));
+        assertFalse(Numbers.lessThanUInt64(0L, -1L, true));
     }
 
     @Test

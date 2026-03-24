@@ -82,6 +82,9 @@ import io.questdb.griffin.engine.functions.columns.ShortColumn;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.columns.UInt16Column;
+import io.questdb.griffin.engine.functions.columns.UInt32Column;
+import io.questdb.griffin.engine.functions.columns.UInt64Column;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
@@ -115,6 +118,9 @@ import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.constants.UInt16Constant;
+import io.questdb.griffin.engine.functions.constants.UInt32Constant;
+import io.questdb.griffin.engine.functions.constants.UInt64Constant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -180,6 +186,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         int columnType = metadata.getColumnType(index);
+        if (columnType == ColumnType.UINT16) {
+            return UInt16Column.newInstance(index);
+        }
+        if (columnType == ColumnType.UINT32) {
+            return UInt32Column.newInstance(index);
+        }
+        if (columnType == ColumnType.UINT64) {
+            return UInt64Column.newInstance(index);
+        }
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
             case ColumnType.BYTE -> ByteColumn.newInstance(index);
@@ -1338,6 +1353,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function functionToConstant0(Function function) {
         int type = function.getType();
+        if (type == ColumnType.UINT16) {
+            if (function instanceof UInt16Constant) {
+                return function;
+            }
+            return UInt16Constant.newInstance(function.getShort(null));
+        }
+        if (type == ColumnType.UINT32) {
+            if (function instanceof UInt32Constant) {
+                return function;
+            }
+            return UInt32Constant.newInstance(function.getInt(null));
+        }
+        if (type == ColumnType.UINT64) {
+            if (function instanceof UInt64Constant) {
+                return function;
+            }
+            return UInt64Constant.newInstance(function.getLong(null));
+        }
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
                 if (function instanceof IntConstant) {
@@ -1354,18 +1387,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
                     return function;
+                } else if (function.isNullConstant() || function.isNull(null)) {
+                    return BooleanConstant.NULL;
                 } else {
                     return BooleanConstant.of(function.getBool(null));
                 }
             case ColumnType.BYTE:
                 if (function instanceof ByteConstant) {
                     return function;
+                } else if (function.isNullConstant() || function.isNull(null)) {
+                    return ByteConstant.NULL;
                 } else {
                     return ByteConstant.newInstance(function.getByte(null));
                 }
             case ColumnType.SHORT:
                 if (function instanceof ShortConstant) {
                     return function;
+                } else if (function.isNullConstant() || function.isNull(null)) {
+                    return ShortConstant.NULL;
                 } else {
                     return ShortConstant.newInstance(function.getShort(null));
                 }

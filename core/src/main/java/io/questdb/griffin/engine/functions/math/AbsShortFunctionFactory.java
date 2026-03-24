@@ -67,8 +67,14 @@ public class AbsShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
+            if (function.isNull(rec)) return 0;
             short value = function.getShort(rec);
             return (short) Math.abs(value);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return function.isNull(rec);
         }
     }
 }

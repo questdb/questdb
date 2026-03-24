@@ -60,7 +60,13 @@ public class NegByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
+            if (arg.isNull(rec)) return 0;
             return (byte) -arg.getByte(rec);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return arg.isNull(rec);
         }
 
         @Override

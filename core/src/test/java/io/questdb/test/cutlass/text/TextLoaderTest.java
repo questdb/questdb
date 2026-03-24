@@ -698,7 +698,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum\s
                     
                     dolor "sit" amet.\t546756
-                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum "dolor" sit amet.\t23
+                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\t\tLorem ipsum "dolor" sit amet.\t23
                     126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434
                     127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112
                     128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122
@@ -739,7 +739,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum\s
                     
                     dolor "sit" amet.\t546756
-                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum "dolor" sit amet.\t23
+                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\t\tLorem ipsum "dolor" sit amet.\t23
                     126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434
                     127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112
                     """;
@@ -1277,9 +1277,9 @@ public class TextLoaderTest extends AbstractCairoTest {
 
                     String expected = """
                             ts\tbyte\tshort\tchar\tint\tlong\tboolean\tfloat\tdouble\tstring\tsymbol\tlong256\ttimestamp\tdate
-                            2021-07-09T19:15:08.000000Z\t0\t0\t\tnull\tnull\tfalse\tnull\tnull\tnull\tnull\t\t\t
-                            2021-07-09T19:15:09.000903Z\t0\t0\t\tnull\tnull\tfalse\tnull\tnull\t\t\t\t\t
-                            2021-07-09T19:15:11.001000Z\t0\t0\t\tnull\tnull\tfalse\tnull\tnull\tnull\tnull\t\t\t
+                            2021-07-09T19:15:08.000000Z\t\t\t\tnull\tnull\t\tnull\tnull\tnull\tnull\t\t\t
+                            2021-07-09T19:15:09.000903Z\t\t\t\tnull\tnull\t\tnull\tnull\t\t\t\t\t
+                            2021-07-09T19:15:11.001000Z\t\t\t\tnull\tnull\t\tnull\tnull\tnull\tnull\t\t\t
                             """;
 
                     String csv = """
@@ -2295,7 +2295,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             String expected = """
                     f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9
-                    0\t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394
+                    \t4\t3883\t7.96873019309714\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394
                     """;
 
             String csv = """
@@ -2573,7 +2573,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum\s
                     
                     dolor "sit" amet.\t546756
-                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum "dolor" sit amet.\t23
+                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\t\tLorem ipsum "dolor" sit amet.\t23
                     126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434
                     127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112
                     128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122
@@ -2613,7 +2613,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum\s
                     
                     dolor "sit" amet.\t546756
-                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum "dolor" sit amet.\t23
+                    125\tabc\t2015-01-20T21:00:00.000Z\t9.334\t\tLorem ipsum "dolor" sit amet.\t23
                     126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434
                     127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112
                     128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122

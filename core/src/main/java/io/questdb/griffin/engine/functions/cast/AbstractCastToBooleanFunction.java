@@ -37,11 +37,6 @@ public abstract class AbstractCastToBooleanFunction extends BooleanFunction impl
      */
     protected final Function arg;
 
-    /**
-     * Constructs a new cast to boolean function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToBooleanFunction(Function arg) {
         this.arg = arg;
     }
@@ -49,6 +44,11 @@ public abstract class AbstractCastToBooleanFunction extends BooleanFunction impl
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return isConstant() && arg.isNullConstant();
     }
 
     @Override

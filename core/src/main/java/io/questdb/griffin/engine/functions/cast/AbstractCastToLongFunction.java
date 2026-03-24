@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
  * Abstract base class for functions that cast values to long.
  */
 public abstract class AbstractCastToLongFunction extends LongFunction implements CastFunction {
+
     /**
      * The function argument to cast.
      */

@@ -50,6 +50,7 @@ public class CastBooleanToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
+            if (arg.isNull(rec)) return Double.NaN;
             boolean val = arg.getBool(rec);
             return val ? 1.0f : 0.0f;
         }

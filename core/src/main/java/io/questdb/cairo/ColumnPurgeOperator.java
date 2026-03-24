@@ -322,6 +322,12 @@ public class ColumnPurgeOperator implements Closeable {
                         continue;
                     }
 
+                    // Remove null bitmap file (.n)
+                    path.trimTo(pathTrimToPartition);
+                    TableUtils.nFile(path, columnName, columnVersion);
+                    // .n file may not exist for legacy partitions, so ignore failure
+                    ff.remove(path.$());
+
                     if (ColumnType.isVarSize(columnType) || columnTypeRogue) {
                         path.trimTo(pathTrimToPartition);
                         TableUtils.iFile(path, columnName, columnVersion);

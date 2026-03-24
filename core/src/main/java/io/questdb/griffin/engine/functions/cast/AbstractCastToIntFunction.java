@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
  * Abstract base class for functions that cast values to int.
  */
 public abstract class AbstractCastToIntFunction extends IntFunction implements CastFunction {
+
     /**
      * The function argument to cast.
      */

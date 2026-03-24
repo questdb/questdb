@@ -30,16 +30,23 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.Mutable;
 
 class ByteBindVariable extends ByteFunction implements Mutable {
+    boolean isNullValue;
     byte value;
 
     @Override
     public void clear() {
         this.value = 0;
+        this.isNullValue = false;
     }
 
     @Override
     public byte getByte(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return isNullValue;
     }
 
     @Override

@@ -25,10 +25,14 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,17 +49,58 @@ public class EqIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        // IS NULL / IS NOT NULL: one arg is NullConstant, check isNull() on the other
+        if (args.getQuick(0).isNullConstant() || args.getQuick(1).isNullConstant()) {
+            Function other = args.getQuick(0).isNullConstant() ? args.getQuick(1) : args.getQuick(0);
+            return new IsNullCheckFunc(other);
+        }
+        boolean bitmapNull = ColumnType.needsNullBitmap(args.getQuick(0).getType())
+                || ColumnType.needsNullBitmap(args.getQuick(1).getType());
+        return new Func(args.getQuick(0), args.getQuick(1), bitmapNull);
     }
 
     private static class Func extends AbstractEqBinaryFunction {
-        public Func(Function left, Function right) {
+        private final boolean bitmapNull;
+
+        public Func(Function left, Function right, boolean bitmapNull) {
             super(left, right);
+            this.bitmapNull = bitmapNull;
         }
 
         @Override
         public boolean getBool(Record rec) {
+            if (bitmapNull && (left.isNull(rec) || right.isNull(rec))) {
+                return false;
+            }
             return negated != (left.getInt(rec) == right.getInt(rec));
+        }
+    }
+
+    private static class IsNullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public IsNullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != arg.isNull(rec);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val("!=null");
+            } else {
+                sink.val("=null");
+            }
         }
     }
 }

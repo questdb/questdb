@@ -195,23 +195,23 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                 """
                         x\tcase
                         -920\tfalse
-                        701\tfalse
-                        706\tfalse
+                        701\t
+                        706\t
                         -714\ttrue
                         116\tfalse
-                        67\tfalse
-                        207\tfalse
+                        67\t
+                        207\t
                         -55\tfalse
                         -104\ttrue
                         -127\tfalse
-                        790\tfalse
-                        881\tfalse
+                        790\t
+                        881\t
                         -535\tfalse
                         -973\tfalse
                         -463\tfalse
                         -667\ttrue
-                        578\tfalse
-                        940\tfalse
+                        578\t
+                        940\t
                         -54\tfalse
                         -393\tfalse
                         """,
@@ -290,23 +290,23 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                 """
                         x\tcase
                         -920\t102
-                        701\t0
-                        706\t0
+                        701\t
+                        706\t
                         -714\t55
                         116\t91
-                        67\t0
-                        207\t0
+                        67\t
+                        207\t
                         -55\t84
                         -104\t35
                         -127\t56
-                        790\t0
-                        881\t0
+                        790\t
+                        881\t
                         -535\t26
                         -973\t34
                         -463\t103
                         -667\t44
-                        578\t0
-                        940\t0
+                        578\t
+                        940\t
                         -54\t112
                         -393\t55
                         """,
@@ -1952,23 +1952,23 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                 """
                         x\tcase
                         -920\t24814
-                        701\t0
-                        706\t0
+                        701\t
+                        706\t
                         -714\t-24335
                         116\t7739
-                        67\t0
-                        207\t0
+                        67\t
+                        207\t
                         -55\t4924
                         -104\t-11679
                         -127\t-12348
-                        790\t0
-                        881\t0
+                        790\t
+                        881\t
                         -535\t26142
                         -973\t-15458
                         -463\t-1271
                         -667\t-11472
-                        578\t0
-                        940\t0
+                        578\t
+                        940\t
                         -54\t13052
                         -393\t5003
                         """,

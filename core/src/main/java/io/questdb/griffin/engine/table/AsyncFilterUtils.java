@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -37,7 +38,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -100,20 +103,44 @@ public class AsyncFilterUtils {
     ) {
         PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
 
-        if (filteredRows.getCapacity() < frameRowCount) {
-            filteredRows.setCapacity(frameRowCount);
+        // Parquet frames don't provide null bitmap addresses, so
+        // populateJitAddresses sets 0 for all fixed-size columns. The JIT
+        // reads from bitmap addresses for bitmap-null columns (BOOLEAN, BYTE,
+        // SHORT) and would crash reading from address 0. Replace with a valid
+        // zeroed buffer so the JIT treats all parquet rows as non-null.
+        long parquetBitmapAddr = 0;
+        long parquetBitmapSize = 0;
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET
+                && frameMemory.getNullBitmapAddresses() == null) {
+            parquetBitmapSize = (frameRowCount + 7) >> 3;
+            parquetBitmapAddr = Unsafe.calloc(parquetBitmapSize, MemoryTag.NATIVE_JIT);
+            final int columnCount = pageAddressCache.getColumnCount();
+            for (int i = 0; i < columnCount; i++) {
+                if (!pageAddressCache.isVarSizeColumn(i) && auxAddresses.get(i) == 0) {
+                    auxAddresses.set(i, parquetBitmapAddr);
+                }
+            }
         }
+        try {
+            if (filteredRows.getCapacity() < frameRowCount) {
+                filteredRows.setCapacity(frameRowCount);
+            }
 
-        long hi = compiledFilter.call(
-                dataAddresses.getAddress(),
-                dataAddresses.size(),
-                auxAddresses.getAddress(),
-                bindVarMemory.getAddress(),
-                bindVarFunctions.size(),
-                filteredRows.getAddress(),
-                frameRowCount
-        );
-        filteredRows.setPos(hi);
+            long hi = compiledFilter.call(
+                    dataAddresses.getAddress(),
+                    dataAddresses.size(),
+                    auxAddresses.getAddress(),
+                    bindVarMemory.getAddress(),
+                    bindVarFunctions.size(),
+                    filteredRows.getAddress(),
+                    frameRowCount
+            );
+            filteredRows.setPos(hi);
+        } finally {
+            if (parquetBitmapAddr != 0) {
+                Unsafe.free(parquetBitmapAddr, parquetBitmapSize, MemoryTag.NATIVE_JIT);
+            }
+        }
     }
 
     public static void applyFilter(

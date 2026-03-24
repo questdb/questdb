@@ -647,6 +647,7 @@ io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxBooleanGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MaxShortGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxCharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MaxTimestampGroupByFunctionFactory
@@ -662,6 +663,7 @@ io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.MinShortGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinCharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory
@@ -671,12 +673,15 @@ io.questdb.griffin.engine.functions.groupby.MinVarcharGroupByFunctionFactory
 # 'count' group by function
 io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountBooleanGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountByteGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountGeoHashGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountIPv4GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.CountShortGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountStrGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountVarcharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.CountSymbolGroupByFunctionFactory

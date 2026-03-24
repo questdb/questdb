@@ -41,6 +41,8 @@ import io.questdb.std.QuietCloseable;
 class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseable {
     private final DirectLongList auxPageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList auxPageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final DirectLongList nullBitmapAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final DirectLongList nullBitmapSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList pageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final DirectLongList pageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private int columnCount;
@@ -51,6 +53,8 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     public void clear() {
         pageAddresses.clear();
         auxPageAddresses.clear();
+        nullBitmapAddresses.clear();
+        nullBitmapSizes.clear();
         pageSizes.clear();
         auxPageSizes.clear();
     }
@@ -59,6 +63,8 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     public void close() {
         Misc.free(pageAddresses);
         Misc.free(auxPageAddresses);
+        Misc.free(nullBitmapAddresses);
+        Misc.free(nullBitmapSizes);
         Misc.free(pageSizes);
         Misc.free(auxPageSizes);
     }
@@ -86,6 +92,16 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     @Override
     public int getColumnOffset() {
         return 0;
+    }
+
+    @Override
+    public DirectLongList getNullBitmapAddresses() {
+        return nullBitmapAddresses;
+    }
+
+    @Override
+    public DirectLongList getNullBitmapSizes() {
+        return nullBitmapSizes;
     }
 
     @Override
@@ -134,6 +150,8 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
 
         pageAddresses.clear();
         auxPageAddresses.clear();
+        nullBitmapAddresses.clear();
+        nullBitmapSizes.clear();
         pageSizes.clear();
         auxPageSizes.clear();
 
@@ -144,6 +162,8 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
             pageSizes.add(frame.getPageSize(col));
             auxPageAddresses.add(frame.getAuxPageAddress(col));
             auxPageSizes.add(frame.getAuxPageSize(col));
+            nullBitmapAddresses.add(frame.getNullBitmapAddress(col));
+            nullBitmapSizes.add(frame.getNullBitmapSize(col));
             if (addr == 0) {
                 hasColumnTops = true;
             }

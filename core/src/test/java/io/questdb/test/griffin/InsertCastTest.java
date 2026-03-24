@@ -567,7 +567,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n" +
                         "20\n" +
                         "93\n" +
-                        "0\n" +
+                        "\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -630,7 +630,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n" +
                         "20\n" +
                         "93\n" +
-                        "0\n" +
+                        "\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -647,7 +647,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "3\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -684,7 +684,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "3\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -694,7 +694,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "8\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -731,7 +731,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "8\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -928,7 +928,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -1155,7 +1155,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -1323,7 +1323,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "byte",
                 "a\n" +
                         "8\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 
@@ -1394,7 +1394,7 @@ public class InsertCastTest extends AbstractCairoTest {
                 "short",
                 "a\n" +
                         "8\n" +
-                        "0\n"
+                        "\n"
         ));
     }
 

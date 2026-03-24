@@ -50,6 +50,7 @@ public class CastShortToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
+            if (arg.isNull(rec)) return Float.NaN;
             return arg.getShort(rec);
         }
     }

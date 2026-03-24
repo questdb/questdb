@@ -52,7 +52,7 @@ public class BooleanGroupByFunctionBatchTest {
                 function.computeBatch(value, ptr, 3, 0);
 
                 Assert.assertTrue(function.getBool(value));
-                Assert.assertTrue(function.supportsBatchComputation());
+                Assert.assertFalse(function.supportsBatchComputation());
             } finally {
                 freeLast();
             }
@@ -113,7 +113,7 @@ public class BooleanGroupByFunctionBatchTest {
 
                 Assert.assertEquals(3, value.getLong(0));
                 Assert.assertTrue(function.getBool(value));
-                Assert.assertTrue(function.supportsBatchComputation());
+                Assert.assertFalse(function.supportsBatchComputation());
             } finally {
                 freeLast();
             }

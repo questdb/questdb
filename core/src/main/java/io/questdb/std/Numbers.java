@@ -641,6 +641,18 @@ public final class Numbers {
         return Boolean.compare(isNull(a), isNull(b));
     }
 
+    public static int compareUnsigned(int a, int b) {
+        return Integer.compareUnsigned(a, b);
+    }
+
+    public static int compareUnsigned(long a, long b) {
+        return Long.compareUnsigned(a, b);
+    }
+
+    public static int compareUnsigned(short a, short b) {
+        return Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b));
+    }
+
     public static int compareUnsigned(byte a, byte b) {
         return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
     }
@@ -1076,11 +1088,43 @@ public final class Numbers {
         return (eq || (a != IPv4_NULL && b != IPv4_NULL)) && (negated ? (eq || a1 > b1) : (!eq && a1 < b1));
     }
 
+    public static boolean lessThanUInt16(short a, short b, boolean negated) {
+        final boolean eq = a == b;
+        return negated
+                ? (eq || Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b)) > 0)
+                : (!eq && Integer.compareUnsigned(Short.toUnsignedInt(a), Short.toUnsignedInt(b)) < 0);
+    }
+
+    public static boolean lessThanUInt32(int a, int b, boolean negated) {
+        final boolean eq = a == b;
+        return negated
+                ? (eq || Integer.compareUnsigned(a, b) > 0)
+                : (!eq && Integer.compareUnsigned(a, b) < 0);
+    }
+
+    public static boolean lessThanUInt64(long a, long b, boolean negated) {
+        final boolean eq = a == b;
+        return negated
+                ? (eq || Long.compareUnsigned(a, b) > 0)
+                : (!eq && Long.compareUnsigned(a, b) < 0);
+    }
+
     public static float longToFloat(long value) {
         if (value != Numbers.LONG_NULL) {
             return value;
         }
         return Float.NaN;
+    }
+
+    public static double longToUnsignedDouble(long value) {
+        if (value >= 0) {
+            return value;
+        }
+        return (double) (value & Long.MAX_VALUE) + 0x1.0p63;
+    }
+
+    public static float longToUnsignedFloat(long value) {
+        return (float) longToUnsignedDouble(value);
     }
 
     public static int msb(int value) {

@@ -353,3 +353,194 @@ int32_t maxShort_Vanilla(int16_t *ps, int64_t count) {
     }
     return max;
 }
+
+// Bitmap-null-aware SHORT aggregation functions.
+// Bitmap convention: bit=1 means null, bit=0 means not-null.
+
+static inline bool isBitmapNull(const uint8_t *bitmap, int64_t bitIdx) {
+    return (bitmap[bitIdx >> 3] >> (bitIdx & 7)) & 1;
+}
+
+int64_t sumShortBitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            sum += ps[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int32_t minShortBitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int32_t min = I_MAX;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const int16_t s = ps[i];
+            if (s < min) {
+                min = s;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? min : I_MIN;
+}
+
+int32_t maxShortBitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int32_t max = I_MIN;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const int16_t s = ps[i];
+            if (s > max) {
+                max = s;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? max : I_MIN;
+}
+
+int64_t countShortBitmapNull_Vanilla(uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int64_t nonNullCount = 0;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            nonNullCount++;
+        }
+    }
+    return nonNullCount;
+}
+
+// UINT16 bitmap-null aggregation — unsigned promotion before arithmetic/comparison.
+
+int64_t sumUInt16BitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            sum += (uint16_t) ps[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int32_t minUInt16BitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    uint16_t min = UINT16_MAX;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const uint16_t s = (uint16_t) ps[i];
+            if (s < min) {
+                min = s;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? (int32_t) min : I_MIN;
+}
+
+int32_t maxUInt16BitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    uint16_t max = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const uint16_t s = (uint16_t) ps[i];
+            if (s > max) {
+                max = s;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? (int32_t) max : I_MIN;
+}
+
+// UINT32 bitmap-null aggregation — unsigned promotion to int64_t.
+
+int64_t sumUInt32BitmapNull_Vanilla(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            sum += (uint32_t) pi[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int64_t minUInt32BitmapNull_Vanilla(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    uint32_t min = UINT32_MAX;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const uint32_t v = (uint32_t) pi[i];
+            if (v < min) {
+                min = v;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? (int64_t) min : L_MIN;
+}
+
+int64_t maxUInt32BitmapNull_Vanilla(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    uint32_t max = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const uint32_t v = (uint32_t) pi[i];
+            if (v > max) {
+                max = v;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? (int64_t) max : L_MIN;
+}
+
+// UINT64 bitmap-null aggregation — unsigned comparison.
+
+int64_t sumUInt64BitmapNull_Vanilla(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    int64_t sum = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            sum += pl[i];
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? sum : L_MIN;
+}
+
+int64_t minUInt64BitmapNull_Vanilla(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    uint64_t min = UINT64_MAX;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const uint64_t v = (uint64_t) pl[i];
+            if (v < min) {
+                min = v;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? (int64_t) min : L_MIN;
+}
+
+int64_t maxUInt64BitmapNull_Vanilla(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count) {
+    uint64_t max = 0;
+    bool hasNonNull = false;
+    for (int64_t i = 0; i < count; i++) {
+        if (!isBitmapNull(bitmap, bitOffset + i)) {
+            const uint64_t v = (uint64_t) pl[i];
+            if (v > max) {
+                max = v;
+            }
+            hasNonNull = true;
+        }
+    }
+    return hasNonNull ? (int64_t) max : L_MIN;
+}

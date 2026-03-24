@@ -50,6 +50,7 @@ public class CastBooleanToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
+            if (arg.isNull(rec)) return Float.NaN;
             boolean val = arg.getBool(rec);
             return val ? 1.0f : 0.0f;
         }

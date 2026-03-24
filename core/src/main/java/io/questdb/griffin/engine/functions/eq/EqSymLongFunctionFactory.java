@@ -70,7 +70,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
         // we get this because of overload. We may end up handling NULL type instead of symbol
         if (ColumnType.isNull(fn0.getType())) {
             if (longFn.isConstant()) {
-                return longFn.getLong(null) == Numbers.LONG_NULL ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+                return longFn.isNullConstant() ? BooleanConstant.TRUE : BooleanConstant.FALSE;
             }
             return new EqLongNullFunction(longFn);
         }
@@ -170,7 +170,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated == (longFn.getLong(rec) != Numbers.LONG_NULL);
+            return negated != longFn.isNull(rec);
         }
 
         @Override

@@ -94,6 +94,9 @@ class PGUtils {
                 return Integer.BYTES + Byte.BYTES;
             case ColumnType.BYTE:
             case ColumnType.SHORT:
+                if (columnType == ColumnType.UINT16) {
+                    return !record.isNull(columnIndex) ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
+                }
                 return Integer.BYTES + Short.BYTES;
             case ColumnType.CHAR:
                 final char charValue = record.getChar(columnIndex);
@@ -102,9 +105,19 @@ class PGUtils {
                 final int ipValue = record.getIPv4(columnIndex);
                 return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
             case ColumnType.INT:
+                if (columnType == ColumnType.UINT32) {
+                    return !record.isNull(columnIndex) ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                }
                 final int value = record.getInt(columnIndex);
                 return value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
             case ColumnType.LONG:
+                if (columnType == ColumnType.UINT64) {
+                    if (record.isNull(columnIndex)) {
+                        return Integer.BYTES;
+                    }
+                    final long ulongValue = record.getLong(columnIndex);
+                    return Integer.BYTES + Long.toUnsignedString(ulongValue).length();
+                }
                 final long longValue = record.getLong(columnIndex);
                 return longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.DATE:

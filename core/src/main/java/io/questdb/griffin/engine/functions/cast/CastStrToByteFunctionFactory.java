@@ -45,6 +45,9 @@ public class CastStrToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToByteFunction {
+        private CharSequence cachedStr;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
@@ -52,7 +55,21 @@ public class CastStrToByteFunctionFactory implements FunctionFactory {
         @Override
         public byte getByte(Record rec) {
             // Related code ColumnTypeConverter::convertStrToByte
-            return (byte) Numbers.parseIntQuiet(arg.getStrA(rec));
+            CharSequence value;
+            if (srcCached) {
+                value = cachedStr;
+                srcCached = false;
+            } else {
+                value = arg.getStrA(rec);
+            }
+            return (byte) Numbers.parseIntQuiet(value);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedStr = arg.getStrA(rec);
+            srcCached = true;
+            return cachedStr == null;
         }
     }
 }

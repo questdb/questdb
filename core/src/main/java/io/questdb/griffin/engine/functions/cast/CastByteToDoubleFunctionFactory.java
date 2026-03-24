@@ -56,6 +56,7 @@ public class CastByteToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
+            if (arg.isNull(rec)) return Double.NaN;
             return arg.getByte(rec);
         }
     }

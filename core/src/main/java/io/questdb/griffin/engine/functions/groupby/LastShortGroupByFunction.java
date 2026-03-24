@@ -45,6 +45,7 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
                 mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr + ((long) count - 1) * Short.BYTES));
+                mapValue.putBool(valueIndex + 2, false);
             }
         }
     }
@@ -68,6 +69,7 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 }

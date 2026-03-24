@@ -47,6 +47,7 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.nFile;
 import static io.questdb.std.Files.SEPARATOR;
 
 // Opens and closes WAL segment column files.
@@ -60,6 +61,7 @@ public class TableWriterSegmentFileCache {
     private final LongObjHashMap<LongList> walFdCache = new LongObjHashMap<>();
     private final WeakClosableObjectPool<LongList> walFdCacheListPool = new WeakClosableObjectPool<>(LongList::new, 5, true);
     private final LongObjHashMap.LongObjConsumer<LongList> walFdCloseCachedFdAction;
+    private final ObjList<MemoryCMOR> walBitmapMappedColumns = new ObjList<>();
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
     private int walFdCacheSize;
 
@@ -110,6 +112,17 @@ public class TableWriterSegmentFileCache {
                 }
             }
             walMappedColumns.setPos(lo);
+
+            // Close bitmap columns (not cached, always freed)
+            int bitmapLo = lo / 2;
+            for (int col = bitmapLo, n = walBitmapMappedColumns.size(); col < n; col++) {
+                MemoryCMOR bitmapMem = walBitmapMappedColumns.get(col);
+                if (bitmapMem != null) {
+                    Misc.free(bitmapMem);
+                    walColumnMemoryPool.push(bitmapMem);
+                }
+            }
+            walBitmapMappedColumns.setPos(bitmapLo);
         } else {
             LongList fds = null;
             if (key > -1) {
@@ -130,6 +143,17 @@ public class TableWriterSegmentFileCache {
                 }
             }
             walMappedColumns.setPos(lo);
+
+            // Close bitmap columns (not cached, always freed)
+            int bitmapLo = lo / 2;
+            for (int col = bitmapLo, n = walBitmapMappedColumns.size(); col < n; col++) {
+                MemoryCMOR bitmapMem = walBitmapMappedColumns.getQuick(col);
+                if (bitmapMem != null) {
+                    Misc.free(bitmapMem);
+                    walColumnMemoryPool.push(bitmapMem);
+                }
+            }
+            walBitmapMappedColumns.setPos(bitmapLo);
         }
 
         if (cacheIsFull && lo == 0) {
@@ -190,6 +214,10 @@ public class TableWriterSegmentFileCache {
             totalVarSize += driver.getDataVectorSize(segmentColumnAuxAddr, segmentCopyInfo.getRowLo(i), segmentCopyInfo.getRowHi(i) - 1);
         }
         return totalVarSize;
+    }
+
+    public ObjList<MemoryCMOR> getWalBitmapMappedColumns() {
+        return walBitmapMappedColumns;
     }
 
     public ObjList<MemoryCMOR> getWalMappedColumns() {
@@ -291,9 +319,32 @@ public class TableWriterSegmentFileCache {
                         );
                     }
                     walPath.trimTo(walPathLen);
+
+                    // Open .n (null bitmap) file if it exists
+                    FilesFacade ff = configuration.getFilesFacade();
+                    LPSZ nfile = nFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    if (ff.exists(nfile)) {
+                        MemoryCMOR bitmapMem = walColumnMemoryPool.pop();
+                        long bitmapByteHi = (rowHi + 7) >> 3;
+                        bitmapMem.ofOffset(
+                                ff,
+                                -1,
+                                false,
+                                nfile,
+                                0,
+                                bitmapByteHi,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walBitmapMappedColumns.add(bitmapMem);
+                    } else {
+                        walBitmapMappedColumns.add(null);
+                    }
+                    walPath.trimTo(walPathLen);
                 } else {
                     walMappedColumns.add(null);
                     walMappedColumns.add(null);
+                    walBitmapMappedColumns.add(null);
                 }
             }
         } catch (Throwable th) {
@@ -344,6 +395,7 @@ public class TableWriterSegmentFileCache {
             } catch (Throwable th) {
                 // Close all the columns without placing into the cache.
                 Misc.freeObjListAndClear(walMappedColumns);
+                Misc.freeObjListAndClear(walBitmapMappedColumns);
                 closeWalFiles();
                 throw th;
             }

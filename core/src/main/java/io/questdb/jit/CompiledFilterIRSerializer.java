@@ -758,6 +758,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(offset + 2 * Integer.BYTES + Long.BYTES, hi);
     }
 
+    // Appends a MEM operand and optionally sets the hi payload to flag
+    // bitmap-null columns. Uses the appending putOperand to properly
+    // advance the memory write position, then patches the hi field.
+    private void putMemOperand(int typeCode, long columnIndex, boolean isBitmapNull) {
+        long offset = memory.getAppendOffset();
+        putOperand(MEM, typeCode, columnIndex);
+        if (isBitmapNull) {
+            memory.putLong(offset + 2 * Integer.BYTES + Long.BYTES, 1L);
+        }
+    }
+
     private void putOperator(int opcode) {
         memory.putInt(opcode);
         // pad unused fields with zeros
@@ -830,6 +841,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
 
             final int columnType = metadata.getColumnType(index);
+            final boolean isBitmapNull = ColumnType.needsNullBitmap(columnType);
+            // Bitmap-null types store null in a separate bitmap, not as a sentinel
+            // value in the column data. Force scalar mode so JIT can test bitmap
+            // bits per-row and substitute INT_NULL sentinel for null values.
+            if (isBitmapNull) {
+                forceScalarMode = true;
+            }
+            // UINT types use unsigned comparison semantics that JIT does not support.
+            // Force interpreted fallback by rejecting them here.
+            if (ColumnType.isUnsigned(columnType)) {
+                throw SqlException.position(position)
+                        .put("unsigned column type is not supported by JIT [type=")
+                        .put(ColumnType.nameOf(columnType))
+                        .put(']');
+            }
             final int columnTypeTag = ColumnType.tagOf(columnType);
             int typeCode = columnTypeCode(columnTypeTag);
             if (typeCode == UNDEFINED_CODE) {
@@ -839,16 +865,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
 
             // In the case of a top level boolean column, expand it to "boolean_column = true" expression.
+            // For bitmap-null columns inside NOT, expand to "boolean_column = false" instead,
+            // because NOT(val=true) inverts the false result from null comparisons to true,
+            // incorrectly including null rows.
             if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
-                // "true" constant
-                putOperand(IMM, I1_TYPE, 1);
-                // column
-                putOperand(MEM, typeCode, index);
-                // =
-                putOperator(EQ);
+                boolean isNegatedBitmapNull = isBitmapNull
+                        && predicateContext.rootNode != null
+                        && SqlKeywords.isNotKeyword(predicateContext.rootNode.token);
+                if (isNegatedBitmapNull) {
+                    // Expand NOT(val) as val = false; suppress the NOT operator
+                    putOperand(IMM, I1_TYPE, 0);
+                    putMemOperand(typeCode, index, isBitmapNull);
+                    putOperator(EQ);
+                    predicateContext.negatedBooleanExpanded = true;
+                } else {
+                    putOperand(IMM, I1_TYPE, 1);
+                    putMemOperand(typeCode, index, isBitmapNull);
+                    putOperator(EQ);
+                }
                 return;
             }
-            putOperand(MEM, typeCode, index);
+            putMemOperand(typeCode, index, isBitmapNull);
         } else {
             throw SqlException.position(position)
                     .put("non-boolean column outside of predicate: ")
@@ -1098,6 +1135,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeNull(long offset, int position, int typeCode, int columnType) throws SqlException {
+        // Bitmap-null types cannot use sentinel-based null checks in JIT.
+        // Throwing here forces fallback to interpreted mode which correctly reads the null bitmap.
+        if (ColumnType.needsNullBitmap(columnType)) {
+            throw SqlException.position(position).put("bitmap-null type is not supported by JIT: ").put(ColumnType.nameOf(columnType));
+        }
         switch (typeCode) {
             case I1_TYPE:
                 if (!isGeoHash(columnType)) {
@@ -1164,14 +1206,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
-                case I1_TYPE:
-                    final byte b = (byte) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I1_TYPE, sign * b);
+                case I1_TYPE: {
+                    // Parse as int to avoid byte overflow before sign application.
+                    // Without this, -128 becomes -(byte)128 = -(-128) = +128.
+                    final int bi = Numbers.parseInt(token);
+                    putOperand(offset, IMM, I1_TYPE, sign * bi);
                     break;
-                case I2_TYPE:
-                    final short s = (short) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I2_TYPE, sign * s);
+                }
+                case I2_TYPE: {
+                    // Same fix: parse as int to avoid short overflow before sign.
+                    final int si = Numbers.parseInt(token);
+                    putOperand(offset, IMM, I2_TYPE, sign * si);
                     break;
+                }
                 case I4_TYPE:
                 case F4_TYPE:
                     try {
@@ -1215,7 +1262,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
         if (SqlKeywords.isNotKeyword(token)) {
-            putOperator(NOT);
+            if (predicateContext.negatedBooleanExpanded) {
+                // Boolean column already expanded as val = false; skip NOT operator
+                predicateContext.negatedBooleanExpanded = false;
+            } else {
+                putOperator(NOT);
+            }
             return;
         }
         if (SqlKeywords.isAndKeyword(token)) {
@@ -1628,6 +1680,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int columnType;
         boolean hasArithmeticOperations;
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
+        boolean negatedBooleanExpanded;
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
@@ -1744,6 +1797,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbolTable = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
+            negatedBooleanExpanded = false;
             hasArithmeticOperations = false;
             localTypesObserver.clear();
             currentInSerialization = false;

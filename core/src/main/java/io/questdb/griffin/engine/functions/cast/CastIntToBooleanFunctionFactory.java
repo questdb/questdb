@@ -45,14 +45,30 @@ public class CastIntToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private int cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            int i = arg.getInt(rec);
+            int i;
+            if (srcCached) {
+                i = cachedSrc;
+                srcCached = false;
+            } else {
+                i = arg.getInt(rec);
+            }
             return i != Numbers.INT_NULL && i != 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getInt(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.INT_NULL;
         }
     }
 }

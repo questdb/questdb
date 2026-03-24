@@ -45,14 +45,30 @@ public class CastDateToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private long cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long date = arg.getDate(rec);
+            long date;
+            if (srcCached) {
+                date = cachedSrc;
+                srcCached = false;
+            } else {
+                date = arg.getDate(rec);
+            }
             return date != Numbers.LONG_NULL && date != 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getDate(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.LONG_NULL;
         }
     }
 }

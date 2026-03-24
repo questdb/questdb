@@ -3417,8 +3417,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0171\r
-                    {"query":"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy","columns":[{"name":"cust_id","type":"INT"},{"name":"balance_ccy","type":"SYMBOL"},{"name":"balance","type":"DOUBLE"},{"name":"status","type":"BYTE"},{"name":"timestamp","type":"TIMESTAMP"}],"timestamp":4,"dataset":[[1,"USD",1500.0,0,"1970-01-01T01:40:00.000001Z"]],"count":1}\r
+                    0174\r
+                    {"query":"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy","columns":[{"name":"cust_id","type":"INT"},{"name":"balance_ccy","type":"SYMBOL"},{"name":"balance","type":"DOUBLE"},{"name":"status","type":"BYTE"},{"name":"timestamp","type":"TIMESTAMP"}],"timestamp":4,"dataset":[[1,"USD",1500.0,null,"1970-01-01T01:40:00.000001Z"]],"count":1}\r
                     00\r
                     \r
                     """, 1, 0, false);
@@ -4277,8 +4277,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0171\r
-                    {"query":"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy","columns":[{"name":"cust_id","type":"INT"},{"name":"balance_ccy","type":"SYMBOL"},{"name":"balance","type":"DOUBLE"},{"name":"status","type":"BYTE"},{"name":"timestamp","type":"TIMESTAMP"}],"timestamp":4,"dataset":[[1,"USD",1500.0,0,"1970-01-01T01:40:00.000001Z"]],"count":1}\r
+                    0174\r
+                    {"query":"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy","columns":[{"name":"cust_id","type":"INT"},{"name":"balance_ccy","type":"SYMBOL"},{"name":"balance","type":"DOUBLE"},{"name":"status","type":"BYTE"},{"name":"timestamp","type":"TIMESTAMP"}],"timestamp":4,"dataset":[[1,"USD",1500.0,null,"1970-01-01T01:40:00.000001Z"]],"count":1}\r
                     00\r
                     \r
                     """, 1, 0, false);
@@ -4333,8 +4333,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0192\r
-                    {"query":"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy","columns":[{"name":"cust_id","type":"INT"},{"name":"balance_ccy","type":"SYMBOL"},{"name":"balance","type":"DOUBLE"},{"name":"status","type":"BYTE"},{"name":"timestamp","type":"TIMESTAMP"},{"name":"xyz","type":"INT"}],"timestamp":4,"dataset":[[1,"USD",1500.0,0,"1970-01-01T01:40:00.000001Z",null]],"count":1}\r
+                    0195\r
+                    {"query":"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy","columns":[{"name":"cust_id","type":"INT"},{"name":"balance_ccy","type":"SYMBOL"},{"name":"balance","type":"DOUBLE"},{"name":"status","type":"BYTE"},{"name":"timestamp","type":"TIMESTAMP"},{"name":"xyz","type":"INT"}],"timestamp":4,"dataset":[[1,"USD",1500.0,null,"1970-01-01T01:40:00.000001Z",null]],"count":1}\r
                     00\r
                     \r
                     """, 1, 0, false);

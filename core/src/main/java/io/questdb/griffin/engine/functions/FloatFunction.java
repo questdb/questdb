@@ -235,4 +235,9 @@ public abstract class FloatFunction implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return Float.isNaN(getFloat(rec));
+    }
 }

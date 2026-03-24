@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 
 /**
@@ -37,6 +38,11 @@ public interface ColumnFunction extends Function {
      * Returns index of the column in the table metadata.
      */
     int getColumnIndex();
+
+    @Override
+    default boolean isNull(Record rec) {
+        return rec.isNull(getColumnIndex());
+    }
 
     @Override
     default boolean isEquivalentTo(Function obj) {

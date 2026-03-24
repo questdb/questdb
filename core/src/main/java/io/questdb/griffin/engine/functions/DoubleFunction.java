@@ -233,4 +233,9 @@ public abstract class DoubleFunction implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return Double.isNaN(getDouble(rec));
+    }
 }

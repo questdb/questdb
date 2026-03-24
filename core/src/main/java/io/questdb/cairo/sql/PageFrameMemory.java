@@ -70,6 +70,18 @@ public interface PageFrameMemory {
     int getColumnOffset();
 
     /**
+     * Returns flat list of null bitmap addresses for all frames.
+     * Use with {@link #getColumnOffset()} for efficient access.
+     * Address is 0 when no null bitmap is available.
+     */
+    DirectLongList getNullBitmapAddresses();
+
+    /**
+     * Returns flat list of null bitmap sizes for all frames.
+     */
+    DirectLongList getNullBitmapSizes();
+
+    /**
      * Returns frame format: {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}.
      */
     byte getFrameFormat();

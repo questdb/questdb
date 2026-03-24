@@ -54,7 +54,7 @@ public class ShortGroupByFunctionBatchTest {
                 function.computeBatch(value, ptr, 3, 0);
 
                 Assert.assertEquals(4.0, function.getDouble(value), 0.0);
-                Assert.assertTrue(function.supportsBatchComputation());
+                Assert.assertFalse(function.supportsBatchComputation());
             } finally {
                 freeLast();
             }
@@ -80,7 +80,7 @@ public class ShortGroupByFunctionBatchTest {
                 function.computeBatch(value, ptr, 3, 0);
 
                 Assert.assertEquals(5, function.getShort(value));
-                Assert.assertTrue(function.supportsBatchComputation());
+                Assert.assertFalse(function.supportsBatchComputation());
             } finally {
                 freeLast();
             }
@@ -156,7 +156,7 @@ public class ShortGroupByFunctionBatchTest {
 
                 Assert.assertEquals(2, value.getLong(0));
                 Assert.assertEquals(33, function.getShort(value));
-                Assert.assertTrue(function.supportsBatchComputation());
+                Assert.assertFalse(function.supportsBatchComputation());
             } finally {
                 freeLast();
             }
@@ -219,7 +219,7 @@ public class ShortGroupByFunctionBatchTest {
                 function.computeBatch(value, ptr, 4, 0);
 
                 Assert.assertEquals(10L, function.getLong(value));
-                Assert.assertTrue(function.supportsBatchComputation());
+                Assert.assertFalse(function.supportsBatchComputation());
             } finally {
                 freeLast();
             }

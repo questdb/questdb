@@ -67,6 +67,7 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
+            if (arg.isNull(rec)) return null;
             sinkA.clear();
             sinkA.put((int) arg.getByte(rec));
             return sinkA;
@@ -74,6 +75,7 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
+            if (arg.isNull(rec)) return null;
             sinkB.clear();
             sinkB.put((int) arg.getByte(rec));
             return sinkB;

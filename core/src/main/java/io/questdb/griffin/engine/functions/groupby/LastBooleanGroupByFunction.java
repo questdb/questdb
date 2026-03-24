@@ -45,6 +45,7 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
                 mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr + ((long) count - 1) * Byte.BYTES) != 0);
+                mapValue.putBool(valueIndex + 2, false);
             }
         }
     }
@@ -68,6 +69,7 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 }

@@ -34,6 +34,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -58,8 +59,11 @@ public abstract class BooleanFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // Returns 0 for null because BYTE uses bitmap nulls (no sentinel value).
+    // Callers must check isNull() before calling getByte().
     @Override
     public byte getByte(Record rec) {
+        if (isNull(rec)) return 0;
         return (byte) (getBool(rec) ? 1 : 0);
     }
 
@@ -70,7 +74,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -105,12 +109,12 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToDouble(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToFloat(getInt(rec));
     }
 
     @Override
@@ -140,6 +144,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
+        if (isNull(rec)) return Numbers.INT_NULL;
         return getBool(rec) ? 1 : 0;
     }
 
@@ -150,7 +155,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -183,8 +188,11 @@ public abstract class BooleanFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // Returns 0 for null because SHORT uses bitmap nulls (no sentinel value).
+    // Callers must check isNull() before calling getShort().
     @Override
     public short getShort(Record rec) {
+        if (isNull(rec)) return 0;
         return (short) (getBool(rec) ? 1 : 0);
     }
 
@@ -215,7 +223,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getTimestamp(Record rec) {
-        return getBool(rec) ? 1 : 0;
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override

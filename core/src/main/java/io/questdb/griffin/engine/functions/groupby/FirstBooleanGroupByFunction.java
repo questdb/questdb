@@ -51,6 +51,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
                 mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr) != 0);
+                mapValue.putBool(valueIndex + 2, false);
             }
         }
     }
@@ -59,6 +60,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
         mapValue.putBool(valueIndex + 1, arg.getBool(record));
+        mapValue.putBool(valueIndex + 2, arg.isNull(record));
     }
 
     @Override
@@ -76,6 +78,11 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     @Override
     public boolean getBool(Record rec) {
         return rec.getBool(valueIndex + 1);
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return rec.getBool(valueIndex + 2);
     }
 
     @Override
@@ -103,6 +110,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);    // row id
         columnTypes.add(ColumnType.BOOLEAN); // value
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -122,6 +130,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 
@@ -129,11 +138,12 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putBool(valueIndex + 1, false);
+        mapValue.putBool(valueIndex + 2, true);
     }
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

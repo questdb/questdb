@@ -514,6 +514,16 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Checks whether the value of a column is NULL using the null bitmap.
+     *
+     * @param col numeric index of the column
+     * @return true if the column value is NULL, false otherwise
+     */
+    default boolean isNull(int col) {
+        return false;
+    }
+
     @FunctionalInterface
     interface CharSequenceFunction {
         /**

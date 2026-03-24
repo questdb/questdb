@@ -63,11 +63,13 @@ public class CastBooleanToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
+            if (arg.isNull(rec)) return null;
             return arg.getVarcharA(rec);
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
+            if (arg.isNull(rec)) return null;
             return arg.getVarcharB(rec);
         }
 

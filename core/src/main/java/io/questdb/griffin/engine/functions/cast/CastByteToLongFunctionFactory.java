@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastByteToLongFunctionFactory implements FunctionFactory {
@@ -56,6 +57,7 @@ public class CastByteToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
+            if (arg.isNull(rec)) return Numbers.LONG_NULL;
             return arg.getByte(rec);
         }
     }

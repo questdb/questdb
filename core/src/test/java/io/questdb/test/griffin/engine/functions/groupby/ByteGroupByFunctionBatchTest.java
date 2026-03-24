@@ -63,7 +63,7 @@ public class ByteGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(11, function.getByte(value));
-            Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertFalse(function.supportsBatchComputation());
         }
     }
 
@@ -112,7 +112,7 @@ public class ByteGroupByFunctionBatchTest {
 
             Assert.assertEquals(2, value.getLong(0));
             Assert.assertEquals(30, function.getByte(value));
-            Assert.assertTrue(function.supportsBatchComputation());
+            Assert.assertFalse(function.supportsBatchComputation());
         }
     }
 

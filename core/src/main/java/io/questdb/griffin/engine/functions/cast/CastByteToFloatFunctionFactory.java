@@ -50,6 +50,7 @@ public class CastByteToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
+            if (arg.isNull(rec)) return Float.NaN;
             return arg.getByte(rec);
         }
     }

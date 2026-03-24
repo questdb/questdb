@@ -27,6 +27,11 @@ package io.questdb.cairo.sql;
 public final class NullRecord implements Record {
     public static final NullRecord INSTANCE = new NullRecord();
 
+    @Override
+    public boolean isNull(int col) {
+        return true;
+    }
+
     private NullRecord() {
     }
 }

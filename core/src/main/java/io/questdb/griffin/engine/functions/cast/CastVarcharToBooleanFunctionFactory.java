@@ -62,13 +62,30 @@ public class CastVarcharToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private Utf8Sequence cachedVarchar;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return resolveBoolean(arg.getVarcharA(rec));
+            Utf8Sequence value;
+            if (srcCached) {
+                value = cachedVarchar;
+                srcCached = false;
+            } else {
+                value = arg.getVarcharA(rec);
+            }
+            return resolveBoolean(value);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedVarchar = arg.getVarcharA(rec);
+            srcCached = true;
+            return cachedVarchar == null;
         }
     }
 }

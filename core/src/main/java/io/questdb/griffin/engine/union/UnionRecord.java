@@ -327,4 +327,12 @@ public class UnionRecord extends AbstractUnionRecord {
         }
         return recordB.getVarcharSize(col);
     }
+
+    @Override
+    public boolean isNull(int col) {
+        if (useA) {
+            return recordA.isNull(col);
+        }
+        return recordB.isNull(col);
+    }
 }

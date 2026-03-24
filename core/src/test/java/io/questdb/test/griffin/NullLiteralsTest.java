@@ -51,15 +51,14 @@ public class NullLiteralsTest extends AbstractCairoTest {
                 "false\n" +
                 "true\n" +
                 "true\n" +
-                "true\n" +
-                "false\n", true, true, false);
+                "true\n", true, false, false);
     }
 
     @Test
     public void testBooleanIsNull() throws Exception {
         assertQuery("v\n", "tab_boolean where v is NULL", "create table tab_boolean as (\n" +
                 "    select rnd_boolean() as v from long_sequence(9)\n" +
-                ");", null, "insert into tab_boolean values(NULL)", "v\n", false, true, false);
+                ");", null, "insert into tab_boolean values(NULL)", "v\n\n", true, false, false);
     }
 
     @Test
@@ -67,12 +66,12 @@ public class NullLiteralsTest extends AbstractCairoTest {
         assertSql("column\nfalse\n", "select cast(0 AS BOOLEAN) IS NULL");
         assertSql("column\nfalse\n", "select cast(0L AS BOOLEAN) IS NULL");
         assertSql("column\nfalse\n", "select cast('' AS BOOLEAN) IS NULL");
-        assertSql("column\nfalse\n", "select cast(NULL AS BOOLEAN) IS NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS BOOLEAN) IS NULL");
         assertSql("column\nfalse\n", "select cast(false AS BOOLEAN) IS NULL");
         assertSql("column\ntrue\n", "select cast(0 AS BOOLEAN) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast(0L AS BOOLEAN) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast('' AS BOOLEAN) IS NOT NULL");
-        assertSql("column\ntrue\n", "select cast(NULL AS BOOLEAN) IS NOT NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS BOOLEAN) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast(false AS BOOLEAN) IS NOT NULL");
     }
 
@@ -98,15 +97,14 @@ public class NullLiteralsTest extends AbstractCairoTest {
                 "79\n" +
                 "122\n" +
                 "83\n" +
-                "90\n" +
-                "0\n", true, true, false);
+                "90\n", true, false, false);
     }
 
     @Test
     public void testByteIsNull() throws Exception {
         assertQuery("v\n", "tab_byte where v is NULL", "create table tab_byte as (\n" +
                 "    select rnd_byte() as v from long_sequence(9)\n" +
-                ");", null, "insert into tab_byte values(NULL)", "v\n", false, true, false);
+                ");", null, "insert into tab_byte values(NULL)", "v\n\n", true, false, false);
     }
 
     @Test
@@ -114,12 +112,12 @@ public class NullLiteralsTest extends AbstractCairoTest {
         assertSql("column\nfalse\n", "select cast(0 AS BYTE) IS NULL");
         assertSql("column\nfalse\n", "select cast(0L AS BYTE) IS NULL");
         assertSql("column\nfalse\n", "select cast('' AS BYTE) IS NULL");
-        assertSql("column\nfalse\n", "select cast(NULL AS BYTE) IS NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS BYTE) IS NULL");
         assertSql("column\nfalse\n", "select cast(false AS BYTE) IS NULL");
         assertSql("column\ntrue\n", "select cast(0 AS BYTE) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast(0L AS BYTE) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast('' AS BYTE) IS NOT NULL");
-        assertSql("column\ntrue\n", "select cast(NULL AS BYTE) IS NOT NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS BYTE) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast(false AS BYTE) IS NOT NULL");
     }
 
@@ -191,15 +189,14 @@ public class NullLiteralsTest extends AbstractCairoTest {
                 "-22955\n" +
                 "-1398\n" +
                 "21015\n" +
-                "30202\n" +
-                "0\n", true, true, false);
+                "30202\n", true, false, false);
     }
 
     @Test
     public void testShortIsNull() throws Exception {
         assertQuery("v\n", "tab_short where v is NULL", "create table tab_short as (\n" +
                 "    select rnd_short() as v from long_sequence(9)\n" +
-                ");", null, "insert into tab_short values(NULL)", "v\n", false, true, false);
+                ");", null, "insert into tab_short values(NULL)", "v\n\n", true, false, false);
     }
 
     @Test
@@ -207,12 +204,12 @@ public class NullLiteralsTest extends AbstractCairoTest {
         assertSql("column\nfalse\n", "select cast(0 AS SHORT) IS NULL");
         assertSql("column\nfalse\n", "select cast(0L AS SHORT) IS NULL");
         assertSql("column\nfalse\n", "select cast('' AS SHORT) IS NULL");
-        assertSql("column\nfalse\n", "select cast(NULL AS SHORT) IS NULL");
+        assertSql("column\ntrue\n", "select cast(NULL AS SHORT) IS NULL");
         assertSql("column\nfalse\n", "select cast(false AS SHORT) IS NULL");
         assertSql("column\ntrue\n", "select cast(0 AS SHORT) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast(0L AS SHORT) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast('' AS SHORT) IS NOT NULL");
-        assertSql("column\ntrue\n", "select cast(NULL AS SHORT) IS NOT NULL");
+        assertSql("column\nfalse\n", "select cast(NULL AS SHORT) IS NOT NULL");
         assertSql("column\ntrue\n", "select cast(false AS SHORT) IS NOT NULL");
     }
 }

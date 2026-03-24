@@ -285,6 +285,11 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return true;
+    }
+
+    @Override
     public boolean isNullConstant() {
         return true;
     }

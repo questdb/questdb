@@ -51,6 +51,10 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        // IS NULL / IS NOT NULL: if the string arg is a NullConstant, use isNull() on the other arg
+        if (args.getQuick(1).isNullConstant()) {
+            return new IsNullCheckFunc(args.getQuick(0));
+        }
         try {
             final CharSequence value = args.getQuick(1).getStrA(null);
             if (value == null) {
@@ -59,6 +63,34 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
             return new Func(args.getQuick(0), Numbers.parseInt(value));
         } catch (NumericException e) {
             return new NegatedAwareBooleanConstantFunc();
+        }
+    }
+
+    private static class IsNullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public IsNullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != arg.isNull(rec);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val("!=null");
+            } else {
+                sink.val("=null");
+            }
         }
     }
 

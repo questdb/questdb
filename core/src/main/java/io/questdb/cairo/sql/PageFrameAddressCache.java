@@ -58,6 +58,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
+    private final DirectLongList nullBitmapAddresses;
+    private final DirectLongList nullBitmapSizes;
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
     private final ObjList<PartitionDecoder> parquetPartitionDecoders = new ObjList<>();
@@ -73,6 +75,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     public PageFrameAddressCache() {
         this.auxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.auxPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.nullBitmapAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.nullBitmapSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     }
@@ -86,6 +90,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
+                nullBitmapAddresses.add(frame.getNullBitmapAddress(columnIndex));
+                nullBitmapSizes.add(frame.getNullBitmapSize(columnIndex));
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
                     auxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
                     auxPageSizes.add(frame.getAuxPageSize(columnIndex));
@@ -100,6 +106,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(0);
                 pageSizes.add(0);
+                nullBitmapAddresses.add(0);
+                nullBitmapSizes.add(0);
                 auxPageAddresses.add(0);
                 auxPageSizes.add(0);
             }
@@ -124,6 +132,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
+        nullBitmapAddresses.clear();
+        nullBitmapSizes.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -134,6 +144,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
+        nullBitmapAddresses.close();
+        nullBitmapSizes.close();
         pageAddresses.close();
         pageSizes.close();
         auxPageAddresses.close();
@@ -167,6 +179,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public IntList getColumnTypes() {
         return columnTypes;
+    }
+
+    public DirectLongList getNullBitmapAddresses() {
+        return nullBitmapAddresses;
+    }
+
+    public DirectLongList getNullBitmapSizes() {
+        return nullBitmapSizes;
     }
 
     public byte getFrameFormat(int frameIndex) {
@@ -225,6 +245,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes, boolean external) {
         // Reopen off-heap lists in case they were closed.
+        nullBitmapAddresses.reopen();
+        nullBitmapSizes.reopen();
         pageAddresses.reopen();
         pageSizes.reopen();
         auxPageAddresses.reopen();

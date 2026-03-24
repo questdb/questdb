@@ -34,6 +34,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -101,12 +102,12 @@ public abstract class ByteFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        return getByte(rec);
+        return Numbers.intToDouble(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getByte(rec);
+        return Numbers.intToFloat(getInt(rec));
     }
 
     @Override
@@ -136,6 +137,7 @@ public abstract class ByteFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
+        if (isNull(rec)) return Numbers.INT_NULL;
         return getByte(rec);
     }
 
@@ -146,7 +148,7 @@ public abstract class ByteFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        return getByte(rec);
+        return Numbers.intToLong(getInt(rec));
     }
 
     @Override
@@ -179,8 +181,11 @@ public abstract class ByteFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // Returns 0 for null because SHORT uses bitmap nulls (no sentinel value).
+    // Callers must check isNull() before calling getShort().
     @Override
     public short getShort(Record rec) {
+        if (isNull(rec)) return 0;
         return getByte(rec);
     }
 

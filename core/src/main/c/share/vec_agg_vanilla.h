@@ -65,4 +65,30 @@ int32_t minShort_Vanilla(int16_t *ps, int64_t count);
 
 int32_t maxShort_Vanilla(int16_t *ps, int64_t count);
 
+int64_t sumShortBitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int32_t minShortBitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int32_t maxShortBitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t countShortBitmapNull_Vanilla(uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t sumUInt16BitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int32_t minUInt16BitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int32_t maxUInt16BitmapNull_Vanilla(int16_t *ps, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t sumUInt32BitmapNull_Vanilla(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t minUInt32BitmapNull_Vanilla(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t maxUInt32BitmapNull_Vanilla(int32_t *pi, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t sumUInt64BitmapNull_Vanilla(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t minUInt64BitmapNull_Vanilla(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
+int64_t maxUInt64BitmapNull_Vanilla(int64_t *pl, uint8_t *bitmap, int64_t bitOffset, int64_t count);
+
 #endif //VECT_VANILLA_H

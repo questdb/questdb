@@ -60,16 +60,26 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.putLong(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
+        if (arg.isNull(record)) {
+            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+            mapValue.putLong(valueIndex + 1, 0);
+        } else {
+            mapValue.putLong(valueIndex, arg.getShort(record));
+            mapValue.putLong(valueIndex + 1, 1);
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.addLong(valueIndex, value);
-        mapValue.addLong(valueIndex + 1, 1);
+        if (!arg.isNull(record)) {
+            final long sum = mapValue.getLong(valueIndex);
+            if (sum != Numbers.LONG_NULL) {
+                mapValue.addLong(valueIndex, arg.getShort(record));
+            } else {
+                mapValue.putLong(valueIndex, arg.getShort(record));
+            }
+            mapValue.addLong(valueIndex + 1, 1);
+        }
     }
 
     @Override
@@ -160,7 +170,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

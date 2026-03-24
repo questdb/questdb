@@ -184,7 +184,8 @@ namespace questdb::x86 {
             Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
             const Gp &varsize_aux_ptr, const Gp &input_index,
             const ColumnAddressCache &addr_cache,
-            ColumnValueCache &value_cache
+            ColumnValueCache &value_cache,
+            bool has_bitmap_null = false
     ) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
@@ -245,24 +246,94 @@ namespace questdb::x86 {
             case data_type_t::i8: {
                 Gp reg = c.new_gp32("col_%d_i8", column_idx);
                 c.movsx(reg, mem_op);
+                if (has_bitmap_null) {
+                    // Load bitmap address from varsize_aux_ptr[column_idx]
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    c.mov(bitmap_addr, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+                    // byte_offset = input_index >> 3
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.mov(byte_offset, input_index);
+                    c.shr(byte_offset, 3);
+                    // Load bitmap byte
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.movzx(bitmap_byte, Mem(bitmap_addr, byte_offset, 0, 0, 1));
+                    // bit_index = input_index & 7
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.mov(bit_idx, input_index.r32());
+                    c.and_(bit_idx, 7);
+                    // Test bit: BT sets CF if bit is 1 (= null)
+                    c.bt(bitmap_byte, bit_idx);
+                    // If null (CF=1), replace with INT_NULL sentinel
+                    Gp null_sentinel = c.new_gp32("null_sentinel");
+                    c.mov(null_sentinel, INT_NULL);
+                    c.cmovc(reg, null_sentinel);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }
             case data_type_t::i16: {
                 Gp reg = c.new_gp32("col_%d_i16", column_idx);
                 c.movsx(reg, mem_op);
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    c.mov(bitmap_addr, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.mov(byte_offset, input_index);
+                    c.shr(byte_offset, 3);
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.movzx(bitmap_byte, Mem(bitmap_addr, byte_offset, 0, 0, 1));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.mov(bit_idx, input_index.r32());
+                    c.and_(bit_idx, 7);
+                    c.bt(bitmap_byte, bit_idx);
+                    Gp null_sentinel = c.new_gp32("null_sentinel");
+                    c.mov(null_sentinel, INT_NULL);
+                    c.cmovc(reg, null_sentinel);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }
             case data_type_t::i32: {
                 Gp reg = c.new_gp32("col_%d_i32", column_idx);
                 c.mov(reg, mem_op);
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    c.mov(bitmap_addr, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.mov(byte_offset, input_index);
+                    c.shr(byte_offset, 3);
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.movzx(bitmap_byte, Mem(bitmap_addr, byte_offset, 0, 0, 1));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.mov(bit_idx, input_index.r32());
+                    c.and_(bit_idx, 7);
+                    c.bt(bitmap_byte, bit_idx);
+                    Gp null_sentinel = c.new_gp32("null_sentinel");
+                    c.mov(null_sentinel, INT_NULL);
+                    c.cmovc(reg, null_sentinel);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }
             case data_type_t::i64: {
                 Gp reg = c.new_gp64("col_%d_i64", column_idx);
                 c.mov(reg, mem_op);
+                if (has_bitmap_null) {
+                    Gp bitmap_addr = c.new_gp64("bitmap_addr_%d", column_idx);
+                    c.mov(bitmap_addr, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+                    Gp byte_offset = c.new_gp64("bmp_byte_off");
+                    c.mov(byte_offset, input_index);
+                    c.shr(byte_offset, 3);
+                    Gp bitmap_byte = c.new_gp32("bmp_byte");
+                    c.movzx(bitmap_byte, Mem(bitmap_addr, byte_offset, 0, 0, 1));
+                    Gp bit_idx = c.new_gp32("bit_idx");
+                    c.mov(bit_idx, input_index.r32());
+                    c.and_(bit_idx, 7);
+                    c.bt(bitmap_byte, bit_idx);
+                    Gp null_sentinel = c.new_gp64("null_sentinel");
+                    c.movabs(null_sentinel, LONG_NULL);
+                    c.cmovc(reg, null_sentinel);
+                }
                 value_cache.add(column_idx, type, reg);
                 return {reg, type, data_kind_t::kMemory};
             }
@@ -1102,7 +1173,8 @@ namespace questdb::x86 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx  = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache, value_cache));
+                    bool bitmap_null = instr.ipayload.hi != 0;
+                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache, value_cache, bitmap_null));
                 }
                     break;
                 case opcodes::Imm:

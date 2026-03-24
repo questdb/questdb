@@ -94,6 +94,14 @@ public:
         return *reinterpret_cast<const T *>(&null_value);
     }
 
+    inline const uint8_t *get_column_bitmap() const {
+        return reinterpret_cast<const uint8_t *>(column_var_data);
+    }
+
+    inline const uint8_t *get_o3_bitmap() const {
+        return reinterpret_cast<const uint8_t *>(o3_var_data);
+    }
+
     [[nodiscard]]
     inline int64_t get_column_top() const {
         return column_top;

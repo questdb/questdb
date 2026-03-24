@@ -228,6 +228,30 @@ public final class Rosti {
     // sum short
     public static native boolean keyedIntSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
 
+    // bitmap-null-aware short aggregation
+    public static native boolean keyedIntMaxShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedIntMinShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedIntSumShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    // bitmap-null-aware UINT16 aggregation
+    public static native boolean keyedIntSumUInt16BitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    // bitmap-null-aware UINT32 aggregation
+    public static native boolean keyedIntMaxUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedIntMinUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedIntSumUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    // bitmap-null-aware UINT64 aggregation
+    public static native boolean keyedIntMaxUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedIntMinUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedIntSumUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
     //returns true if rosti is set to trigger OOM on  allocation
     public static native boolean keyedMicroHourCount(long pRosti, long pKeys, long count, int valueOffset);
 
@@ -272,6 +296,26 @@ public final class Rosti {
 
     public static native boolean keyedMicroHourSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
 
+    public static native boolean keyedMicroHourMaxShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumUInt16BitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMaxUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMaxUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourMinUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedMicroHourSumUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
     public static native boolean keyedNanoHourCount(long pRosti, long pKeys, long count, int valueOffset);
 
     public static native boolean keyedNanoHourCountDouble(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
@@ -314,6 +358,26 @@ public final class Rosti {
     public static native boolean keyedNanoHourSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static native boolean keyedNanoHourSumShort(long pRosti, long pKeys, long pShort, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumShortBitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumUInt16BitmapNull(long pRosti, long pKeys, long pShort, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumUInt32BitmapNull(long pRosti, long pKeys, long pInt, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMaxUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourMinUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
+
+    public static native boolean keyedNanoHourSumUInt64BitmapNull(long pRosti, long pKeys, long pLong, long pBitmap, long bitOffset, long count, int valueOffset);
 
     public static void printRosti(long pRosti) {
         final long slots = getSlots(pRosti);

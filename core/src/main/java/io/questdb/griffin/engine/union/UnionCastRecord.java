@@ -348,4 +348,12 @@ public class UnionCastRecord extends AbstractUnionRecord {
         }
         return castFunctionsB.getQuick(col).getVarcharSize(recordB);
     }
+
+    @Override
+    public boolean isNull(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).isNull(recordA);
+        }
+        return castFunctionsB.getQuick(col).isNull(recordB);
+    }
 }

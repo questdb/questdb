@@ -119,7 +119,7 @@ public class JoinTest extends AbstractCairoTest {
                             name\tage\tmember\taddress\tts
                             alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z
                             peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z
-                            \tnull\tfalse\t1 Houston St\t
+                            \tnull\t\t1 Houston St\t
                             david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z
                             """,
                     """
@@ -5925,10 +5925,10 @@ public class JoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1
-                            \tnull\t0\t\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
-                            \tnull\t0\t\tmsft\t185.9\t187.3\t2018-11-02T10:00:02.000001Z
-                            \tnull\t0\t\tmsft\t186.1\t187.8\t2018-11-02T10:00:02.000002Z
-                            \tnull\t0\t\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z
+                            \tnull\t\t\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
+                            \tnull\t\t\tmsft\t185.9\t187.3\t2018-11-02T10:00:02.000001Z
+                            \tnull\t\t\tmsft\t186.1\t187.8\t2018-11-02T10:00:02.000002Z
+                            \tnull\t\t\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z
                             googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z
                             msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z
                             googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z

@@ -318,15 +318,27 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
                     break;
                 }
                 case 2: {
-                    diff = compare_dedup_column_fixed<int16_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    if ((ColumnType)(col_key->column_type) == ColumnType::UINT16) {
+                        diff = compare_dedup_column_fixed<uint16_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    } else {
+                        diff = compare_dedup_column_fixed<int16_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    }
                     break;
                 }
                 case 4: {
-                    diff = compare_dedup_column_fixed<int32_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    if ((ColumnType)(col_key->column_type) == ColumnType::UINT32) {
+                        diff = compare_dedup_column_fixed<uint32_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    } else {
+                        diff = compare_dedup_column_fixed<int32_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    }
                     break;
                 }
                 case 8: {
-                    diff = compare_dedup_column_fixed<int64_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    if ((ColumnType)(col_key->column_type) == ColumnType::UINT64) {
+                        diff = compare_dedup_column_fixed<uint64_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    } else {
+                        diff = compare_dedup_column_fixed<int64_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
+                    }
                     break;
                 }
                 case 16: {
@@ -961,6 +973,13 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case 2: {
+                if ((ColumnType)(src_keys[0].column_type) == ColumnType::UINT16) {
+                    return merge_dedup_long_index_int_keys(
+                            src, data_lo, data_hi,
+                            index, index_lo, index_hi, index_tmp,
+                            *reinterpret_cast<const MergeColumnComparer<uint16_t> *>(src_keys)
+                    );
+                }
                 return merge_dedup_long_index_int_keys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi, index_tmp,
@@ -968,6 +987,13 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case 4: {
+                if ((ColumnType)(src_keys[0].column_type) == ColumnType::UINT32) {
+                    return merge_dedup_long_index_int_keys(
+                            src, data_lo, data_hi,
+                            index, index_lo, index_hi, index_tmp,
+                            *reinterpret_cast<const MergeColumnComparer<uint32_t> *>(src_keys)
+                    );
+                }
                 return merge_dedup_long_index_int_keys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi,
@@ -976,6 +1002,13 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case 8: {
+                if ((ColumnType)(src_keys[0].column_type) == ColumnType::UINT64) {
+                    return merge_dedup_long_index_int_keys(
+                            src, data_lo, data_hi,
+                            index, index_lo, index_hi, index_tmp,
+                            *reinterpret_cast<const MergeColumnComparer<uint64_t> *>(src_keys)
+                    );
+                }
                 return merge_dedup_long_index_int_keys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi,
@@ -1049,18 +1082,33 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     break;
                 }
                 case 2: {
-                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int16_t> *>(col_key);
-                    diff = comparer(l, r);
+                    if ((ColumnType)(col_key->column_type) == ColumnType::UINT16) {
+                        const auto &comparer = *reinterpret_cast<const MergeColumnComparer<uint16_t> *>(col_key);
+                        diff = comparer(l, r);
+                    } else {
+                        const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int16_t> *>(col_key);
+                        diff = comparer(l, r);
+                    }
                     break;
                 }
                 case 4: {
-                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int32_t> *>(col_key);
-                    diff = comparer(l, r);
+                    if ((ColumnType)(col_key->column_type) == ColumnType::UINT32) {
+                        const auto &comparer = *reinterpret_cast<const MergeColumnComparer<uint32_t> *>(col_key);
+                        diff = comparer(l, r);
+                    } else {
+                        const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int32_t> *>(col_key);
+                        diff = comparer(l, r);
+                    }
                     break;
                 }
                 case 8: {
-                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int64_t> *>(col_key);
-                    diff = comparer(l, r);
+                    if ((ColumnType)(col_key->column_type) == ColumnType::UINT64) {
+                        const auto &comparer = *reinterpret_cast<const MergeColumnComparer<uint64_t> *>(col_key);
+                        diff = comparer(l, r);
+                    } else {
+                        const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int64_t> *>(col_key);
+                        diff = comparer(l, r);
+                    }
                     break;
                 }
                 case 16: {
@@ -1140,16 +1188,34 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             *reinterpret_cast<const SortColumnComparer<int8_t> *>(src_keys)
                     );
                 case 2:
+                    if ((ColumnType)(src_keys[0].column_type) == ColumnType::UINT16) {
+                        return dedup_sorted_timestamp_index_with_keys(
+                                index_in, index_count, index_out, index_temp,
+                                *reinterpret_cast<const SortColumnComparer<uint16_t> *>(src_keys)
+                        );
+                    }
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int16_t> *>(src_keys)
                     );
                 case 4:
+                    if ((ColumnType)(src_keys[0].column_type) == ColumnType::UINT32) {
+                        return dedup_sorted_timestamp_index_with_keys(
+                                index_in, index_count, index_out, index_temp,
+                                *reinterpret_cast<const SortColumnComparer<uint32_t> *>(src_keys)
+                        );
+                    }
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int32_t> *>(src_keys)
                     );
                 case 8:
+                    if ((ColumnType)(src_keys[0].column_type) == ColumnType::UINT64) {
+                        return dedup_sorted_timestamp_index_with_keys(
+                                index_in, index_count, index_out, index_temp,
+                                *reinterpret_cast<const SortColumnComparer<uint64_t> *>(src_keys)
+                        );
+                    }
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int64_t> *>(src_keys)
@@ -1203,18 +1269,33 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         break;
                     }
                     case 2: {
-                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int16_t> *>(col_key);
-                        diff = comparer(l, r);
+                        if ((ColumnType)(col_key->column_type) == ColumnType::UINT16) {
+                            const auto &comparer = *reinterpret_cast<const SortColumnComparer<uint16_t> *>(col_key);
+                            diff = comparer(l, r);
+                        } else {
+                            const auto &comparer = *reinterpret_cast<const SortColumnComparer<int16_t> *>(col_key);
+                            diff = comparer(l, r);
+                        }
                         break;
                     }
                     case 4: {
-                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int32_t> *>(col_key);
-                        diff = comparer(l, r);
+                        if ((ColumnType)(col_key->column_type) == ColumnType::UINT32) {
+                            const auto &comparer = *reinterpret_cast<const SortColumnComparer<uint32_t> *>(col_key);
+                            diff = comparer(l, r);
+                        } else {
+                            const auto &comparer = *reinterpret_cast<const SortColumnComparer<int32_t> *>(col_key);
+                            diff = comparer(l, r);
+                        }
                         break;
                     }
                     case 8: {
-                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int64_t> *>(col_key);
-                        diff = comparer(l, r);
+                        if ((ColumnType)(col_key->column_type) == ColumnType::UINT64) {
+                            const auto &comparer = *reinterpret_cast<const SortColumnComparer<uint64_t> *>(col_key);
+                            diff = comparer(l, r);
+                        } else {
+                            const auto &comparer = *reinterpret_cast<const SortColumnComparer<int64_t> *>(col_key);
+                            diff = comparer(l, r);
+                        }
                         break;
                     }
                     case 16: {

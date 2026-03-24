@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,6 +45,10 @@ public class SumIntGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new SumIntGroupByFunction(args.getQuick(0));
+        final Function arg = args.getQuick(0);
+        if (ColumnType.isUInt32(arg.getType())) {
+            return new SumUInt32GroupByFunction(arg);
+        }
+        return new SumIntGroupByFunction(arg);
     }
 }

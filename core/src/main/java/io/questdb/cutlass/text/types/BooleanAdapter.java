@@ -48,6 +48,8 @@ public final class BooleanAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putBool(column, SqlKeywords.isTrueKeyword(value));
+        if (!SqlKeywords.isNullKeyword(value)) {
+            row.putBool(column, SqlKeywords.isTrueKeyword(value));
+        }
     }
 }

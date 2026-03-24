@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastShortToIntFunctionFactory implements FunctionFactory {
@@ -50,6 +51,7 @@ public class CastShortToIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
+            if (arg.isNull(rec)) return Numbers.INT_NULL;
             return arg.getShort(rec);
         }
     }

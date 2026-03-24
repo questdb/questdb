@@ -447,11 +447,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putBooleanValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getBool(col));
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+        } else {
+            response.put(rec.getBool(col));
+        }
     }
 
     private static void putByteValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put((int) rec.getByte(col));
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+        } else {
+            response.put((int) rec.getByte(col));
+        }
     }
 
     private static void putCharValue(HttpChunkedResponse response, Record rec, int col) {
@@ -556,6 +564,40 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    private static void putUInt16Value(HttpChunkedResponse response, Record rec, int col) {
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+            return;
+        }
+        response.put(Short.toUnsignedInt(rec.getShort(col)));
+    }
+
+    private static void putUInt32Value(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+            return;
+        }
+        final long unsignedValue = Integer.toUnsignedLong(rec.getInt(col));
+        if (quoteLargeNum && unsignedValue > Integer.MAX_VALUE) {
+            response.putAscii('"').put(unsignedValue).putAscii('"');
+            return;
+        }
+        response.put(unsignedValue);
+    }
+
+    private static void putUInt64Value(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+            return;
+        }
+        final long value = rec.getLong(col);
+        if (quoteLargeNum) {
+            response.putAscii('"').put(Long.toUnsignedString(value)).putAscii('"');
+            return;
+        }
+        response.put(Long.toUnsignedString(value));
+    }
+
     private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (Interval.NULL.equals(interval)) {
@@ -587,7 +629,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putShortValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getShort(col));
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+        } else {
+            response.put(rec.getShort(col));
+        }
     }
 
     private static void putStrValue(HttpChunkedResponse response, Record rec, int col) {
@@ -786,10 +832,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putFloatValue(response, record, columnIdx);
                     break;
                 case ColumnType.INT:
-                    putIntValue(response, record, columnIdx);
+                    if (columnType == ColumnType.UINT32) {
+                        putUInt32Value(response, record, columnIdx, quoteLargeNum);
+                    } else {
+                        putIntValue(response, record, columnIdx);
+                    }
                     break;
                 case ColumnType.LONG:
-                    putLongValue(response, record, columnIdx, quoteLargeNum);
+                    if (columnType == ColumnType.UINT64) {
+                        putUInt64Value(response, record, columnIdx, quoteLargeNum);
+                    } else {
+                        putLongValue(response, record, columnIdx, quoteLargeNum);
+                    }
                     break;
                 case ColumnType.DATE:
                     putDateValue(response, record, columnIdx);
@@ -798,7 +852,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType));
                     break;
                 case ColumnType.SHORT:
-                    putShortValue(response, record, columnIdx);
+                    if (columnType == ColumnType.UINT16) {
+                        putUInt16Value(response, record, columnIdx);
+                    } else {
+                        putShortValue(response, record, columnIdx);
+                    }
                     break;
                 case ColumnType.CHAR:
                     putCharValue(response, record, columnIdx);

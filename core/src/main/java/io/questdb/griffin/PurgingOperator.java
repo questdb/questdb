@@ -134,6 +134,10 @@ public final class PurgingOperator {
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }
 
+                                // Remove null bitmap file (best effort, may not exist for old partitions)
+                                TableUtils.nFile(path.trimTo(pathPartitionLen), columnName, columnVersion);
+                                ff.removeQuiet(path.$());
+
                                 if (isIndexed) {
                                     BitmapIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());

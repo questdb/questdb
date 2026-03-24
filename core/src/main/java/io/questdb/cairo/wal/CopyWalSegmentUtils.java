@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.NullBitmapMigrator;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -39,6 +40,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -54,6 +56,7 @@ public class CopyWalSegmentUtils {
             int options,
             MemoryMA primaryColumn,
             MemoryMA secondaryColumn,
+            @Nullable MemoryMA bitmapColumn,
             @Transient Path walPath,
             int newSegment,
             CharSequence columnName,
@@ -78,6 +81,12 @@ public class CopyWalSegmentUtils {
             secondaryFd = -1;
         }
         columnRollSink.setDestSecondaryFd(secondaryFd);
+
+        long bitmapFd = -1;
+        if (bitmapColumn != null) {
+            bitmapFd = openRW(ff, nFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE), LOG, options);
+        }
+        columnRollSink.setDestBitmapFd(bitmapFd);
 
         boolean success;
         if (columnType == newColumnType) {
@@ -177,6 +186,113 @@ public class CopyWalSegmentUtils {
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType)
                     .put(", newColumnType=").put(newColumnType).put("]");
+        }
+
+        if (bitmapFd > -1 && bitmapColumn != null) {
+            copyBitmapFile(ff, bitmapColumn, bitmapFd, startRowNumber, rowCount, columnRollSink, commitMode);
+        } else if (bitmapColumn == null && ColumnType.needsNullBitmap(newColumnType)
+                && columnType != newColumnType && success) {
+            // Source type doesn't have .n bitmap but destination type needs one.
+            // Generate bitmap from source sentinel values so null info is preserved.
+            generateBitmapFromSentinels(
+                    ff, options, walPath, newSegment, columnName,
+                    columnType, primaryColumn, startRowNumber, rowCount,
+                    columnRollSink, commitMode
+            );
+        }
+    }
+
+    private static void copyBitmapFile(
+            FilesFacade ff,
+            MemoryMA bitmapColumn,
+            long bitmapFd,
+            long startRowNumber,
+            long rowCount,
+            SegmentColumnRollSink columnRollSink,
+            int commitMode
+    ) {
+        long dstBitmapByteCount = (rowCount + 7) >> 3;
+        long srcBitmapByteCount = (startRowNumber + rowCount + 7) >> 3;
+
+        long srcAddr = TableUtils.mapRO(ff, bitmapColumn.getFd(), srcBitmapByteCount, MEMORY_TAG);
+        try {
+            long dstAddr = TableUtils.mapRW(ff, bitmapFd, dstBitmapByteCount, MEMORY_TAG);
+            try {
+                int srcBitOffset = (int) (startRowNumber & 7);
+                long srcByteStart = startRowNumber >> 3;
+
+                if (srcBitOffset == 0) {
+                    Unsafe.getUnsafe().copyMemory(srcAddr + srcByteStart, dstAddr, dstBitmapByteCount);
+                } else {
+                    for (long i = 0; i < dstBitmapByteCount; i++) {
+                        int lo = Unsafe.getUnsafe().getByte(srcAddr + srcByteStart + i) & 0xFF;
+                        int hi = (srcByteStart + i + 1 < srcBitmapByteCount)
+                                ? Unsafe.getUnsafe().getByte(srcAddr + srcByteStart + i + 1) & 0xFF
+                                : 0;
+                        byte result = (byte) ((lo >>> srcBitOffset) | (hi << (8 - srcBitOffset)));
+                        Unsafe.getUnsafe().putByte(dstAddr + i, result);
+                    }
+                }
+
+                // Mask out trailing bits in the last byte if rowCount is not byte-aligned
+                int trailingBits = (int) (rowCount & 7);
+                if (trailingBits > 0 && dstBitmapByteCount > 0) {
+                    long lastByteAddr = dstAddr + dstBitmapByteCount - 1;
+                    byte lastByte = Unsafe.getUnsafe().getByte(lastByteAddr);
+                    Unsafe.getUnsafe().putByte(lastByteAddr, (byte) (lastByte & ((1 << trailingBits) - 1)));
+                }
+
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(dstAddr, dstBitmapByteCount, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(dstAddr, dstBitmapByteCount, MEMORY_TAG);
+            }
+        } finally {
+            ff.munmap(srcAddr, srcBitmapByteCount, MEMORY_TAG);
+        }
+
+        columnRollSink.setDestBitmapSize(dstBitmapByteCount);
+    }
+
+    private static void generateBitmapFromSentinels(
+            FilesFacade ff,
+            int options,
+            Path walPath,
+            int newSegment,
+            CharSequence columnName,
+            int sourceColumnType,
+            MemoryMA primaryColumn,
+            long startRowNumber,
+            long rowCount,
+            SegmentColumnRollSink columnRollSink,
+            int commitMode
+    ) {
+        Path nPath = Path.PATH2.get().of(walPath).slash().put(newSegment);
+        int setPathRoot = nPath.size();
+        nFile(nPath, columnName, COLUMN_NAME_TXN_NONE);
+
+        int typeSize = ColumnType.sizeOf(sourceColumnType);
+        long srcDataOffset = startRowNumber * typeSize;
+        long srcDataSize = rowCount * typeSize;
+        long mapSize = srcDataOffset + srcDataSize;
+        long dataAddr = TableUtils.mapRO(ff, primaryColumn.getFd(), mapSize, MEMORY_TAG);
+        try {
+            NullBitmapMigrator.ensureNullBitmap(
+                    ff, nPath.$(), sourceColumnType, dataAddr + srcDataOffset, rowCount, 0
+            );
+        } finally {
+            ff.munmap(dataAddr, mapSize, MEMORY_TAG);
+        }
+
+        // Open the generated .n file and register in the column roll sink
+        long bitmapFd = openRW(ff, nFile(nPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE), LOG, options);
+        columnRollSink.setDestBitmapFd(bitmapFd);
+        long bitmapSize = (rowCount + 7) >> 3;
+        columnRollSink.setDestBitmapSize(bitmapSize);
+
+        if (commitMode != CommitMode.NOSYNC) {
+            ff.fsync(bitmapFd);
         }
     }
 

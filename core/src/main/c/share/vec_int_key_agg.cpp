@@ -2307,4 +2307,554 @@ Java_io_questdb_std_Rosti_keyedIntMaxLongMerge(JNIEnv *env, jclass cl, jlong pRo
     return JNI_TRUE;
 }
 
+} // extern "C"
+
+// Bitmap-null-aware aggregation for keyed (Rosti) path.
+// Bitmap convention: bit=1 means null, bit=0 means not-null.
+// Templates need C++ linkage, so these are outside extern "C".
+
+static inline bool isRostiBitmapNull(const uint8_t *bitmap, int64_t bitIdx) {
+    return (bitmap[bitIdx >> 3] >> (bitIdx & 7)) & 1;
+}
+
+template<typename T>
+static jboolean kIntSumShortBitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pShort,
+                                       jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    constexpr auto count_idx = sizeof(T) == 8 ? 1 : 2;
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *ps = reinterpret_cast<jshort *>(pShort);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + count_idx];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(ps + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (isNull) {
+                *reinterpret_cast<T *>(dest + value_offset) = 0;
+                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
+            } else {
+                *reinterpret_cast<T *>(dest + value_offset) = ps[i];
+                *reinterpret_cast<jlong *>(dest + count_offset) = 1;
+            }
+        } else if (!isNull) {
+            *reinterpret_cast<T *>(dest + value_offset) += ps[i];
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntMinShortBitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong,
+                                       jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<jshort *>(pLong);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pi + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto pKey = map->slots_ + res.first;
+        auto pVal = pKey + value_offset;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(pKey) = key;
+            *reinterpret_cast<jlong *>(pVal) = isNull ? L_MIN : pi[i];
+        } else if (!isNull) {
+            const jlong old = *reinterpret_cast<jlong *>(pVal);
+            if (old != L_MIN) {
+                *reinterpret_cast<jlong *>(pVal) = MIN(pi[i], (jshort) old);
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = pi[i];
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntMaxShortBitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong,
+                                       jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<jshort *>(pLong);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pi + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto pKey = map->slots_ + res.first;
+        auto pVal = pKey + value_offset;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(pKey) = key;
+            *reinterpret_cast<jlong *>(pVal) = isNull ? L_MIN : pi[i];
+        } else if (!isNull) {
+            const jlong old = *reinterpret_cast<jlong *>(pVal);
+            if (old == L_MIN) {
+                *reinterpret_cast<jlong *>(pVal) = pi[i];
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = MAX(pi[i], (jshort) old);
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+// UINT16 bitmap-null keyed sum — same as SHORT but casts to uint16_t for unsigned accumulation.
+
+template<typename T>
+static jboolean kIntSumUInt16BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pShort,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    constexpr auto count_idx = sizeof(T) == 8 ? 1 : 2;
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *ps = reinterpret_cast<jshort *>(pShort);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + count_idx];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(ps + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (isNull) {
+                *reinterpret_cast<T *>(dest + value_offset) = 0;
+                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
+            } else {
+                *reinterpret_cast<T *>(dest + value_offset) = (uint16_t) ps[i];
+                *reinterpret_cast<jlong *>(dest + count_offset) = 1;
+            }
+        } else if (!isNull) {
+            *reinterpret_cast<T *>(dest + value_offset) += (uint16_t) ps[i];
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+        }
+    }
+    return JNI_TRUE;
+}
+
+extern "C" {
+
+// JNI exports for bitmap-null-aware Rosti SHORT and UINT16 aggregation
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                     jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumShortBitmapNull<jlong>(to_int, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourSumShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumShortBitmapNull<jlong>(micro_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourSumShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                          jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumShortBitmapNull<jlong>(nano_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMinShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                     jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinShortBitmapNull(to_int, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourMinShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinShortBitmapNull(micro_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourMinShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                          jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinShortBitmapNull(nano_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMaxShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                     jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxShortBitmapNull(to_int, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourMaxShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxShortBitmapNull(micro_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourMaxShortBitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                          jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxShortBitmapNull(nano_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+// UINT16 keyed sum JNI exports
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt16BitmapNull<jlong>(to_int, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourSumUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt16BitmapNull<jlong>(micro_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourSumUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pShort,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt16BitmapNull<jlong>(nano_to_hour, pRosti, pKeys, pShort, pBitmap, bitOffset, count, valueOffset);
+}
+
+} // extern "C"
+
+// UINT32 bitmap-null keyed aggregation.
+// Values stored as jlong (unsigned 32-bit fits in positive long range).
+
+template<typename T>
+static jboolean kIntSumUInt32BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pInt,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    constexpr auto count_idx = sizeof(T) == 8 ? 1 : 2;
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<jint *>(pInt);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + count_idx];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pi + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (isNull) {
+                *reinterpret_cast<T *>(dest + value_offset) = 0;
+                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
+            } else {
+                *reinterpret_cast<T *>(dest + value_offset) = (uint32_t) pi[i];
+                *reinterpret_cast<jlong *>(dest + count_offset) = 1;
+            }
+        } else if (!isNull) {
+            *reinterpret_cast<T *>(dest + value_offset) += (uint32_t) pi[i];
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntMinUInt32BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pInt,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<jint *>(pInt);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pi + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto pKey = map->slots_ + res.first;
+        auto pVal = pKey + value_offset;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(pKey) = key;
+            *reinterpret_cast<jlong *>(pVal) = isNull ? L_MIN : (jlong)(uint32_t) pi[i];
+        } else if (!isNull) {
+            const jlong old = *reinterpret_cast<jlong *>(pVal);
+            const jlong val = (jlong)(uint32_t) pi[i];
+            if (old == L_MIN || val < old) {
+                *reinterpret_cast<jlong *>(pVal) = val;
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntMaxUInt32BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pInt,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pi = reinterpret_cast<jint *>(pInt);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pi + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto pKey = map->slots_ + res.first;
+        auto pVal = pKey + value_offset;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(pKey) = key;
+            *reinterpret_cast<jlong *>(pVal) = isNull ? L_MIN : (jlong)(uint32_t) pi[i];
+        } else if (!isNull) {
+            const jlong old = *reinterpret_cast<jlong *>(pVal);
+            const jlong val = (jlong)(uint32_t) pi[i];
+            if (old == L_MIN || val > old) {
+                *reinterpret_cast<jlong *>(pVal) = val;
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+// UINT64 bitmap-null keyed aggregation.
+// Uses unsigned comparison for min/max.
+
+template<typename T>
+static jboolean kIntSumUInt64BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    constexpr auto count_idx = sizeof(T) == 8 ? 1 : 2;
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pl = reinterpret_cast<jlong *>(pLong);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + count_idx];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pl + i + 4);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (isNull) {
+                *reinterpret_cast<T *>(dest + value_offset) = 0;
+                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
+            } else {
+                *reinterpret_cast<T *>(dest + value_offset) = pl[i];
+                *reinterpret_cast<jlong *>(dest + count_offset) = 1;
+            }
+        } else if (!isNull) {
+            *reinterpret_cast<T *>(dest + value_offset) += pl[i];
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntMinUInt64BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pl = reinterpret_cast<jlong *>(pLong);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count2_offset = map->value_offsets_[valueOffset + 1];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pl + i + 4);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto pKey = map->slots_ + res.first;
+        auto pVal = pKey + value_offset;
+        auto pHas = pKey + count2_offset;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(pKey) = key;
+            if (isNull) {
+                *reinterpret_cast<jlong *>(pVal) = 0;
+                *reinterpret_cast<jlong *>(pHas) = 0;
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = pl[i];
+                *reinterpret_cast<jlong *>(pHas) = 1;
+            }
+        } else if (!isNull) {
+            const jlong hasData = *reinterpret_cast<jlong *>(pHas);
+            if (hasData == 0 || (uint64_t) pl[i] < (uint64_t) *reinterpret_cast<jlong *>(pVal)) {
+                *reinterpret_cast<jlong *>(pVal) = pl[i];
+                *reinterpret_cast<jlong *>(pHas) = 1;
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+static jboolean kIntMaxUInt64BitmapNull(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong,
+                                        jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto *pl = reinterpret_cast<jlong *>(pLong);
+    const auto *bitmap = reinterpret_cast<uint8_t *>(pBitmap);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count2_offset = map->value_offsets_[valueOffset + 1];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pl + i + 4);
+        const int32_t key = to_int(pKeys, i);
+        const bool isNull = bitmap != nullptr && isRostiBitmapNull(bitmap, bitOffset + i);
+        auto res = find(map, key);
+        auto pKey = map->slots_ + res.first;
+        auto pVal = pKey + value_offset;
+        auto pHas = pKey + count2_offset;
+        if (PREDICT_FALSE(res.second)) {
+            if (PREDICT_FALSE(res.first == UL_MAX)) {
+                return JNI_FALSE;
+            }
+            *reinterpret_cast<int32_t *>(pKey) = key;
+            if (isNull) {
+                *reinterpret_cast<jlong *>(pVal) = 0;
+                *reinterpret_cast<jlong *>(pHas) = 0;
+            } else {
+                *reinterpret_cast<jlong *>(pVal) = pl[i];
+                *reinterpret_cast<jlong *>(pHas) = 1;
+            }
+        } else if (!isNull) {
+            const jlong hasData = *reinterpret_cast<jlong *>(pHas);
+            if (hasData == 0 || (uint64_t) pl[i] > (uint64_t) *reinterpret_cast<jlong *>(pVal)) {
+                *reinterpret_cast<jlong *>(pVal) = pl[i];
+                *reinterpret_cast<jlong *>(pHas) = 1;
+            }
+        }
+    }
+    return JNI_TRUE;
+}
+
+extern "C" {
+
+// UINT32 keyed aggregation JNI exports.
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt32BitmapNull<jlong>(to_int, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourSumUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt32BitmapNull<jlong>(micro_to_hour, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourSumUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt32BitmapNull<jlong>(nano_to_hour, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMinUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinUInt32BitmapNull(to_int, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourMinUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinUInt32BitmapNull(micro_to_hour, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourMinUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinUInt32BitmapNull(nano_to_hour, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMaxUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxUInt32BitmapNull(to_int, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourMaxUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxUInt32BitmapNull(micro_to_hour, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourMaxUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pInt,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxUInt32BitmapNull(nano_to_hour, pRosti, pKeys, pInt, pBitmap, bitOffset, count, valueOffset);
+}
+
+// UINT64 keyed aggregation JNI exports.
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt64BitmapNull<jlong>(to_int, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourSumUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt64BitmapNull<jlong>(micro_to_hour, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourSumUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntSumUInt64BitmapNull<jlong>(nano_to_hour, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMinUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinUInt64BitmapNull(to_int, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourMinUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinUInt64BitmapNull(micro_to_hour, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourMinUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMinUInt64BitmapNull(nano_to_hour, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedIntMaxUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                      jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxUInt64BitmapNull(to_int, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedMicroHourMaxUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                            jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxUInt64BitmapNull(micro_to_hour, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_keyedNanoHourMaxUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                                           jlong pBitmap, jlong bitOffset, jlong count, jint valueOffset) {
+    return kIntMaxUInt64BitmapNull(nano_to_hour, pRosti, pKeys, pLong, pBitmap, bitOffset, count, valueOffset);
+}
+
 }

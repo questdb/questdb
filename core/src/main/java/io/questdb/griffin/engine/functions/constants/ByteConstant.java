@@ -29,6 +29,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
 
 public class ByteConstant extends ByteFunction implements ConstantFunction {
+    public static final ByteConstant NULL = new NullByteConstant();
     public static final ByteConstant ZERO = new ByteConstant((byte) 0);
     private final byte value;
 
@@ -48,5 +49,26 @@ public class ByteConstant extends ByteFunction implements ConstantFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
+    }
+
+    private static final class NullByteConstant extends ByteConstant {
+        private NullByteConstant() {
+            super((byte) 0);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return true;
+        }
+
+        @Override
+        public boolean isNullConstant() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("null");
+        }
     }
 }

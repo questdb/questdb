@@ -235,4 +235,9 @@ public abstract class LongFunction implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return getLong(rec) == Numbers.LONG_NULL;
+    }
 }

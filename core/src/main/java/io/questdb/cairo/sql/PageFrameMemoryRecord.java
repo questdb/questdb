@@ -76,6 +76,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected int columnOffset;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
+    protected DirectLongList nullBitmapAddresses;
+    protected DirectLongList nullBitmapSizes;
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
     // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
     protected byte letter;
@@ -101,6 +103,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIdOffset = other.rowIdOffset;
         this.pageAddresses = other.pageAddresses;
         this.auxPageAddresses = other.auxPageAddresses;
+        this.nullBitmapAddresses = other.nullBitmapAddresses;
+        this.nullBitmapSizes = other.nullBitmapSizes;
         this.pageSizes = other.pageSizes;
         this.auxPageSizes = other.auxPageSizes;
         this.columnOffset = other.columnOffset;
@@ -116,6 +120,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         columnOffset = 0;
         pageAddresses = null;
         auxPageAddresses = null;
+        nullBitmapAddresses = null;
+        nullBitmapSizes = null;
         pageSizes = null;
         auxPageSizes = null;
     }
@@ -537,9 +543,42 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
+        this.nullBitmapAddresses = frameMemory.getNullBitmapAddresses();
+        this.nullBitmapSizes = frameMemory.getNullBitmapSizes();
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
+    }
+
+    @Override
+    public boolean isNull(int columnIndex) {
+        // Column-top: the column has no data page for this frame.
+        // This check must come first because the bitmap may exist but have
+        // incorrect bits for column-top rows (not yet initialized to 1).
+        final long dataAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (dataAddress == 0) {
+            return true;
+        }
+        if (nullBitmapAddresses != null) {
+            final long address = nullBitmapAddresses.get(columnOffset + columnIndex);
+            if (address != 0) {
+                // rowIndex is frame-relative; add partitionLo to get absolute row in bitmap
+                final long absoluteRow = Rows.toLocalRowID(rowIdOffset) + rowIndex;
+                long byteIndex = absoluteRow >> 3;
+                // Bounds check: if the bitmap is smaller than expected (e.g., stale after O3),
+                // treat the row as not null.
+                if (nullBitmapSizes != null) {
+                    long bitmapSize = nullBitmapSizes.get(columnOffset + columnIndex);
+                    if (byteIndex >= bitmapSize) {
+                        return false;
+                    }
+                }
+                int bitIndex = (int) (absoluteRow & 7);
+                byte bitmapByte = Unsafe.getUnsafe().getByte(address + byteIndex);
+                return (bitmapByte & (1 << bitIndex)) != 0;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -746,6 +785,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             long rowIdOffset,
             DirectLongList pageAddresses,
             DirectLongList auxPageAddresses,
+            DirectLongList nullBitmapAddresses,
+            DirectLongList nullBitmapSizes,
             DirectLongList pageLimits,
             DirectLongList auxPageLimits,
             int columnOffset
@@ -756,6 +797,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;
+        this.nullBitmapAddresses = nullBitmapAddresses;
+        this.nullBitmapSizes = nullBitmapSizes;
         this.pageSizes = pageLimits;
         this.auxPageSizes = auxPageLimits;
         this.columnOffset = columnOffset;

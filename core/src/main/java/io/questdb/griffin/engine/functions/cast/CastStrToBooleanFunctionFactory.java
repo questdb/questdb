@@ -54,13 +54,30 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private CharSequence cachedStr;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return resolveBoolean(arg.getStrA(rec));
+            CharSequence value;
+            if (srcCached) {
+                value = cachedStr;
+                srcCached = false;
+            } else {
+                value = arg.getStrA(rec);
+            }
+            return resolveBoolean(value);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedStr = arg.getStrA(rec);
+            srcCached = true;
+            return cachedStr == null;
         }
     }
 }
