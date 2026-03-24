@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.std.MemoryTag;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -771,7 +772,7 @@ public final class PostingIndexUtils {
     /**
      * Reusable workspace for encodeKey to avoid per-call allocations.
      */
-    public static class EncodeContext {
+    public static class EncodeContext implements QuietCloseable {
         long deltasAddr;
         long blockValueCountsAddr;
         long blockFirstValuesAddr;
@@ -878,7 +879,7 @@ public final class PostingIndexUtils {
     /**
      * Reusable workspace for decodeKey to avoid per-call allocations.
      */
-    public static class DecodeContext {
+    public static class DecodeContext implements QuietCloseable {
         long valueCountsAddr;
         long firstValuesAddr;
         long minDeltasAddr;
