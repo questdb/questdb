@@ -188,7 +188,7 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'false')
       )
   - task: Maven@3
-    displayName: "Run tests"
+    displayName: "Run tests (with sccache)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
@@ -214,7 +214,34 @@ steps:
     condition: |
       and(
         eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
+      )
+  - task: Maven@3
+    displayName: "Run tests"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenPomFile: "pom.xml"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode --quiet -Dtest.include=$(includeTests)
+        -Dtest.exclude=$(excludeTests)
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+        -P build-web-console
+         $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'all'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['os'], 'Linux')
       )
   - bash: find . -name '*.profraw' -delete
     displayName: "Clean stale profraw files"
