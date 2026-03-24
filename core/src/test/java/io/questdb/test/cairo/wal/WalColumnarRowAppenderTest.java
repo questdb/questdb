@@ -1328,11 +1328,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
                 // 256-bit value with hl=1 overflows 128-bit decimal
+                // Wire order is true little-endian: ll, lh, hl, hh
                 long offset = 2;
-                Unsafe.getUnsafe().putLong(dataAddress + offset, 0L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, 1L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, 0L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, 12_345L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset, 12_345L);      // ll
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, 0L);       // lh
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, 1L);      // hl
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, 0L);      // hh
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256);
@@ -1372,18 +1373,19 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
                 Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 2);
-                // Value 1: 12345 (= 123.45), sign-extended to 256-bit little-endian (hh, hl, lh, ll)
+                // Value 1: 12345 (= 123.45), sign-extended to 256-bit
+                // Wire order is true little-endian: ll, lh, hl, hh
                 long offset = 2;
-                Unsafe.getUnsafe().putLong(dataAddress + offset, 0L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, 0L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, 0L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, 12_345L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset, 12_345L);      // ll
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, 0L);       // lh
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, 0L);      // hl
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, 0L);      // hh
                 // Value 2: -9999 (= -99.99), sign-extended
                 offset = 34;
-                Unsafe.getUnsafe().putLong(dataAddress + offset, -1L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, -1L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, -1L);
-                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, -9999L);
+                Unsafe.getUnsafe().putLong(dataAddress + offset, -9999L);       // ll
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 8, -1L);      // lh
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 16, -1L);     // hl
+                Unsafe.getUnsafe().putLong(dataAddress + offset + 24, -1L);     // hh
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256);

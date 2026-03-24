@@ -26,6 +26,10 @@ package io.questdb.cutlass.qwp.protocol;
 
 /**
  * Constants for the QWP v1 binary protocol.
+ * <p>
+ * All little-endian encoding in this protocol is byte-level: multi-byte and
+ * multi-word values are stored with the least significant byte at the lowest
+ * address.
  */
 public final class QwpConstants {
 
@@ -225,7 +229,7 @@ public final class QwpConstants {
      */
     public static final byte TYPE_LONG = 0x05;
     /**
-     * Column type: LONG256 (32 bytes, big-endian).
+     * Column type: LONG256 (32 bytes, little-endian).
      */
     public static final byte TYPE_LONG256 = 0x0D;
 
@@ -257,7 +261,7 @@ public final class QwpConstants {
      */
     public static final byte TYPE_TIMESTAMP_NANOS = 0x10;
     /**
-     * Column type: UUID (16 bytes, big-endian).
+     * Column type: UUID (16 bytes, little-endian).
      */
     public static final byte TYPE_UUID = 0x0C;
 

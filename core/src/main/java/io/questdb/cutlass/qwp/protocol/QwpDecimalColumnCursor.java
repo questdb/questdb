@@ -40,9 +40,9 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <p>
  * Value sizes:
  * <ul>
- *   <li>DECIMAL64: 8 bytes (1 long)</li>
- *   <li>DECIMAL128: 16 bytes (2 longs: high, low)</li>
- *   <li>DECIMAL256: 32 bytes (4 longs: hh, hl, lh, ll)</li>
+ *   <li>DECIMAL64: 8 bytes</li>
+ *   <li>DECIMAL128: 16 bytes</li>
+ *   <li>DECIMAL256: 32 bytes</li>
  * </ul>
  */
 public final class QwpDecimalColumnCursor implements QwpColumnCursor {
@@ -272,14 +272,14 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
                 currentValue64 = Unsafe.getUnsafe().getLong(address);
                 break;
             case TYPE_DECIMAL128:
-                currentValue128Hi = Unsafe.getUnsafe().getLong(address);
-                currentValue128Lo = Unsafe.getUnsafe().getLong(address + 8);
+                currentValue128Lo = Unsafe.getUnsafe().getLong(address);
+                currentValue128Hi = Unsafe.getUnsafe().getLong(address + 8);
                 break;
             case TYPE_DECIMAL256:
-                currentValue256Hh = Unsafe.getUnsafe().getLong(address);
-                currentValue256Hl = Unsafe.getUnsafe().getLong(address + 8);
-                currentValue256Lh = Unsafe.getUnsafe().getLong(address + 16);
-                currentValue256Ll = Unsafe.getUnsafe().getLong(address + 24);
+                currentValue256Ll = Unsafe.getUnsafe().getLong(address);
+                currentValue256Lh = Unsafe.getUnsafe().getLong(address + 8);
+                currentValue256Hl = Unsafe.getUnsafe().getLong(address + 16);
+                currentValue256Hh = Unsafe.getUnsafe().getLong(address + 24);
                 break;
         }
     }
