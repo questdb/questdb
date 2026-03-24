@@ -501,49 +501,6 @@
             </build>
         </profile>
         <profile>
-            <id>build-cxx-library</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>exec-maven-plugin</artifactId>
-                        <version>3.0.0</version>
-                        <executions>
-                            <execution>
-                                <id>cmake-configure</id>
-                                <phase>generate-resources</phase>
-                                <goals><goal>exec</goal></goals>
-                                <configuration>
-                                    <executable>cmake</executable>
-                                    <arguments>
-                                        <argument>-B</argument>
-                                        <argument>build/release</argument>
-                                        <argument>-DCMAKE_BUILD_TYPE=Release</argument>
-                                    </arguments>
-                                    <workingDirectory>${project.basedir}</workingDirectory>
-                                </configuration>
-                            </execution>
-                            <execution>
-                                <id>cmake-build</id>
-                                <phase>generate-resources</phase>
-                                <goals><goal>exec</goal></goals>
-                                <configuration>
-                                    <executable>cmake</executable>
-                                    <arguments>
-                                        <argument>--build</argument>
-                                        <argument>build/release</argument>
-                                        <argument>--config</argument>
-                                        <argument>Release</argument>
-                                    </arguments>
-                                    <workingDirectory>${project.basedir}</workingDirectory>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
             <id>platform-windows-x86-64</id>
             <activation>
                 <os>

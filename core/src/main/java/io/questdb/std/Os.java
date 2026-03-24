@@ -256,7 +256,7 @@ public final class Os {
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
-            throw new FatalError("Native library not found: " + lib + ", build with 'mvn package' or set -Dquestdb.libs.dir");
+            throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
         loadLib(lib, is);
     }
