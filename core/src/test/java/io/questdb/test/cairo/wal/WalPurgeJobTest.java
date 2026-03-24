@@ -56,6 +56,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
@@ -338,6 +339,66 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             removePendingFile(tableToken);
             drainPurgeJob();
             assertExistence(false, tableToken);
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForDroppedTable() throws Exception {
+        // Regression test for a race where WalPurgeJob calls getTableMetadata()
+        // for a table that is concurrently dropped. The metadata pool's tenant
+        // can throw NullPointerException (not CairoException) during refresh
+        // when its txFile is closed by a concurrent drop. WalPurgeJob must
+        // handle non-CairoException errors gracefully for dropped tables.
+        //
+        // We simulate this by clearing the metadata pool cache and then using
+        // a custom FilesFacade that drops the table and throws NPE when the
+        // pool tries to re-create the metadata tenant (opening the _meta file).
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldThrowNpe.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    // Simulate concurrent drop: mark the table as dropped, then
+                    // throw NPE like what happens when the metadata pool tenant's
+                    // txFile is closed during a concurrent drop's notifyDropped().
+                    try {
+                        execute("drop table " + testName.getMethodName());
+                    } catch (Exception ignored) {
+                    }
+                    throw new NullPointerException("simulated: txFile is null during concurrent drop");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            // Clear metadata pool so next getTableMetadata() creates a fresh tenant,
+            // which goes through FilesFacade (openRO for _meta file) where we can intercept.
+            engine.releaseAllReaders();
+
+            // Arm the NPE trap. The next purge job iteration will try to create a
+            // metadata tenant for this table, hit our FilesFacade hook, drop the table,
+            // and throw NPE. With the fix, fetchSequencerPairs catches the NPE and
+            // checks isTableDropped(), which returns true, so it returns gracefully.
+            shouldThrowNpe.set(true);
+
+            // This should not throw despite the simulated NPE during metadata access.
+            drainPurgeJob();
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            drainPurgeJob();
         });
     }
 
@@ -1253,8 +1314,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj instanceof DeletionEvent) {
-                DeletionEvent other = (DeletionEvent) obj;
+            if (obj instanceof DeletionEvent other) {
                 return walId == other.walId && Objects.equals(segmentId, other.segmentId);
             }
             return false;
