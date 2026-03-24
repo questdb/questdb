@@ -652,7 +652,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         testUpdateAsyncMode(
-                tableWriter -> tableWriter.addColumn("newCol", ColumnType.INT),
+                tableWriter -> tableWriter.addColumn("newCol", ColumnType.INT, AllowAllSecurityContext.INSTANCE),
                 "cached query plan cannot be used because table schema has changed [table=up]",
                 """
                         ts\tx\tnewCol
@@ -3681,7 +3681,7 @@ public class UpdateTest extends AbstractCairoTest {
             assertQuery(
                     """
                             symCol
-                            
+                                                        
                             ABC
                             VTJ
                             """,

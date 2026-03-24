@@ -37,6 +37,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -652,22 +653,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         2015-03-14T01:40:42.379000Z
-                        
+                                                
                         2015-10-29T01:10:58.169000Z
                         2015-06-20T21:01:53.022000Z
-                        
+                                                
                         2015-08-16T15:44:28.373000Z
                         2015-10-04T11:24:49.668000Z
                         2015-08-22T21:51:00.964000Z
-                        
+                                                
                         2015-09-25T12:23:29.660000Z
-                        
+                                                
                         2015-06-26T06:02:24.851000Z
-                        
+                                                
                         2015-11-10T18:53:48.184000Z
                         2015-09-15T23:58:20.400000Z
                         2015-04-04T16:34:47.226000Z
-                        
+                                                
                         2015-06-22T18:58:53.562000Z
                         2015-02-12T10:25:55.529000Z
                         2015-03-17T04:25:52.765000Z
@@ -720,14 +721,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.034Z
                         1970-01-01T00:00:00.076Z
                         1970-01-01T00:00:00.042Z
-                        
+                                                
                         1970-01-01T00:00:00.072Z
                         1970-01-01T00:00:00.042Z
                         1970-01-01T00:00:00.070Z
                         1970-01-01T00:00:00.038Z
                         1970-01-01T00:00:00.000Z
                         1970-01-01T00:00:00.032Z
-                        
+                                                
                         1970-01-01T00:00:00.097Z
                         1970-01-01T00:00:00.024Z
                         1970-01-01T00:00:00.063Z
@@ -870,14 +871,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         1970-01-01T00:00:00.000034Z
                         1970-01-01T00:00:00.000076Z
                         1970-01-01T00:00:00.000042Z
-                        
+                                                
                         1970-01-01T00:00:00.000072Z
                         1970-01-01T00:00:00.000042Z
                         1970-01-01T00:00:00.000070Z
                         1970-01-01T00:00:00.000038Z
                         1970-01-01T00:00:00.000000Z
                         1970-01-01T00:00:00.000032Z
-                        
+                                                
                         1970-01-01T00:00:00.000097Z
                         1970-01-01T00:00:00.000024Z
                         1970-01-01T00:00:00.000063Z
@@ -922,22 +923,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         1970-01-01T00:00:00.080Z
-                        
+                                                
                         1970-01-01T00:00:00.008Z
                         1970-01-01T00:00:00.029Z
-                        
+                                                
                         1970-01-01T00:00:00.093Z
                         1970-01-01T00:00:00.013Z
                         1970-01-01T00:00:00.079Z
-                        
+                                                
                         1970-01-01T00:00:00.022Z
-                        
+                                                
                         1970-01-01T00:00:00.034Z
-                        
+                                                
                         1970-01-01T00:00:00.076Z
                         1970-01-01T00:00:00.052Z
                         1970-01-01T00:00:00.055Z
-                        
+                                                
                         1970-01-01T00:00:00.072Z
                         1970-01-01T00:00:00.062Z
                         1970-01-01T00:00:00.066Z
@@ -1072,22 +1073,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         1970-01-01T00:00:00.000080Z
-                        
+                                                
                         1970-01-01T00:00:00.000008Z
                         1970-01-01T00:00:00.000029Z
-                        
+                                                
                         1970-01-01T00:00:00.000093Z
                         1970-01-01T00:00:00.000013Z
                         1970-01-01T00:00:00.000079Z
-                        
+                                                
                         1970-01-01T00:00:00.000022Z
-                        
+                                                
                         1970-01-01T00:00:00.000034Z
-                        
+                                                
                         1970-01-01T00:00:00.000076Z
                         1970-01-01T00:00:00.000052Z
                         1970-01-01T00:00:00.000055Z
-                        
+                                                
                         1970-01-01T00:00:00.000072Z
                         1970-01-01T00:00:00.000062Z
                         1970-01-01T00:00:00.000066Z
@@ -1133,22 +1134,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         1970-01-01T00:00:00.001Z
-                        
+                                                
                         1970-01-01T00:00:00.022Z
                         1970-01-01T00:00:00.022Z
-                        
+                                                
                         1970-01-01T00:00:00.007Z
                         1970-01-01T00:00:00.026Z
                         1970-01-01T00:00:00.026Z
-                        
+                                                
                         1970-01-01T00:00:00.013Z
-                        
+                                                
                         1970-01-01T00:00:00.000Z
-                        
+                                                
                         1970-01-01T00:00:00.025Z
                         1970-01-01T00:00:00.021Z
                         1970-01-01T00:00:00.023Z
-                        
+                                                
                         1970-01-01T00:00:00.006Z
                         1970-01-01T00:00:00.019Z
                         1970-01-01T00:00:00.007Z
@@ -1283,22 +1284,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         String expectedData = """
                 a
                 1970-01-01T00:00:00.000001Z
-                
+                                
                 1970-01-01T00:00:00.000022Z
                 1970-01-01T00:00:00.000022Z
-                
+                                
                 1970-01-01T00:00:00.000007Z
                 1970-01-01T00:00:00.000026Z
                 1970-01-01T00:00:00.000026Z
-                
+                                
                 1970-01-01T00:00:00.000013Z
-                
+                                
                 1970-01-01T00:00:00.000000Z
-                
+                                
                 1970-01-01T00:00:00.000025Z
                 1970-01-01T00:00:00.000021Z
                 1970-01-01T00:00:00.000023Z
-                
+                                
                 1970-01-01T00:00:00.000006Z
                 1970-01-01T00:00:00.000019Z
                 1970-01-01T00:00:00.000007Z
@@ -1343,22 +1344,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         1970-01-01T00:00:00.022Z
-                        
+                                                
                         1970-01-01T00:00:00.017Z
                         1970-01-01T00:00:00.002Z
-                        
+                                                
                         1970-01-01T00:00:00.021Z
                         1970-01-01T00:00:00.001Z
                         1970-01-01T00:00:00.020Z
-                        
+                                                
                         1970-01-01T00:00:00.014Z
-                        
+                                                
                         1970-01-01T00:00:00.026Z
-                        
+                                                
                         1970-01-01T00:00:00.023Z
                         1970-01-01T00:00:00.002Z
                         1970-01-01T00:00:00.024Z
-                        
+                                                
                         1970-01-01T00:00:00.016Z
                         1970-01-01T00:00:00.010Z
                         1970-01-01T00:00:00.006Z
@@ -1504,22 +1505,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         1970-01-01T00:00:00.000022Z
-                        
+                                                
                         1970-01-01T00:00:00.000017Z
                         1970-01-01T00:00:00.000002Z
-                        
+                                                
                         1970-01-01T00:00:00.000021Z
                         1970-01-01T00:00:00.000001Z
                         1970-01-01T00:00:00.000020Z
-                        
+                                                
                         1970-01-01T00:00:00.000014Z
-                        
+                                                
                         1970-01-01T00:00:00.000026Z
-                        
+                                                
                         1970-01-01T00:00:00.000023Z
                         1970-01-01T00:00:00.000002Z
                         1970-01-01T00:00:00.000024Z
-                        
+                                                
                         1970-01-01T00:00:00.000016Z
                         1970-01-01T00:00:00.000010Z
                         1970-01-01T00:00:00.000006Z
@@ -1805,10 +1806,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         final String expectedData = """
                 a
                 JWCPS
-                
+                                
                 RXPEHNRXG
-                
-                
+                                
+                                
                 XIBBT
                 GWFFY
                 EYYQEHBHFO
@@ -1822,7 +1823,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 YYCTG
                 LYXWCKYLSU
                 SWUGSHOLNV
-                
+                                
                 BZXIOVI
                 """;
 
@@ -1878,22 +1879,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """
                         a
                         2015-12-27T07:50:58.992Z
-                        
+                                                
                         2015-11-11T04:53:52.325Z
                         2015-12-23T09:55:40.841Z
-                        
+                                                
                         2015-03-01T17:21:30.549Z
                         2015-08-11T04:44:49.997Z
                         2015-11-04T22:21:35.124Z
-                        
+                                                
                         2015-05-27T06:28:53.379Z
-                        
+                                                
                         2015-11-06T07:59:51.480Z
-                        
+                                                
                         2015-07-14T11:54:20.781Z
                         2015-08-29T01:32:49.345Z
                         2015-08-29T23:55:43.664Z
-                        
+                                                
                         2015-08-26T10:11:44.609Z
                         2015-10-03T23:38:25.356Z
                         2015-11-24T20:19:13.843Z
@@ -2101,6 +2102,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 engine.clear();
             }
         });
+    }
+
+    @Test
+    public void testCloseMissingArgRejected() throws Exception {
+        assertException("CLOSE", 5, "argument expected");
+    }
+
+    @Test
+    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("CLOSE;", 5, "argument expected");
     }
 
     @Test
@@ -2636,15 +2647,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCompileSetNonStandardForm() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
-            }
-        });
-    }
-
-    @Test
     public void testCompileSetMissingName() throws Exception {
         assertException("SET", 3, "parameter name expected");
     }
@@ -2669,6 +2671,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile("SET x TO y, z", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetNonStandardForm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
             }
         });
     }
@@ -2847,23 +2858,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 a
                 CPSW
                 HYRX
-                
+                                
                 VTJW
                 PEHN
-                
+                                
                 VTJW
-                
+                                
                 CPSW
-                
+                                
                 PEHN
                 CPSW
                 VTJW
-                
-                
+                                
+                                
                 CPSW
-                
-                
-                
+                                
+                                
+                                
                 PEHN
                 """;
 
@@ -2979,7 +2990,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         } else {
                                             writer.removeColumn("b" + (state - 1));
                                         }
-                                        writer.addColumn("b" + state, ColumnType.INT);
+                                        writer.addColumn("b" + state, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                                     }
                                 }
                             }
@@ -3548,7 +3559,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             // remove column from table X
                             try (TableWriter writer = getWriter("X")) {
                                 writer.removeColumn("a");
-                                writer.addColumn("c", ColumnType.FLOAT);
+                                writer.addColumn("c", ColumnType.FLOAT, AllowAllSecurityContext.INSTANCE);
                             }
                         }
                     }
@@ -3577,7 +3588,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     // remove column from table X
                                     try (TableWriter writer = getWriter("X")) {
                                         writer.removeColumn("t");
-                                        writer.addColumn("t", ColumnType.FLOAT);
+                                        writer.addColumn("t", ColumnType.FLOAT, AllowAllSecurityContext.INSTANCE);
                                     }
                                 }
                             }
@@ -3982,6 +3993,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
         });
+    }
+
+    @Test
+    public void testDiscardMissingArgRejected() throws Exception {
+        assertException("DISCARD", 7, "argument expected");
+    }
+
+    @Test
+    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("DISCARD;", 7, "argument expected");
     }
 
     @Test
@@ -5176,7 +5197,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     // remove column from table X
                     try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
                         writer.removeColumn("int1");
-                        writer.addColumn("c", ColumnType.INT);
+                        writer.addColumn("c", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                     }
                 }
             }
@@ -5623,7 +5644,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 2020-01-10T12:00:01.111143Z
                 2020-01-10T15:00:01.000143Z
                 2020-01-10T18:00:01.800000Z
-                
+                                
                 """;
 
         assertMemoryLeak(() -> {
@@ -6406,7 +6427,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("t");
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
-                    writer.addColumn("t", ColumnType.TIMESTAMP);
+                    writer.addColumn("t", ColumnType.TIMESTAMP, AllowAllSecurityContext.INSTANCE);
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
                 }
 
@@ -6448,6 +6469,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testResetMissingArgRejected() throws Exception {
+        assertException("RESET", 5, "argument expected");
+    }
+
+    @Test
+    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("RESET;", 5, "argument expected");
     }
 
     @Test
@@ -6533,8 +6564,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             created
-                            
-                            
+                                                        
+                                                        
                             """,
                     query1,
                     null,
@@ -7294,6 +7325,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterCloseRejected() throws Exception {
+        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
+    }
+
+    @Test
     public void testTrailingContentAfterCommitRejected() throws Exception {
         assertException("COMMIT extra_token", 7, "unexpected token [extra_token]");
     }
@@ -7308,41 +7344,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseMissingArgRejected() throws Exception {
-        assertException("CLOSE", 5, "argument expected");
-    }
-
-    @Test
-    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("CLOSE;", 5, "argument expected");
-    }
-
-    @Test
-    public void testDiscardMissingArgRejected() throws Exception {
-        assertException("DISCARD", 7, "argument expected");
-    }
-
-    @Test
-    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("DISCARD;", 7, "argument expected");
-    }
-
-    @Test
-    public void testResetMissingArgRejected() throws Exception {
-        assertException("RESET", 5, "argument expected");
-    }
-
-    @Test
-    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("RESET;", 5, "argument expected");
-    }
-
-    @Test
-    public void testTrailingContentAfterCloseRejected() throws Exception {
-        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
-    }
-
-    @Test
     public void testTrailingContentAfterDiscardRejected() throws Exception {
         assertException("DISCARD ALL extra", 12, "unexpected token [extra]");
     }
@@ -7354,16 +7355,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 10,
                 "unexpected token [extra]"
         );
-    }
-
-    @Test
-    public void testTrailingContentAfterUnlistenRejected() throws Exception {
-        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
-    }
-
-    @Test
-    public void testUnlistenMissingArgRejected() throws Exception {
-        assertException("UNLISTEN", 8, "argument expected");
     }
 
     @Test
@@ -7384,12 +7375,29 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterSemicolonRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab; select x from tab",
+                    19,
+                    "unexpected token [select]"
+            );
+        });
+    }
+
+    @Test
     public void testTrailingContentAfterSetRejected() throws Exception {
         assertException(
                 "SET x = y extra_token",
                 10,
                 "unexpected token [extra_token]"
         );
+    }
+
+    @Test
+    public void testTrailingContentAfterUnlistenRejected() throws Exception {
+        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
     }
 
     @Test
@@ -7400,18 +7408,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertQuery("x\n",
                     "select x from tab;",
                     "", true, true);
-        });
-    }
-
-    @Test
-    public void testTrailingContentAfterSemicolonRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (x int)");
-            assertExceptionNoLeakCheck(
-                    "select x from tab; select x from tab",
-                    19,
-                    "unexpected token [select]"
-            );
         });
     }
 
@@ -7462,6 +7458,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "except"
             );
         });
+    }
+
+    @Test
+    public void testUnlistenMissingArgRejected() throws Exception {
+        assertException("UNLISTEN", 8, "argument expected");
     }
 
     @Test

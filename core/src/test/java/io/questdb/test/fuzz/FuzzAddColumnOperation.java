@@ -26,6 +26,7 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
@@ -47,7 +48,7 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity, false);
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity, false, AllowAllSecurityContext.INSTANCE);
         return true;
     }
 }

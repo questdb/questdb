@@ -231,18 +231,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            SecurityContext securityContext
     ) {
-        addColumn(
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableToken,
+                0,
                 columnName,
+                0,
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey,
-                null
+                isDedupKey
         );
+        alterOp.withSecurityContext(securityContext);
+        apply(alterOp, true);
     }
 
     @Override
@@ -664,34 +671,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private static int getDataColumnOffset(int columnIndex) {
         return columnIndex * 2;
-    }
-
-    private void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isDedupKey,
-            SecurityContext securityContext
-    ) {
-        alterOp.clear();
-        alterOp.ofAddColumn(
-                getMetadata().getTableId(),
-                tableToken,
-                0,
-                columnName,
-                0,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                isDedupKey
-        );
-        alterOp.withSecurityContext(securityContext);
-        apply(alterOp, true);
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {

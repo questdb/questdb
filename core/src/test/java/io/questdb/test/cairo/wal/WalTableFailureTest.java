@@ -94,9 +94,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(tableName, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(tableToken, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
@@ -119,10 +119,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return true;
                     }
                 };
+                dodgyAlterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
                 try {
                     twa.apply(dodgyAlterOp, true);
@@ -134,23 +140,23 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("""
                     x\tsym\tts\tsym2
                     1\tAB\t2022-02-24T00:00:00.000000Z\tEF
                     1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """, tableName.getTableName());
+                    """, tableToken.getTableName());
         });
     }
 
     @Test
     public void testAddColumnFailToSerialiseToSequencerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
-            TableToken tableName = createStandardWalTable(testName.getMethodName());
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            try (TableWriterAPI twa = engine.getTableWriterAPI(tableName, "test")) {
+            try (TableWriterAPI twa = engine.getTableWriterAPI(tableToken, "test")) {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
@@ -169,6 +175,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return true;
                     }
@@ -178,6 +189,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         throw new IndexOutOfBoundsException();
                     }
                 };
+                dodgyAlterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
                 try {
                     twa.apply(dodgyAlterOp, true);
@@ -188,14 +200,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("""
                     x\tsym\tts\tsym2
                     1\tAB\t2022-02-24T00:00:00.000000Z\tEF
                     1\tab\t2022-02-24T23:00:00.000000Z\tef
-                    """, tableName.getTableName());
+                    """, tableToken.getTableName());
         });
     }
 
@@ -271,6 +283,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             AlterOperationBuilder alterOpBuilder = new AlterOperationBuilder().ofDropColumn(1, tableToken, 0);
             AlterOperation alterOp = alterOpBuilder.ofDropColumn("non_existing_column").build();
+            alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
             int badWriterId;
             try (
@@ -290,6 +303,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return true;
                     }
@@ -299,6 +317,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         alterOp.serializeBody(sink);
                     }
                 };
+                dodgyAlter.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
                 try {
                     alterWriter.apply(dodgyAlter, true);
@@ -380,6 +399,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofRenameColumn(1, tableToken, 0);
                 alterBuilder.ofRenameColumn("x", "x2");
                 alterOp = alterBuilder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
                 alterWriter.apply(alterOp, true);
 
                 TableWriter.Row row = insertWriter.newRow(MicrosTimestampDriver.floor("2022-02-25"));
@@ -445,10 +465,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return true;
                     }
                 };
+                dodgyAlterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
                 try {
                     twa.apply(dodgyAlterOp, true);
@@ -495,6 +521,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return true;
                     }
@@ -504,6 +535,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         // Do nothing, deserialization should fail
                     }
                 };
+                dodgyAlterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
                 try {
                     twa.apply(dodgyAlterOp, true);
@@ -528,11 +560,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testDropDesignatedTimestampFails() throws Exception {
         failToApplyAlter("cannot remove designated timestamp column", token -> {
-            AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
-                    .ofDropColumn(1, token, 0);
+            AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, token, 0);
             alterBuilder.ofDropColumn("ts");
-
-            return alterBuilder.build();
+            AlterOperation alterOp = alterBuilder.build();
+            alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+            return alterOp;
         });
     }
 
@@ -879,10 +911,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
 
                     @Override
+                    public @NotNull TableToken getTableToken() {
+                        return tableToken;
+                    }
+
+                    @Override
                     public boolean isStructural() {
                         return false;
                     }
                 };
+                dodgyAlterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
 
                 try {
                     twa.apply(dodgyAlterOp, true);
@@ -1145,7 +1183,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
                             .ofRenameColumn(1, tableToken, 0);
                     alterBuilder.ofRenameColumn("x", "x2");
-                    return alterBuilder.build();
+                    AlterOperation alterOp = alterBuilder.build();
+                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                    return alterOp;
                 }
         );
     }
@@ -1158,7 +1198,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
                             .ofRenameColumn(1, tableToken, 0);
                     alterBuilder.ofRenameColumn("ts", "ts2");
-                    return alterBuilder.build();
+                    AlterOperation alterOp = alterBuilder.build();
+                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                    return alterOp;
                 }
         );
     }
@@ -1171,7 +1213,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
                             .ofRenameColumn(1, tableToken, 0);
                     alterBuilder.ofRenameColumn("x", "sym");
-                    return alterBuilder.build();
+                    AlterOperation alterOp = alterBuilder.build();
+                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                    return alterOp;
                 }
         );
     }
@@ -1184,7 +1228,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
                             .ofRenameColumn(1, tableToken, 0);
                     alterBuilder.ofRenameColumn("x", "/../tb");
-                    return alterBuilder.build();
+                    AlterOperation alterOp = alterBuilder.build();
+                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                    return alterOp;
                 }
         );
     }
@@ -1325,7 +1371,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             drainWalQueue();
             try (TableWriter writer = getWriter(tableName)) {
-                writer.addColumn("abcd", ColumnType.INT);
+                writer.addColumn("abcd", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
             }
 
             execute("alter table " + tableName.getTableName() + " add column dddd2 long");
