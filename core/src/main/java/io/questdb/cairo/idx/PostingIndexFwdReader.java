@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -40,6 +41,12 @@ import io.questdb.std.str.Path;
  */
 public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     private final Cursor cursor = new Cursor();
+
+    @Override
+    public void close() {
+        cursor.close();
+        super.close();
+    }
 
     public PostingIndexFwdReader(
             CairoConfiguration configuration,
@@ -68,8 +75,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     }
 
     private class Cursor implements CoveringRowCursor {
-        private final long[] blockBuffer = new long[PostingIndexUtils.PACKED_BATCH_SIZE];
-        private final long[] blockDeltas = new long[PostingIndexUtils.BLOCK_CAPACITY];
+        private final long blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        private final long blockDeltasAddr = Unsafe.malloc((long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long next;
         private int blockBufferPos;
         private int blockBufferEnd;
@@ -85,8 +92,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // Block metadata arrays (pre-allocated, grown as needed)
         private int metadataCapacity = 256;
         private int[] valueCounts = new int[256];
-        private long[] firstValues = new long[256];
-        private long[] minDeltas = new long[256];
+        private long firstValuesAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        private long minDeltasAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private int[] bitWidths = new int[256];
         private long packedDataAddr;
         // Flat mode batch state (for count > BLOCK_CAPACITY)
@@ -107,7 +114,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private double[][] decodedDoubles;
         private int[][] decodedInts;
         private long[][] decodedLongs;
-        private long[] decodeWorkspace; // reusable workspace for ALP decompress
+        private long decodeWorkspaceAddr; // reusable native workspace for ALP decompress
+        private int decodeWorkspaceCapacity;
         private int decodedStride = -1;
 
         @Override
@@ -236,10 +244,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         if (decodedDoubles[c] == null || decodedDoubles[c].length < count) {
                             decodedDoubles[c] = new double[count];
                         }
-                        if (decodeWorkspace == null || decodeWorkspace.length < count) {
-                            decodeWorkspace = new long[count];
-                        }
-                        AlpCompression.decompressDoubles(keyBlockAddr, decodedDoubles[c], decodeWorkspace);
+                        ensureDecodeWorkspaceCapacity(count);
+                        AlpCompression.decompressDoubles(keyBlockAddr, decodedDoubles[c], decodeWorkspaceAddr);
                         break;
                     }
                     case ColumnType.LONG:
@@ -259,10 +265,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         if (decodedInts[c] == null || decodedInts[c].length < count) {
                             decodedInts[c] = new int[count];
                         }
-                        if (decodeWorkspace == null || decodeWorkspace.length < count) {
-                            decodeWorkspace = new long[count];
-                        }
-                        AlpCompression.decompressInts(keyBlockAddr, decodedInts[c], decodeWorkspace);
+                        ensureDecodeWorkspaceCapacity(count);
+                        AlpCompression.decompressInts(keyBlockAddr, decodedInts[c], decodeWorkspaceAddr);
                         break;
                     }
                     case ColumnType.SHORT:
@@ -300,7 +304,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             while (true) {
                 // Serve from block buffer first
                 while (blockBufferPos < blockBufferEnd) {
-                    long value = blockBuffer[blockBufferPos];
+                    long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                     if (value > maxValue) {
                         return false;
                     }
@@ -506,22 +510,23 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
+                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
                 if (bitWidth == 0) {
                     for (int i = 0; i < numDeltas; i++) {
-                        blockDeltas[i] = minDeltas[b];
+                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
                     }
                 } else {
-                    BitpackUtils.unpackAllValues(packedDataAddr, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(packedDataAddr, numDeltas, bitWidth, minD, blockDeltasAddr);
                 }
             }
             packedDataAddr += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
             // Cumulative sum from firstValue
-            long cumulative = firstValues[b];
-            blockBuffer[0] = cumulative;
+            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(blockBufferAddr, cumulative);
             for (int i = 0; i < numDeltas; i++) {
-                cumulative += blockDeltas[i];
-                blockBuffer[i + 1] = cumulative;
+                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
+                Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (i + 1) * Long.BYTES, cumulative);
             }
 
             blockBufferPos = 0;
@@ -531,7 +536,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private void decodeNextFlatBatch() {
             int batch = Math.min(flatRemaining, PostingIndexUtils.PACKED_BATCH_SIZE);
-            BitpackUtils.unpackValuesFrom(flatDataBase, flatStartIdx, batch, flatBitWidth, flatBaseValue, blockBuffer);
+            BitpackUtils.unpackValuesFrom(flatDataBase, flatStartIdx, batch, flatBitWidth, flatBaseValue, blockBufferAddr);
             flatStartIdx += batch;
             flatRemaining -= batch;
             blockBufferPos = 0;
@@ -540,11 +545,43 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private void ensureMetadataCapacity(int needed) {
             if (needed > metadataCapacity) {
-                metadataCapacity = Math.max(needed, metadataCapacity * 2);
-                valueCounts = new int[metadataCapacity];
-                firstValues = new long[metadataCapacity];
-                minDeltas = new long[metadataCapacity];
-                bitWidths = new int[metadataCapacity];
+                int newCapacity = Math.max(needed, metadataCapacity * 2);
+                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(firstValuesAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = newFirstAddr;
+                minDeltasAddr = newMinAddr;
+                metadataCapacity = newCapacity;
+                valueCounts = new int[newCapacity];
+                bitWidths = new int[newCapacity];
+            }
+        }
+
+        private void ensureDecodeWorkspaceCapacity(int count) {
+            if (count > decodeWorkspaceCapacity) {
+                if (decodeWorkspaceAddr != 0) {
+                    Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                decodeWorkspaceCapacity = count;
+                decodeWorkspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+
+        void close() {
+            Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.free(blockDeltasAddr, (long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            if (firstValuesAddr != 0) {
+                Unsafe.free(firstValuesAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = 0;
+            }
+            if (minDeltasAddr != 0) {
+                Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                minDeltasAddr = 0;
+            }
+            if (decodeWorkspaceAddr != 0) {
+                Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                decodeWorkspaceAddr = 0;
             }
         }
 
@@ -643,7 +680,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.sidecarOrdinal = 0;
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
-                BitpackUtils.unpackValuesFrom(dataAddr, effectiveStart, batch, bitWidth, baseValue, blockBuffer);
+                BitpackUtils.unpackValuesFrom(dataAddr, effectiveStart, batch, bitWidth, baseValue, blockBufferAddr);
                 this.blockBufferPos = 0;
                 this.blockBufferEnd = batch;
                 this.flatStartIdx = effectiveStart + batch;
@@ -741,12 +778,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             pos += blockCount;
 
             for (int b = 0; b < blockCount; b++) {
-                firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+                Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
+                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
             }
             pos += (long) blockCount * Long.BYTES;
 
             for (int b = 0; b < blockCount; b++) {
-                minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+                Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
+                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
             }
             pos += (long) blockCount * Long.BYTES;
 
@@ -769,7 +808,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 int lo = 0, hi = blockCount - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
-                    if (firstValues[mid] <= minValue) {
+                    if (Unsafe.getUnsafe().getLong(firstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
                         lo = mid;
                     } else {
                         hi = mid - 1;
@@ -795,7 +834,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (maxValue < Long.MAX_VALUE && blockCount > 0) {
                 // Find first block whose firstValue > maxValue — all subsequent blocks can be skipped
                 for (int b = startBlock; b < blockCount; b++) {
-                    if (firstValues[b] > maxValue) {
+                    if (Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES) > maxValue) {
                         endBlock = b;
                         break;
                     }

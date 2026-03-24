@@ -103,8 +103,8 @@ public final class PostingIndexNative {
      * gain outweighs copy cost.
      */
     public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth,
-                                        long minValue, long[] dest) {
-        BitpackUtils.unpackAllValues(srcAddr, valueCount, bitWidth, minValue, dest);
+                                        long minValue, long destAddr) {
+        BitpackUtils.unpackAllValues(srcAddr, valueCount, bitWidth, minValue, destAddr);
     }
 
     /**
@@ -113,8 +113,8 @@ public final class PostingIndexNative {
      * (zero-copy). Uses AVX2 for byte-aligned widths (8/16/32-bit).
      */
     public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount,
-                                         int bitWidth, long minValue, long[] dest) {
-        unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, dest);
+                                         int bitWidth, long minValue, long destAddr) {
+        unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
     }
 
     private static void packValuesNativeFallback(long valuesAddr, int count, long minValue,
@@ -168,5 +168,5 @@ public final class PostingIndexNative {
                                                  long minValue, long destAddr);
 
     private static native void unpackValuesFrom0(long srcAddr, int startIndex, int valueCount,
-                                                   int bitWidth, long minValue, long[] dest);
+                                                   int bitWidth, long minValue, long destAddr);
 }

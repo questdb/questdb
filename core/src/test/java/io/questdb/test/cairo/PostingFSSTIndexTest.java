@@ -599,16 +599,16 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
         long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         long destAddr1 = Unsafe.malloc(PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
         long destAddr2 = Unsafe.malloc(PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
+        PostingIndexUtils.EncodeContext ctx1 = new PostingIndexUtils.EncodeContext();
+        PostingIndexUtils.EncodeContext ctx2 = new PostingIndexUtils.EncodeContext();
         try {
             for (int i = 0; i < count; i++) {
                 Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
             }
 
-            PostingIndexUtils.EncodeContext ctx1 = new PostingIndexUtils.EncodeContext();
             ctx1.ensureCapacity(count);
             int size1 = PostingIndexUtils.encodeKey(values, count, destAddr1, ctx1);
 
-            PostingIndexUtils.EncodeContext ctx2 = new PostingIndexUtils.EncodeContext();
             ctx2.ensureCapacity(count);
             int size2 = PostingIndexUtils.encodeKeyNative(srcAddr, count, destAddr2, ctx2);
 
@@ -619,6 +619,8 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                         Unsafe.getUnsafe().getByte(destAddr2 + i));
             }
         } finally {
+            ctx1.close();
+            ctx2.close();
             Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(destAddr1, PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(destAddr2, PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);

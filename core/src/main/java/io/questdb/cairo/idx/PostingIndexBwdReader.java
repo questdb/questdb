@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -39,6 +40,12 @@ import io.questdb.std.str.Path;
  */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private final Cursor cursor = new Cursor();
+
+    @Override
+    public void close() {
+        cursor.close();
+        super.close();
+    }
 
     public PostingIndexBwdReader(
             CairoConfiguration configuration,
@@ -67,8 +74,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     }
 
     private class Cursor implements RowCursor {
-        private final long[] blockBuffer = new long[PostingIndexUtils.PACKED_BATCH_SIZE];
-        private final long[] blockDeltas = new long[PostingIndexUtils.BLOCK_CAPACITY];
+        private final long blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        private final long blockDeltasAddr = Unsafe.malloc((long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long next;
         private int blockBufferPos;
         private int currentGen;
@@ -81,8 +88,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         // Block metadata arrays (pre-allocated, grown as needed)
         private int metadataCapacity = 256;
         private int[] valueCounts = new int[256];
-        private long[] firstValues = new long[256];
-        private long[] minDeltas = new long[256];
+        private long firstValuesAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        private long minDeltasAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private int[] bitWidths = new int[256];
         private long[] blockPackedAddrs = new long[256];
         // Flat mode batch state (for count > BLOCK_CAPACITY)
@@ -101,7 +108,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             while (true) {
                 // Serve from block buffer in reverse
                 while (blockBufferPos >= 0) {
-                    long value = blockBuffer[blockBufferPos];
+                    long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                     if (value < minValue) {
                         return false;
                     }
@@ -293,21 +300,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
+                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
                 if (bitWidth == 0) {
                     for (int i = 0; i < numDeltas; i++) {
-                        blockDeltas[i] = minDeltas[b];
+                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
                     }
                 } else {
-                    BitpackUtils.unpackAllValues(blockPackedAddrs[b], numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(blockPackedAddrs[b], numDeltas, bitWidth, minD, blockDeltasAddr);
                 }
             }
 
             // Cumulative sum from firstValue
-            long cumulative = firstValues[b];
-            blockBuffer[0] = cumulative;
+            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(blockBufferAddr, cumulative);
             for (int i = 0; i < numDeltas; i++) {
-                cumulative += blockDeltas[i];
-                blockBuffer[i + 1] = cumulative;
+                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
+                Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (i + 1) * Long.BYTES, cumulative);
             }
 
             blockBufferPos = count - 1; // start from last value
@@ -317,7 +325,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int batch = Math.min(flatRemaining, PostingIndexUtils.PACKED_BATCH_SIZE);
             // Unpack from the end of remaining values
             int batchStart = flatStartIdx - batch;
-            BitpackUtils.unpackValuesFrom(flatDataBase, batchStart, batch, flatBitWidth, flatBaseValue, blockBuffer);
+            BitpackUtils.unpackValuesFrom(flatDataBase, batchStart, batch, flatBitWidth, flatBaseValue, blockBufferAddr);
             flatStartIdx = batchStart;
             flatRemaining -= batch;
             blockBufferPos = batch - 1;
@@ -325,12 +333,30 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         private void ensureMetadataCapacity(int needed) {
             if (needed > metadataCapacity) {
-                metadataCapacity = Math.max(needed, metadataCapacity * 2);
-                valueCounts = new int[metadataCapacity];
-                firstValues = new long[metadataCapacity];
-                minDeltas = new long[metadataCapacity];
-                bitWidths = new int[metadataCapacity];
-                blockPackedAddrs = new long[metadataCapacity];
+                int newCapacity = Math.max(needed, metadataCapacity * 2);
+                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(firstValuesAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = newFirstAddr;
+                minDeltasAddr = newMinAddr;
+                metadataCapacity = newCapacity;
+                valueCounts = new int[newCapacity];
+                bitWidths = new int[newCapacity];
+                blockPackedAddrs = new long[newCapacity];
+            }
+        }
+
+        void close() {
+            Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.free(blockDeltasAddr, (long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            if (firstValuesAddr != 0) {
+                Unsafe.free(firstValuesAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = 0;
+            }
+            if (minDeltasAddr != 0) {
+                Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                minDeltasAddr = 0;
             }
         }
 
@@ -426,7 +452,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
                 int batchStart = effectiveStart + effectiveCount - batch;
-                BitpackUtils.unpackValuesFrom(dataAddr, batchStart, batch, bitWidth, baseValue, blockBuffer);
+                BitpackUtils.unpackValuesFrom(dataAddr, batchStart, batch, bitWidth, baseValue, blockBufferAddr);
                 this.blockBufferPos = batch - 1;
                 this.flatStartIdx = batchStart;
                 this.flatRemaining = effectiveCount - batch;
@@ -535,12 +561,14 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             pos += blockCount;
 
             for (int b = 0; b < blockCount; b++) {
-                firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+                Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
+                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
             }
             pos += (long) blockCount * Long.BYTES;
 
             for (int b = 0; b < blockCount; b++) {
-                minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+                Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
+                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
             }
             pos += (long) blockCount * Long.BYTES;
 
@@ -564,7 +592,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int lo = 0, hi = blockCount - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
-                    if (firstValues[mid] <= maxValue) {
+                    if (Unsafe.getUnsafe().getLong(firstValuesAddr + (long) mid * Long.BYTES) <= maxValue) {
                         lo = mid;
                     } else {
                         hi = mid - 1;
@@ -582,7 +610,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int lo = 0, hi = blockCount - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
-                    if (firstValues[mid] <= minValue) {
+                    if (Unsafe.getUnsafe().getLong(firstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
                         lo = mid;
                     } else {
                         hi = mid - 1;

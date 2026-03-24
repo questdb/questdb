@@ -135,13 +135,13 @@ public final class BitpackUtils {
      * @param bitWidth bits per offset
      * @param destAddr destination memory address
      */
-    public static void packValues(long[] values, int count, long minValue, int bitWidth, long destAddr) {
+    public static void packValues(long valuesAddr, int count, long minValue, int bitWidth, long destAddr) {
         long buffer = 0;
         int bufferBits = 0;
         int destOffset = 0;
 
         for (int i = 0; i < count; i++) {
-            long offset = values[i] - minValue;
+            long offset = Unsafe.getUnsafe().getLong(valuesAddr + (long) i * Long.BYTES) - minValue;
             buffer |= (offset << bufferBits);
             bufferBits += bitWidth;
 
@@ -176,7 +176,7 @@ public final class BitpackUtils {
      * @param minValue   minimum value to add back
      * @param dest       destination array
      */
-    public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth, long minValue, long[] dest) {
+    public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth, long minValue, long destAddr) {
         long buffer = 0;
         int bufferBits = 0;
         int srcOffset = 0;
@@ -206,7 +206,7 @@ public final class BitpackUtils {
 
             // Extract offset and add minValue
             long offset = buffer & mask;
-            dest[i] = minValue + offset;
+            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + offset);
 
             // Remove used bits
             buffer >>>= bitWidth;
@@ -219,14 +219,13 @@ public final class BitpackUtils {
      * Uses native AVX2 path when available for byte-aligned widths (8/16/32-bit),
      * falling back to Java scalar for non-aligned widths.
      */
-    public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount, int bitWidth, long minValue, long[] dest) {
+    public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount, int bitWidth, long minValue, long destAddr) {
         if (valueCount == 0) {
             return;
         }
-        // Dispatch to native for byte-aligned widths where AVX2 gives a real
-        // speedup. Uses GetPrimitiveArrayCritical for zero-copy into the Java array.
+        // Dispatch to native for byte-aligned widths where AVX2 gives a real speedup.
         if (PostingIndexNative.isNativeAvailable() && (bitWidth == 8 || bitWidth == 16 || bitWidth == 32)) {
-            PostingIndexNative.unpackValuesFrom(srcAddr, startIndex, valueCount, bitWidth, minValue, dest);
+            PostingIndexNative.unpackValuesFrom(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
             return;
         }
         long mask = (1L << bitWidth) - 1;
@@ -274,7 +273,7 @@ public final class BitpackUtils {
                     }
                 }
             }
-            dest[i] = minValue + (buffer & mask);
+            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
             buffer >>>= bitWidth;
             bufferBits -= bitWidth;
         }

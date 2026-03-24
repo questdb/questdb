@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 /**
@@ -153,22 +154,24 @@ public class AlpCompression {
      * @return number of bytes written
      */
     public static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr) {
-        return compressDoubles(srcAddr, count, valueShift, destAddr, new long[count], new boolean[count]);
+        long encodedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        long exceptionAddr = Unsafe.malloc(count, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            return compressDoubles(srcAddr, count, valueShift, destAddr, encodedAddr, exceptionAddr);
+        } finally {
+            Unsafe.free(encodedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.free(exceptionAddr, count, MemoryTag.NATIVE_INDEX_READER);
+        }
     }
 
     public static int compressDoubles(long srcAddr, int count, int valueShift, long destAddr,
-                                      long[] encodedWorkspace, boolean[] exceptionWorkspace) {
+                                      long encodedAddr, long exceptionAddr) {
         int params = findBestAlpParams(srcAddr, count, valueShift);
         int e = params >>> 16;
         int f = params & 0xFFFF;
 
-        // Encode all values, detect exceptions
-        long[] encoded = encodedWorkspace;
-        boolean[] isException = exceptionWorkspace;
-        // Clear exception flags from prior use
-        for (int i = 0; i < count; i++) {
-            isException[i] = false;
-        }
+        // Clear exception flags
+        Unsafe.getUnsafe().setMemory(exceptionAddr, count, (byte) 0);
         int excCount = 0;
         long fillValue = 0;
         boolean fillFound = false;
@@ -177,16 +180,16 @@ public class AlpCompression {
             double val = readDouble(srcAddr, i, valueShift);
             long enc = alpEncode(val, e, f);
             if (enc == Long.MAX_VALUE) {
-                isException[i] = true;
+                Unsafe.getUnsafe().putByte(exceptionAddr + i, (byte) 1);
                 excCount++;
                 continue;
             }
             double dec = alpDecode(enc, e, f);
             if (Double.doubleToRawLongBits(dec) != Double.doubleToRawLongBits(val)) {
-                isException[i] = true;
+                Unsafe.getUnsafe().putByte(exceptionAddr + i, (byte) 1);
                 excCount++;
             } else {
-                encoded[i] = enc;
+                Unsafe.getUnsafe().putLong(encodedAddr + (long) i * Long.BYTES, enc);
                 if (!fillFound) {
                     fillValue = enc;
                     fillFound = true;
@@ -196,8 +199,8 @@ public class AlpCompression {
 
         // Replace exceptions with fill value
         for (int i = 0; i < count; i++) {
-            if (isException[i]) {
-                encoded[i] = fillValue;
+            if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
+                Unsafe.getUnsafe().putLong(encodedAddr + (long) i * Long.BYTES, fillValue);
             }
         }
 
@@ -205,8 +208,9 @@ public class AlpCompression {
         long forBase = Long.MAX_VALUE;
         long forMax = Long.MIN_VALUE;
         for (int i = 0; i < count; i++) {
-            forBase = Math.min(forBase, encoded[i]);
-            forMax = Math.max(forMax, encoded[i]);
+            long v = Unsafe.getUnsafe().getLong(encodedAddr + (long) i * Long.BYTES);
+            forBase = Math.min(forBase, v);
+            forMax = Math.max(forMax, v);
         }
         if (forBase == Long.MAX_VALUE) {
             forBase = 0;
@@ -228,19 +232,19 @@ public class AlpCompression {
         // Write packed data
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            BitpackUtils.packValues(encoded, count, forBase, bw, pos);
+            BitpackUtils.packValues(encodedAddr, count, forBase, bw, pos);
         }
         pos += packedBytes;
 
         // Write exception positions and values
         for (int i = 0; i < count; i++) {
-            if (isException[i]) {
+            if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
                 Unsafe.getUnsafe().putInt(pos, i);
                 pos += 4;
             }
         }
         for (int i = 0; i < count; i++) {
-            if (isException[i]) {
+            if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
                 double val = readDouble(srcAddr, i, valueShift);
                 Unsafe.getUnsafe().putDouble(pos, val);
                 pos += 8;
@@ -257,14 +261,19 @@ public class AlpCompression {
      */
     public static int decompressDoubles(long srcAddr, double[] output) {
         int count = Unsafe.getUnsafe().getInt(srcAddr);
-        return decompressDoubles(srcAddr, output, new long[count]);
+        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            return decompressDoubles(srcAddr, output, workspaceAddr);
+        } finally {
+            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
     }
 
     /**
-     * Decompress ALP-encoded doubles using a pre-allocated workspace to avoid allocation.
-     * The workspace must have length >= count (read from the header at srcAddr).
+     * Decompress ALP-encoded doubles using a pre-allocated native workspace to avoid allocation.
+     * The workspace must have room for count longs (read from the header at srcAddr).
      */
-    public static int decompressDoubles(long srcAddr, double[] output, long[] workspace) {
+    public static int decompressDoubles(long srcAddr, double[] output, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
@@ -278,19 +287,18 @@ public class AlpCompression {
 
         // Unpack FoR integers
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
-        long[] encoded = workspace;
         if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, count, bw, forBase, encoded);
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
         } else {
             for (int i = 0; i < count; i++) {
-                encoded[i] = forBase;
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
             }
         }
         pos += packedBytes;
 
         // ALP decode: integer -> double
         for (int i = 0; i < count; i++) {
-            output[i] = alpDecode(encoded[i], e, f);
+            output[i] = alpDecode(Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES), e, f);
         }
 
         // Patch exceptions
@@ -312,10 +320,6 @@ public class AlpCompression {
      * @return number of bytes written
      */
     public static int compressLongs(long srcAddr, int count, long destAddr) {
-        return compressLongs(srcAddr, count, destAddr, new long[count]);
-    }
-
-    public static int compressLongs(long srcAddr, int count, long destAddr, long[] workspace) {
         long forBase = Long.MAX_VALUE;
         long forMax = Long.MIN_VALUE;
         for (int i = 0; i < count; i++) {
@@ -335,14 +339,10 @@ public class AlpCompression {
         Unsafe.getUnsafe().putLong(pos, forBase);
         pos += 8;
 
-        int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            for (int i = 0; i < count; i++) {
-                workspace[i] = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            }
-            BitpackUtils.packValues(workspace, count, forBase, bw, pos);
+            BitpackUtils.packValues(srcAddr, count, forBase, bw, pos);
         }
-        pos += packedBytes;
+        pos += BitpackUtils.packedDataSize(count, bw);
 
         return (int) (pos - destAddr);
     }
@@ -359,12 +359,20 @@ public class AlpCompression {
         pos += 8;
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, count, bw, forBase, output);
-        } else {
-            for (int i = 0; i < count; i++) {
-                output[i] = forBase;
+        long outputAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            if (bw > 0) {
+                BitpackUtils.unpackAllValues(pos, count, bw, forBase, outputAddr);
+            } else {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putLong(outputAddr + (long) i * Long.BYTES, forBase);
+                }
             }
+            for (int i = 0; i < count; i++) {
+                output[i] = Unsafe.getUnsafe().getLong(outputAddr + (long) i * Long.BYTES);
+            }
+        } finally {
+            Unsafe.free(outputAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         }
         pos += packedBytes;
 
@@ -378,10 +386,15 @@ public class AlpCompression {
      * @return number of bytes written
      */
     public static int compressInts(long srcAddr, int count, long destAddr) {
-        return compressInts(srcAddr, count, destAddr, new long[count]);
+        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            return compressInts(srcAddr, count, destAddr, workspaceAddr);
+        } finally {
+            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
     }
 
-    public static int compressInts(long srcAddr, int count, long destAddr, long[] workspace) {
+    public static int compressInts(long srcAddr, int count, long destAddr, long workspaceAddr) {
         int forBase = Integer.MAX_VALUE;
         int forMax = Integer.MIN_VALUE;
         for (int i = 0; i < count; i++) {
@@ -402,14 +415,15 @@ public class AlpCompression {
         Unsafe.getUnsafe().putInt(pos, forBase);
         pos += 4;
 
-        int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
+            // Widen int→long into workspace for bitpacking
             for (int i = 0; i < count; i++) {
-                workspace[i] = Unsafe.getUnsafe().getInt(srcAddr + (long) i * Integer.BYTES);
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES,
+                        Unsafe.getUnsafe().getInt(srcAddr + (long) i * Integer.BYTES));
             }
-            BitpackUtils.packValues(workspace, count, (long) forBase, bw, pos);
+            BitpackUtils.packValues(workspaceAddr, count, (long) forBase, bw, pos);
         }
-        pos += packedBytes;
+        pos += BitpackUtils.packedDataSize(count, bw);
 
         return (int) (pos - destAddr);
     }
@@ -419,13 +433,18 @@ public class AlpCompression {
      */
     public static int decompressInts(long srcAddr, int[] output) {
         int count = Unsafe.getUnsafe().getInt(srcAddr);
-        return decompressInts(srcAddr, output, new long[count]);
+        long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            return decompressInts(srcAddr, output, workspaceAddr);
+        } finally {
+            Unsafe.free(workspaceAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
     }
 
     /**
-     * Decompress FoR-encoded ints using a pre-allocated workspace to avoid allocation.
+     * Decompress FoR-encoded ints using a pre-allocated native workspace to avoid allocation.
      */
-    public static int decompressInts(long srcAddr, int[] output, long[] workspace) {
+    public static int decompressInts(long srcAddr, int[] output, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
@@ -435,9 +454,9 @@ public class AlpCompression {
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, count, bw, 0, workspace);
+            BitpackUtils.unpackAllValues(pos, count, bw, 0, workspaceAddr);
             for (int i = 0; i < count; i++) {
-                output[i] = forBase + (int) workspace[i];
+                output[i] = forBase + (int) Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
             }
         } else {
             for (int i = 0; i < count; i++) {

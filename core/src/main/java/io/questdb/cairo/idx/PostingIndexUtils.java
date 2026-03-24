@@ -225,52 +225,70 @@ public final class PostingIndexUtils {
         }
         pos += blockCount;
 
-        // Read firstValues[]
-        long[] firstValues = new long[blockCount];
-        for (int b = 0; b < blockCount; b++) {
-            firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
-        }
-        pos += (long) blockCount * Long.BYTES;
+        long firstValuesAddr = 0;
+        long minDeltasAddr = 0;
+        long blockDeltasAddr = 0;
+        try {
+            // Read firstValues[] (off-heap)
+            firstValuesAddr = Unsafe.malloc((long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            for (int b = 0; b < blockCount; b++) {
+                Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
+                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
+            }
+            pos += (long) blockCount * Long.BYTES;
 
-        // Read minDeltas[]
-        long[] minDeltas = new long[blockCount];
-        for (int b = 0; b < blockCount; b++) {
-            minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
-        }
-        pos += (long) blockCount * Long.BYTES;
+            // Read minDeltas[] (off-heap)
+            minDeltasAddr = Unsafe.malloc((long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            for (int b = 0; b < blockCount; b++) {
+                Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
+                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
+            }
+            pos += (long) blockCount * Long.BYTES;
 
-        // Read bitWidths[]
-        int[] bitWidths = new int[blockCount];
-        for (int b = 0; b < blockCount; b++) {
-            bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
-        }
-        pos += blockCount;
+            // Read bitWidths[]
+            int[] bitWidths = new int[blockCount];
+            for (int b = 0; b < blockCount; b++) {
+                bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+            }
+            pos += blockCount;
 
-        // Decode each block — only count-1 deltas are packed (first value is in firstValues[])
-        int destIdx = 0;
-        long[] blockDeltas = new long[BLOCK_CAPACITY];
-        for (int b = 0; b < blockCount; b++) {
-            int count = valueCounts[b];
-            int bitWidth = bitWidths[b];
-            int numDeltas = count - 1;
+            // Decode each block — only count-1 deltas are packed (first value is in firstValues[])
+            int destIdx = 0;
+            blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            for (int b = 0; b < blockCount; b++) {
+                int count = valueCounts[b];
+                int bitWidth = bitWidths[b];
+                int numDeltas = count - 1;
 
-            if (numDeltas > 0) {
-                if (bitWidth == 0) {
-                    for (int i = 0; i < numDeltas; i++) {
-                        blockDeltas[i] = minDeltas[b];
+                if (numDeltas > 0) {
+                    long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
+                    if (bitWidth == 0) {
+                        for (int i = 0; i < numDeltas; i++) {
+                            Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
+                        }
+                    } else {
+                        BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minD, blockDeltasAddr);
                     }
-                } else {
-                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                }
+                pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
+
+                // Cumulative sum from firstValue to reconstruct absolute values
+                long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
+                dest[destIdx++] = cumulative;
+                for (int i = 0; i < numDeltas; i++) {
+                    cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
+                    dest[destIdx++] = cumulative;
                 }
             }
-            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
-
-            // Cumulative sum from firstValue to reconstruct absolute values
-            long cumulative = firstValues[b];
-            dest[destIdx++] = cumulative;
-            for (int i = 0; i < numDeltas; i++) {
-                cumulative += blockDeltas[i];
-                dest[destIdx++] = cumulative;
+        } finally {
+            if (firstValuesAddr != 0) {
+                Unsafe.free(firstValuesAddr, (long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (minDeltasAddr != 0) {
+                Unsafe.free(minDeltasAddr, (long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (blockDeltasAddr != 0) {
+                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
         }
     }
@@ -290,10 +308,10 @@ public final class PostingIndexUtils {
 
         ctx.ensureCapacity(blockCount);
         int[] valueCounts = ctx.valueCounts;
-        long[] firstValues = ctx.firstValues;
-        long[] minDeltas = ctx.minDeltas;
+        long firstValuesAddr = ctx.firstValuesAddr;
+        long minDeltasAddr = ctx.minDeltasAddr;
         int[] bitWidths = ctx.bitWidths;
-        long[] blockDeltas = ctx.blockDeltas;
+        long blockDeltasAddr = ctx.blockDeltasAddr;
 
         for (int b = 0; b < blockCount; b++) {
             valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
@@ -301,12 +319,14 @@ public final class PostingIndexUtils {
         pos += blockCount;
 
         for (int b = 0; b < blockCount; b++) {
-            firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
         for (int b = 0; b < blockCount; b++) {
-            minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
@@ -322,20 +342,21 @@ public final class PostingIndexUtils {
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
+                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
                 if (bitWidth == 0) {
                     for (int i = 0; i < numDeltas; i++) {
-                        blockDeltas[i] = minDeltas[b];
+                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
                     }
                 } else {
-                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minD, blockDeltasAddr);
                 }
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
-            long cumulative = firstValues[b];
+            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
             dest[destIdx++] = cumulative;
             for (int i = 0; i < numDeltas; i++) {
-                cumulative += blockDeltas[i];
+                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
                 dest[destIdx++] = cumulative;
             }
         }
@@ -356,10 +377,10 @@ public final class PostingIndexUtils {
 
         ctx.ensureCapacity(blockCount);
         int[] valueCounts = ctx.valueCounts;
-        long[] firstValues = ctx.firstValues;
-        long[] minDeltas = ctx.minDeltas;
+        long firstValuesAddr = ctx.firstValuesAddr;
+        long minDeltasAddr = ctx.minDeltasAddr;
         int[] bitWidths = ctx.bitWidths;
-        long[] blockDeltas = ctx.blockDeltas;
+        long blockDeltasAddr = ctx.blockDeltasAddr;
 
         for (int b = 0; b < blockCount; b++) {
             valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
@@ -367,12 +388,14 @@ public final class PostingIndexUtils {
         pos += blockCount;
 
         for (int b = 0; b < blockCount; b++) {
-            firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
         for (int b = 0; b < blockCount; b++) {
-            minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
@@ -388,21 +411,22 @@ public final class PostingIndexUtils {
             int numDeltas = count - 1;
 
             if (numDeltas > 0) {
+                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
                 if (bitWidth == 0) {
                     for (int i = 0; i < numDeltas; i++) {
-                        blockDeltas[i] = minDeltas[b];
+                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
                     }
                 } else {
-                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minDeltas[b], blockDeltas);
+                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minD, blockDeltasAddr);
                 }
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
-            long cumulative = firstValues[b];
+            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
             Unsafe.getUnsafe().putLong(destAddr + (long) destIdx * Long.BYTES, cumulative);
             destIdx++;
             for (int i = 0; i < numDeltas; i++) {
-                cumulative += blockDeltas[i];
+                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
                 Unsafe.getUnsafe().putLong(destAddr + (long) destIdx * Long.BYTES, cumulative);
                 destIdx++;
             }
@@ -441,17 +465,17 @@ public final class PostingIndexUtils {
         }
 
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
-        long[] deltas = ctx.deltas;
+        long deltasAddr = ctx.deltasAddr;
         int[] valueCounts = ctx.blockValueCounts;
-        long[] firstValues = ctx.blockFirstValues;
-        long[] minDeltas = ctx.blockMinDeltas;
+        long blockFirstValuesAddr = ctx.blockFirstValuesAddr;
+        long blockMinDeltasAddr = ctx.blockMinDeltasAddr;
         int[] bitWidths = ctx.blockBitWidths;
-        long[] residuals = ctx.residuals;
+        long residualsAddr = ctx.residualsAddr;
 
         // Compute deltas
-        deltas[0] = values[0];
+        Unsafe.getUnsafe().putLong(deltasAddr, values[0]);
         for (int i = 1; i < count; i++) {
-            deltas[i] = values[i] - values[i - 1];
+            Unsafe.getUnsafe().putLong(deltasAddr + (long) i * Long.BYTES, values[i] - values[i - 1]);
         }
 
         // Per-block metadata
@@ -461,7 +485,7 @@ public final class PostingIndexUtils {
             int blockSize = blockEnd - blockStart;
 
             valueCounts[b] = blockSize;
-            firstValues[b] = values[blockStart];
+            Unsafe.getUnsafe().putLong(blockFirstValuesAddr + (long) b * Long.BYTES, values[blockStart]);
 
             // Compute min/max delta for deltas[blockStart+1..blockEnd-1] only.
             // delta[blockStart] is redundant — firstValues[b] already stores the absolute value.
@@ -471,15 +495,16 @@ public final class PostingIndexUtils {
                 minD = 0;
                 maxD = 0;
             } else {
-                minD = deltas[blockStart + 1];
-                maxD = deltas[blockStart + 1];
+                minD = Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1) * Long.BYTES);
+                maxD = minD;
                 for (int i = blockStart + 2; i < blockEnd; i++) {
-                    if (deltas[i] < minD) minD = deltas[i];
-                    if (deltas[i] > maxD) maxD = deltas[i];
+                    long d = Unsafe.getUnsafe().getLong(deltasAddr + (long) i * Long.BYTES);
+                    if (d < minD) minD = d;
+                    if (d > maxD) maxD = d;
                 }
             }
 
-            minDeltas[b] = minD;
+            Unsafe.getUnsafe().putLong(blockMinDeltasAddr + (long) b * Long.BYTES, minD);
             long range = maxD - minD;
             bitWidths[b] = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
         }
@@ -499,13 +524,15 @@ public final class PostingIndexUtils {
 
         // firstValues[] (blockCount × 8B)
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES, firstValues[b]);
+            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(blockFirstValuesAddr + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
         // minDeltas[] (blockCount × 8B)
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES, minDeltas[b]);
+            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(blockMinDeltasAddr + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
@@ -524,18 +551,20 @@ public final class PostingIndexUtils {
             int bitWidth = bitWidths[b];
 
             if (bitWidth > 0 && numDeltas > 0) {
+                long minD = Unsafe.getUnsafe().getLong(blockMinDeltasAddr + (long) b * Long.BYTES);
                 if (ctx.nativeResidualsAddr != 0) {
                     long nrAddr = ctx.nativeResidualsAddr;
                     for (int i = 0; i < numDeltas; i++) {
                         Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
-                                deltas[blockStart + 1 + i] - minDeltas[b]);
+                                Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1 + i) * Long.BYTES) - minD);
                     }
                     PostingIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
                 } else {
                     for (int i = 0; i < numDeltas; i++) {
-                        residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
+                        Unsafe.getUnsafe().putLong(residualsAddr + (long) i * Long.BYTES,
+                                Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1 + i) * Long.BYTES) - minD);
                     }
-                    BitpackUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+                    BitpackUtils.packValues(residualsAddr, numDeltas, 0, bitWidth, pos);
                 }
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
@@ -568,19 +597,19 @@ public final class PostingIndexUtils {
         }
 
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
-        long[] deltas = ctx.deltas;
+        long deltasAddr = ctx.deltasAddr;
         int[] valueCounts = ctx.blockValueCounts;
-        long[] firstValues = ctx.blockFirstValues;
-        long[] minDeltas = ctx.blockMinDeltas;
+        long blockFirstValuesAddr = ctx.blockFirstValuesAddr;
+        long blockMinDeltasAddr = ctx.blockMinDeltasAddr;
         int[] bitWidths = ctx.blockBitWidths;
-        long[] residuals = ctx.residuals;
+        long residualsAddr = ctx.residualsAddr;
 
         // Compute deltas — reading directly from native memory
         long prev = Unsafe.getUnsafe().getLong(srcAddr);
-        deltas[0] = prev;
+        Unsafe.getUnsafe().putLong(deltasAddr, prev);
         for (int i = 1; i < count; i++) {
             long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            deltas[i] = val - prev;
+            Unsafe.getUnsafe().putLong(deltasAddr + (long) i * Long.BYTES, val - prev);
             prev = val;
         }
 
@@ -591,7 +620,8 @@ public final class PostingIndexUtils {
             int blockSize = blockEnd - blockStart;
 
             valueCounts[b] = blockSize;
-            firstValues[b] = Unsafe.getUnsafe().getLong(srcAddr + (long) blockStart * Long.BYTES);
+            Unsafe.getUnsafe().putLong(blockFirstValuesAddr + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(srcAddr + (long) blockStart * Long.BYTES));
 
             int numDeltas = blockSize - 1;
             long minD, maxD;
@@ -599,15 +629,16 @@ public final class PostingIndexUtils {
                 minD = 0;
                 maxD = 0;
             } else {
-                minD = deltas[blockStart + 1];
-                maxD = deltas[blockStart + 1];
+                minD = Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1) * Long.BYTES);
+                maxD = minD;
                 for (int i = blockStart + 2; i < blockEnd; i++) {
-                    if (deltas[i] < minD) minD = deltas[i];
-                    if (deltas[i] > maxD) maxD = deltas[i];
+                    long d = Unsafe.getUnsafe().getLong(deltasAddr + (long) i * Long.BYTES);
+                    if (d < minD) minD = d;
+                    if (d > maxD) maxD = d;
                 }
             }
 
-            minDeltas[b] = minD;
+            Unsafe.getUnsafe().putLong(blockMinDeltasAddr + (long) b * Long.BYTES, minD);
             long range = maxD - minD;
             bitWidths[b] = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
         }
@@ -624,12 +655,14 @@ public final class PostingIndexUtils {
         pos += blockCount;
 
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES, firstValues[b]);
+            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(blockFirstValuesAddr + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES, minDeltas[b]);
+            Unsafe.getUnsafe().putLong(pos + (long) b * Long.BYTES,
+                    Unsafe.getUnsafe().getLong(blockMinDeltasAddr + (long) b * Long.BYTES));
         }
         pos += (long) blockCount * Long.BYTES;
 
@@ -646,18 +679,20 @@ public final class PostingIndexUtils {
             int bitWidth = bitWidths[b];
 
             if (bitWidth > 0 && numDeltas > 0) {
+                long minD = Unsafe.getUnsafe().getLong(blockMinDeltasAddr + (long) b * Long.BYTES);
                 if (ctx.nativeResidualsAddr != 0) {
                     long nrAddr = ctx.nativeResidualsAddr;
                     for (int i = 0; i < numDeltas; i++) {
                         Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
-                                deltas[blockStart + 1 + i] - minDeltas[b]);
+                                Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1 + i) * Long.BYTES) - minD);
                     }
                     PostingIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
                 } else {
                     for (int i = 0; i < numDeltas; i++) {
-                        residuals[i] = deltas[blockStart + 1 + i] - minDeltas[b];
+                        Unsafe.getUnsafe().putLong(residualsAddr + (long) i * Long.BYTES,
+                                Unsafe.getUnsafe().getLong(deltasAddr + (long) (blockStart + 1 + i) * Long.BYTES) - minD);
                     }
-                    BitpackUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+                    BitpackUtils.packValues(residualsAddr, numDeltas, 0, bitWidth, pos);
                 }
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
@@ -678,13 +713,13 @@ public final class PostingIndexUtils {
         // Compute deltas and find min/max in a single pass
         long minD = Long.MAX_VALUE;
         long maxD = Long.MIN_VALUE;
-        long[] deltas = ctx.deltas;
+        long deltasAddr = ctx.deltasAddr;
 
         long prev = firstValue;
         for (int i = 1; i < count; i++) {
             long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
             long d = val - prev;
-            deltas[i] = d;
+            Unsafe.getUnsafe().putLong(deltasAddr + (long) i * Long.BYTES, d);
             if (d < minD) minD = d;
             if (d > maxD) maxD = d;
             prev = val;
@@ -715,15 +750,17 @@ public final class PostingIndexUtils {
             if (ctx.nativeResidualsAddr != 0) {
                 long nrAddr = ctx.nativeResidualsAddr;
                 for (int i = 0; i < numDeltas; i++) {
-                    Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES, deltas[i + 1] - minD);
+                    Unsafe.getUnsafe().putLong(nrAddr + (long) i * Long.BYTES,
+                            Unsafe.getUnsafe().getLong(deltasAddr + (long) (i + 1) * Long.BYTES) - minD);
                 }
                 PostingIndexNative.packValuesNative(nrAddr, numDeltas, 0, bitWidth, pos);
             } else {
-                long[] residuals = ctx.residuals;
+                long residualsAddr = ctx.residualsAddr;
                 for (int i = 0; i < numDeltas; i++) {
-                    residuals[i] = deltas[i + 1] - minD;
+                    Unsafe.getUnsafe().putLong(residualsAddr + (long) i * Long.BYTES,
+                            Unsafe.getUnsafe().getLong(deltasAddr + (long) (i + 1) * Long.BYTES) - minD);
                 }
-                BitpackUtils.packValues(residuals, numDeltas, 0, bitWidth, pos);
+                BitpackUtils.packValues(residualsAddr, numDeltas, 0, bitWidth, pos);
             }
         }
         pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
@@ -735,29 +772,48 @@ public final class PostingIndexUtils {
      * Reusable workspace for encodeKey to avoid per-call allocations.
      */
     public static class EncodeContext {
-        long[] deltas;
+        long deltasAddr;
         int[] blockValueCounts;
-        long[] blockFirstValues;
-        long[] blockMinDeltas;
+        long blockFirstValuesAddr;
+        long blockMinDeltasAddr;
         int[] blockBitWidths;
-        long[] residuals = new long[BLOCK_CAPACITY];
+        long residualsAddr;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
         int deltaCapacity;
         private int blockCapacity;
+        private int residualsCapacity;
 
         public void ensureCapacity(int count) {
             if (count > deltaCapacity) {
-                deltaCapacity = Math.max(count, deltaCapacity * 2);
-                deltas = new long[deltaCapacity];
+                int newCapacity = Math.max(count, deltaCapacity * 2);
+                long newAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                if (deltasAddr != 0) {
+                    Unsafe.free(deltasAddr, (long) deltaCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                deltasAddr = newAddr;
+                deltaCapacity = newCapacity;
             }
             int bc = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
             if (bc > blockCapacity) {
-                blockCapacity = Math.max(bc, blockCapacity * 2);
-                blockValueCounts = new int[blockCapacity];
-                blockFirstValues = new long[blockCapacity];
-                blockMinDeltas = new long[blockCapacity];
-                blockBitWidths = new int[blockCapacity];
+                int newBc = Math.max(bc, blockCapacity * 2);
+                long newFirstAddr = Unsafe.malloc((long) newBc * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr = Unsafe.malloc((long) newBc * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                if (blockFirstValuesAddr != 0) {
+                    Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (blockMinDeltasAddr != 0) {
+                    Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                blockFirstValuesAddr = newFirstAddr;
+                blockMinDeltasAddr = newMinAddr;
+                blockCapacity = newBc;
+                blockValueCounts = new int[newBc];
+                blockBitWidths = new int[newBc];
+            }
+            if (residualsAddr == 0) {
+                residualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                residualsCapacity = BLOCK_CAPACITY;
             }
             if (nativeResidualsAddr == 0 && PostingIndexNative.isNativeAvailable()) {
                 nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -765,6 +821,22 @@ public final class PostingIndexUtils {
         }
 
         public void close() {
+            if (deltasAddr != 0) {
+                Unsafe.free(deltasAddr, (long) deltaCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                deltasAddr = 0;
+            }
+            if (blockFirstValuesAddr != 0) {
+                Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockFirstValuesAddr = 0;
+            }
+            if (blockMinDeltasAddr != 0) {
+                Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockMinDeltasAddr = 0;
+            }
+            if (residualsAddr != 0) {
+                Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                residualsAddr = 0;
+            }
             if (nativeResidualsAddr != 0) {
                 Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 nativeResidualsAddr = 0;
@@ -777,19 +849,46 @@ public final class PostingIndexUtils {
      */
     public static class DecodeContext {
         int[] valueCounts;
-        long[] firstValues;
-        long[] minDeltas;
+        long firstValuesAddr;
+        long minDeltasAddr;
         int[] bitWidths;
-        long[] blockDeltas = new long[BLOCK_CAPACITY];
+        long blockDeltasAddr;
         private int blockCapacity;
 
         public void ensureCapacity(int blockCount) {
             if (blockCount > blockCapacity) {
-                blockCapacity = Math.max(blockCount, blockCapacity * 2);
-                valueCounts = new int[blockCapacity];
-                firstValues = new long[blockCapacity];
-                minDeltas = new long[blockCapacity];
-                bitWidths = new int[blockCapacity];
+                int newCapacity = Math.max(blockCount, blockCapacity * 2);
+                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                if (firstValuesAddr != 0) {
+                    Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (minDeltasAddr != 0) {
+                    Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                firstValuesAddr = newFirstAddr;
+                minDeltasAddr = newMinAddr;
+                blockCapacity = newCapacity;
+                valueCounts = new int[newCapacity];
+                bitWidths = new int[newCapacity];
+            }
+            if (blockDeltasAddr == 0) {
+                blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+
+        public void close() {
+            if (firstValuesAddr != 0) {
+                Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = 0;
+            }
+            if (minDeltasAddr != 0) {
+                Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                minDeltasAddr = 0;
+            }
+            if (blockDeltasAddr != 0) {
+                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockDeltasAddr = 0;
             }
         }
     }

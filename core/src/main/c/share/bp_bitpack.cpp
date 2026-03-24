@@ -276,27 +276,23 @@ Java_io_questdb_cairo_idx_PostingIndexNative_unpackAllValues0(
 
 JNIEXPORT void JNICALL
 Java_io_questdb_cairo_idx_PostingIndexNative_unpackValuesFrom0(
-        JNIEnv *env,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
         jlong srcAddr,
         jint startIndex,
         jint valueCount,
         jint bitWidth,
         jlong minValue,
-        jlongArray destArray
+        jlong destAddr
 ) {
-    auto *dest = reinterpret_cast<int64_t *>(
-        env->GetPrimitiveArrayCritical(destArray, nullptr));
-    if (dest == nullptr) return;
     unpack_values_from(
         reinterpret_cast<const uint8_t *>(srcAddr),
         startIndex,
         valueCount,
         bitWidth,
         minValue,
-        dest
+        reinterpret_cast<int64_t *>(destAddr)
     );
-    env->ReleasePrimitiveArrayCritical(destArray, dest, 0);
 }
 
 } // extern "C"

@@ -95,7 +95,8 @@ public class PostingIndexWriter implements IndexWriter {
     private int keyCapacity;
     private int keyCount;
     private String indexName;
-    private long[] packedResiduals = new long[0];
+    private long packedResidualsAddr;
+    private int packedResidualsCapacity;
     private String partitionPath;
     private long pendingCountsAddr;
     private long pendingValuesAddr;
@@ -105,7 +106,8 @@ public class PostingIndexWriter implements IndexWriter {
     private long spillKeyAddrsAddr;
     private long spillKeyCapacitiesAddr;
     private long spillKeyCountsAddr;
-    private long[] unpackBatch = new long[0];
+    private long unpackBatchAddr;
+    private int unpackBatchCapacity;
     private long valueMemSize;
 
     public PostingIndexWriter(CairoConfiguration configuration) {
@@ -524,12 +526,20 @@ public class PostingIndexWriter implements IndexWriter {
 
             // Pre-allocate seal-path arrays to avoid per-stride allocations
             int preAllocPerKey = maxPerKey + PostingIndexUtils.BLOCK_CAPACITY * genCount;
-            if (preAllocPerKey > unpackBatch.length) {
-                unpackBatch = new long[preAllocPerKey];
+            if (preAllocPerKey > unpackBatchCapacity) {
+                if (unpackBatchAddr != 0) {
+                    Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                unpackBatchCapacity = preAllocPerKey;
+                unpackBatchAddr = Unsafe.malloc((long) preAllocPerKey * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
             int preAllocPerStride = (int) Math.min(maxPerStride, Integer.MAX_VALUE);
-            if (preAllocPerStride > packedResiduals.length) {
-                packedResiduals = new long[preAllocPerStride];
+            if (preAllocPerStride > packedResidualsCapacity) {
+                if (packedResidualsAddr != 0) {
+                    Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                packedResidualsCapacity = preAllocPerStride;
+                packedResidualsAddr = Unsafe.malloc((long) preAllocPerStride * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
 
             // Append-only seal: write sealed data AFTER existing data so that
@@ -898,12 +908,18 @@ public class PostingIndexWriter implements IndexWriter {
                 if (count > 0) {
                     int flatHdrSize = PostingIndexUtils.strideFlatHeaderSize(ks);
                     long flatDataAddr = strideAddr + flatHdrSize;
-                    if (count > unpackBatch.length) {
-                        unpackBatch = new long[Math.max(count, unpackBatch.length * 2)];
+                    if (count > unpackBatchCapacity) {
+                        int newCap = Math.max(count, unpackBatchCapacity * 2);
+                        if (unpackBatchAddr != 0) {
+                            Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        }
+                        unpackBatchCapacity = newCap;
+                        unpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
-                    BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatch);
+                    BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatchAddr);
                     for (int i = 0; i < count; i++) {
-                        Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES, unpackBatch[i]);
+                        Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES,
+                                Unsafe.getUnsafe().getLong(unpackBatchAddr + (long) i * Long.BYTES));
                         totalCount++;
                     }
                 }
@@ -980,18 +996,25 @@ public class PostingIndexWriter implements IndexWriter {
                 totalValues += keyCounts[j];
             }
             if (totalValues > 0 && localBitWidth > 0) {
-                if (totalValues > packedResiduals.length) {
-                    packedResiduals = new long[Math.max(totalValues, packedResiduals.length * 2)];
+                if (totalValues > packedResidualsCapacity) {
+                    int newCap = Math.max(totalValues, packedResidualsCapacity * 2);
+                    if (packedResidualsAddr != 0) {
+                        Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    packedResidualsCapacity = newCap;
+                    packedResidualsAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
                 int idx = 0;
                 for (int j = 0; j < ks; j++) {
                     int count = keyCounts[j];
                     long keyAddr = mergedValuesAddr + keyOffsets[j] * Long.BYTES;
                     for (int i = 0; i < count; i++) {
-                        packedResiduals[idx++] = Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES) - strideMinValue;
+                        Unsafe.getUnsafe().putLong(packedResidualsAddr + (long) idx * Long.BYTES,
+                                Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES) - strideMinValue);
+                        idx++;
                     }
                 }
-                BitpackUtils.packValues(packedResiduals, totalValues, 0, localBitWidth, packedBuf);
+                BitpackUtils.packValues(packedResidualsAddr, totalValues, 0, localBitWidth, packedBuf);
             }
 
             valueMem.putBlockOfBytes(packedBuf, flatDataSize);
@@ -1130,9 +1153,10 @@ public class PostingIndexWriter implements IndexWriter {
         for (int j = 0; j < ks; j++) {
             maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
         }
-        long[] longWorkspace = maxKeyCount > 0 ? new long[maxKeyCount] : null;
-        boolean[] boolWorkspace = maxKeyCount > 0 ? new boolean[maxKeyCount] : null;
+        long longWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER) : 0;
+        long exceptionWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc(maxKeyCount, MemoryTag.NATIVE_INDEX_READER) : 0;
 
+        try {
         for (int c = 0; c < coverCount; c++) {
             long colAddr = coveredColumnMems != null
                     ? coveredColumnMems[c].addressOf(0)
@@ -1196,7 +1220,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                     // Compress and write
                     int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType,
-                            compressBuf, longWorkspace, boolWorkspace);
+                            compressBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
                     sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
                 }
             } finally {
@@ -1205,23 +1229,31 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
         }
+        } finally {
+            if (longWorkspaceAddr != 0) {
+                Unsafe.free(longWorkspaceAddr, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (exceptionWorkspaceAddr != 0) {
+                Unsafe.free(exceptionWorkspaceAddr, maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
     }
 
     private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
-                                              long destBuf, long[] longWorkspace, boolean[] boolWorkspace) {
+                                              long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE:
-                return AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspace, boolWorkspace);
+                return AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
             case ColumnType.LONG:
             case ColumnType.TIMESTAMP:
             case ColumnType.DATE:
             case ColumnType.GEOLONG:
-                return AlpCompression.compressLongs(rawBuf, valueCount, destBuf, longWorkspace);
+                return AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
             case ColumnType.FLOAT:
             case ColumnType.GEOINT:
             case ColumnType.INT:
             case ColumnType.SYMBOL:
-                return AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspace);
+                return AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:
             case ColumnType.BYTE:
@@ -1353,9 +1385,18 @@ public class PostingIndexWriter implements IndexWriter {
                             if (strideTotal > maxStrideTotal) maxStrideTotal = strideTotal;
                         }
                     }
-                    long[] reencodeUnpackBatch = maxPerKeyCount > 0 ? new long[maxPerKeyCount] : new long[0];
-                    if (maxStrideTotal > packedResiduals.length) {
-                        packedResiduals = new long[maxStrideTotal];
+                    long reencodeUnpackBatchAddr = 0;
+                    int reencodeUnpackBatchCapacity = 0;
+                    if (maxPerKeyCount > 0) {
+                        reencodeUnpackBatchCapacity = maxPerKeyCount;
+                        reencodeUnpackBatchAddr = Unsafe.malloc((long) maxPerKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    if (maxStrideTotal > packedResidualsCapacity) {
+                        if (packedResidualsAddr != 0) {
+                            Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        }
+                        packedResidualsCapacity = maxStrideTotal;
+                        packedResidualsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     }
                     for (int gen = 0; gen < genCount; gen++) {
                         long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
@@ -1416,12 +1457,18 @@ public class PostingIndexWriter implements IndexWriter {
                                                 keyOffsetsAddr + (long) key * Long.BYTES);
                                         long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
 
-                                        if (count > reencodeUnpackBatch.length) {
-                                            reencodeUnpackBatch = new long[Math.max(count, reencodeUnpackBatch.length * 2)];
+                                        if (count > reencodeUnpackBatchCapacity) {
+                                            int newCap = Math.max(count, reencodeUnpackBatchCapacity * 2);
+                                            if (reencodeUnpackBatchAddr != 0) {
+                                                Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                                            }
+                                            reencodeUnpackBatchCapacity = newCap;
+                                            reencodeUnpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                                         }
-                                        BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, reencodeUnpackBatch);
+                                        BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, reencodeUnpackBatchAddr);
                                         for (int i = 0; i < count; i++) {
-                                            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, reencodeUnpackBatch[i]);
+                                            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES,
+                                                    Unsafe.getUnsafe().getLong(reencodeUnpackBatchAddr + (long) i * Long.BYTES));
                                         }
     
                                         Unsafe.getUnsafe().putLong(
@@ -1509,6 +1556,10 @@ public class PostingIndexWriter implements IndexWriter {
                         }
                     }
     
+                    if (reencodeUnpackBatchAddr != 0) {
+                        Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+
                     // Phase 3: Re-encode into single generation using stride-indexed format
                     // with adaptive per-stride encoding (delta vs flat)
                     {
@@ -2505,6 +2556,17 @@ public class PostingIndexWriter implements IndexWriter {
             flushHeaderBufCapacity = 0;
         }
         encodeCtx.close();
+        decodeCtx.close();
+        if (packedResidualsAddr != 0) {
+            Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            packedResidualsAddr = 0;
+            packedResidualsCapacity = 0;
+        }
+        if (unpackBatchAddr != 0) {
+            Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            unpackBatchAddr = 0;
+            unpackBatchCapacity = 0;
+        }
         keyCapacity = 0;
     }
 
