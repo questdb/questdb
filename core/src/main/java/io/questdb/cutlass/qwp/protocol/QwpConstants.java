@@ -185,18 +185,18 @@ public final class QwpConstants {
 
     /**
      * Column type: DECIMAL128 (16 bytes, 38 digits precision).
-     * Wire format: [scale (1B in schema)] + [big-endian unscaled value (16B)]
+     * Wire format: [scale (1B in schema)] + [little-endian unscaled value (16B)]
      */
     public static final byte TYPE_DECIMAL128 = 0x14;
     /**
      * Column type: DECIMAL256 (32 bytes, 77 digits precision).
-     * Wire format: [scale (1B in schema)] + [big-endian unscaled value (32B)]
+     * Wire format: [scale (1B in schema)] + [little-endian unscaled value (32B)]
      */
     public static final byte TYPE_DECIMAL256 = 0x15;
 
     /**
      * Column type: DECIMAL64 (8 bytes, 18 digits precision).
-     * Wire format: [scale (1B in schema)] + [big-endian unscaled value (8B)]
+     * Wire format: [scale (1B in schema)] + [little-endian unscaled value (8B)]
      */
     public static final byte TYPE_DECIMAL64 = 0x13;
     /**

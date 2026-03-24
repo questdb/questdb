@@ -49,7 +49,7 @@ compatibility with older clients.
 
 | Magic  | Hex Value      | Description                          |
 |--------|----------------|--------------------------------------|
-| `QWP1` | `0x31505751`   | Standard data message (LE int32)     |
+| `QWP1` | `0x31505751`   | Standard data message                |
 | `ILP?` | `0x3F504C49`   | Capability request (8 bytes total)   |
 | `ILP!` | `0x21504C49`   | Capability response (8 bytes total)  |
 | `ILP0` | `0x30504C49`   | Fallback (server doesn't support QWP)|
@@ -105,33 +105,8 @@ byte does not match with a parse error.
 
 ## 4. Byte Ordering
 
-### Little-Endian (default)
-
-Most numeric types use **little-endian** byte ordering:
-- Message header fields
-- `BYTE`, `SHORT`, `INT`, `LONG`
-- `FLOAT`, `DOUBLE`
-- `TIMESTAMP`, `TIMESTAMP_NANOS`, `DATE`
-- `UUID`, `LONG256`
-- Array dimension lengths and values
-- String offset arrays
-- Schema hash
-
-### Big-Endian (exceptions)
-
-The following types use **big-endian** byte ordering:
-- `DECIMAL64`, `DECIMAL128`, `DECIMAL256` (unscaled values)
-
-### Endianness Summary
-
-| Category                            | Byte Order    |
-|-------------------------------------|---------------|
-| Message header fields               | Little-endian |
-| Varint-encoded values               | LEB128 (LE)   |
-| Fixed-width numerics                | Little-endian |
-| DECIMAL64 / DECIMAL128 / DECIMAL256 | Big-endian    |
-| String offsets                      | Little-endian |
-| Schema hash                         | Little-endian |
+All multi-byte numeric values are **little-endian**. Variable-length integers
+use unsigned LEB128 (see §5).
 
 ---
 
@@ -208,11 +183,11 @@ decode(n) = (n >>> 1) ^ -(n & 1)
 ```
 Offset  Size  Type    Field           Description
 ──────────────────────────────────────────────────────────
-0       4     int32   magic           "QWP1" (0x31505751, LE)
+0       4     int32   magic           "QWP1" (0x31505751)
 4       1     uint8   version         Protocol version (0x01)
 5       1     uint8   flags           Compression/encoding flags
-6       2     uint16  table_count     Number of table blocks (LE)
-8       4     uint32  payload_length  Payload size in bytes (LE)
+6       2     uint16  table_count     Number of table blocks
+8       4     uint32  payload_length  Payload size in bytes
 ```
 
 **Total message size** = 12 + payload length.
@@ -337,7 +312,7 @@ Used for subsequent batches when the server has already cached the schema.
 ┌─────────────────────────────────────────┐
 │ mode_byte: 0x01                         │
 ├─────────────────────────────────────────┤
-│ schema_hash: int64 (LE)                 │
+│ schema_hash: int64                      │
 └─────────────────────────────────────────┘
 ```
 
@@ -351,30 +326,30 @@ codes. If the server does not recognize the hash, it responds with
 
 ### Type Code Table
 
-| Code | Hex    | Type            | Size            | Endian | Description                       |
-|------|--------|-----------------|-----------------|--------|-----------------------------------|
-| 1    | `0x01` | BOOLEAN         | 1 bit           | N/A    | Bit-packed boolean                |
-| 2    | `0x02` | BYTE            | 1               | N/A    | Signed 8-bit integer              |
-| 3    | `0x03` | SHORT           | 2               | LE     | Signed 16-bit integer             |
-| 4    | `0x04` | INT             | 4               | LE     | Signed 32-bit integer             |
-| 5    | `0x05` | LONG            | 8               | LE     | Signed 64-bit integer             |
-| 6    | `0x06` | FLOAT           | 4               | LE     | IEEE 754 single precision         |
-| 7    | `0x07` | DOUBLE          | 8               | LE     | IEEE 754 double precision         |
-| 8    | `0x08` | STRING          | var             | N/A    | Length-prefixed UTF-8             |
-| 9    | `0x09` | SYMBOL          | var             | N/A    | Dictionary-encoded string         |
-| 10   | `0x0A` | TIMESTAMP       | 8               | LE     | Microseconds since epoch          |
-| 11   | `0x0B` | DATE            | 8               | LE     | Milliseconds since epoch          |
-| 12   | `0x0C` | UUID            | 16              | LE     | RFC 4122 UUID                     |
-| 13   | `0x0D` | LONG256         | 32              | LE     | 256-bit integer                   |
-| 14   | `0x0E` | GEOHASH         | var             | N/A    | Geospatial hash                   |
-| 15   | `0x0F` | VARCHAR         | var             | N/A    | Length-prefixed UTF-8 (aux storage)|
-| 16   | `0x10` | TIMESTAMP_NANOS | 8               | LE     | Nanoseconds since epoch           |
-| 17   | `0x11` | DOUBLE_ARRAY    | var             | LE     | N-dimensional double array        |
-| 18   | `0x12` | LONG_ARRAY      | var             | LE     | N-dimensional long array          |
-| 19   | `0x13` | DECIMAL64       | 8               | **BE** | Decimal (18 digits precision)     |
-| 20   | `0x14` | DECIMAL128      | 16              | **BE** | Decimal (38 digits precision)     |
-| 21   | `0x15` | DECIMAL256      | 32              | **BE** | Decimal (77 digits precision)     |
-| 22   | `0x16` | CHAR            | 2               | LE     | Single UTF-16 code unit           |
+| Code | Hex    | Type            | Size    | Description                        |
+|------|--------|-----------------|---------|------------------------------------|
+| 1    | `0x01` | BOOLEAN         | 1 bit   | Bit-packed boolean                 |
+| 2    | `0x02` | BYTE            | 1       | Signed 8-bit integer               |
+| 3    | `0x03` | SHORT           | 2       | Signed 16-bit integer              |
+| 4    | `0x04` | INT             | 4       | Signed 32-bit integer              |
+| 5    | `0x05` | LONG            | 8       | Signed 64-bit integer              |
+| 6    | `0x06` | FLOAT           | 4       | IEEE 754 single precision          |
+| 7    | `0x07` | DOUBLE          | 8       | IEEE 754 double precision          |
+| 8    | `0x08` | STRING          | var     | Length-prefixed UTF-8              |
+| 9    | `0x09` | SYMBOL          | var     | Dictionary-encoded string          |
+| 10   | `0x0A` | TIMESTAMP       | 8       | Microseconds since epoch           |
+| 11   | `0x0B` | DATE            | 8       | Milliseconds since epoch           |
+| 12   | `0x0C` | UUID            | 16      | RFC 4122 UUID                      |
+| 13   | `0x0D` | LONG256         | 32      | 256-bit integer                    |
+| 14   | `0x0E` | GEOHASH         | var     | Geospatial hash                    |
+| 15   | `0x0F` | VARCHAR         | var     | Length-prefixed UTF-8 (aux storage)|
+| 16   | `0x10` | TIMESTAMP_NANOS | 8       | Nanoseconds since epoch            |
+| 17   | `0x11` | DOUBLE_ARRAY    | var     | N-dimensional double array         |
+| 18   | `0x12` | LONG_ARRAY      | var     | N-dimensional long array           |
+| 19   | `0x13` | DECIMAL64       | 8       | Decimal (18 digits precision)      |
+| 20   | `0x14` | DECIMAL128      | 16      | Decimal (38 digits precision)      |
+| 21   | `0x15` | DECIMAL256      | 32      | Decimal (77 digits precision)      |
+| 22   | `0x16` | CHAR            | 2       | Single UTF-16 code unit            |
 
 TIMESTAMP and TIMESTAMP_NANOS may use Gorilla encoding when `FLAG_GORILLA` is
 set (see [Column Data Encoding](#12-column-data-encoding)).
@@ -439,8 +414,7 @@ the bitmap to expand sparse non-null values into dense storage.
 ### Fixed-Width Types
 
 For BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, CHAR: values are written as
-contiguous arrays of their respective sizes in little-endian byte order. The
-encoder uses bulk memory copy when wire format matches native byte order.
+contiguous arrays of their respective sizes.
 
 ```
 ┌─────────────────────────────────────────┐
@@ -480,7 +454,7 @@ Byte layout for values [true, false, true, true, false, false, false, true]:
 ```
 
 - `value_count = row_count - null_count`
-- Offsets are uint32, little-endian
+- Offsets are uint32
 - String `i` spans bytes `[offset[i], offset[i+1])`
 
 ### Symbol Type (`0x09`)
@@ -537,7 +511,7 @@ uncompressed int64 arrays.
 │ [Null flag + bitmap (see §11)]          │
 ├─────────────────────────────────────────┤
 │ Timestamp values (non-null only):       │
-│   value_count x int64 (LE)              │
+│   value_count x int64                   │
 └─────────────────────────────────────────┘
 ```
 
@@ -557,7 +531,7 @@ uncompressed int64 arrays.
 │ encoding_flag: uint8 (0x00)             │
 ├─────────────────────────────────────────┤
 │ Timestamp values (non-null only):       │
-│   value_count x int64 (LE)              │
+│   value_count x int64                   │
 └─────────────────────────────────────────┘
 ```
 
@@ -569,9 +543,9 @@ uncompressed int64 arrays.
 ├─────────────────────────────────────────┤
 │ encoding_flag: uint8 (0x01)             │
 ├─────────────────────────────────────────┤
-│ first_timestamp: int64 (LE)             │
+│ first_timestamp: int64                  │
 ├─────────────────────────────────────────┤
-│ second_timestamp: int64 (LE)            │
+│ second_timestamp: int64                 │
 ├─────────────────────────────────────────┤
 │ Bit-packed delta-of-deltas:             │
 │   For timestamps 3..N                   │
@@ -628,8 +602,8 @@ N-dimensional arrays of DOUBLE or LONG, row-major order:
 ┌─────────────────────────────────────────┐
 │ For each row:                           │
 │   n_dims:      uint8          Number of dimensions    │
-│   dim_lengths: n_dims x int32 LE   Length per dim     │
-│   values:      product(dims) x element, LE            │
+│   dim_lengths: n_dims x int32      Length per dim     │
+│   values:      product(dims) x element                │
 │                (float64 for DOUBLE_ARRAY,              │
 │                 int64 for LONG_ARRAY)                  │
 └─────────────────────────────────────────┘
@@ -637,7 +611,7 @@ N-dimensional arrays of DOUBLE or LONG, row-major order:
 
 ### Decimal Types (`0x13`, `0x14`, `0x15`)
 
-Decimal values are stored as big-endian two's complement integers. The scale
+Decimal values are stored as two's complement integers. The scale
 (number of decimal places) is a 1-byte prefix in the column data section,
 shared by all values in the column.
 
@@ -647,7 +621,7 @@ shared by all values in the column.
 ├─────────────────────────────────────────┤
 │ scale: uint8                            │
 ├─────────────────────────────────────────┤
-│ Unscaled values (big-endian):           │
+│ Unscaled values:                        │
 │   DECIMAL64:  8 bytes x value_count     │
 │   DECIMAL128: 16 bytes x value_count    │
 │   DECIMAL256: 32 bytes x value_count    │
@@ -693,7 +667,7 @@ that correlates the response with the original request.
 ```
 ┌──────────────────────────────────────────────────────┐
 │ status:    uint8   (0x00)                             │
-│ sequence:  int64 LE       Request sequence number     │
+│ sequence:  int64          Request sequence number     │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -702,8 +676,8 @@ that correlates the response with the original request.
 ```
 ┌──────────────────────────────────────────────────────┐
 │ status:    uint8          Status code                 │
-│ sequence:  int64 LE       Request sequence number     │
-│ msg_len:   uint16 LE      Error message length        │
+│ sequence:  int64          Request sequence number     │
+│ msg_len:   uint16         Error message length        │
 │ msg_bytes: bytes          UTF-8 error message         │
 └──────────────────────────────────────────────────────┘
 ```
@@ -801,11 +775,11 @@ Table: `sensors`, 2 rows, 3 columns: `id` (LONG), `value` (DOUBLE), `ts`
 
 ```
 # Header (12 bytes)
-51 57 50 31  # Magic: "QWP1" (LE)
+51 57 50 31  # Magic: "QWP1"
 01           # Version: 1
 00           # Flags: none
-01 00        # Table count: 1 (LE uint16)
-XX XX XX XX  # Payload length (LE uint32)
+01 00        # Table count: 1
+XX XX XX XX  # Payload length
 
 # Table Block
 07           # Table name length: 7
@@ -928,7 +902,7 @@ Payload:
       00                       -- row 0: global ID 0
       01                       -- row 1: global ID 1
 
-    Column 1 (DOUBLE, 2 x 8 bytes LE):
+    Column 1 (DOUBLE, 2 x 8 bytes):
       00                       -- null_flag: no nulls
       66 66 66 66 66 E6 56 40  -- 91.6
       9A 99 99 99 99 19 57 40  -- 92.4
@@ -936,8 +910,8 @@ Payload:
     Column 2 (TIMESTAMP, Gorilla):
       00                       -- null_flag: no nulls
       01                       -- encoding = Gorilla
-      [8 bytes LE: t0]
-      [8 bytes LE: t1]
+      [8 bytes: t0]
+      [8 bytes: t1]
 ```
 
 ---

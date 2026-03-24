@@ -35,7 +35,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <pre>
  * [if null bitmap is present]: ceil(rowCount/8) bytes
  * [scale: 1 byte] - shared for entire column
- * [values]: (rowCount - nullCount) * valueSize bytes, big-endian
+ * [values]: (rowCount - nullCount) * valueSize bytes, little-endian
  * </pre>
  * <p>
  * Value sizes:
@@ -83,7 +83,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
             currentIsNull = false;
         }
 
-        // Read value from wire (big-endian)
+        // Read value from wire (little-endian)
         long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
         readCurrentValue(valueAddress);
         currentValueIndex++;
@@ -269,20 +269,17 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     private void readCurrentValue(long address) {
         switch (typeCode) {
             case TYPE_DECIMAL64:
-                // Big-endian
-                currentValue64 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
+                currentValue64 = Unsafe.getUnsafe().getLong(address);
                 break;
             case TYPE_DECIMAL128:
-                // Big-endian: high then low
-                currentValue128Hi = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                currentValue128Lo = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
+                currentValue128Hi = Unsafe.getUnsafe().getLong(address);
+                currentValue128Lo = Unsafe.getUnsafe().getLong(address + 8);
                 break;
             case TYPE_DECIMAL256:
-                // Big-endian: hh, hl, lh, ll
-                currentValue256Hh = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                currentValue256Hl = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
-                currentValue256Lh = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 16));
-                currentValue256Ll = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 24));
+                currentValue256Hh = Unsafe.getUnsafe().getLong(address);
+                currentValue256Hl = Unsafe.getUnsafe().getLong(address + 8);
+                currentValue256Lh = Unsafe.getUnsafe().getLong(address + 16);
+                currentValue256Ll = Unsafe.getUnsafe().getLong(address + 24);
                 break;
         }
     }
