@@ -135,6 +135,48 @@ steps:
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
 
+  - bash: |
+      set -eux
+      SCCACHE_VERSION="0.10.0"
+
+      export PATH="$(CARGO_INSTALL_PATH)/bin:$PATH"
+
+      if [ "$(uname)" == "Darwin" ]; then
+        SCCACHE_BINARY="sccache"
+        ARCHIVE="sccache-v${SCCACHE_VERSION}-x86_64-apple-darwin.tar.gz"
+      else
+        SCCACHE_BINARY="sccache.exe"
+        ARCHIVE="sccache-v${SCCACHE_VERSION}-x86_64-pc-windows-msvc.tar.gz"
+      fi
+
+      if [ -f "$(CARGO_INSTALL_PATH)/bin/${SCCACHE_BINARY}" ]; then
+        echo "sccache already installed at: $(CARGO_INSTALL_PATH)/bin"
+      else
+        echo "Installing sccache ${SCCACHE_VERSION} for $(uname)..."
+
+        URL="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${ARCHIVE}"
+        echo "Downloading from: $URL"
+
+        curl -L "$URL" -o sccache.tar.gz
+        tar xzf sccache.tar.gz
+
+        mkdir -p "$(CARGO_INSTALL_PATH)/bin"
+        find . -name "${SCCACHE_BINARY}" | head -1 | xargs -I {} mv {} "$(CARGO_INSTALL_PATH)/bin/"
+
+        rm -rf sccache.tar.gz sccache-v${SCCACHE_VERSION}-*
+
+        echo "sccache installed successfully"
+      fi
+
+      sccache --version
+      set +x  # workaround for https://github.com/microsoft/azure-pipelines-tasks/issues/10331
+      echo "##vso[task.setvariable variable=RUSTC_WRAPPER]$(CARGO_INSTALL_PATH)/bin/${SCCACHE_BINARY}"
+    displayName: "Install sccache (Windows and macOS)"
+    condition: or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
+    env:
+      SCCACHE_AZURE_BLOB_CONTAINER: $(RUST_CACHE_CONTAINER)
+      SCCACHE_AZURE_CONNECTION_STRING: $(RUST_CACHE_CONNECTION_STRING)
+
   - template: install-llvm.yml
     parameters:
       shouldRun: |
@@ -179,6 +221,10 @@ steps:
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
+      RUSTC_WRAPPER: $(RUSTC_WRAPPER)
+      SCCACHE_AZURE_BLOB_CONTAINER: $(RUST_CACHE_CONTAINER)
+      SCCACHE_AZURE_CONNECTION_STRING: $(RUST_CACHE_CONNECTION_STRING)
+      CARGO_INCREMENTAL: 0
     timeoutInMinutes: 55
     condition: |
       and(
