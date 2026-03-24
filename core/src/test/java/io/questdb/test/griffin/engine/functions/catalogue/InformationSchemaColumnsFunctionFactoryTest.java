@@ -99,9 +99,9 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse\n",
                     "show columns from test_rename"
             );
 
@@ -116,9 +116,9 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse\n",
                     "show columns from test_renamed"
             );
 

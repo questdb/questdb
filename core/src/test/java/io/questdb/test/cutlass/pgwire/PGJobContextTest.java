@@ -3973,9 +3973,9 @@ if __name__ == "__main__":
                     connection,
                     "show columns from tab",
                     """
-                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]
-                            a,INT,false,0,false,0,0,false,false
-                            b,LONG,false,0,false,0,0,false,false
+                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],indexType[VARCHAR],indexInclude[VARCHAR],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]
+                            a,INT,false,0,,false,0,0,false,false
+                            b,LONG,false,0,,false,0,0,false,false
                             """,
                     2
             );
@@ -3985,10 +3985,10 @@ if __name__ == "__main__":
                     connection,
                     "show columns from tab",
                     """
-                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]
-                            a,INT,false,0,false,0,0,false,false
-                            b,LONG,false,0,false,0,0,false,false
-                            ts,TIMESTAMP,false,0,false,0,0,false,false
+                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],indexType[VARCHAR],indexInclude[VARCHAR],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]
+                            a,INT,false,0,,false,0,0,false,false
+                            b,LONG,false,0,,false,0,0,false,false
+                            ts,TIMESTAMP,false,0,,false,0,0,false,false
                             """,
                     6
             );

@@ -104,10 +104,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (3, 'c', 3)");
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            cust_id\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                            ccy\tSYMBOL\tfalse\t256\t\t\ttrue\t128\t4\tfalse\tfalse
+                            balance\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
                             """,
                     "select * from table_columns('balances')",
                     null,
@@ -149,11 +149,11 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (2, 'foo', null, 2)");
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            cust_id\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                            ccx\tSYMBOL\tfalse\t256\t\t\ttrue\t128\t1\tfalse\tfalse
+                            ccy\tSYMBOL\tfalse\t256\t\t\ttrue\t128\t2\tfalse\tfalse
+                            balance\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
                             """,
                     "show columns from balances",
                     null,

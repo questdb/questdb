@@ -261,7 +261,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             execute("CREATE TABLE foo ( a SYMBOL )");
             drainWalQueue();
 
-            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n";
+            String header = "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n";
             String left = "a\tSYMBOL\tfalse\t256\t";
             String right = "\t128\t0\tfalse\tfalse\n";
 

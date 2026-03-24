@@ -433,8 +433,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ik\tSYMBOL\ttrue\t256\tBITMAP\t\tfalse\t512\t5\tfalse\tfalse
                             """,
                     "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
             );
@@ -450,8 +450,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ik\tSYMBOL\ttrue\t256\tBITMAP\t\tfalse\t1024\t5\tfalse\tfalse
                             """,
                     "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
             );

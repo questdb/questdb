@@ -468,10 +468,10 @@ public class CreateTableTest extends AbstractCairoTest {
         execute("create table foo_clone ( like foo)");
         assertSql(
                 """
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue
-                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue
-                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                        column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                        ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\ttrue
+                        a\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\ttrue
+                        b\tSTRING\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
                         """,
                 "SHOW COLUMNS FROM foo_clone"
         );
@@ -921,9 +921,9 @@ public class CreateTableTest extends AbstractCairoTest {
                     "show create table y;");
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                            ns\tTIMESTAMP_NS\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
+                            s\tSYMBOL\tfalse\t256\t\t\ttrue\t128\t0\tfalse\tfalse
                             """
                     ,
                     "SHOW COLUMNS FROM y"

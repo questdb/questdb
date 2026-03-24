@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -43,6 +44,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Transient;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,7 +53,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     public static final int N_TYPE_COL = N_NAME_COL + 1;
     private static final int N_INDEXED_COL = N_TYPE_COL + 1;
     private static final int N_INDEX_BLOCK_CAPACITY_COL = N_INDEXED_COL + 1;
-    private static final int N_SYMBOL_CACHED_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
+    private static final int N_INDEX_TYPE_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
+    private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
+    private static final int N_SYMBOL_CACHED_COL = N_INDEX_INCLUDE_COL + 1;
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_SYMBOL_TABLE_SIZE_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_TABLE_SIZE_COL + 1;
@@ -84,6 +88,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     private static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
+        private final StringSink includeSink = new StringSink();
         private final ShowColumnsRecord record = new ShowColumnsRecord();
         private final IntList staticSymbolTableSizes = new IntList();
         private CairoColumn cairoColumn = new CairoColumn();
@@ -212,6 +217,26 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 if (col == N_TYPE_COL) {
                     return ColumnType.nameOf(cairoColumn.getType());
                 }
+                if (col == N_INDEX_TYPE_COL) {
+                    return cairoColumn.isIndexed() ? IndexType.nameOf(cairoColumn.getIndexType()) : "";
+                }
+                if (col == N_INDEX_INCLUDE_COL) {
+                    int[] coveringCols = cairoColumn.getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.length == 0) {
+                        return "";
+                    }
+                    includeSink.clear();
+                    for (int i = 0; i < coveringCols.length; i++) {
+                        if (i > 0) {
+                            includeSink.putAscii(',');
+                        }
+                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols[i]);
+                        if (covCol != null) {
+                            includeSink.put(covCol.getName());
+                        }
+                    }
+                    return includeSink;
+                }
                 throw new UnsupportedOperationException();
             }
 
@@ -233,6 +258,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indexType", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexInclude", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
         metadata.add(new TableColumnMetadata("symbolTableSize", ColumnType.INT));
