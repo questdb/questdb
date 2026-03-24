@@ -2610,6 +2610,16 @@ class LateralJoinRewriter {
 
         dataSourceLayer.getJoinModels().remove(outerRefJmIndex);
         dataSourceLayer.getModelAliasIndexes().remove(outerRefAlias);
+        // Update alias indices for models shifted down by the removal
+        ObjList<QueryModel> remainingJoins = dataSourceLayer.getJoinModels();
+        LowerCaseCharSequenceIntHashMap aliasIdx = dataSourceLayer.getModelAliasIndexes();
+        for (int si = outerRefJmIndex, sn = remainingJoins.size(); si < sn; si++) {
+            QueryModel shifted = remainingJoins.getQuick(si);
+            ExpressionNode shiftedAlias = shifted.getAlias() != null ? shifted.getAlias() : shifted.getTableNameExpr();
+            if (shiftedAlias != null) {
+                aliasIdx.put(shiftedAlias.token, si);
+            }
+        }
     }
 
     private void tryEliminateOuterRefs(QueryModel model) throws SqlException {
