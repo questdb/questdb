@@ -9342,10 +9342,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (partitionTimestamp == -1L) {
                 continue;
             }
-            // Skip the last partition — it will be handled by openPartition() + normal seal
-            if (partitionTimestamp == txWriter.getLastPartitionTimestamp()) {
-                continue;
-            }
+            // Include last partition — its sidecars also need rebuilding after O3
+
             long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             setStateForTimestamp(path, partitionTimestamp);
             int plen = path.size();

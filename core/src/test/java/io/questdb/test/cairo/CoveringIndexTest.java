@@ -75,6 +75,116 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3dup (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3dup VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30),
+                    ('2024-01-02T09:00:00', 'C', 4.5, 40),
+                    ('2024-01-02T10:00:00', 'B', 5.5, 50),
+                    ('2024-01-02T11:00:00', 'A', 6.5, 60)
+                    """);
+            // Duplicate insert triggers O3 merge — tests sealFull/reencodeAllGenerations
+            execute("""
+                    INSERT INTO t_o3dup VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30),
+                    ('2024-01-02T09:00:00', 'C', 4.5, 40),
+                    ('2024-01-02T10:00:00', 'B', 5.5, 50),
+                    ('2024-01-02T11:00:00', 'A', 6.5, 60)
+                    """);
+            engine.releaseAllWriters();
+
+            // Non-covering query verifies data survived O3 merge
+            assertSql("""
+                    count
+                    6
+                    """, "SELECT count() FROM t_o3dup WHERE sym = 'A'");
+
+            // Covering LATEST ON after O3 — sidecar rebuilt by rebuildSidecars()
+            assertSql("""
+                    price\tqty
+                    6.5\t60
+                    """, "SELECT price, qty FROM t_o3dup WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexO3DuplicateInsertWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3dup_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3dup_wal VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-02T09:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+            // Duplicate insert triggers O3 merge through WAL apply
+            execute("""
+                    INSERT INTO t_o3dup_wal VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-02T09:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+
+            // Non-covering query (SELECT * includes ts) — verifies data integrity after O3
+            assertSql("""
+                    ts\tsym\tprice\tqty
+                    2024-01-01T09:00:00.000000Z\tA\t1.5\t10
+                    2024-01-01T09:00:00.000000Z\tA\t1.5\t10
+                    2024-01-02T09:00:00.000000Z\tA\t3.5\t30
+                    2024-01-02T09:00:00.000000Z\tA\t3.5\t30
+                    """, "SELECT * FROM t_o3dup_wal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_wal VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0)
+                    """);
+            drainWalQueue();
+
+            // Non-covering LATEST ON (SELECT * includes ts, not in INCLUDE list)
+            assertSql("""
+                    ts\tsym\tprice
+                    2024-01-02T00:00:00.000000Z\tA\t3.0
+                    """, "SELECT * FROM t_latest_wal WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexWithInclude() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

@@ -83,7 +83,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int blockBufferPos;
         private int blockBufferEnd;
         private int currentGen;
-        // Per-generation state for block-buffered decode
         private long encodedAddr;
         private int encodedBlockCount;
         private int currentBlock;
@@ -91,28 +90,23 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long minValue;
         private int requestedKey;
         private int totalValueCount;
-        // Block metadata arrays (pre-allocated, grown as needed)
         private int metadataCapacity = 256;
         private long valueCountsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long firstValuesAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long minDeltasAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long bitWidthsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long packedDataAddr;
-        // Flat mode batch state (for count > BLOCK_CAPACITY)
         private boolean flatMode;
         private int flatBitWidth;
         private long flatBaseValue;
         private long flatDataBase;
         private int flatStartIdx;
         private int flatRemaining;
-        // Inverted index cursor state — jumps directly to relevant sparse gens
         private int lookupPos;
         private int lookupEnd;
-        // Covering index sidecar state
         private int sidecarOrdinal;
         private int sidecarStrideKeyStart;
         private int sealedGenKeyCount;
-        // Decoded sidecar buffers (one per covered column, lazily allocated)
         private double[][] decodedDoubles;
         private int[][] decodedInts;
         private long[][] decodedLongs;

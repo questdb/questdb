@@ -87,21 +87,18 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long maxValue;
         private long minValue;
         private int requestedKey;
-        // Block metadata arrays (pre-allocated, grown as needed)
         private int metadataCapacity = 256;
         private long valueCountsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long firstValuesAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long minDeltasAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long bitWidthsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long[] blockPackedAddrs = new long[256];
-        // Flat mode batch state (for count > BLOCK_CAPACITY)
         private boolean flatMode;
         private int flatBitWidth;
         private long flatBaseValue;
         private long flatDataBase;
         private int flatStartIdx; // start index of remaining values (going backwards)
         private int flatRemaining;
-        // Tier 1 per-key lookup state (reverse iteration)
         private int lookupPos;
         private int lookupEnd;
 

@@ -219,8 +219,18 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void close() {
         try {
-            seal();
-            compactValueFile();
+            if (keyMem.isOpen()) {
+                // Check if covered column files are still open before seal.
+                // During O3 merge, column files may be closed before the
+                // indexer's close() runs. Skip sidecar writing in that case —
+                // rebuildCoveringSidecarsForO3Partitions handles it separately.
+                if (coveredColumnMems != null && coveredColumnMems.length > 0
+                        && !coveredColumnMems[0].isOpen()) {
+                    coveredColumnMems = null;
+                }
+                seal();
+                compactValueFile();
+            }
         } finally {
             try {
                 if (keyMem.isOpen()) {
@@ -310,14 +320,9 @@ public class PostingIndexWriter implements IndexWriter {
         if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
             return;
         }
-        // Only process if the gen is already dense (sealed)
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        if (gen0KeyCount < 0) {
-            // Not yet sealed (sparse gen) — regular seal() will handle sidecars
-            return;
-        }
-        // Open sidecar files and re-seal to write sidecar data
+        // Open sidecar files and seal to write sidecar data.
+        // This handles both sparse gens (after O3 commit) and dense gens
+        // (after a prior seal without covering configuration).
         if (sidecarMems != null) {
             closeSidecarMems();
         }
@@ -326,10 +331,21 @@ public class PostingIndexWriter implements IndexWriter {
                 openSidecarFiles(p, indexName, columnNameTxn);
             }
         }
-        sealFull();
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        if (gen0KeyCount >= 0) {
+            // Already dense — just rewrite sidecars
+            sealFull();
+        } else {
+            // Sparse — full seal converts to dense + writes sidecars
+            seal();
+        }
     }
 
     public void seal() {
+        if (!keyMem.isOpen()) {
+            return;
+        }
         flushAllPending();
 
         if (genCount == 0 || keyCount == 0) {
@@ -1125,26 +1141,31 @@ public class PostingIndexWriter implements IndexWriter {
 
     private static void writeNullSentinel(long addr, int valueSize, int columnType) {
         switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DOUBLE:
+            case ColumnType.DOUBLE -> {
                 Unsafe.getUnsafe().putDouble(addr, Double.NaN);
                 return;
-            case ColumnType.FLOAT:
+            }
+            case ColumnType.FLOAT -> {
                 Unsafe.getUnsafe().putFloat(addr, Float.NaN);
                 return;
-            case ColumnType.GEOBYTE:
+            }
+            case ColumnType.GEOBYTE -> {
                 Unsafe.getUnsafe().putByte(addr, GeoHashes.BYTE_NULL);
                 return;
-            case ColumnType.GEOSHORT:
+            }
+            case ColumnType.GEOSHORT -> {
                 Unsafe.getUnsafe().putShort(addr, GeoHashes.SHORT_NULL);
                 return;
-            case ColumnType.GEOINT:
+            }
+            case ColumnType.GEOINT -> {
                 Unsafe.getUnsafe().putInt(addr, GeoHashes.INT_NULL);
                 return;
-            case ColumnType.GEOLONG:
+            }
+            case ColumnType.GEOLONG -> {
                 Unsafe.getUnsafe().putLong(addr, GeoHashes.NULL);
                 return;
-            default:
-                break;
+            }
+            default -> {}
         }
         if (valueSize == Long.BYTES) {
             Unsafe.getUnsafe().putLong(addr, Long.MIN_VALUE);
@@ -1165,7 +1186,7 @@ public class PostingIndexWriter implements IndexWriter {
             long sidecarBuf,
             long sidecarBufSize
     ) {
-        if (coverCount <= 0 || sidecarMems == null) {
+        if (coverCount <= 0 || sidecarMems == null || (coveredColumnMems == null && coveredColumnAddrs == null)) {
             return;
         }
         // Pre-allocate workspaces once for all covered columns (maxKeyCount is the same)
@@ -1261,30 +1282,21 @@ public class PostingIndexWriter implements IndexWriter {
 
     private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
                                               long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
-        switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE:
-                return AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-            case ColumnType.LONG:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.DATE:
-            case ColumnType.GEOLONG:
-                return AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.FLOAT:
-            case ColumnType.GEOINT:
-            case ColumnType.INT:
-            case ColumnType.SYMBOL:
-                return AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-            case ColumnType.BYTE:
-            case ColumnType.BOOLEAN:
-            case ColumnType.GEOBYTE:
+        return switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE ->
+                    AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                    AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
+            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.SYMBOL ->
+                    AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE -> {
                 Unsafe.getUnsafe().putInt(destBuf, valueCount);
                 Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
-                return 4 + (valueCount << shift);
-            default:
-                throw new UnsupportedOperationException("unsupported sidecar column type: " + ColumnType.nameOf(colType));
-        }
+                yield 4 + (valueCount << shift);
+            }
+            default ->
+                    throw new UnsupportedOperationException("unsupported sidecar column type: " + ColumnType.nameOf(colType));
+        };
     }
 
     private void sealFull() {
@@ -2045,6 +2057,9 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void rollbackValues(long maxValue) {
+        if (!keyMem.isOpen()) {
+            return;
+        }
         flushAllPending();
 
         if (genCount == 0 && keyCount == 0) {

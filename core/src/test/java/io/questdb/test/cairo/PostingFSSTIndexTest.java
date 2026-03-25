@@ -121,7 +121,8 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBPMultipleKeys() {
+    public void testBPMultipleKeys() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             int keyCount = 50;
             int valuesPerKey = 50; // fits in one BP batch (64)
@@ -169,10 +170,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testBPLargeOffset() {
+    public void testBPLargeOffset() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             long baseOffset = 1_000_000_000L;
             int count = 640; // 10 batches of 64
@@ -200,10 +203,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(count, idx);
             }
         }
+        });
     }
 
     @Test
-    public void testBPCommitSeal() {
+    public void testBPCommitSeal() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             // Write multiple batches, close (which triggers seal)
@@ -235,10 +240,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(192, count);
             }
         }
+        });
     }
 
     @Test
-    public void testBPEmptyKey() {
+    public void testBPEmptyKey() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "bp_empty", COLUMN_NAME_TXN_NONE)) {
                 writer.add(5, 100);
@@ -258,12 +265,14 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertFalse(cursor.hasNext());
             }
         }
+        });
     }
 
     // ===== FSST Tests =====
 
     @Test
-    public void testFSSTComparisonWithLegacy() {
+    public void testFSSTComparisonWithLegacy() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             int valueCount = 10000;
             long[] values = new long[valueCount];
@@ -313,10 +322,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals("Mismatch at index " + i, legacyValues.getQuick(i), fsstValues.getQuick(i));
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTMultipleKeys() {
+    public void testFSSTMultipleKeys() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             int keyCount = 50;
             int valuesPerKey = 100; // fits in one FSST batch (128)
@@ -361,10 +372,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTLargeOffset() {
+    public void testFSSTLargeOffset() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             long baseOffset = 1_000_000_000L;
             int count = 640;
@@ -392,10 +405,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(count, idx);
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTCommitSeal() {
+    public void testFSSTCommitSeal() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_seal", COLUMN_NAME_TXN_NONE)) {
@@ -425,10 +440,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(384, count);
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTEmptyKey() {
+    public void testFSSTEmptyKey() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_empty", COLUMN_NAME_TXN_NONE)) {
                 writer.add(5, 100);
@@ -448,12 +465,14 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertFalse(cursor.hasNext());
             }
         }
+        });
     }
 
     // ===== BP GenLookup / SBBF Integration Tests =====
 
     @Test
-    public void testBPManyKeysMultipleGens() {
+    public void testBPManyKeysMultipleGens() throws Exception {
+        assertMemoryLeak(() -> {
         // This test exercises the gen lookup tiers with many keys
         // across multiple sparse gens (unsealed reads).
         try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -500,12 +519,14 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===== BP Incremental Seal Tests =====
 
     @Test
-    public void testBPIncrementalSealMatchesFullSeal() {
+    public void testBPIncrementalSealMatchesFullSeal() throws Exception {
+        assertMemoryLeak(() -> {
         // Write same data via two writers; one will seal incrementally, the other fully
         try (Path path = new Path().of(configuration.getDbRoot())) {
             int keyCount = 10;
@@ -550,10 +571,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testBPBwdReaderWithGenLookup() {
+    public void testBPBwdReaderWithGenLookup() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             // Write multiple batches (creates multiple sparse gens)
@@ -584,10 +607,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(128, count);
             }
         }
+        });
     }
 
     @Test
-    public void testBPNativeEncodeKey() {
+    public void testBPNativeEncodeKey() throws Exception {
+        assertMemoryLeak(() -> {
         // Test encodeKeyNative produces identical output to encodeKey
         int count = 200;
         long[] values = new long[count];
@@ -625,12 +650,14 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
             Unsafe.free(destAddr1, PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(destAddr2, PostingIndexUtils.computeMaxEncodedSize(count), MemoryTag.NATIVE_DEFAULT);
         }
+        });
     }
 
     // ===== Concurrent read safety tests =====
 
     @Test
-    public void testReaderSurvivesWriterSeal() {
+    public void testReaderSurvivesWriterSeal() throws Exception {
+        assertMemoryLeak(() -> {
         // A reader with an active cursor must not be corrupted when the writer
         // seals (which now appends rather than overwriting offset 0).
         try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -683,10 +710,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
-    public void testCompactOnReopen() {
+    public void testCompactOnReopen() throws Exception {
+        assertMemoryLeak(() -> {
         // After seal + close, reopening should compact dead space and produce correct data.
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -729,10 +758,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals("reader value " + i, (long) i, vals.getQuick(i));
             }
         }
+        });
     }
 
     @Test
-    public void testSealCommitSealCycle() {
+    public void testSealCommitSealCycle() throws Exception {
+        assertMemoryLeak(() -> {
         // Seal → more commits → seal again. Verifies append-only seal handles
         // the case where gen 0 already has a non-zero fileOffset.
         try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -780,6 +811,7 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals("reader val " + i, (long) i, vals.getQuick(i));
             }
         }
+        });
     }
 
     // ===== Helpers =====
@@ -820,7 +852,8 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
     // ===== FSST backward reader tests =====
 
     @Test
-    public void testFSSTBwdReaderSingleGen() {
+    public void testFSSTBwdReaderSingleGen() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd1", COLUMN_NAME_TXN_NONE)) {
@@ -857,10 +890,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(100, count);
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTBwdReaderMultipleGens() {
+    public void testFSSTBwdReaderMultipleGens() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd2", COLUMN_NAME_TXN_NONE)) {
@@ -895,10 +930,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(0, prev);
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTBwdReaderWithRangeBounds() {
+    public void testFSSTBwdReaderWithRangeBounds() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd3", COLUMN_NAME_TXN_NONE)) {
@@ -924,10 +961,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(101, count);
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTBwdReaderAfterSeal() {
+    public void testFSSTBwdReaderAfterSeal() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd4", COLUMN_NAME_TXN_NONE)) {
@@ -968,10 +1007,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(250, count);
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTBwdReaderEmptyKey() {
+    public void testFSSTBwdReaderEmptyKey() throws Exception {
+        assertMemoryLeak(() -> {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(configuration, path, "fsst_bwd5", COLUMN_NAME_TXN_NONE)) {
@@ -989,10 +1030,12 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 Assert.assertFalse(cursor.hasNext());
             }
         }
+        });
     }
 
     @Test
-    public void testFSSTBwdReaderMatchesFwdReader() {
+    public void testFSSTBwdReaderMatchesFwdReader() throws Exception {
+        assertMemoryLeak(() -> {
         // Oracle test: forward and backward readers must produce the same values
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
@@ -1031,5 +1074,6 @@ public class PostingFSSTIndexTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 }
