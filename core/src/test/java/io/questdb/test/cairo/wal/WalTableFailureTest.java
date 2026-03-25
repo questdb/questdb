@@ -1907,6 +1907,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 alterOperation = alterOperationFunc.apply(tableToken);
                 alterWriter1.apply(alterOperation, true);
                 try {
+                    alterOperation = alterOperationFunc.apply(tableToken);
                     alterWriter2.apply(alterOperation, true);
                     Assert.fail();
                 } catch (CairoException e) {
