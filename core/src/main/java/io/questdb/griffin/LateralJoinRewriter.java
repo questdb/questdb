@@ -707,7 +707,7 @@ class LateralJoinRewriter implements Mutable {
         }
         if (limitLo != null && limitLo.type != ExpressionNode.CONSTANT) {
             throw SqlException.position(limitLo.position)
-                    .put("non-constant OFFSET in LATERAL join is not supported");
+                    .put("non-constant LIMIT in LATERAL join is not supported");
         }
 
         orderBySave.clear();
