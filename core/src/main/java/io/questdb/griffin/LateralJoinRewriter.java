@@ -86,13 +86,9 @@ class LateralJoinRewriter {
 
     public void rewrite(QueryModel model) throws SqlException {
         outerRefId = 0;
-        System.err.println("=== BEFORE ===");
-        dumpModel(model, 0, "PRE");
         analyzeCorrelation(model, 0);
-        decorrelate(model, 0);
+        decorrelate(model);
         tryEliminateOuterRefs(model);
-        System.err.println("=== AFTER ===");
-        dumpModel(model, 0, "ROOT");
     }
 
     private static boolean allLiteralsBelongTo(
@@ -1062,8 +1058,8 @@ class LateralJoinRewriter {
         return outerRefBase;
     }
 
-    private void decorrelate(QueryModel model, int lateralDepth) throws SqlException {
-        decorrelate(model, lateralDepth, null);
+    private void decorrelate(QueryModel model) throws SqlException {
+        decorrelate(model, 0, null);
     }
 
     private void decorrelate(QueryModel model, int lateralDepth, QueryModel parent) throws SqlException {
@@ -1211,35 +1207,6 @@ class LateralJoinRewriter {
                     subCountColAliases, clonedOuterRef, jm, depth
             );
         }
-    }
-
-    private void dumpModel(QueryModel m, int indent, String label) {
-        if (m == null) return;
-        String pad = " ".repeat(indent);
-        System.err.println(pad + label + " @" + System.identityHashCode(m)
-                + " table=" + (m.getTableNameExpr() != null ? m.getTableNameExpr().token : "null")
-                + " alias=" + (m.getAlias() != null ? m.getAlias().token : "null")
-                + " cols=" + m.getBottomUpColumns().size()
-                + " joins=" + m.getJoinModels().size()
-                + " where=" + (m.getWhereClause() != null ? m.getWhereClause() : "null")
-                + (m.getLimitHi() != null ? " LIMIT=" + m.getLimitHi() : "")
-                + " subQ=" + m.isNestedModelIsSubQuery());
-        for (int i = 0, n = m.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn c = m.getBottomUpColumns().getQuick(i);
-            String extra = "";
-            if (c instanceof WindowExpression we) {
-                extra = " WIN(partBy=" + we.getPartitionBy().size() + " orderBy=" + we.getOrderBy().size() + ")";
-            }
-            System.err.println(pad + "  col[" + i + "] alias=" + c.getAlias() + " ast=" + c.getAst().token + extra);
-        }
-        for (int i = 1, n = m.getJoinModels().size(); i < n; i++) {
-            QueryModel jm = m.getJoinModels().getQuick(i);
-            System.err.println(pad + "  jm[" + i + "] type=" + jm.getJoinType() + " alias=" + (jm.getAlias() != null ? jm.getAlias().token : "null")
-                    + " crit=" + (jm.getJoinCriteria() != null ? jm.getJoinCriteria() : "null"));
-            dumpModel(jm.getNestedModel(), indent + 4, "JM");
-        }
-        dumpModel(m.getNestedModel(), indent + 2, "N");
-        dumpModel(m.getUnionModel(), indent + 2, "U");
     }
 
     private CharSequence ensureColumnInSelect(
