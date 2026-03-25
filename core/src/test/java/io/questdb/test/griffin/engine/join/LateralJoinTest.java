@@ -455,9 +455,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                             SELECT o.id, sub.val
                             FROM t_outer o
                             JOIN LATERAL (
-                                SELECT val FROM t_data WHERE oid = o.id AND src = 'A' ORDER BY val LIMIT 1
+                                (SELECT val FROM t_data WHERE oid = o.id AND src = 'A' ORDER BY val LIMIT 1)
                                 UNION ALL
-                                SELECT val FROM t_data WHERE oid = o.id AND src = 'B' ORDER BY val LIMIT 1
+                                (SELECT val FROM t_data WHERE oid = o.id AND src = 'B' ORDER BY val LIMIT 1)
                             ) sub ON true
                             ORDER BY o.id, sub.val
                             """,
