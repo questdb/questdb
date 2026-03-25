@@ -3803,25 +3803,42 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
-            // MM1/AAPL: full book, tight spread → compliant
-            // MM2/AAPL: only BID side → early fail SellQuantity
             execute("""
                     INSERT INTO mm_book VALUES
-                    ('mm1', 'AAPL', 'BID', 100.0, 200.0, '2024-01-01T00:00:00.000000Z'),
-                    ('mm1', 'AAPL', 'ASK', 102.0, 200.0, '2024-01-01T00:00:01.000000Z'),
-                    ('mm2', 'AAPL', 'BID',  50.0, 100.0, '2024-01-01T00:00:02.000000Z')
+                    ('mm1', 'AAPL', 'BID', 100.0, 100.0, '2024-01-01T00:00:00.000000Z'),
+                    ('mm1', 'AAPL', 'BID',  99.0, 100.0, '2024-01-01T00:00:01.000000Z'),
+                    ('mm1', 'AAPL', 'BID',  98.0, 100.0, '2024-01-01T00:00:02.000000Z'),
+                    ('mm1', 'AAPL', 'ASK', 102.0, 100.0, '2024-01-01T00:00:03.000000Z'),
+                    ('mm1', 'AAPL', 'ASK', 103.0, 100.0, '2024-01-01T00:00:04.000000Z'),
+                    ('mm1', 'AAPL', 'ASK', 104.0, 100.0, '2024-01-01T00:00:05.000000Z'),
+                    ('mm2', 'AAPL', 'BID',  50.0, 100.0, '2024-01-01T00:00:06.000000Z'),
+                    ('mm3', 'MSFT', 'BID', 100.0, 200.0, '2024-01-01T00:00:07.000000Z'),
+                    ('mm3', 'MSFT', 'ASK', 125.0, 200.0, '2024-01-01T00:00:08.000000Z'),
+                    ('mm4', 'MSFT', 'BID',  50.0, 200.0, '2024-01-01T00:00:09.000000Z'),
+                    ('mm4', 'MSFT', 'ASK',  51.0, 200.0, '2024-01-01T00:00:10.000000Z'),
+                    ('mm5', 'GOOG', 'BID', 100.0,  30.0, '2024-01-01T00:00:11.000000Z'),
+                    ('mm5', 'GOOG', 'ASK', 101.0,  30.0, '2024-01-01T00:00:12.000000Z'),
+                    ('mm6', 'GOOG', 'ASK', 100.0, 200.0, '2024-01-01T00:00:13.000000Z')
                     """);
             execute("""
                     INSERT INTO mm_obligations VALUES
-                    ('mm1', 'AAPL', 1, 100.0, 0.05, 'Pct', '2024-01-01T00:00:00.000000Z'),
-                    ('mm2', 'AAPL', 2, 100.0, 0.05, 'Pct', '2024-01-01T00:00:01.000000Z')
+                    ('mm1', 'AAPL', 1, 100.0, 0.05,  'Pct', '2024-01-01T00:00:00.000000Z'),
+                    ('mm2', 'AAPL', 2, 100.0, 0.05,  'Pct', '2024-01-01T00:00:01.000000Z'),
+                    ('mm3', 'MSFT', 3, 100.0, 0.05,  'Pct', '2024-01-01T00:00:02.000000Z'),
+                    ('mm4', 'MSFT', 4, 100.0, 2.0,   'Abs', '2024-01-01T00:00:03.000000Z'),
+                    ('mm5', 'GOOG', 5,  50.0, 0.05,  'Pct', '2024-01-01T00:00:04.000000Z'),
+                    ('mm6', 'GOOG', 6, 100.0, 0.05,  'Pct', '2024-01-01T00:00:05.000000Z')
                     """);
 
             assertQueryNoLeakCheck(
                     """
                             mm_id\tsymbol\tobligation_id\tnon_compliance_reason\tavg_price_buy\tavg_price_sell\tqty_buy\tqty_sell\tspread
-                            mm1\tAAPL\t1\tNone\t100.0\t102.0\t200.0\t200.0\t0.020000000000000018
+                            mm1\tAAPL\t1\tNone\t100.0\t102.0\t300.0\t300.0\t0.020000000000000018
                             mm2\tAAPL\t2\tSellQuantity\tnull\tnull\t100.0\t0.0\tnull
+                            mm3\tMSFT\t3\tSpread\t100.0\t125.0\t200.0\t200.0\t0.25
+                            mm4\tMSFT\t4\tNone\t50.0\t51.0\t200.0\t200.0\t1.0
+                            mm5\tGOOG\t5\tQuantity\tnull\tnull\t30.0\t30.0\tnull
+                            mm6\tGOOG\t6\tBuyQuantity\tnull\tnull\t0.0\t200.0\tnull
                             """,
                     """
                              WITH
