@@ -1218,11 +1218,7 @@ class LateralJoinRewriter {
             CharSequence preferredAlias
     ) throws SqlException {
         ObjList<QueryColumn> cols = model.getBottomUpColumns();
-        if (cols.size() == 0) {
-            return preferredAlias;
-        }
-
-        if (isWildcard(cols) && !Chars.startsWith(preferredAlias, OUTER_REF_PREFIX)) {
+        if (cols.size() == 0 || isWildcard(cols)) {
             return preferredAlias;
         }
         for (int i = 0, n = cols.size(); i < n; i++) {
@@ -2107,7 +2103,7 @@ class LateralJoinRewriter {
                 );
             }
 
-            if (Chars.indexOf(node.token, '.') < 0) {
+            if (Chars.indexOf(node.token, '.') < 0 && node.lateralDepth > 0) {
                 ObjList<CharSequence> keys = outerToInnerAlias.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     CharSequence key = keys.getQuick(i);
@@ -2595,6 +2591,21 @@ class LateralJoinRewriter {
                 }
             } else {
                 joinModel.setJoinCriteria(simpleChainCriteria);
+            }
+        }
+
+        ObjList<QueryColumn> branchTopCols = branchTop.getBottomUpColumns();
+        if (branchTopCols.size() > 0 && isWildcard(branchTopCols)) {
+            for (int j = 0, sz = outerRefCols.size(); j < sz; j++) {
+                CharSequence colAlias = outerRefCols.getQuick(j).getAlias();
+                if (branchTop.getAliasToColumnMap().excludes(colAlias)) {
+                    CharSequence innerEquiv = outerToInnerAlias.get(colAlias);
+                    CharSequence astToken = innerEquiv != null ? innerEquiv : colAlias;
+                    ExpressionNode ref = expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, astToken, 0, 0
+                    );
+                    branchTop.addBottomUpColumn(queryColumnPool.next().of(colAlias, ref, false));
+                }
             }
         }
 

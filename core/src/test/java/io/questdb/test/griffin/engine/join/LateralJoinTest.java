@@ -1332,7 +1332,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T22: Nested LATERAL — error
     @Test
     public void testT22NestedLateral() throws Exception {
         assertMemoryLeak(() -> {
