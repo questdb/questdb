@@ -2172,7 +2172,14 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public void of(Path path, CharSequence name, long columnNameTxn, boolean init) {
-        partitionPath = null; // prevent seal during close — partition is being reopened
+        // Seal current partition before switching. This flushes buffered add()
+        // calls to the mmap files and creates the sealed .pv file. Unlike the
+        // bitmap index which writes directly to mmap, the posting index buffers
+        // data in native memory — without this flush the data is lost.
+        if (keyMem.isOpen() && partitionPath != null) {
+            seal();
+        }
+        partitionPath = null; // prevent double-seal during close
         close();
         this.partitionPath = path.toString();
         this.indexName = name.toString();
