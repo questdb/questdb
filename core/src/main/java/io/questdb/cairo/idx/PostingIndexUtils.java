@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -1046,6 +1047,34 @@ public final class PostingIndexUtils {
             path.put('.').put(columnNameTxn);
         }
         return path.$();
+    }
+
+    public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return -1;
+        }
+        try {
+            // Read sequence from both pages, pick the one with higher valid sequence
+            long seqA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+            long seqB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+
+            long pageOffset;
+            if (seqA == seqEndA && seqB == seqEndB) {
+                pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
+            } else if (seqA == seqEndA) {
+                pageOffset = PAGE_A_OFFSET;
+            } else if (seqB == seqEndB) {
+                pageOffset = PAGE_B_OFFSET;
+            } else {
+                return -1;
+            }
+            return ff.readNonNegativeLong(fd, pageOffset + PAGE_OFFSET_VALUE_FILE_TXN);
+        } finally {
+            ff.close(fd);
+        }
     }
 
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {

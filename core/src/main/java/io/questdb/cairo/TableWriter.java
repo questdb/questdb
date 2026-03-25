@@ -5945,6 +5945,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else if (ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
             linkFile(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), keyFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
             linkFile(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), valueFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
+            // Posting index seal creates a separate .pv.{valueFileTxn} file referenced
+            // by VALUE_FILE_TXN in the .pk metadata. Link it alongside the base .pv.
+            if (indexType == IndexType.POSTING) {
+                LPSZ pkFile = keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+                long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(ff, pkFile);
+                if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
+                    linkFile(ff,
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn),
+                            PostingIndexUtils.valueFileName(other.trimTo(plen), newName, valueFileTxn));
+                }
+            }
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
