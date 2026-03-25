@@ -504,8 +504,11 @@ public class HorizonJoinTimeFrameHelper {
                 if (prevAsOfRowId != Long.MIN_VALUE) {
                     long gap = asOfRowId - prevAsOfRowId;
                     if (shouldSwitchToForwardScan(
-                            bwdScanCost, gap, bwdScanMinGap,
-                            bwdScanSwitchFactor, bwdScanAbsoluteThreshold
+                            bwdScanCost,
+                            gap,
+                            bwdScanMinGap,
+                            bwdScanSwitchFactor,
+                            bwdScanAbsoluteThreshold
                     )) {
                         isForwardScanMode = true;
                         initForwardWatermark(prevAsOfRowId);
@@ -524,8 +527,12 @@ public class HorizonJoinTimeFrameHelper {
         }
 
         return backwardScanForKeyMatch(
-                asOfRowId, masterKeyRecord, masterAsOfJoinMapSink,
-                slaveAsOfJoinMapSink, keyToRowIdMap, symbolTranslatingRecord
+                asOfRowId,
+                masterKeyRecord,
+                masterAsOfJoinMapSink,
+                slaveAsOfJoinMapSink,
+                keyToRowIdMap,
+                symbolTranslatingRecord
         );
     }
 

@@ -283,12 +283,25 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
                 this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
                 Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
-                        configuration, asm, horizonJoinMetadata, groupByColumnFilter,
-                        keyFunctions, null, null, null, null
+                        configuration,
+                        asm,
+                        horizonJoinMetadata,
+                        groupByColumnFilter,
+                        keyFunctions,
+                        null,
+                        null,
+                        null,
+                        null
                 );
                 this.groupByKeyCopier = RecordSinkFactory.getInstance(
-                        sinkClass, horizonJoinMetadata, groupByColumnFilter,
-                        keyFunctions, null, null, null, null
+                        sinkClass,
+                        horizonJoinMetadata,
+                        groupByColumnFilter,
+                        keyFunctions,
+                        null,
+                        null,
+                        null,
+                        null
                 );
 
                 // Create per-slave maps, symbol translating records, and time frame helpers
@@ -306,8 +319,11 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                         symbolTranslatingRecords.add(null);
                     }
                     timeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
-                            lookahead, ss.getSlaveTsScale(),
-                            bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                            lookahead,
+                            ss.getSlaveTsScale(),
+                            bwdScanAbsoluteThreshold,
+                            bwdScanMinGap,
+                            bwdScanSwitchFactor
                     ));
                 }
             } catch (Throwable th) {

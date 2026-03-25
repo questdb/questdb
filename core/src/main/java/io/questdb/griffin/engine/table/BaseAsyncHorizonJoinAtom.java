@@ -195,16 +195,22 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
-                    lookahead, slaveTsScale,
-                    bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                    lookahead,
+                    slaveTsScale,
+                    bwdScanAbsoluteThreshold,
+                    bwdScanMinGap,
+                    bwdScanSwitchFactor
             );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
                 perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
-                        lookahead, slaveTsScale,
-                        bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                        lookahead,
+                        slaveTsScale,
+                        bwdScanAbsoluteThreshold,
+                        bwdScanMinGap,
+                        bwdScanSwitchFactor
                 ));
             }
 

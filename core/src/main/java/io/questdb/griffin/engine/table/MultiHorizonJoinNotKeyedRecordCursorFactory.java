@@ -266,8 +266,11 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         symbolTranslatingRecords.add(null);
                     }
                     timeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
-                            lookahead, ss.getSlaveTsScale(),
-                            bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                            lookahead,
+                            ss.getSlaveTsScale(),
+                            bwdScanAbsoluteThreshold,
+                            bwdScanMinGap,
+                            bwdScanSwitchFactor
                     ));
                 }
             } catch (Throwable th) {

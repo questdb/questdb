@@ -211,8 +211,11 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 HorizonJoinSlaveState state = slaveStates.getQuick(s);
                 ownerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                 ownerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
-                        lookahead, state.getSlaveTsScale(),
-                        bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                        lookahead,
+                        state.getSlaveTsScale(),
+                        bwdScanAbsoluteThreshold,
+                        bwdScanMinGap,
+                        bwdScanSwitchFactor
                 ));
             }
             // Per-worker flat lists use worker-major order so that element at
@@ -222,8 +225,11 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                     HorizonJoinSlaveState state = slaveStates.getQuick(s);
                     perWorkerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                     perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
-                            lookahead, state.getSlaveTsScale(),
-                            bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                            lookahead,
+                            state.getSlaveTsScale(),
+                            bwdScanAbsoluteThreshold,
+                            bwdScanMinGap,
+                            bwdScanSwitchFactor
                     ));
                 }
             }
