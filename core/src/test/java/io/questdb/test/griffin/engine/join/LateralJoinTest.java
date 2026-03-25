@@ -1330,6 +1330,26 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testT21bNonConstantOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO orders VALUES (1, 2, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO trades VALUES (1, 1, 10.0, '2024-01-01T00:30:00.000000Z')");
+
+            assertException(
+                    """
+                            SELECT o.id, t.qty
+                            FROM orders o
+                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id LIMIT o.n, 5) t
+                            """,
+                    98,
+                    "non-constant LIMIT in LATERAL join is not supported"
+            );
+        });
+    }
+
+    @Test
     public void testT22NestedLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3525,6 +3545,100 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 LIMIT 1, 2
                             ) sub
                             ORDER BY t1.a, sub.val DESC
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T61: Multiple lateral joins on the same outer table — verifies outerRefId uniqueness
+    @Test
+    public void testT61MultipleLateralJoinsOnSameOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (id INT, order_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (1, 1, 100.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 2, 200.0, '2024-01-01T01:10:00.000000Z'),
+                    (3, 2, 300.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\ttrade_cnt\tfill_cnt
+                            1\t2\t1
+                            2\t1\t2
+                            """,
+                    """
+                            SELECT o.id, t.trade_cnt, f.fill_cnt
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT count(*) AS trade_cnt FROM trades WHERE order_id = o.id
+                            ) t
+                            JOIN LATERAL (
+                                SELECT count(*) AS fill_cnt FROM fills WHERE order_id = o.id
+                            ) f
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT62CorrelationFromTwoOuterTables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE customers (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE products (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sales (customer_id INT, product_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO customers VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO products VALUES
+                    (10, '2024-01-01T00:00:00.000000Z'),
+                    (20, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO sales VALUES
+                    (1, 10, 5, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, 3, '2024-01-01T00:20:00.000000Z'),
+                    (2, 10, 7, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ttotal_qty
+                            1\t10\t5
+                            1\t20\t3
+                            2\t10\t7
+                            2\t20\tnull
+                            """,
+                    """
+                            SELECT c.id, p.id, s.total_qty
+                            FROM customers c
+                            CROSS JOIN products p
+                            LEFT JOIN LATERAL (
+                                SELECT sum(qty)::INT AS total_qty
+                                FROM sales
+                                WHERE customer_id = c.id AND product_id = p.id
+                            ) s
+                            ORDER BY c.id, p.id
                             """,
                     null, true, false
             );

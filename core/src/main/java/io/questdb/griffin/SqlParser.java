@@ -3315,20 +3315,13 @@ public class SqlParser {
         tok = expectTableNameOrSubQuery(lexer);
 
         if (isLateralKeyword(tok) && joinType != QueryModel.JOIN_LATERAL_CROSS) {
-            switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
-                    joinType = QueryModel.JOIN_LATERAL_LEFT;
-                    break;
-                case QueryModel.JOIN_INNER:
-                    joinType = QueryModel.JOIN_LATERAL_INNER;
-                    break;
-                case QueryModel.JOIN_CROSS:
-                    joinType = QueryModel.JOIN_LATERAL_CROSS;
-                    break;
-                default:
-                    throw SqlException.position(lexer.lastTokenPosition())
-                            .put("LATERAL is only supported with INNER, LEFT, or CROSS joins");
-            }
+            joinType = switch (joinType) {
+                case QueryModel.JOIN_LEFT_OUTER -> QueryModel.JOIN_LATERAL_LEFT;
+                case QueryModel.JOIN_INNER -> QueryModel.JOIN_LATERAL_INNER;
+                case QueryModel.JOIN_CROSS -> QueryModel.JOIN_LATERAL_CROSS;
+                default -> throw SqlException.position(lexer.lastTokenPosition())
+                        .put("LATERAL is only supported with INNER, LEFT, or CROSS joins");
+            };
             tok = expectTableNameOrSubQuery(lexer);
         }
 

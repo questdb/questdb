@@ -129,7 +129,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
-    private final IntHashSet decorrelatedDepths = new IntHashSet();
+    private final IntHashSet correlatedDepths = new IntHashSet();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
@@ -576,7 +576,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
         columnAliasRefCounts.clear();
-        decorrelatedDepths.clear();
+        correlatedDepths.clear();
         Misc.clearObjList(correlatedColumns);
         correlatedColumns.clear();
     }
@@ -1164,7 +1164,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 return true;
             }
         }
-        return decorrelatedDepths.contains(depth);
+        return correlatedDepths.contains(depth);
     }
 
     public boolean isCteModel() {
@@ -1221,7 +1221,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void makeCorrelatedAtDepth(int depth) {
-        decorrelatedDepths.add(depth);
+        correlatedDepths.add(depth);
     }
 
     /**

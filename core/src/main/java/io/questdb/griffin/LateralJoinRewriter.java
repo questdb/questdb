@@ -35,12 +35,13 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
+import io.questdb.std.Mutable;
+
 import java.util.ArrayDeque;
-import java.util.Objects;
 
 import static io.questdb.griffin.model.QueryModel.isLateralJoin;
 
-class LateralJoinRewriter {
+class LateralJoinRewriter implements Mutable {
 
     private static final String OUTER_REF_PREFIX = "__qdb_outer_ref__";
     private final ObjList<ExpressionNode> branchCorrelated = new ObjList<>();
@@ -56,6 +57,7 @@ class LateralJoinRewriter {
     private final ObjList<ExpressionNode> nonCorrelatedPreds = new ObjList<>();
     private final IntList orderByDirSave = new IntList();
     private final ObjList<ExpressionNode> orderBySave = new ObjList<>();
+    private final ObjList<CharSequence> outerAliasSaveStack = new ObjList<>();
     private final ObjList<ExpressionNode> outerCols = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -63,7 +65,7 @@ class LateralJoinRewriter {
     private final ArrayDeque<ExpressionNode> sqlNodeStack;
     private final ObjList<CharSequence> subCountColAliases = new ObjList<>();
     private final ObjectPool<WindowExpression> windowExpressionPool;
-    private boolean foundCorrelation;
+    private boolean hasCorrelation;
     private int outerRefId;
 
     LateralJoinRewriter(
@@ -82,6 +84,26 @@ class LateralJoinRewriter {
         this.windowExpressionPool = windowExpressionPool;
         this.sqlNodeStack = sqlNodeStack;
         this.functionParser = functionParser;
+    }
+
+    @Override
+    public void clear() {
+        branchCorrelated.clear();
+        branchNonCorrelated.clear();
+        correlatedPreds.clear();
+        countColAliases.clear();
+        groupingCols.clear();
+        innerJoinCorrelated.clear();
+        innerJoinNonCorrelated.clear();
+        nonCorrelatedPreds.clear();
+        orderByDirSave.clear();
+        orderBySave.clear();
+        outerAliasSaveStack.clear();
+        outerCols.clear();
+        outerToInnerAlias.clear();
+        subCountColAliases.clear();
+        hasCorrelation = false;
+        outerRefId = 0;
     }
 
     public void rewrite(QueryModel model) throws SqlException {
@@ -433,7 +455,7 @@ class LateralJoinRewriter {
                     CharSequence colName = node.token.subSequence(dotPos + 1, node.token.length());
                     ensureCorrelatedColumnSet(correlatedColumns, jmIndex).put(colName, node.position);
                     node.lateralDepth = lateralDepth;
-                    foundCorrelation = true;
+                    hasCorrelation = true;
                 }
             } else if (!canResolveColumn(node.token, innerModel)) {
                 for (int j = 0; j < lateralJoinIndex; j++) {
@@ -441,7 +463,7 @@ class LateralJoinRewriter {
                     if (canResolveColumnForOuter(node.token, outerJm)) {
                         ensureCorrelatedColumnSet(correlatedColumns, j).put(node.token, node.position);
                         node.lateralDepth = lateralDepth;
-                        foundCorrelation = true;
+                        hasCorrelation = true;
                         break;
                     }
                 }
@@ -482,7 +504,7 @@ class LateralJoinRewriter {
                 outerModel.getJoinModels().getQuick(lateralJoinIndex).getCorrelatedColumns();
         QueryModel current = topInner;
         while (current != null) {
-            foundCorrelation = false;
+            hasCorrelation = false;
             ObjList<QueryColumn> cols = current.getBottomUpColumns();
             for (int i = 0, n = cols.size(); i < n; i++) {
                 collectCorrelatedRef(cols.getQuick(i).getAst(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
@@ -513,7 +535,7 @@ class LateralJoinRewriter {
                 collectCorrelatedRef(jm.getJoinCriteria(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
             }
 
-            if (foundCorrelation) {
+            if (hasCorrelation) {
                 current.makeCorrelatedAtDepth(lateralDepth);
             }
 
@@ -723,11 +745,11 @@ class LateralJoinRewriter {
             rnWindowExpr.getOrderByDirection().add(orderByDirSave.getQuick(i));
         }
 
-        boolean needsWrapping = current.getGroupBy().size() > 0
+        boolean isWrappingNeeded = current.getGroupBy().size() > 0
                 || (current.getNestedModel() != null && current.getNestedModel().getGroupBy().size() > 0)
                 || hasAggregateFunctions(current)
                 || current.isDistinct();
-        if (needsWrapping) {
+        if (isWrappingNeeded) {
             for (int i = 0, n = groupingCols.size(); i < n; i++) {
                 rnWindowExpr.getPartitionBy().add(
                         ExpressionNode.deepClone(expressionNodePool, groupingCols.getQuick(i)));
@@ -794,7 +816,7 @@ class LateralJoinRewriter {
         } else {
             rnFilter = createBinaryOp("<=",
                     ExpressionNode.deepClone(expressionNodePool, rnRef),
-                    ExpressionNode.deepClone(expressionNodePool, Objects.requireNonNullElse(limitHi, limitLo)));
+                    ExpressionNode.deepClone(expressionNodePool, limitHi != null ? limitHi : limitLo));
         }
 
         QueryModel filterModel = queryModelPool.next();
@@ -858,8 +880,8 @@ class LateralJoinRewriter {
             }
 
             rewriteSelectExpressions(current, outerToInnerAlias, depth);
-            rewriteOrderByExpressions(current, outerToInnerAlias, depth);
-            rewriteGroupByExpressions(current, outerToInnerAlias, depth);
+            rewriteExpressionList(current.getOrderBy(), outerToInnerAlias, depth);
+            rewriteExpressionList(current.getGroupBy(), outerToInnerAlias, depth);
             if (current.getSampleBy() != null
                     && hasCorrelatedExprAtDepth(current.getSampleBy(), depth)) {
                 current.setSampleBy(
@@ -1038,7 +1060,7 @@ class LateralJoinRewriter {
             outerRefBase.setNestedModel(outerJm.getNestedModel());
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
         } else {
-            throw SqlException.position(0)
+            throw SqlException.position(outerJm.getModelPosition())
                     .put("LATERAL decorrelation: cannot determine outer data source");
         }
         if (outerJm.getAlias() != null) {
@@ -1450,7 +1472,7 @@ class LateralJoinRewriter {
             if (Chars.startsWith(node.token, outerRefAlias)
                     && node.token.length() > outerRefAlias.length()) {
                 ExpressionNode original = findOriginalOuterRef(node.token, outerRefCols);
-                return ExpressionNode.deepClone(expressionNodePool, Objects.requireNonNullElse(original, node));
+                return ExpressionNode.deepClone(expressionNodePool, original != null ? original : node);
             }
             CharSequence colName = node.token;
             int dotPos = Chars.indexOf(colName, '.');
@@ -1630,8 +1652,8 @@ class LateralJoinRewriter {
 
         // 4. Rewrite current layer correlated references
         rewriteSelectExpressions(current, outerToInnerAlias, depth);
-        rewriteOrderByExpressions(current, outerToInnerAlias, depth);
-        rewriteGroupByExpressions(current, outerToInnerAlias, depth);
+        rewriteExpressionList(current.getOrderBy(), outerToInnerAlias, depth);
+        rewriteExpressionList(current.getGroupBy(), outerToInnerAlias, depth);
         if (current.getSampleBy() != null
                 && hasCorrelatedExprAtDepth(current.getSampleBy(), depth)) {
             current.setSampleBy(
@@ -1762,14 +1784,15 @@ class LateralJoinRewriter {
                 clonedOuterRef.setAlias(cloneAliasExpr);
                 clonedOuterRef.setJoinType(QueryModel.JOIN_CROSS);
 
-                // Save outerToInnerAlias values, replace with clone aliases (zero GC: reuse subCountColAliases)
-                subCountColAliases.clear();
+                // Save outerToInnerAlias values, replace with clone aliases
+                // Use stack-safe pattern: record base offset, append, restore by truncating
+                int aliasSaveBase = outerAliasSaveStack.size();
                 ObjList<CharSequence> oKeys = outerToInnerAlias.keys();
                 for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
                     CharSequence key = oKeys.getQuick(ok);
                     if (key == null) continue;
                     CharSequence origValue = outerToInnerAlias.get(key);
-                    subCountColAliases.add(origValue);
+                    outerAliasSaveStack.add(origValue);
                     CharSequence colName = unqualify(key);
                     final CharacterStoreEntry cse = characterStore.newEntry();
                     cse.put(cloneAlias).put("_").put(colName);
@@ -1784,7 +1807,7 @@ class LateralJoinRewriter {
                 ExpressionNode alignCriteria = jm.getJoinCriteria();
                 QueryModel jmTop = jm.getNestedModel();
                 CharSequence jmAlias = jm.getAlias() != null ? jm.getAlias().token : null;
-                int savedIdx = 0;
+                int savedIdx = aliasSaveBase;
                 for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
                     CharSequence key = oKeys.getQuick(ok);
                     if (key == null) {
@@ -1792,7 +1815,7 @@ class LateralJoinRewriter {
                     }
 
                     CharSequence cloneColAlias = outerToInnerAlias.get(key);
-                    CharSequence mainColAlias = subCountColAliases.getQuick(savedIdx);
+                    CharSequence mainColAlias = outerAliasSaveStack.getQuick(savedIdx);
 
                     ExpressionNode cloneColNode = expressionNodePool.next().of(
                             ExpressionNode.LITERAL, cloneColAlias, 0, 0
@@ -1825,14 +1848,15 @@ class LateralJoinRewriter {
                     jm.setJoinType(QueryModel.JOIN_INNER);
                 }
 
-                // Restore outerToInnerAlias values
-                savedIdx = 0;
+                // Restore outerToInnerAlias values and truncate save stack
+                savedIdx = aliasSaveBase;
                 for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
                     CharSequence key = oKeys.getQuick(ok);
                     if (key == null) continue;
-                    outerToInnerAlias.put(key, subCountColAliases.getQuick(savedIdx));
+                    outerToInnerAlias.put(key, outerAliasSaveStack.getQuick(savedIdx));
                     savedIdx++;
                 }
+                outerAliasSaveStack.setPos(aliasSaveBase);
             }
         }
     }
@@ -1997,31 +2021,15 @@ class LateralJoinRewriter {
         }
     }
 
-    private void rewriteGroupByExpressions(
-            QueryModel inner,
+    private void rewriteExpressionList(
+            ObjList<ExpressionNode> list,
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) {
-        ObjList<ExpressionNode> groupBy = inner.getGroupBy();
-        for (int i = 0, n = groupBy.size(); i < n; i++) {
-            ExpressionNode expr = groupBy.getQuick(i);
+        for (int i = 0, n = list.size(); i < n; i++) {
+            ExpressionNode expr = list.getQuick(i);
             if (hasCorrelatedExprAtDepth(expr, depth)) {
-                groupBy.setQuick(i,
-                        rewriteOuterRefs(expr, outerToInnerAlias, depth));
-            }
-        }
-    }
-
-    private void rewriteOrderByExpressions(
-            QueryModel inner,
-            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
-            int depth
-    ) {
-        ObjList<ExpressionNode> orderBy = inner.getOrderBy();
-        for (int i = 0, n = orderBy.size(); i < n; i++) {
-            ExpressionNode expr = orderBy.getQuick(i);
-            if (hasCorrelatedExprAtDepth(expr, depth)) {
-                orderBy.setQuick(i,
+                list.setQuick(i,
                         rewriteOuterRefs(expr, outerToInnerAlias, depth));
             }
         }
@@ -2052,6 +2060,7 @@ class LateralJoinRewriter {
                     ), col.isIncludeIntoWildcard());
                 } else {
                     model.removeColumn(j);
+                    continue;
                 }
             } else {
                 ExpressionNode rewritten = rewriteOuterRefs(ast, aliasMap, 0);

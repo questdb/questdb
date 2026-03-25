@@ -353,6 +353,7 @@ public class SqlOptimiser implements Mutable {
         pivotAliasSequenceMap.clear();
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
+        lateralJoinRewriter.clear();
     }
 
     public void clearForUnionModelInJoin() {
