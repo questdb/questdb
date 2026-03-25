@@ -125,6 +125,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int sidecarOrdinal;
         private int sidecarStrideKeyStart;
         private int sealedGenKeyCount;
+        private boolean isCurrentGenDense;
+        private int currentGenSidecarOffset; // offset into .pc* for raw sidecar block
         private double[][] decodedDoubles;
         private int[][] decodedInts;
         private long[][] decodedLongs;
@@ -134,6 +136,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public byte getCoveredByte(int includeIdx) {
+            if (!isCurrentGenDense) {
+                return getRawSidecarByte(includeIdx);
+            }
             int idx = sidecarValueIndex();
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return 0;
@@ -143,6 +148,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public double getCoveredDouble(int includeIdx) {
+            if (!isCurrentGenDense) {
+                return getRawSidecarDouble(includeIdx);
+            }
             int idx = sidecarValueIndex();
             if (idx < 0 || decodedDoubles == null || decodedDoubles[includeIdx] == null) {
                 return Double.NaN;
@@ -152,6 +160,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public float getCoveredFloat(int includeIdx) {
+            if (!isCurrentGenDense) {
+                return getRawSidecarFloat(includeIdx);
+            }
             int idx = sidecarValueIndex();
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return Float.NaN;
@@ -161,6 +172,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public int getCoveredInt(int includeIdx) {
+            if (!isCurrentGenDense) {
+                return getRawSidecarInt(includeIdx);
+            }
             int idx = sidecarValueIndex();
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return Integer.MIN_VALUE;
@@ -170,6 +184,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long getCoveredLong(int includeIdx) {
+            if (!isCurrentGenDense) {
+                return getRawSidecarLong(includeIdx);
+            }
             int idx = sidecarValueIndex();
             if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
                 return Long.MIN_VALUE;
@@ -179,6 +196,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public short getCoveredShort(int includeIdx) {
+            if (!isCurrentGenDense) {
+                return getRawSidecarShort(includeIdx);
+            }
             int idx = sidecarValueIndex();
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return 0;
@@ -188,7 +208,47 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public boolean hasCovering() {
-            return coverCount > 0 && sidecarMems != null && genCount == 1;
+            return coverCount > 0 && sidecarMems != null;
+        }
+
+        // Raw sidecar readers for sparse (unsealed) gens.
+        // Format: [valueCount: 4B][raw values: valueCount × elemSize]
+        // sidecarOrdinal tracks position within this gen's block.
+
+        private double getRawSidecarDouble(int includeIdx) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Double.NaN;
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Double.BYTES);
+            return Unsafe.getUnsafe().getDouble(addr);
+        }
+
+        private float getRawSidecarFloat(int includeIdx) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Float.NaN;
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Float.BYTES);
+            return Unsafe.getUnsafe().getFloat(addr);
+        }
+
+        private int getRawSidecarInt(int includeIdx) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Integer.MIN_VALUE;
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Integer.BYTES);
+            return Unsafe.getUnsafe().getInt(addr);
+        }
+
+        private long getRawSidecarLong(int includeIdx) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Long.MIN_VALUE;
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Long.BYTES);
+            return Unsafe.getUnsafe().getLong(addr);
+        }
+
+        private short getRawSidecarShort(int includeIdx) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return 0;
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Short.BYTES);
+            return Unsafe.getUnsafe().getShort(addr);
+        }
+
+        private byte getRawSidecarByte(int includeIdx) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return 0;
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Byte.BYTES);
+            return Unsafe.getUnsafe().getByte(addr);
         }
 
         @Override
@@ -632,6 +692,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          * Loads a dense generation using cached metadata from PostingGenLookup.
          */
         private void loadDenseGenerationCached(int gen) {
+            this.isCurrentGenDense = true;
+            this.sidecarOrdinal = 0;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -749,6 +811,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          * bypassing binary search entirely.
          */
         private void loadSparseGenDirect(int gen, int idx) {
+            this.isCurrentGenDense = false;
+            this.currentGenSidecarOffset = genLookup.getGenSidecarOffset(gen);
+            this.sidecarOrdinal = 0;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -774,6 +839,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          * Loads a sparse generation using binary search (Tier 2/3 fallback).
          */
         private void loadSparseGenWithBinarySearch(int gen) {
+            this.isCurrentGenDense = false;
+            this.currentGenSidecarOffset = genLookup.getGenSidecarOffset(gen);
+            this.sidecarOrdinal = 0;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);

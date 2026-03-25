@@ -2010,8 +2010,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testCoveringMultiGenFallback() throws Exception {
-        // When genCount > 1 (pre-seal), hasCovering() must return false
-        // and queries fall back to regular column reads
+        // With per-gen sidecars, hasCovering() returns true even with genCount > 1.
+        // Covering data is written during each commit's flushAllPending().
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 String name = "cover_multigen";
@@ -2042,26 +2042,29 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     writer.setMaxValue(9);
                     writer.commit();
 
-                    // Gen 1 — index now has genCount=2, not sealed
+                    // Gen 1 — index now has genCount=2 with per-gen sidecar data
                     for (int i = 10; i < 20; i++) {
                         writer.add(0, i);
                     }
                     writer.setMaxValue(19);
                     writer.commit();
 
-                    // Reader sees genCount=2 but no sidecar files yet (seal hasn't run)
+                    // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        // genCount=2, hasCovering() must be false
-                        assertFalse(cc.hasCovering());
+                        // Per-gen sidecars: hasCovering() returns true
+                        assertTrue(cc.hasCovering());
 
-                        // But row IDs are still correct
+                        // Row IDs and covered values are correct
                         int count = 0;
                         while (cursor.hasNext()) {
-                            assertEquals(count, cursor.next());
+                            long rowId = cursor.next();
+                            assertEquals(count, rowId);
+                            double covered = cc.getCoveredDouble(0);
+                            assertEquals("covered value at row " + count, 100.0 + count, covered, 0.001);
                             count++;
                         }
                         assertEquals(20, count);
@@ -2077,8 +2080,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testCoveringAfterSealThenNewCommit() throws Exception {
-        // After seal + new commit: genCount=2, sidecar files exist from seal,
-        // but hasCovering() must be false to prevent wrong sidecar reads
+        // After seal + new commit: genCount=2. With per-gen sidecars,
+        // covering still works — gen0 has sealed sidecar, gen1 has raw sidecar.
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 String name = "cover_postseal";
@@ -2112,7 +2115,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     FilesFacade ff = configuration.getFilesFacade();
                     assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)));
 
-                    // Second writer: reopen without reinit (preserves sealed data), add more
+                    // Second writer: reopen without reinit, add more data (creates gen1)
                     PostingIndexWriter writer2 = new PostingIndexWriter(configuration);
                     writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
                     writer2.configureCovering(
@@ -2129,12 +2132,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     writer2.setMaxValue(29);
                     writer2.commit();
 
-                    // Reader: sidecar files exist but genCount=2 — hasCovering must be false
+                    // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
-                        assertFalse(((CoveringRowCursor) cursor).hasCovering());
+                        assertTrue(((CoveringRowCursor) cursor).hasCovering());
 
                         int count = 0;
                         while (cursor.hasNext()) {

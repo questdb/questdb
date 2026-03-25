@@ -77,6 +77,7 @@ class PostingGenLookup implements Closeable {
     private int[] genKeyCounts;    // negative = sparse
     private int[] genMinKeys;
     private int[] genMaxKeys;
+    private int[] genSidecarOffsets;
 
     // State
     private int builtForGenCount;
@@ -100,6 +101,7 @@ class PostingGenLookup implements Closeable {
             genKeyCounts = new int[newSize];
             genMinKeys = new int[newSize];
             genMaxKeys = new int[newSize];
+            genSidecarOffsets = new int[newSize];
         }
         for (int g = 0; g < genCount; g++) {
             long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
@@ -108,6 +110,7 @@ class PostingGenLookup implements Closeable {
             genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
             genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
         }
         // Free stale lookup index; buildLookupIfNeeded will rebuild
         freeTier1();
@@ -219,6 +222,10 @@ class PostingGenLookup implements Closeable {
         return Unsafe.getUnsafe().getInt(genIndicesAddr + (long) entryPos * Integer.BYTES);
     }
 
+    int getGenSidecarOffset(int gen) {
+        return genSidecarOffsets != null ? genSidecarOffsets[gen] : 0;
+    }
+
     int getGenKeyCount(int gen) {
         return genKeyCounts[gen];
     }
@@ -295,6 +302,7 @@ class PostingGenLookup implements Closeable {
             int[] newKeyCounts = new int[newSize];
             int[] newMinKeys = new int[newSize];
             int[] newMaxKeys = new int[newSize];
+            int[] newSidecarOffsets = new int[newSize];
 
             if (genFileOffsets != null && fromGen > 0) {
                 System.arraycopy(genFileOffsets, 0, newOffsets, 0, fromGen);
@@ -302,6 +310,9 @@ class PostingGenLookup implements Closeable {
                 System.arraycopy(genKeyCounts, 0, newKeyCounts, 0, fromGen);
                 System.arraycopy(genMinKeys, 0, newMinKeys, 0, fromGen);
                 System.arraycopy(genMaxKeys, 0, newMaxKeys, 0, fromGen);
+                if (genSidecarOffsets != null) {
+                    System.arraycopy(genSidecarOffsets, 0, newSidecarOffsets, 0, fromGen);
+                }
             }
 
             genFileOffsets = newOffsets;
@@ -309,6 +320,7 @@ class PostingGenLookup implements Closeable {
             genKeyCounts = newKeyCounts;
             genMinKeys = newMinKeys;
             genMaxKeys = newMaxKeys;
+            genSidecarOffsets = newSidecarOffsets;
         }
 
         for (int g = fromGen; g < toGenCount; g++) {
@@ -318,6 +330,7 @@ class PostingGenLookup implements Closeable {
             genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
             genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
         }
     }
 
