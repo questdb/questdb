@@ -79,6 +79,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableConvertPartitionToNative(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableDedupDisable(TableToken tableToken) {
     }
 
@@ -103,11 +111,19 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableDropParquetEncoding(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
     public void authorizeAlterTableSetParam(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableSetParquetEncoding(TableToken tableToken) {
     }
 
     @Override
