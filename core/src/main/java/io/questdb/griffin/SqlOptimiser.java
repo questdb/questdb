@@ -2528,6 +2528,7 @@ public class SqlOptimiser implements Mutable {
             CharSequence columnName,
             ExpressionNode columnAst,
             boolean isGroupBy,
+            boolean includeIntoWildcard,
             QueryModel baseModel,
             QueryModel translatingModel,
             QueryModel innerVirtualModel,
@@ -2560,6 +2561,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             // expose the column in the outer models
+            translatedColumn.setIncludeIntoWildcard(includeIntoWildcard);
             outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
@@ -2587,6 +2589,7 @@ public class SqlOptimiser implements Mutable {
             windowModel.addBottomUpColumn(translatedColumn);
 
             // expose the column in the outer models
+            translatedColumn.setIncludeIntoWildcard(includeIntoWildcard);
             outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
@@ -2678,6 +2681,7 @@ public class SqlOptimiser implements Mutable {
                         name,
                         nextLiteral(token, wildcardPosition),
                         isGroupBy,
+                        true, // already filtered by isIncludeIntoWildcard() check above
                         null, // do not validate
                         translatingModel,
                         innerModel,
@@ -9080,6 +9084,7 @@ public class SqlOptimiser implements Mutable {
                                         qc.getAlias(),
                                         qc.getAst(),
                                         (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
+                                        qc.isIncludeIntoWildcard(),
                                         baseModel,
                                         translatingModel0,
                                         innerVirtualModel,
