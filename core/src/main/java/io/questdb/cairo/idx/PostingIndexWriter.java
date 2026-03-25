@@ -2229,9 +2229,20 @@ public class PostingIndexWriter implements IndexWriter {
             this.keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
             this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
+            // After seal, the .pk metadata contains VALUE_FILE_TXN pointing to the
+            // sealed .pv.{txn} file. The passed columnNameTxn may be stale (from
+            // columnVersionWriter which wasn't updated after seal). Read the actual
+            // txn from the metadata to open the correct value file.
+            if (!init) {
+                long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+                if (metaValueTxn > 0) {
+                    this.columnNameTxn = metaValueTxn;
+                }
+            }
+
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
+                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, this.columnNameTxn),
                     configuration.getDataIndexValueAppendPageSize(),
                     init ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
