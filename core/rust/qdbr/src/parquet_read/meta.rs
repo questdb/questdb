@@ -42,6 +42,17 @@ impl ParquetDecoder {
         let metadata = read_metadata_with_size(reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
+
+        // Discard QDB metadata when the schema length doesn't match the Parquet
+        // column count. This happens when an external tool rewrites the file
+        // (e.g. drops partition columns) but preserves the original key-value
+        // metadata. Positional lookups into a stale schema return wrong types.
+        //
+        // Note: col_len is the number of leaf (primitive) columns from
+        // schema_descr.columns(). For all column types QuestDB currently writes
+        // (including arrays encoded as LIST groups), each top-level field
+        // produces exactly one leaf column, so this matches qdb_meta.schema.len().
+        let qdb_meta = qdb_meta.filter(|m| m.schema.len() == col_len);
         let mut row_group_sizes: AcVec<u32> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
         let mut row_group_sizes_acc: AcVec<usize> =
