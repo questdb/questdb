@@ -565,7 +565,7 @@
             <activation>
                 <os>
                     <family>Mac</family>
-                    <arch>amd64</arch>
+                    <arch>x86_64</arch>
                 </os>
             </activation>
             <properties>
