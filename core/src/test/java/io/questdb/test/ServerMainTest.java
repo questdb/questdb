@@ -500,13 +500,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "'cairo.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
                                     "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count', 'view.compiler.worker.count', " +
-                                    "'http.export.connection.limit'" +
+                                    "'http.export.connection.limit', 'cairo.mat.view.parallel.sql.enabled'" +
                                     ") order by 1",
                             actualSink
                     );
                     final Set<String> actualProps = new HashSet<>(asList(actualSink.toString().split("\n")));
 
-                    final String matViewParallelDefault = Runtime.getRuntime().availableProcessors() >= 4 ? "true" : "false";
                     final String[] expectedProps = (
                             "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
@@ -900,7 +899,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.rows.per.query.estimate\tQDB_CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE\t1000000\tdefault\tfalse\ttrue\n" +
-                                    "cairo.mat.view.parallel.sql.enabled\tQDB_CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED\t" + matViewParallelDefault + "\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.max.refresh.intervals\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS\t100\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.max.refresh.step\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_STEP\t31536000000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.refresh.intervals.update.period\tQDB_CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD\t15000\tdefault\tfalse\tfalse\n" +
