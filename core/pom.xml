@@ -491,8 +491,7 @@
                                 <configuration>
                                     <path>${qdbr.path}</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
-                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                 </configuration>
                             </execution>
                         </executions>
@@ -512,6 +511,7 @@
                 <archive.name>${project.version}-rt-windows-x86-64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-win.xml</runtime.assembly>
+                <platform.dir.name>windows-x86-64</platform.dir.name>
             </properties>
         </profile>
         <profile>
@@ -667,8 +667,7 @@
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
-                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                     </environmentVariables>

@@ -56,33 +56,37 @@ jobs:
           script: |
             set -eo pipefail
             ARCH=amd64
+            # --provenance=false prevents BuildKit from creating attestation manifests,
+            # which would make the pushed images manifest lists instead of plain images,
+            # breaking docker manifest create later.
+            BUILD="docker build --provenance=false"
 
             if [ "$(Build.SourceBranch)" = "refs/heads/master" ]; then
-              docker build -t questdb/questdb:nightly-${ARCH} .
+              $BUILD -t questdb/questdb:nightly-${ARCH} .
               docker push questdb/questdb:nightly-${ARCH}
-              docker build -t questdb/questdb:nightly-rhel-${ARCH} --target rhel .
+              $BUILD -t questdb/questdb:nightly-rhel-${ARCH} --target rhel .
               docker push questdb/questdb:nightly-rhel-${ARCH}
 
             elif [[ "$(Build.SourceBranch)" == refs/tags/* ]]; then
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               echo "Tag release: $tag_name"
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-${ARCH} .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-${ARCH} .
               docker push questdb/questdb:${tag_name}-${ARCH}
               pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
               if [[ "$tag_name" =~ $pattern ]]; then
                 docker tag questdb/questdb:${tag_name}-${ARCH} questdb/questdb:latest-${ARCH}
                 docker push questdb/questdb:latest-${ARCH}
               fi
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-rhel-${ARCH} --target rhel .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-rhel-${ARCH} --target rhel .
               docker push questdb/questdb:${tag_name}-rhel-${ARCH}
 
             else
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
               echo "Branch release: $docker_tag_name"
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-${ARCH} .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-${ARCH} .
               docker push questdb/questdb:${docker_tag_name}-${ARCH}
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-rhel-${ARCH} --target rhel .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-rhel-${ARCH} --target rhel .
               docker push questdb/questdb:${docker_tag_name}-rhel-${ARCH}
             fi
           workingDirectory: core
@@ -108,33 +112,34 @@ jobs:
           script: |
             set -eo pipefail
             ARCH=arm64
+            BUILD="docker build --provenance=false"
 
             if [ "$(Build.SourceBranch)" = "refs/heads/master" ]; then
-              docker build -t questdb/questdb:nightly-${ARCH} .
+              $BUILD -t questdb/questdb:nightly-${ARCH} .
               docker push questdb/questdb:nightly-${ARCH}
-              docker build -t questdb/questdb:nightly-rhel-${ARCH} --target rhel .
+              $BUILD -t questdb/questdb:nightly-rhel-${ARCH} --target rhel .
               docker push questdb/questdb:nightly-rhel-${ARCH}
 
             elif [[ "$(Build.SourceBranch)" == refs/tags/* ]]; then
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               echo "Tag release: $tag_name"
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-${ARCH} .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-${ARCH} .
               docker push questdb/questdb:${tag_name}-${ARCH}
               pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
               if [[ "$tag_name" =~ $pattern ]]; then
                 docker tag questdb/questdb:${tag_name}-${ARCH} questdb/questdb:latest-${ARCH}
                 docker push questdb/questdb:latest-${ARCH}
               fi
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-rhel-${ARCH} --target rhel .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${tag_name}-rhel-${ARCH} --target rhel .
               docker push questdb/questdb:${tag_name}-rhel-${ARCH}
 
             else
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
               echo "Branch release: $docker_tag_name"
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-${ARCH} .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-${ARCH} .
               docker push questdb/questdb:${docker_tag_name}-${ARCH}
-              docker build --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-rhel-${ARCH} --target rhel .
+              $BUILD --build-arg tag_name=$tag_name -t questdb/questdb:${docker_tag_name}-rhel-${ARCH} --target rhel .
               docker push questdb/questdb:${docker_tag_name}-rhel-${ARCH}
             fi
           workingDirectory: core
