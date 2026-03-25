@@ -156,7 +156,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - minValue;
         }
 
         void of(int key, long minValue, long maxValue) {

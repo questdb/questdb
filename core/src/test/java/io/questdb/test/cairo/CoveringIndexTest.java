@@ -4046,4 +4046,52 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_seek_empty WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
         });
     }
+
+    @Test
+    public void testPostingIndexSplitPageFrame() throws Exception {
+        // Regression: posting index cursor returned partition-absolute row IDs
+        // instead of frame-relative (bitmap subtracts minValue, posting didn't).
+        // With >1M rows in a single partition, the page frame splits and the
+        // second frame has partitionLo>0. The absolute row IDs double-count
+        // partitionLo against the already-offset page addresses.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_split_frame (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL
+                    """);
+            // Insert 1.5M rows — enough to split into 2 frames (pageFrameMaxRows=1M)
+            // sym alternates between A and B so both keys span both frames
+            execute("""
+                    INSERT INTO t_split_frame
+                    SELECT
+                        timestamp_sequence('2024-01-01', 1_000_000) AS ts,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END AS sym,
+                        x * 1.5 AS val
+                    FROM long_sequence(1_500_000)
+                    """);
+            engine.releaseAllWriters();
+
+            // Verify we have enough rows to split into multiple page frames
+            try (TableReader reader = engine.getReader("t_split_frame")) {
+                assertEquals(1_500_000, reader.size());
+            }
+
+            // Indexed scan must return correct data from both frames.
+            // Before the fix, frame 2 (partitionLo=1M) would read wrong data.
+            // A = even x (2,4,...,1500000), avg(x)=750001, avg(val)=750001*1.5
+            assertSql("""
+                    count\tavg
+                    750000\t1125001.5
+                    """, "SELECT count(), avg(val) FROM t_split_frame WHERE sym = 'A'");
+
+            // B = odd x (1,3,...,1499999), avg(x)=750000, avg(val)=750000*1.5
+            assertSql("""
+                    count\tavg
+                    750000\t1125000.0
+                    """, "SELECT count(), avg(val) FROM t_split_frame WHERE sym = 'B'");
+        });
+    }
 }
