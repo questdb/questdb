@@ -5044,7 +5044,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             HORIZON JOIN asks AS a ON (t.sym = a.sym)
                                 LIST (0) AS h
                             """,
-                    82,
+                    74,
                     "left side of time series join has no timestamp"
             );
         });
