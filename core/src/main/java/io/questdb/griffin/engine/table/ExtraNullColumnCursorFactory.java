@@ -224,16 +224,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public long getPageFrameRowHi() {
-            return delegate.getPageFrameRowHi();
-        }
-
-        @Override
-        public long getPageFrameRowLo() {
-            return delegate.getPageFrameRowLo();
-        }
-
-        @Override
         public Record getRecord() {
             return extraNullColumnRecord;
         }
@@ -326,6 +316,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public byte format() {
+            return baseFrame.format();
+        }
+
+        @Override
         public long getAuxPageAddress(int columnIndex) {
             return columnIndex < columnSplit ? baseFrame.getAuxPageAddress(columnIndex) : 0;
         }
@@ -343,11 +338,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public int getColumnCount() {
             return columnCount;
-        }
-
-        @Override
-        public byte getFormat() {
-            return baseFrame.getFormat();
         }
 
         @Override
@@ -386,11 +376,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public int getPartitionIndex() {
-            return baseFrame.getPartitionIndex();
-        }
-
-        @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
         }
@@ -398,6 +383,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         public ExtraNullColumnPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;
+        }
+
+        @Override
+        public int partitionIndex() {
+            return baseFrame.partitionIndex();
         }
     }
 
@@ -419,6 +409,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             baseCursor.close();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return baseCursor.hasIntervalFilter();
         }
 
         @Override
@@ -527,16 +522,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
-        }
-
-        @Override
-        public long getPageFrameRowHi() {
-            return baseCursor.getPageFrameRowHi();
-        }
-
-        @Override
-        public long getPageFrameRowLo() {
-            return baseCursor.getPageFrameRowLo();
         }
 
         @Override

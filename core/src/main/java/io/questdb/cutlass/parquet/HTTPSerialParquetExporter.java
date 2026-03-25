@@ -259,7 +259,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             long rowsInFrame = frame.getPartitionHi() - frame.getPartitionLo();
-            int partitionIndex = frame.getPartitionIndex();
+            int partitionIndex = frame.partitionIndex();
 
             exporter.setCurrentPartitionIndex(partitionIndex, rowsInFrame);
             exporter.writePageFrame(pageFrameCursor, frame);

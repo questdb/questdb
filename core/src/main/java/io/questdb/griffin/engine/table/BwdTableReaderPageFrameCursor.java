@@ -395,7 +395,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         while (targetGroup >= 0) {
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
-                    targetGroup, reenterParquetDecoder, filterList, filterBufEnd)) {
+                    targetGroup,
+                    reenterParquetDecoder,
+                    filterList,
+                    filterBufEnd
+            )) {
                 partitionHi = targetGroupStart;
                 if (partitionHi <= partitionLo) {
                     this.reenterPartitionFrame = false;
@@ -448,7 +452,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             assert reenterParquetDecoder != null;
             filterBufEnd = -1;
             if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
+                    reenterParquetDecoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);
@@ -470,6 +478,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupLo;
 
         @Override
+        public byte format() {
+            return format;
+        }
+
+        @Override
         public long getAuxPageAddress(int columnIndex) {
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
@@ -487,11 +500,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getColumnCount() {
             return columnCount;
-        }
-
-        @Override
-        public byte getFormat() {
-            return format;
         }
 
         @Override
@@ -531,13 +539,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public int getPartitionIndex() {
-            return partitionIndex;
+        public long getPartitionLo() {
+            return partitionLo;
         }
 
         @Override
-        public long getPartitionLo() {
-            return partitionLo;
+        public int partitionIndex() {
+            return partitionIndex;
         }
     }
 }

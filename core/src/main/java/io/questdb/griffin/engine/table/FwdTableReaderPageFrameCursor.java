@@ -129,6 +129,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasIntervalFilter() {
+        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
+    }
+
+    @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
@@ -347,7 +352,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
             if (partitionLo < rowGroupEndRow) {
                 if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
-                        i, reenterParquetDecoder, filterList, filterBufEnd)) {
+                        i,
+                        reenterParquetDecoder,
+                        filterList,
+                        filterBufEnd
+                )) {
                     partitionLo = rowGroupEndRow;
                     if (partitionLo >= partitionHi) {
                         reenterPartitionFrame = false;
@@ -401,7 +410,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             assert reenterParquetDecoder != null;
             filterBufEnd = -1;
             if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
+                    reenterParquetDecoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);
@@ -442,6 +455,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupLo;
 
         @Override
+        public byte format() {
+            return format;
+        }
+
+        @Override
         public long getAuxPageAddress(int columnIndex) {
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
@@ -459,11 +477,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getColumnCount() {
             return columnCount;
-        }
-
-        @Override
-        public byte getFormat() {
-            return format;
         }
 
         @Override
@@ -503,13 +516,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public int getPartitionIndex() {
-            return partitionIndex;
+        public long getPartitionLo() {
+            return partitionLo;
         }
 
         @Override
-        public long getPartitionLo() {
-            return partitionLo;
+        public int partitionIndex() {
+            return partitionIndex;
         }
     }
 }

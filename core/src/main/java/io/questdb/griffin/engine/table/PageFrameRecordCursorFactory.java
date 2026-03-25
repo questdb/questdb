@@ -138,7 +138,12 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             if (timeFrameCursor == null) {
                 timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
-            return timeFrameCursor.of(pageFrameCursor);
+            return timeFrameCursor.of(
+                    pageFrameCursor,
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    executionContext.getSharedQueryWorkerCount()
+            );
         }
         return null;
     }

@@ -256,16 +256,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public long getPageFrameRowHi() {
-            return delegate.getPageFrameRowHi();
-        }
-
-        @Override
-        public long getPageFrameRowLo() {
-            return delegate.getPageFrameRowLo();
-        }
-
-        @Override
         public Record getRecord() {
             return delegate.getRecord();
         }
@@ -355,6 +345,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public byte format() {
+            return baseFrame.format();
+        }
+
+        @Override
         public long getAuxPageAddress(int columnIndex) {
             return baseFrame.getAuxPageAddress(columnCrossIndex.getQuick(columnIndex));
         }
@@ -372,11 +367,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public int getColumnCount() {
             return columnCrossIndex.size();
-        }
-
-        @Override
-        public byte getFormat() {
-            return baseFrame.getFormat();
         }
 
         @Override
@@ -415,11 +405,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public int getPartitionIndex() {
-            return baseFrame.getPartitionIndex();
-        }
-
-        @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
         }
@@ -427,6 +412,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         public SelectedPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;
+        }
+
+        @Override
+        public int partitionIndex() {
+            return baseFrame.partitionIndex();
         }
     }
 
@@ -448,6 +438,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void close() {
             baseCursor.close();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return baseCursor.hasIntervalFilter();
         }
 
         @Override
@@ -551,16 +546,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return baseCursor.getIndexReaderForCurrentFrame(columnCrossIndex.getQuick(columnIndex), direction);
-        }
-
-        @Override
-        public long getPageFrameRowHi() {
-            return baseCursor.getPageFrameRowHi();
-        }
-
-        @Override
-        public long getPageFrameRowLo() {
-            return baseCursor.getPageFrameRowLo();
         }
 
         @Override

@@ -28,10 +28,10 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -160,8 +160,8 @@ public class HorizonJoinTimeFrameHelper {
             effectiveStart = startRowId;
         }
 
-        int frameIndex = TimeFrameCursor.toPartitionIndex(effectiveStart);
-        long rowIndex = TimeFrameCursor.toLocalRowID(effectiveStart);
+        int frameIndex = Rows.toPartitionIndex(effectiveStart);
+        long rowIndex = Rows.toLocalRowID(effectiveStart);
 
         // Jump to the starting frame
         timeFrameCursor.jumpTo(frameIndex);
@@ -176,12 +176,8 @@ public class HorizonJoinTimeFrameHelper {
         masterKey.commit();
         final long masterHash = masterKey.hash();
 
-        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
-        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
-        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
-
         while (true) {
-            final long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
+            final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
             backwardScanRows++;
 
             // Update backward watermark
@@ -190,15 +186,7 @@ public class HorizonJoinTimeFrameHelper {
             }
 
             // Position record at current row
-            if (pfRecord != null && rowIndex >= pfRowLo) {
-                pfRecord.setRowIndex(rowIndex - pfRowLo);
-            } else {
-                timeFrameCursor.recordAtRowIndex(record, rowIndex);
-                if (pfRecord != null) {
-                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
-                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
-                }
-            }
+            timeFrameCursor.recordAtRowIndex(record, rowIndex);
 
             // Add key to map only if not already present (we want latest/highest rowId)
             final MapKey slaveKey = keyToRowIdMap.withKey();
@@ -243,8 +231,6 @@ public class HorizonJoinTimeFrameHelper {
                 }
                 rowIndex = timeFrame.getRowHi() - 1;
                 timeFrameCursor.recordAt(record, frameIndex, rowIndex);
-                pfRowLo = timeFrameCursor.getPageFrameRowLo();
-                pfRowHi = timeFrameCursor.getPageFrameRowHi();
             }
         }
 
@@ -297,7 +283,7 @@ public class HorizonJoinTimeFrameHelper {
                                 timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
                                 final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
                                 if (nextRowTs > targetTimestamp) {
-                                    final long result = TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
+                                    final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
                                     cachedAsOfRowId = result;
                                     cachedNextRowTs = nextRowTs;
                                     return result;
@@ -408,7 +394,7 @@ public class HorizonJoinTimeFrameHelper {
                         if (bestRowIndex != Long.MIN_VALUE) {
                             bookmarkedFrameIndex = bestFrameIndex;
                             bookmarkedRowIndex = bestRowIndex;
-                            return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
                         }
                         // Bookmark current frame so subsequent searches with larger timestamps can find it
                         bookmarkCurrentFrame(0);
@@ -419,7 +405,7 @@ public class HorizonJoinTimeFrameHelper {
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
-                        return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     // Bookmark current frame so subsequent searches with larger timestamps can find it
                     bookmarkCurrentFrame(0);
@@ -431,7 +417,7 @@ public class HorizonJoinTimeFrameHelper {
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
-                        return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     return Long.MIN_VALUE;
                 }
@@ -440,7 +426,7 @@ public class HorizonJoinTimeFrameHelper {
 
         // Search within the current frame for the ASOF row
         bookmarkCurrentFrame(rowLo);
-        timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), rowLo);
+        timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), timeFrame.getRowLo());
 
         // Try linear scan first
         long scanResult = linearScanAsOf(targetTimestamp, rowLo);
@@ -451,7 +437,7 @@ public class HorizonJoinTimeFrameHelper {
             if (bestRowIndex != Long.MIN_VALUE) {
                 bookmarkedFrameIndex = bestFrameIndex;
                 bookmarkedRowIndex = bestRowIndex;
-                return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                return Rows.toRowID(bestFrameIndex, bestRowIndex);
             }
             return Long.MIN_VALUE;
         }
@@ -523,8 +509,8 @@ public class HorizonJoinTimeFrameHelper {
             startRowIndex = timeFrame.getRowLo();
         } else {
             // Start from just after forward watermark
-            startFrameIndex = TimeFrameCursor.toPartitionIndex(forwardWatermark);
-            startRowIndex = TimeFrameCursor.toLocalRowID(forwardWatermark) + 1;
+            startFrameIndex = Rows.toPartitionIndex(forwardWatermark);
+            startRowIndex = Rows.toLocalRowID(forwardWatermark) + 1;
 
             timeFrameCursor.jumpTo(startFrameIndex);
             if (timeFrameCursor.open() == 0 || startRowIndex >= timeFrame.getRowHi()) {
@@ -547,12 +533,9 @@ public class HorizonJoinTimeFrameHelper {
         int frameIndex = startFrameIndex;
         long rowIndex = startRowIndex;
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
-        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
-        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
-        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
 
         while (true) {
-            long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
+            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
 
             // Check if we've reached the target
             if (currentRowId > targetRowId) {
@@ -560,15 +543,7 @@ public class HorizonJoinTimeFrameHelper {
             }
 
             // Position record and cache the key
-            if (pfRecord != null && rowIndex < pfRowHi) {
-                pfRecord.setRowIndex(rowIndex - pfRowLo);
-            } else {
-                timeFrameCursor.recordAtRowIndex(record, rowIndex);
-                if (pfRecord != null) {
-                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
-                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
-                }
-            }
+            timeFrameCursor.recordAtRowIndex(record, rowIndex);
             MapKey key = keyToRowIdMap.withKey();
             key.put(record, slaveAsOfJoinMapSink);
             MapValue value = key.createValue();
@@ -600,8 +575,6 @@ public class HorizonJoinTimeFrameHelper {
                 frameIndex = timeFrame.getFrameIndex();
                 rowIndex = timeFrame.getRowLo();
                 timeFrameCursor.recordAt(record, frameIndex, rowIndex);
-                pfRowLo = timeFrameCursor.getPageFrameRowLo();
-                pfRowHi = timeFrameCursor.getPageFrameRowHi();
             }
         }
     }
@@ -699,40 +672,13 @@ public class HorizonJoinTimeFrameHelper {
         }
 
         // Linear scan for small range
-        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
-        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
-        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
-        long r = low;
-        outer:
-        while (r <= high) {
-            if (pfRecord != null) {
-                final long innerEnd = Math.min(high + 1, pfRowHi);
-                long localR = r - pfRowLo;
-                while (r < innerEnd) {
-                    pfRecord.setRowIndex(localR);
-                    long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-                    if (timestamp <= targetTimestamp) {
-                        result = r;
-                    } else {
-                        break outer;
-                    }
-                    r++;
-                    localR++;
-                }
-                if (r <= high) {
-                    timeFrameCursor.recordAtRowIndex(record, r);
-                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
-                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
-                }
+        for (long r = low; r <= high; r++) {
+            timeFrameCursor.recordAtRowIndex(record, r);
+            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+            if (timestamp <= targetTimestamp) {
+                result = r;
             } else {
-                timeFrameCursor.recordAtRowIndex(record, r);
-                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-                if (timestamp <= targetTimestamp) {
-                    result = r;
-                } else {
-                    break;
-                }
-                r++;
+                break;
             }
         }
 
@@ -745,7 +691,7 @@ public class HorizonJoinTimeFrameHelper {
      */
     private long bookmarkAndCache(long resultRowIndex) {
         bookmarkCurrentFrame(resultRowIndex);
-        final long result = TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), resultRowIndex);
+        final long result = Rows.toRowID(timeFrame.getFrameIndex(), resultRowIndex);
         final long nextRow = resultRowIndex + 1;
         if (nextRow < timeFrame.getRowHi()) {
             timeFrameCursor.recordAtRowIndex(record, nextRow);
@@ -768,46 +714,19 @@ public class HorizonJoinTimeFrameHelper {
      * - negative value: need binary search, encoded as -(last scanned row) - 1
      */
     private long linearScanAsOf(long targetTimestamp, long rowLo) {
-        final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
+        long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
         long result = Long.MIN_VALUE;
-        final PageFrameMemoryRecord pfRecord = record instanceof PageFrameMemoryRecord ? (PageFrameMemoryRecord) record : null;
-        long pfRowLo = pfRecord != null ? timeFrameCursor.getPageFrameRowLo() : 0;
-        long pfRowHi = pfRecord != null ? timeFrameCursor.getPageFrameRowHi() : 0;
 
-        long r = rowLo;
-        while (r < scanHi) {
-            if (pfRecord != null) {
-                // Two-level loop: iterate within page frame bounds without
-                // per-row page-frame checks. Only the inner bound comparison
-                // and a setRowIndex store happen per row — matching the old
-                // per-page-frame cursor's per-row cost.
-                final long innerEnd = Math.min(scanHi, pfRowHi);
-                long localR = r - pfRowLo;
-                while (r < innerEnd) {
-                    pfRecord.setRowIndex(localR);
-                    long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-                    if (timestamp <= targetTimestamp) {
-                        result = r;
-                    } else {
-                        return result;
-                    }
-                    r++;
-                    localR++;
-                }
-                if (r < scanHi) {
-                    timeFrameCursor.recordAtRowIndex(record, r);
-                    pfRowLo = timeFrameCursor.getPageFrameRowLo();
-                    pfRowHi = timeFrameCursor.getPageFrameRowHi();
-                }
+        for (long r = rowLo; r < scanHi; r++) {
+            timeFrameCursor.recordAtRowIndex(record, r);
+            // Scale slave timestamp to common unit for cross-resolution support
+            long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+
+            if (timestamp <= targetTimestamp) {
+                result = r;
             } else {
-                timeFrameCursor.recordAtRowIndex(record, r);
-                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
-                if (timestamp <= targetTimestamp) {
-                    result = r;
-                } else {
-                    return result;
-                }
-                r++;
+                // Found first row > target, return previous row if any
+                return result;
             }
         }
 

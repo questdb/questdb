@@ -24,16 +24,21 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 import java.util.concurrent.atomic.AtomicIntegerArray;
@@ -42,164 +47,142 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
 
 /**
  * Shared state across all concurrent time frame cursors for a query.
- * Manages partition metadata and synchronized lazy partition opening.
  * <p>
- * Each partition gets its own {@link PageFrameAddressCache} instance,
- * created lazily on first open and reused across queries. Metadata
- * is stored in flat arrays for zero-GC on the hot path.
+ * Pre-computes exact page frame boundaries from table metadata (column tops,
+ * row counts, partition formats) WITHOUT opening partitions. Builds an
+ * uninitialized flat {@link PageFrameAddressCache} with zero column addresses.
+ * Column addresses are patched lazily per partition on first access via
+ * {@link #ensurePartitionOpened(int)}.
+ * <p>
+ * The flat cache preserves the master branch's "1 time frame = 1 page frame"
+ * model so that per-row operations in the cursor are trivial
+ * ({@code record.setRowIndex(rowIndex)}).
  * <p>
  * Thread safety: {@link #ensurePartitionOpened(int)} uses double-checked
  * locking with {@link AtomicIntegerArray} for acquire/release fences.
- * The hot path (already-opened partition) is a volatile read + array
- * lookups with zero allocation.
- * <p>
- * This class is created once and reused via {@link #of} / {@link #clear}.
  */
 public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
+    private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    private final DirectIntList framePartitionIndexes;
+    private final DirectLongList frameRowCounts;
     private final Object openLock = new Object();
-    // Lazily created, reused across queries. Only opened partitions
-    // have non-null entries.
-    private final ObjList<PageFrameAddressCache> partitionCaches = new ObjList<>();
     private final LongList partitionCeilings = new LongList();
-    // Per-partition cumulative row counts (off-heap). Each partition's list
-    // is 0-based and populated under openLock, then made visible via the
-    // AtomicIntegerArray release fence. Readers access it after the acquire
-    // fence — no shared mutable state, no race.
-    private final ObjList<DirectLongList> partitionCumulativeRows = new ObjList<>();
     private final LongList partitionTimestamps = new LongList();
-    private IntList columnIndexes;
-    // Only access via openLock (toPartition/next are not thread-safe).
+    private int frameCount;
     private TablePageFrameCursor frameCursor;
-    private boolean isExternal;
-    private RecordMetadata metadata;
     private int partitionCount;
+    // Per-partition: first global frame index (populated during of())
+    private int[] partitionFirstFrame;
     private AtomicIntegerArray partitionOpened;
-    private int[] partitionPageFrameCount;
-    private long[] partitionTotalRows;
+
+    public ConcurrentTimeFrameState() {
+        this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+        this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
+    }
 
     @Override
     public void clear() {
-        // Clear opened caches but keep the ObjList and cache objects for reuse.
-        for (int i = 0, n = partitionCaches.size(); i < n; i++) {
-            PageFrameAddressCache cache = partitionCaches.getQuick(i);
-            if (cache != null) {
-                cache.clear();
-            }
-        }
+        addressCache.clear();
         frameCursor = null;
     }
 
     @Override
     public void close() {
-        Misc.freeObjListAndKeepObjects(partitionCaches);
-        Misc.freeObjListAndKeepObjects(partitionCumulativeRows);
+        Misc.free(addressCache);
+        Misc.free(framePartitionIndexes);
+        Misc.free(frameRowCounts);
         frameCursor = null;
     }
 
     /**
-     * Opens the given partition lazily if not already opened.
-     * Uses double-checked locking via {@link AtomicIntegerArray}:
-     * the volatile read ({@code get}) provides an acquire fence,
-     * and the volatile write ({@code set}) after population provides
-     * a release fence, ensuring all writes to the partition's
-     * {@link PageFrameAddressCache} and flat arrays are visible
-     * to concurrent readers.
-     *
-     * @param partitionIndex the partition to open
-     * @return the partition's address cache (immutable after this call)
+     * Opens a partition lazily if not already opened, patching the
+     * uninitialized cache entries with real column addresses.
      */
-    public PageFrameAddressCache ensurePartitionOpened(int partitionIndex) {
+    public void ensurePartitionOpened(int partitionIndex) {
         if (partitionOpened.get(partitionIndex) != 0) { // acquire fence
-            return partitionCaches.getQuick(partitionIndex);
+            return;
         }
         synchronized (openLock) {
             if (partitionOpened.get(partitionIndex) != 0) {
-                return partitionCaches.getQuick(partitionIndex);
+                return;
             }
-
-            PageFrameAddressCache cache = partitionCaches.getQuick(partitionIndex);
-            if (cache == null) {
-                cache = new PageFrameAddressCache();
-                partitionCaches.setQuick(partitionIndex, cache);
-            }
-            cache.of(metadata, columnIndexes, isExternal);
-
-            DirectLongList cumulativeRows = partitionCumulativeRows.getQuick(partitionIndex);
-            if (cumulativeRows == null) {
-                cumulativeRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                partitionCumulativeRows.setQuick(partitionIndex, cumulativeRows);
-            } else {
-                cumulativeRows.reopen();
-                cumulativeRows.clear();
-            }
-
             frameCursor.toPartition(partitionIndex);
-            long totalRows = 0;
-            int pfCount = 0;
+            int globalFrame = partitionFirstFrame[partitionIndex];
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
-                cache.add(pfCount, frame);
-                long pfRows = frame.getPartitionHi() - frame.getPartitionLo();
-                totalRows += pfRows;
-                cumulativeRows.add(totalRows);
-                pfCount++;
+                addressCache.updateAddresses(globalFrame, frame);
+                globalFrame++;
             }
-
-            partitionPageFrameCount[partitionIndex] = pfCount;
-            partitionTotalRows[partitionIndex] = totalRows;
             partitionOpened.set(partitionIndex, 1); // release fence
-            return cache;
         }
     }
 
-    public long getPartitionCeiling(int index) {
-        return partitionCeilings.getQuick(index);
+    public PageFrameAddressCache getAddressCache() {
+        return addressCache;
+    }
+
+    public int getFrameCount() {
+        return frameCount;
+    }
+
+    public DirectIntList getFramePartitionIndexes() {
+        return framePartitionIndexes;
+    }
+
+    public DirectLongList getFrameRowCounts() {
+        return frameRowCounts;
+    }
+
+    public LongList getPartitionCeilings() {
+        return partitionCeilings;
     }
 
     public int getPartitionCount() {
         return partitionCount;
     }
 
-    public DirectLongList getPartitionCumulativeRows(int index) {
-        assert partitionOpened.get(index) != 0 : "partition not opened: " + index;
-        return partitionCumulativeRows.getQuick(index);
+    public LongList getPartitionTimestamps() {
+        return partitionTimestamps;
     }
 
-    public int getPartitionPageFrameCount(int index) {
-        assert partitionOpened.get(index) != 0 : "partition not opened: " + index;
-        return partitionPageFrameCount[index];
-    }
-
-    public long getPartitionTimestamp(int index) {
-        return partitionTimestamps.getQuick(index);
-    }
-
-    public long getPartitionTotalRows(int index) {
-        assert partitionOpened.get(index) != 0 : "partition not opened: " + index;
-        return partitionTotalRows[index];
-    }
-
+    /**
+     * Initializes the state by pre-computing page frame boundaries from table
+     * metadata and building an uninitialized flat address cache with zero
+     * column addresses.
+     *
+     * @param frameCursor      page frame cursor (used for lazy partition opening)
+     * @param metadata         slave table metadata
+     * @param columnIndexes    query-to-reader column index mapping
+     * @param isExternal       whether the cursor wraps an external data source
+     * @param pageFrameMinRows min rows per page frame (from SqlExecutionContext)
+     * @param pageFrameMaxRows max rows per page frame (from SqlExecutionContext)
+     * @param workerCount      shared query worker count
+     */
     public ConcurrentTimeFrameState of(
             TablePageFrameCursor frameCursor,
             RecordMetadata metadata,
             IntList columnIndexes,
-            boolean isExternal
+            boolean isExternal,
+            int pageFrameMinRows,
+            int pageFrameMaxRows,
+            int workerCount
     ) {
         this.frameCursor = frameCursor;
-        this.metadata = metadata;
-        this.columnIndexes = columnIndexes;
-        this.isExternal = isExternal;
 
         populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
-        this.partitionCount = partitionTimestamps.size();
+        partitionCount = partitionTimestamps.size();
 
-        // Resize flat arrays if partition count changed; reuse if large enough.
-        if (partitionPageFrameCount == null || partitionPageFrameCount.length < partitionCount) {
-            partitionPageFrameCount = new int[partitionCount];
-            partitionTotalRows = new long[partitionCount];
+        // Initialize the address cache structure (no frames added yet)
+        addressCache.of(metadata, columnIndexes, isExternal);
+        framePartitionIndexes.reopen();
+        framePartitionIndexes.clear();
+        frameRowCounts.reopen();
+        frameRowCounts.clear();
+
+        // Allocate per-partition tracking arrays
+        if (partitionFirstFrame == null || partitionFirstFrame.length < partitionCount) {
+            partitionFirstFrame = new int[partitionCount];
         }
-
-        // AtomicIntegerArray: new instance only if size changed, else reset.
         if (partitionOpened == null || partitionOpened.length() < partitionCount) {
             partitionOpened = new AtomicIntegerArray(partitionCount);
         } else {
@@ -208,13 +191,246 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             }
         }
 
-        // Ensure ObjLists are sized (null entries for not-yet-opened partitions).
-        partitionCaches.setPos(Math.max(partitionCaches.size(), partitionCount));
-        partitionCumulativeRows.setPos(Math.max(partitionCumulativeRows.size(), partitionCount));
-        // Free native memory from previous query but keep objects for reuse.
-        Misc.freeObjListAndKeepObjects(partitionCaches);
-        Misc.freeObjListAndKeepObjects(partitionCumulativeRows);
+        final TableReader tableReader = frameCursor.getTableReader();
+        frameCount = 0;
+
+        if (frameCursor.hasIntervalFilter()) {
+            // Interval filtering makes frame counts unpredictable from metadata.
+            // Fall back to eager enumeration of all page frames (like master).
+            buildFrameCacheEagerly();
+        } else {
+            // Pre-compute frame boundaries for all partitions.
+            // If a partition is already open in the table reader, iterate its
+            // page frames eagerly (zero contention, no lazy open overhead).
+            // Otherwise, pre-compute from metadata and add uninitialized entries.
+            final ColumnVersionReader columnVersionReader = tableReader.getColumnVersionReader();
+            final int columnCount = columnIndexes.size();
+
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                partitionFirstFrame[partitionIndex] = frameCount;
+
+                final long partitionRowCount = tableReader.getPartitionRowCountFromMetadata(partitionIndex);
+                if (partitionRowCount <= 0) {
+                    continue;
+                }
+
+                if (tableReader.getPartitionRowCount(partitionIndex) != -1) {
+                    // Partition is already open — iterate page frames eagerly
+                    addOpenPartitionFrames(partitionIndex);
+                } else {
+                    final byte format = tableReader.getPartitionFormatFromMetadata(partitionIndex);
+                    if (format == PartitionFormat.NATIVE) {
+                        addNativePartitionFrames(
+                                tableReader,
+                                columnVersionReader,
+                                columnIndexes,
+                                columnCount,
+                                partitionIndex,
+                                tableReader.getPartitionTimestampByIndex(partitionIndex),
+                                partitionRowCount,
+                                pageFrameMinRows,
+                                pageFrameMaxRows,
+                                workerCount
+                        );
+                    } else {
+                        // TODO(puzpuzpuz): read row group count from table metadata instead of
+                        //  opening the parquet file. This will be addressed in a follow-up PR.
+                        addParquetPartitionFrames(tableReader, partitionIndex);
+                    }
+                }
+            }
+        }
 
         return this;
+    }
+
+    /**
+     * Pre-computes and adds uninitialized frame entries for a native partition.
+     * Replicates the column-top-aware splitting logic from
+     * FwdTableReaderPageFrameCursor#computeNativeFrame().
+     */
+    private void addNativePartitionFrames(
+            TableReader tableReader,
+            ColumnVersionReader columnVersionReader,
+            IntList columnIndexes,
+            int columnCount,
+            int partitionIndex,
+            long partitionTimestamp,
+            long partitionRowCount,
+            int pageFrameMinRows,
+            int pageFrameMaxRows,
+            int workerCount
+    ) {
+        final long pageFrameRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                0,
+                partitionRowCount,
+                pageFrameMinRows,
+                pageFrameMaxRows,
+                workerCount
+        );
+
+        // Pre-fetch column tops for this partition from column version metadata.
+        // A column top > partitionLo and < adjustedHi causes a frame split.
+        // Columns that don't exist in this partition have top = partitionRowCount
+        // (all-null, no constraint on frame boundary).
+        // Use reader metadata (not factory metadata) for writer index lookup,
+        // because factory metadata (e.g. SelectedRecordCursorFactory) may not
+        // implement getWriterIndex().
+        final RecordMetadata readerMetadata = tableReader.getMetadata();
+        final long[] columnTops = new long[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            final int readerColumnIndex = columnIndexes.getQuick(i);
+            final int writerIndex = readerMetadata.getWriterIndex(readerColumnIndex);
+            final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+            if (recordIndex > -1) {
+                columnTops[i] = columnVersionReader.getColumnTopByIndex(recordIndex);
+            } else if (columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp) {
+                columnTops[i] = 0; // column exists from start, no top
+            } else {
+                columnTops[i] = partitionRowCount; // column doesn't exist — all-null
+            }
+        }
+
+        long lo = 0;
+        while (lo < partitionRowCount) {
+            long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
+            // Shrink frame boundary at column top splits
+            for (int i = 0; i < columnCount; i++) {
+                long top = columnTops[i];
+                if (top > lo && top < adjustedHi) {
+                    adjustedHi = top;
+                }
+            }
+            addUninitializedFrame(partitionIndex, lo, adjustedHi);
+            lo = adjustedHi;
+        }
+    }
+
+    /**
+     * Adds fully initialized frame entries for a partition that is already open
+     * in the table reader. Iterates the page frame cursor to get real column
+     * addresses directly. Marks the partition as opened so that
+     * {@link #ensurePartitionOpened(int)} becomes a no-op.
+     */
+    private void addOpenPartitionFrames(int partitionIndex) {
+        frameCursor.toPartition(partitionIndex);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            addressCache.add(frameCount, frame);
+            framePartitionIndexes.add(frame.partitionIndex());
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
+        }
+        partitionOpened.set(partitionIndex, 1);
+    }
+
+    /**
+     * Opens a parquet partition and adds fully initialized frame entries.
+     * <p>
+     * TODO(puzpuzpuz): read row group count from table metadata instead of opening the
+     *  parquet file. Once available, pre-compute uninitialized frames like native partitions.
+     */
+    private void addParquetPartitionFrames(TableReader reader, int partitionIndex) {
+        reader.openPartition(partitionIndex);
+        addOpenPartitionFrames(partitionIndex);
+    }
+
+    /**
+     * Adds an uninitialized frame entry to the flat cache with zero column
+     * addresses. The frame structure (format, size, rowIdOffset) is correct;
+     * column addresses will be patched by {@link #ensurePartitionOpened(int)}.
+     */
+    private void addUninitializedFrame(int partitionIndex, long lo, long hi) {
+        addressCache.add(frameCount, new UninitializedPageFrame(partitionIndex, lo, hi, PartitionFormat.NATIVE));
+        framePartitionIndexes.add(partitionIndex);
+        frameRowCounts.add(hi - lo);
+        frameCount++;
+    }
+
+    /**
+     * Eagerly iterates all page frames and adds them with real column
+     * addresses. Used when the cursor has interval filtering, which
+     * makes frame counts unpredictable from metadata alone.
+     */
+    private void buildFrameCacheEagerly() {
+        frameCursor.toTop();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            addressCache.add(frameCount, frame);
+            framePartitionIndexes.add(frame.partitionIndex());
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
+        }
+        // Mark all partitions as opened so ensurePartitionOpened is a no-op
+        for (int i = 0; i < partitionCount; i++) {
+            partitionOpened.set(i, 1);
+        }
+    }
+
+    /**
+     * A lightweight PageFrame with correct structure but zero column addresses.
+     * Used to populate the uninitialized address cache during the upfront phase.
+     */
+    private record UninitializedPageFrame(int partitionIndex, long lo, long hi, byte format) implements PageFrame {
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getAuxPageSize(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            return null;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 0;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return null;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return -1;
+        }
+
+        @Override
+        public int getParquetRowGroupHi() {
+            return -1;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return -1;
+        }
+
+        @Override
+        public long getPartitionHi() {
+            return hi;
+        }
+
+        @Override
+        public long getPartitionLo() {
+            return lo;
+        }
     }
 }

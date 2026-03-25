@@ -642,7 +642,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {
             assert streamWriter != -1 && writeCallback != null;
-            if (frame.getFormat() == PartitionFormat.NATIVE) {
+            if (frame.format() == PartitionFormat.NATIVE) {
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 

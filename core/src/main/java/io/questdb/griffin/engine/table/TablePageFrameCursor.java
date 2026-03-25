@@ -35,6 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
  */
 public interface TablePageFrameCursor extends PageFrameCursor {
 
+    default boolean hasIntervalFilter() {
+        return false;
+    }
+
     TableReader getTableReader();
 
     @Override

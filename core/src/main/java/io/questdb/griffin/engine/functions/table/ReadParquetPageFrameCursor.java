@@ -62,7 +62,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private final IntList columnIndexes;
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
-    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     private final ReadParquetPageFrame frame = new ReadParquetPageFrame();
@@ -71,6 +70,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private long addr = 0;
     private long fd = -1;
     private long fileSize = 0;
+    private long filterBufEnd;
     private boolean isFilterListPrepared;
     private long rowCount;
     private int rowGroupCount;
@@ -187,7 +187,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+                    decoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             } else {
@@ -228,6 +232,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
+        public byte format() {
+            return PartitionFormat.PARQUET;
+        }
+
+        @Override
         public long getAuxPageAddress(int columnIndex) {
             return 0;
         }
@@ -245,11 +254,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         @Override
         public int getColumnCount() {
             return columnIndexes.size();
-        }
-
-        @Override
-        public byte getFormat() {
-            return PartitionFormat.PARQUET;
         }
 
         @Override
@@ -288,13 +292,13 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public int getPartitionIndex() {
-            return 0;
+        public long getPartitionLo() {
+            return partitionLo;
         }
 
         @Override
-        public long getPartitionLo() {
-            return partitionLo;
+        public int partitionIndex() {
+            return 0;
         }
     }
 }

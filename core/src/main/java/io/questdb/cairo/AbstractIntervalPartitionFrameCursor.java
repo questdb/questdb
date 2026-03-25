@@ -69,6 +69,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     @Override
+    public boolean hasIntervalFilter() {
+        return true;
+    }
+
+    @Override
     public void close() {
         reader = Misc.free(reader);
         Misc.free(parquetTimestampFinder);

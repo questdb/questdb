@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -112,10 +113,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         TimeFrameCursor slaveCursor = null;
         try {
-            slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            Record filterRecord = slaveCursor.getRecordB();
-            slaveRecordFilter.init(slaveCursor, executionContext);
-            slaveCursor = selectedTimeFrameCursor == null ? slaveCursor : selectedTimeFrameCursor.of(slaveCursor);
+            TimeFrameCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            Record filterRecord = baseTimeFrameCursor.getRecordB();
+            slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
+            slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
@@ -215,8 +216,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // first, we have to set the time frame cursor to the record found by the non-filtering algo
             // and then we have to traverse the slave cursor backwards until we find a match
             long rowId = slaveRecB.getRowId();
-            final int initialFilteredFrameIndex = TimeFrameCursor.toPartitionIndex(rowId);
-            final long initialFilteredRowId = TimeFrameCursor.toLocalRowID(rowId);
+            final int initialFilteredFrameIndex = Rows.toPartitionIndex(rowId);
+            final long initialFilteredRowId = Rows.toLocalRowID(rowId);
 
             slaveTimeFrameCursor.jumpTo(initialFilteredFrameIndex);
             slaveTimeFrameCursor.open();
@@ -225,8 +226,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             long filteredRowId = initialFilteredRowId;
             int filteredFrameIndex = initialFilteredFrameIndex;
 
-            int stopAtFrameIndex = TimeFrameCursor.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
-            long stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? TimeFrameCursor.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+            int stopAtFrameIndex = Rows.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
+            long stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
 
             for (; ; ) {
                 // let's try to move backwards in the slave cursor until we have a match
@@ -245,7 +246,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                         // Remember that there is no matching slave record for a given initial rowId.
                         // So the next time we can abort the slave cursor traversal before we reach the end of the cursor.
                         // We increment the initial rowId by 1, because the early exit guard is exclusive.
-                        highestKnownSlaveRowIdWithNoMatch = TimeFrameCursor.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                        highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                         // note: we do not check for overflow here. localRowId has 44 bits, this is enough to store
                         // 17.5 trillion rows. we don't expect to ever reach this limit within a single partition.
                         break;
@@ -255,17 +256,17 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     filteredFrameIndex = timeFrame.getFrameIndex();
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();
-                    stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? TimeFrameCursor.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+                    stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
 
                     // invariant: when exiting from this branch then either we fully exhausted the slave cursor
                     // or slaveRecB is set to the current filteredFrameIndex so the outside loop can continue
                     // searching for a match by just moving filteredRowId down
-                    slaveTimeFrameCursor.recordAt(slaveRecB, TimeFrameCursor.toRowID(filteredFrameIndex, filteredRowId));
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
                 }
 
                 if (filteredRowId < stopUnderRowId) {
                     record.hasSlave(false);
-                    highestKnownSlaveRowIdWithNoMatch = TimeFrameCursor.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                     break;
                 }
 
@@ -273,7 +274,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 if (toleranceInterval != Numbers.LONG_NULL && scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale) < masterTimestamp - toleranceInterval) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
-                    highestKnownSlaveRowIdWithNoMatch = TimeFrameCursor.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                     break;
                 }
                 if (slaveRecordFilter.getBool(filterRecord)) {

@@ -40,6 +40,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
@@ -177,7 +178,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             long rowLo = slaveTimeFrame.getRowLo();
             int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-            long keyedRowId = TimeFrameCursor.toLocalRowID(slaveRecB.getRowId());
+            long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
 
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
@@ -198,20 +199,20 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
                     // ops, we exhausted this frame, let's try the previous one
-                    if (slaveTimeFrameCursor.prev()) {
-                        slaveTimeFrameCursor.open();
-                        keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-                        keyedRowId = slaveTimeFrame.getRowHi() - 1;
-                        rowLo = slaveTimeFrame.getRowLo();
-                    } else {
+                    if (!slaveTimeFrameCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
                         // until we either exhaust the cursor or find a matching key.
                         record.hasSlave(false);
                         break;
                     }
+                    slaveTimeFrameCursor.open();
+
+                    keyedFrameIndex = slaveTimeFrame.getFrameIndex();
+                    keyedRowId = slaveTimeFrame.getRowHi() - 1;
+                    rowLo = slaveTimeFrame.getRowLo();
                 }
-                slaveTimeFrameCursor.recordAt(slaveRecB, TimeFrameCursor.toRowID(keyedFrameIndex, keyedRowId));
+                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }

@@ -40,7 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-
+import io.questdb.std.Rows;
 
 /**
  * AsOf Join factory that leverages symbol bitmap indexes for efficient row lookup.
@@ -156,7 +156,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             }
 
             // go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
-            long rowMax = TimeFrameCursor.toLocalRowID(slaveRecB.getRowId());
+            long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
             int frameIndex = slaveTimeFrame.getFrameIndex();
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
@@ -166,15 +166,15 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
                 // the first row within the BETWEEN ... AND ... range selected by the query.
                 // Use Record.getUpdateRowId() to get the absolute row ID.
-                slaveTimeFrameCursor.recordAt(slaveRecA, TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
-                final long rowLo = TimeFrameCursor.toLocalRowID(slaveRecA.getUpdateRowId());
+                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
+                final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
                 RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowLo, rowMax + rowLo);
 
                 // Check the first entry only. They are sorted descending by timestamp,
                 // so there aren't any entries more recent than the first one.
                 if (rowCursor.hasNext()) {
                     long rowId = rowCursor.next();
-                    slaveTimeFrameCursor.recordAt(slaveRecB, TimeFrameCursor.toRowID(frameIndex, rowId));
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
                     long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     if (slaveTimestamp <= masterTimestamp) {
                         // Enforce tolerance limit if specified
@@ -185,15 +185,14 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                     }
                 }
 
-                // no match in this frame, try the previous one
-                if (slaveTimeFrameCursor.prev()) {
-                    slaveTimeFrameCursor.open();
-                    frameIndex = slaveTimeFrame.getFrameIndex();
-                    rowMax = slaveTimeFrame.getRowHi() - 1;
-                } else {
+                // no match in this frame, try the previous frame
+                if (!slaveTimeFrameCursor.prev()) {
                     record.hasSlave(false);
                     return;
                 }
+                slaveTimeFrameCursor.open();
+                frameIndex = slaveTimeFrame.getFrameIndex();
+                rowMax = slaveTimeFrame.getRowHi() - 1;
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
