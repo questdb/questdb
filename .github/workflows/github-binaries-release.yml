@@ -132,10 +132,27 @@ jobs:
         with:
           submodules: true
 
-      - uses: graalvm/setup-graalvm@v1
-        with:
-          java-version: '17'
-          distribution: 'graalvm-community'
+      - name: Install GraalVM Community 17.0.9
+        run: |
+          set -eux
+          GRAAL_VERSION=17.0.9
+          TAG="jdk-${GRAAL_VERSION}"
+          FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
+          BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
+
+          curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
+          curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
+
+          HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
+          echo "${HASH}  ${FILENAME}" | sha256sum -c -
+
+          INSTALL_DIR="${HOME}/graalvm-community-jdk-${GRAAL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
+
+          echo "JAVA_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "GRAALVM_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "${INSTALL_DIR}/bin" >> "$GITHUB_PATH"
 
       # Download all Rust libraries into the classpath so they end up in the JAR
       - uses: actions/download-artifact@v4
@@ -186,10 +203,34 @@ jobs:
         with:
           submodules: true
 
-      - uses: graalvm/setup-graalvm@v1
-        with:
-          java-version: '17'
-          distribution: 'graalvm-community'
+      - name: Install GraalVM Community 17.0.9
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $GRAAL_VERSION = "17.0.9"
+          $tag = "jdk-$GRAAL_VERSION"
+          $fileName = "graalvm-community-jdk-$GRAAL_VERSION`_windows-x64_bin.zip"
+          $baseUrl = "https://github.com/graalvm/graalvm-ce-builds/releases/download/$tag"
+          $zipPath = Join-Path $env:USERPROFILE $fileName
+          $shaPath = "$zipPath.sha256"
+
+          Invoke-WebRequest "$baseUrl/$fileName" -OutFile $zipPath
+          Invoke-WebRequest "$baseUrl/$fileName.sha256" -OutFile $shaPath
+
+          $expected = (Get-Content $shaPath).Split(" ")[0].ToLower()
+          $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) {
+            throw "SHA256 mismatch for $fileName. Expected $expected but got $actual"
+          }
+
+          $dest = Join-Path $env:USERPROFILE "graalvm-ce-17"
+          Expand-Archive $zipPath -DestinationPath $dest
+          $dir = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          $graalHome = $dir.FullName
+
+          echo "JAVA_HOME=$graalHome" >> $env:GITHUB_ENV
+          echo "GRAALVM_HOME=$graalHome" >> $env:GITHUB_ENV
+          echo "$graalHome\bin" >> $env:GITHUB_PATH
 
       - uses: actions/download-artifact@v4
         with:
