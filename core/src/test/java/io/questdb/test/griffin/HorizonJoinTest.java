@@ -1885,100 +1885,100 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinParallelExecution() throws Exception {
         assertMemoryLeak(() -> {
-        // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
+            // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10);
 
-        final int workerCount = 4;
-        WorkerPool pool = new WorkerPool(() -> workerCount);
-        TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
+            final int workerCount = 4;
+            WorkerPool pool = new WorkerPool(() -> workerCount);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
 
-                    // Create prices table with enough data points
-                    engine.execute(
-                            """
-                                    CREATE TABLE prices (
-                                        price_ts TIMESTAMP,
-                                        sym SYMBOL,
-                                        price DOUBLE)
-                                    TIMESTAMP(price_ts) PARTITION BY HOUR
-                                    """,
-                            sqlExecutionContext
-                    );
+                        // Create prices table with enough data points
+                        engine.execute(
+                                """
+                                        CREATE TABLE prices (
+                                            price_ts TIMESTAMP,
+                                            sym SYMBOL,
+                                            price DOUBLE)
+                                        TIMESTAMP(price_ts) PARTITION BY HOUR
+                                        """,
+                                sqlExecutionContext
+                        );
 
-                    engine.execute(
-                            String.format(
-                                    """
-                                            INSERT INTO prices SELECT
-                                                generate_series,
-                                                %s,
-                                                9.0 + 2.0 * rnd_double()
-                                            FROM generate_series('2025-12-01', '2025-12-01T02', '200u');
-                                            """,
-                                    symbolGen
-                            ),
-                            sqlExecutionContext
-                    );
+                        engine.execute(
+                                String.format(
+                                        """
+                                                INSERT INTO prices SELECT
+                                                    generate_series,
+                                                    %s,
+                                                    9.0 + 2.0 * rnd_double()
+                                                FROM generate_series('2025-12-01', '2025-12-01T02', '200u');
+                                                """,
+                                        symbolGen
+                                ),
+                                sqlExecutionContext
+                        );
 
-                    // Create orders table with integer amount to avoid floating-point precision issues
-                    engine.execute(
-                            """
-                                    CREATE TABLE orders (
-                                        order_ts TIMESTAMP,
-                                        sym SYMBOL,
-                                        amount LONG
-                                    ) TIMESTAMP(order_ts);
-                                    """,
-                            sqlExecutionContext
-                    );
+                        // Create orders table with integer amount to avoid floating-point precision issues
+                        engine.execute(
+                                """
+                                        CREATE TABLE orders (
+                                            order_ts TIMESTAMP,
+                                            sym SYMBOL,
+                                            amount LONG
+                                        ) TIMESTAMP(order_ts);
+                                        """,
+                                sqlExecutionContext
+                        );
 
-                    engine.execute(
-                            String.format(
-                                    """
-                                            INSERT INTO orders SELECT
-                                              generate_series,
-                                              %s,
-                                              90 + rnd_long(0, 20, 0)
-                                            FROM generate_series('2025-12-01', '2025-12-01T00:05', '1s');
-                                            """,
-                                    symbolGen
-                            ),
-                            sqlExecutionContext
-                    );
+                        engine.execute(
+                                String.format(
+                                        """
+                                                INSERT INTO orders SELECT
+                                                  generate_series,
+                                                  %s,
+                                                  90 + rnd_long(0, 20, 0)
+                                                FROM generate_series('2025-12-01', '2025-12-01T00:05', '1s');
+                                                """,
+                                        symbolGen
+                                ),
+                                sqlExecutionContext
+                        );
 
-                    // HORIZON JOIN query with RANGE -600s to 600s step 1s (1201 offsets)
-                    final String sql = """
-                            SELECT
-                                h.offset / 1000000 AS sec_offs,
-                                sum(amount),
-                                count(*)
-                            FROM orders AS t
-                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
-                            RANGE FROM -600s TO 600s STEP 1s AS h
-                            ORDER BY h.offset
-                            """;
+                        // HORIZON JOIN query with RANGE -600s to 600s step 1s (1201 offsets)
+                        final String sql = """
+                                SELECT
+                                    h.offset / 1000000 AS sec_offs,
+                                    sum(amount),
+                                    count(*)
+                                FROM orders AS t
+                                HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                                RANGE FROM -600s TO 600s STEP 1s AS h
+                                ORDER BY h.offset
+                                """;
 
-                    final StringSink planSink = new StringSink();
-                    try (
-                            RecordCursorFactory planFactory = engine.select("EXPLAIN " + sql, sqlExecutionContext);
-                            RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
-                    ) {
-                        CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
-                    }
-                    TestUtils.assertContains(planSink, "Async Horizon Join");
+                        final StringSink planSink = new StringSink();
+                        try (
+                                RecordCursorFactory planFactory = engine.select("EXPLAIN " + sql, sqlExecutionContext);
+                                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+                        ) {
+                            CursorPrinter.println(cursor, planFactory.getMetadata(), planSink);
+                        }
+                        TestUtils.assertContains(planSink, "Async Horizon Join");
 
-                    // Execute the query to verify it runs successfully
-                    StringSink result = new StringSink();
-                    engine.print(sql, result, sqlExecutionContext);
-                    // Verify we got results (1201 offset values)
-                    TestUtils.assertContains(result, "sec_offs");
-                },
-                configuration,
-                LOG
-        );
+                        // Execute the query to verify it runs successfully
+                        StringSink result = new StringSink();
+                        engine.print(sql, result, sqlExecutionContext);
+                        // Verify we got results (1201 offset values)
+                        TestUtils.assertContains(result, "sec_offs");
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 
