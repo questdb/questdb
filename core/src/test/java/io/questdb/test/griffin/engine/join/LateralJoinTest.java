@@ -1946,7 +1946,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28i: GROUP BY + LIMIT — combined compensation: aggregate GROUP BY + row_number LIMIT
     @Test
     public void testT28iGroupByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
@@ -1981,6 +1980,30 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 FROM trades
                                 WHERE order_id = o.id
                                 GROUP BY category
+                                ORDER BY total DESC
+                                LIMIT 2
+                            ) t
+                            ORDER BY o.id, t.total DESC
+                            """,
+                    null, true, false
+            );
+
+            // implicit aggregation
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttotal
+                            1\tB\t30.0
+                            1\tA\t30.0
+                            2\tZ\t70.0
+                            2\tY\t60.0
+                            """,
+                    """
+                            SELECT o.id, t.category, t.total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, sum(qty) AS total
+                                FROM trades
+                                WHERE order_id = o.id
                                 ORDER BY total DESC
                                 LIMIT 2
                             ) t

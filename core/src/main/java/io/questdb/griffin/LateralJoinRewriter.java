@@ -735,14 +735,57 @@ class LateralJoinRewriter {
             rnWindowExpr.getOrderByDirection().add(orderByDirSave.getQuick(i));
         }
 
-        current.addBottomUpColumn(rnWindowExpr);
-        current.setLimit(null, null);
-        if (orderByModel != null) {
-            orderByModel.getOrderBy().clear();
-            orderByModel.getOrderByDirection().clear();
+        boolean hasAggregate = current.getGroupBy().size() > 0
+                || (current.getNestedModel() != null && current.getNestedModel().getGroupBy().size() > 0)
+                || hasAggregateFunctions(current);
+        if (hasAggregate) {
+            for (int i = 0, n = groupingCols.size(); i < n; i++) {
+                rnWindowExpr.getPartitionBy().add(
+                        ExpressionNode.deepClone(expressionNodePool, groupingCols.getQuick(i)));
+            }
+
+            QueryModel flatWrapper = queryModelPool.next();
+            flatWrapper.setNestedModel(current);
+            flatWrapper.setNestedModelIsSubQuery(true);
+
+            QueryModel windowLayer = queryModelPool.next();
+            windowLayer.setNestedModel(flatWrapper);
+            windowLayer.setNestedModelIsSubQuery(true);
+
+            ObjList<QueryColumn> curCols = current.getBottomUpColumns();
+            for (int i = 0, n = curCols.size(); i < n; i++) {
+                QueryColumn col = curCols.getQuick(i);
+                ExpressionNode ref = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, col.getAlias(), 0, 0
+                );
+                windowLayer.addBottomUpColumn(queryColumnPool.next().of(col.getAlias(), ref));
+            }
+            for (int i = 0, n = groupingCols.size(); i < n; i++) {
+                ExpressionNode gcol = groupingCols.getQuick(i);
+                ExpressionNode ref = ExpressionNode.deepClone(expressionNodePool, gcol);
+                CharSequence alias = createColumnAlias(gcol.token, windowLayer);
+                windowLayer.addBottomUpColumn(queryColumnPool.next().of(alias, ref));
+            }
+            windowLayer.addBottomUpColumn(rnWindowExpr);
+
+            current.setLimit(null, null);
+            if (orderByModel != null) {
+                orderByModel.getOrderBy().clear();
+                orderByModel.getOrderByDirection().clear();
+            }
+            current.getOrderBy().clear();
+            current.getOrderByDirection().clear();
+            current = windowLayer;
+        } else {
+            current.addBottomUpColumn(rnWindowExpr);
+            current.setLimit(null, null);
+            if (orderByModel != null) {
+                orderByModel.getOrderBy().clear();
+                orderByModel.getOrderByDirection().clear();
+            }
+            current.getOrderBy().clear();
+            current.getOrderByDirection().clear();
         }
-        current.getOrderBy().clear();
-        current.getOrderByDirection().clear();
 
         ExpressionNode rnRef = expressionNodePool.next().of(
                 ExpressionNode.LITERAL, rnAlias, 0, 0
