@@ -1583,49 +1583,32 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void applyLateralCountCoalesce(QueryModel model) {
-        ObjList<CharSequence> countCols = model.getLateralCountColumns();
-        if (countCols.size() > 0) {
-            ObjList<QueryColumn> cols = model.getBottomUpColumns();
-            for (int i = 0, n = cols.size(); i < n; i++) {
-                QueryColumn pc = cols.getQuick(i);
-                ExpressionNode ast = pc.getAst();
-                if (ast == null || ast.type != ExpressionNode.LITERAL) {
-                    continue;
-                }
-                CharSequence colRef = ast.token;
-                int dotPos = Chars.indexOf(colRef, '.');
-                CharSequence colName = dotPos > 0
-                        ? colRef.subSequence(dotPos + 1, colRef.length())
-                        : colRef;
-                for (int j = 0, m = countCols.size(); j < m; j++) {
-                    if (Chars.equalsIgnoreCase(colName, countCols.getQuick(j))) {
-                        ExpressionNode coalesce = expressionNodePool.next().of(
-                                ExpressionNode.FUNCTION, "coalesce", 0, ast.position
-                        );
-                        coalesce.paramCount = 2;
-                        coalesce.args.clear();
-                        coalesce.args.add(expressionNodePool.next().of(
-                                ExpressionNode.CONSTANT, "0", 0, ast.position
-                        ));
-                        coalesce.args.add(ast);
-                        pc.of(pc.getAlias(), coalesce);
-                        break;
-                    }
-                }
+    private void applyLateralCountCoalesce(QueryModel outputModel, ObjList<CharSequence> countCols) {
+        ObjList<QueryColumn> cols = outputModel.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            QueryColumn pc = cols.getQuick(i);
+            ExpressionNode ast = pc.getAst();
+            if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                continue;
             }
-            countCols.clear();
-        }
-        if (model.getNestedModel() != null) {
-            applyLateralCountCoalesce(model.getNestedModel());
-        }
-        if (model.getUnionModel() != null) {
-            applyLateralCountCoalesce(model.getUnionModel());
-        }
-        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-            QueryModel jm = model.getJoinModels().getQuick(i);
-            if (jm.getNestedModel() != null) {
-                applyLateralCountCoalesce(jm.getNestedModel());
+            CharSequence colRef = ast.token;
+            int dotPos = Chars.indexOf(colRef, '.');
+            CharSequence colName = dotPos > 0
+                    ? colRef.subSequence(dotPos + 1, colRef.length())
+                    : colRef;
+            for (int j = 0, m = countCols.size(); j < m; j++) {
+                if (Chars.equalsIgnoreCase(colName, countCols.getQuick(j))) {
+                    ExpressionNode coalesce = expressionNodePool.next().of(
+                            ExpressionNode.FUNCTION, "coalesce", 0, ast.position
+                    );
+                    coalesce.paramCount = 2;
+                    coalesce.rhs = expressionNodePool.next().of(
+                            ExpressionNode.CONSTANT, "0", 0, ast.position
+                    );
+                    coalesce.lhs = ast;
+                    pc.of(pc.getAlias(), coalesce);
+                    break;
+                }
             }
         }
     }
@@ -9342,6 +9325,13 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        ObjList<CharSequence> lateralCountCols = model.getLateralCountColumns();
+        if (lateralCountCols.size() > 0) {
+            applyLateralCountCoalesce(outerVirtualModel, lateralCountCols);
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            lateralCountCols.clear();
+        }
+
         QueryModel root;
         QueryModel limitSource;
 
@@ -11038,7 +11028,6 @@ public class SqlOptimiser implements Mutable {
             lateralJoinRewriter.rewrite(rewrittenModel);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            applyLateralCountCoalesce(rewrittenModel);
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);

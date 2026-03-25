@@ -693,7 +693,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T04: GROUP BY + COUNT, LEFT, equality correlation — COUNT→CASE WHEN correction
     @Test
     public void testT04GroupByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
@@ -1685,6 +1684,49 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
                             ) t
                             ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT28c2SampleByCountLeft() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 20.0, '2024-01-01T00:40:00.000000Z'),
+                    (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // SAMPLE BY with count: order 3 has no trades → LEFT JOIN fills count with 0
+            assertQueryNoLeakCheck(
+                    """
+                            id\tts\tcnt\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\t1\t10.0
+                            1\t2024-01-01T00:30:00.000000Z\t1\t20.0
+                            2\t2024-01-01T01:00:00.000000Z\t1\t30.0
+                            3\t\t0\tnull
+                            """,
+                    """
+                            SELECT o.id, t.ts, t.cnt, t.total
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT ts, count(*) AS cnt, sum(qty) AS total
+                                FROM trades
+                                WHERE order_id = o.id
+                                SAMPLE BY 30m
+                            ) t
+                            ORDER BY o.id, t.ts
                             """,
                     null, true, false
             );
@@ -3221,7 +3263,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T56: LEFT LATERAL with COUNT and wildcard SELECT — coalesce must produce 0 not NULL
     @Test
     public void testT56LeftLateralCountWildcard() throws Exception {
         assertMemoryLeak(() -> {
@@ -3254,6 +3295,49 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.a
                             ) t ON true
                             ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T56b: SELECT * + LEFT LATERAL + SAMPLE BY + count(*) — count must be 0, no __qdb_outer_ref__ columns
+    @Test
+    public void testT56bLeftLateralSampleByCountWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:40:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\tts\tts1\tcnt\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1\t10
+                            1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:30:00.000000Z\t1\t20
+                            2\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t1\t30
+                            3\t2024-01-01T02:00:00.000000Z\t\t0\tnull
+                            """,
+                    """
+                            SELECT *
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT ts, count(*) AS cnt, sum(val) AS total
+                                FROM t2
+                                WHERE t2.t1_id = t1.a
+                                SAMPLE BY 30m
+                            ) t ON true
+                            ORDER BY t1.a, t.ts
                             """,
                     null, true, false
             );

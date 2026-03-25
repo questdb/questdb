@@ -601,11 +601,7 @@ class LateralJoinRewriter {
         }
     }
 
-    private void compensateAggregate(
-            QueryModel inner,
-            boolean isLeftJoin,
-            ObjList<CharSequence> countColAliases
-    ) throws SqlException {
+    private void compensateAggregate(QueryModel inner) throws SqlException {
         ObjList<ExpressionNode> groupBy = inner.getGroupBy();
         if (groupBy != null && groupBy.size() > 0) {
             for (int i = 0, n = groupingCols.size(); i < n; i++) {
@@ -626,10 +622,6 @@ class LateralJoinRewriter {
                 ExpressionNode col = groupingCols.getQuick(i);
                 ensureColumnInSelect(inner, col, col.token);
             }
-        }
-
-        if (isLeftJoin) {
-            rewriteCountForLeftJoin(inner, countColAliases);
         }
     }
 
@@ -1071,11 +1063,15 @@ class LateralJoinRewriter {
     }
 
     private void decorrelate(QueryModel model, int lateralDepth) throws SqlException {
+        decorrelate(model, lateralDepth, null);
+    }
+
+    private void decorrelate(QueryModel model, int lateralDepth, QueryModel parent) throws SqlException {
         if (model.getNestedModel() != null) {
-            decorrelate(model.getNestedModel(), lateralDepth);
+            decorrelate(model.getNestedModel(), lateralDepth, model);
         }
         if (model.getUnionModel() != null) {
-            decorrelate(model.getUnionModel(), lateralDepth);
+            decorrelate(model.getUnionModel(), lateralDepth, parent);
         }
 
         for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
@@ -1085,7 +1081,7 @@ class LateralJoinRewriter {
                 assert topInner != null;
 
                 // bottom up
-                decorrelate(topInner, lateralDepth + 1);
+                decorrelate(topInner, lateralDepth + 1, null);
 
                 boolean isLeft = joinModel.getJoinType() == QueryModel.JOIN_LATERAL_LEFT;
 
@@ -1166,12 +1162,13 @@ class LateralJoinRewriter {
                     }
                 }
 
-                // LEFT JOIN count coalesce
                 if (isLeft && countColAliases.size() > 0) {
-                    wrapCountColumnsWithCoalesce(model, joinModel, countColAliases);
+                    QueryModel selectModel = (model.getBottomUpColumns().size() > 0 || parent == null)
+                            ? model : parent;
+                    wrapCountColumnsWithCoalesce(selectModel, joinModel, countColAliases);
                 }
             } else if (joinModel.getNestedModel() != null) {
-                decorrelate(joinModel.getNestedModel(), lateralDepth);
+                decorrelate(joinModel.getNestedModel(), lateralDepth, null);
             }
         }
     }
@@ -1649,7 +1646,10 @@ class LateralJoinRewriter {
         if (current.getSampleBy() != null) {
             compensateSampleBy(current);
         } else if (hasGroupBy || hasAggregates) {
-            compensateAggregate(current, isLeftJoin, countColAliases);
+            compensateAggregate(current);
+        }
+        if (isLeftJoin && hasAggregateFunctions(current)) {
+            rewriteCountForLeftJoin(current, countColAliases);
         }
         if (hasWindowColumns(current)) {
             compensateWindow(current, outerRefJoinModel.getAlias().token);
@@ -2725,11 +2725,10 @@ class LateralJoinRewriter {
                             ExpressionNode.FUNCTION, "coalesce", 0, ast.position
                     );
                     coalesce.paramCount = 2;
-                    coalesce.args.clear();
-                    coalesce.args.add(expressionNodePool.next().of(
+                    coalesce.rhs = expressionNodePool.next().of(
                             ExpressionNode.CONSTANT, "0", 0, ast.position
-                    ));
-                    coalesce.args.add(ast);
+                    );
+                    coalesce.lhs = ast;
                     pc.of(pc.getAlias(), coalesce);
                     break;
                 }
