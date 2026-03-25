@@ -225,7 +225,6 @@ public class PostingIndexWriter implements IndexWriter {
     public void close() {
         try {
             if (keyMem.isOpen() && partitionPath != null) {
-                // Check if covered column files are still open before seal.
                 if (coveredColumnMems != null && coveredColumnMems.length > 0
                         && !coveredColumnMems[0].isOpen()) {
                     coveredColumnMems = null;
@@ -1336,7 +1335,8 @@ public class PostingIndexWriter implements IndexWriter {
     private void sealFull() {
         reencodeAllGenerations(
                 keyMem.getLong(activePageOffset + PAGE_OFFSET_MAX_VALUE),
-                Long.MAX_VALUE
+                Long.MAX_VALUE,
+                false
         );
     }
 
@@ -1348,8 +1348,7 @@ public class PostingIndexWriter implements IndexWriter {
      * @param maxValueCutoff  Long.MAX_VALUE means no filtering (seal path);
      *                        any other value trims per-key values to those <= cutoff (rollback path)
      */
-    private void reencodeAllGenerations(long maxValue, long maxValueCutoff) {
-        boolean isRollback = maxValueCutoff < Long.MAX_VALUE;
+    private void reencodeAllGenerations(long maxValue, long maxValueCutoff, boolean inPlace) {
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;
@@ -1412,7 +1411,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             if (totalValueCount == 0) {
-                if (isRollback) {
+                if (inPlace) {
                     truncate();
                     setMaxValue(maxValue);
                 }
@@ -1571,7 +1570,7 @@ public class PostingIndexWriter implements IndexWriter {
     
                     // Filter step (rollback only): trim each key's values to those <= maxValueCutoff.
                     // Recompute per-key start offsets in keyOffsetsAddr, then binary search for cutoff.
-                    if (isRollback) {
+                    if (inPlace) {
                         long cumOff = 0;
                         for (int key = 0; key < keyCount; key++) {
                             Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, cumOff);
@@ -1631,21 +1630,24 @@ public class PostingIndexWriter implements IndexWriter {
 
                     // Phase 3: Re-encode into single generation using stride-indexed format
                     // with adaptive per-stride encoding (delta vs flat).
-                    // Seal path: write to a NEW value file (.pv.{txn+1}) so concurrent
-                    // readers keep their valid mmap on the old file.
-                    // Rollback path: write in-place to existing valueMem (no concurrent
-                    // readers during an active writer session).
+                    // Seal: write to a NEW .pv.{txn+1} file, protecting concurrent readers.
+                    // In-place (rollback): rewrite valueMem at offset 0, no new file.
                     {
                         int sc = PostingIndexUtils.strideCount(keyCount);
                         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
 
-                        // Open new value file for sealed data
-                        long newTxn = Math.max(1, columnNameTxn + 1);
-                        openSealValueFile(newTxn);
+                        long newTxn = 0;
+                        if (inPlace) {
+                            valueMem.jumpTo(0);
+                            sealTarget = valueMem;
+                        } else {
+                            newTxn = Math.max(1, columnNameTxn + 1);
+                            openSealValueFile(newTxn);
+                        }
                         long sealOffset = 0;
-                        sealValueMem.jumpTo(0);
+                        sealTarget.jumpTo(0);
                         for (int i = 0; i < siSize; i += Integer.BYTES) {
-                            sealValueMem.putInt(0);
+                            sealTarget.putInt(0);
                         }
     
                         // Allocate stride index buffer
@@ -1780,7 +1782,7 @@ public class PostingIndexWriter implements IndexWriter {
                                         .$(']').$();
 
                                 // Record stride offset (relative to end of stride index)
-                                int strideOff = (int) (sealValueMem.getAppendOffset() - sealOffset - siSize);
+                                int strideOff = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
                                 Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
 
                                 if (useFlat) {
@@ -1811,14 +1813,14 @@ public class PostingIndexWriter implements IndexWriter {
                             }
 
                             // Sentinel: total size of all stride blocks
-                            int totalStrideBlocksSize = (int) (sealValueMem.getAppendOffset() - sealOffset - siSize);
+                            int totalStrideBlocksSize = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
                             Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
 
                             // Copy stride index into sealed value file
-                            long strideIndexAddr = sealValueMem.addressOf(sealOffset);
+                            long strideIndexAddr = sealTarget.addressOf(sealOffset);
                             Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
 
-                            valueMemSize = sealValueMem.getAppendOffset();
+                            valueMemSize = sealTarget.getAppendOffset();
 
                             // Finalize sidecar stride indices
                             if (coverCount > 0 && sidecarStrideIndexBufs != null) {
@@ -1851,8 +1853,13 @@ public class PostingIndexWriter implements IndexWriter {
                         }
     
                         genCount = 1;
-                        sealValueMem.sync(false);
-                        switchToSealedValueFile(newTxn);
+                        if (inPlace) {
+                            valueMemSize = sealTarget.getAppendOffset();
+                            sealTarget = null;
+                        } else {
+                            sealValueMem.sync(false);
+                            switchToSealedValueFile(newTxn);
+                        }
                         Unsafe.getUnsafe().storeFence();
                         writeMetadataPage(genCount, maxValue,
                                 0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
@@ -2123,7 +2130,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void rollbackToMaxValue(long maxValue) {
-        reencodeAllGenerations(maxValue, maxValue);
+        // Rollback writes in-place to the existing valueMem at offset 0 — same
+        // approach as BitmapIndexWriter.rollbackValues() which writes in-place to
+        // keyMem/valueMem. No new .pv file, no columnNameTxn bump.
+        reencodeAllGenerations(maxValue, maxValue, true);
     }
 
     @Override
@@ -2174,14 +2184,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public void of(Path path, CharSequence name, long columnNameTxn, boolean init) {
-        // Seal current partition before switching. This flushes buffered add()
-        // calls to the mmap files and creates the sealed .pv file. Unlike the
-        // bitmap index which writes directly to mmap, the posting index buffers
-        // data in native memory — without this flush the data is lost.
-        if (keyMem.isOpen() && partitionPath != null) {
-            seal();
-        }
-        partitionPath = null; // prevent double-seal during close
+        // Flush and close the current partition. close() flushes buffered
+        // add() calls to the mmap files so the data is not lost. Seal is
+        // NOT triggered here — it's an optimization done by TableWriter
+        // during syncColumns() where the txn bump can be published.
         close();
         this.partitionPath = path.toString();
         this.indexName = name.toString();
@@ -2231,10 +2237,8 @@ public class PostingIndexWriter implements IndexWriter {
             this.keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
             this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
-            // After seal, the .pk metadata contains VALUE_FILE_TXN pointing to the
-            // sealed .pv.{txn} file. The passed columnNameTxn may be stale (from
-            // columnVersionWriter which wasn't updated after seal). Read the actual
-            // txn from the metadata to open the correct value file.
+            // After a previous seal, the .pk metadata may contain VALUE_FILE_TXN
+            // pointing to a sealed .pv.{txn} file. Open the correct value file.
             if (!init) {
                 long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
                 if (metaValueTxn > 0) {
@@ -2251,13 +2255,7 @@ public class PostingIndexWriter implements IndexWriter {
             );
 
             if (!init && valueMemSize > 0) {
-                long actualFileSize = ff.length(valueMem.getFd());
-                if (actualFileSize >= 0 && actualFileSize < valueMemSize) {
-                    LOG.advisory().$("value file shorter than header claims [expected=").$(valueMemSize)
-                            .$(", actual=").$(actualFileSize).$("] — possible incomplete seal").$();
-                }
                 valueMem.jumpTo(valueMemSize);
-                compactValueFile();
             }
 
             allocateNativeBuffers();

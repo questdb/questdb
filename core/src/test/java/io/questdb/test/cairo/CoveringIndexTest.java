@@ -3671,14 +3671,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         ts TIMESTAMP,
                         sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
                         price DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T00:00:00', 'A', 10.0)");
-            drainWalQueue();
             execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T01:00:00', 'A', 11.0)");
-            drainWalQueue();
             execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T02:00:00', 'B', 20.0)");
-            drainWalQueue();
             engine.releaseAllWriters();
 
             assertSql("""
