@@ -461,7 +461,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         // The base factory's getPageFrameCursor() handles partition-level initialization internally,
         // then we wrap the already-initialized result.
         @Override
-        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
             throw new UnsupportedOperationException();
         }
 

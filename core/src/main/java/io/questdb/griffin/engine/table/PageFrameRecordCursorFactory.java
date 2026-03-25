@@ -216,7 +216,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
@@ -231,7 +231,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     @Override

@@ -140,7 +140,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 );
             }
         }
-        return pageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return pageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     /**
