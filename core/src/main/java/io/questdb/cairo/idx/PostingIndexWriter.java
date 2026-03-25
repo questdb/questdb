@@ -243,13 +243,11 @@ public class PostingIndexWriter implements IndexWriter {
             } finally {
                 try {
                     if (valueMem.isOpen()) {
-                        try {
-                            if (valueMemSize > 0) {
-                                valueMem.setSize(valueMemSize);
-                            }
-                        } finally {
-                            Misc.free(valueMem);
-                        }
+                        // Do NOT truncate the value file here — concurrent readers
+                        // may have it mapped to the pre-compaction size. Truncating
+                        // would unmap pages they're reading (SIGSEGV). Dead space
+                        // is reclaimed on next open via compactValueFile().
+                        Misc.free(valueMem);
                     }
                 } finally {
                     closeSidecarMems();
