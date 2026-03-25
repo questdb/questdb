@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -41,12 +42,17 @@ import io.questdb.std.str.Path;
  */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private final Cursor cursor = new Cursor();
-    private final Cursor cursor2 = new Cursor();
+    private ObjList<Cursor> extraCursors;
 
     @Override
     public void close() {
         cursor.close();
-        cursor2.close();
+        if (extraCursors != null) {
+            for (int i = 0, n = extraCursors.size(); i < n; i++) {
+                extraCursors.getQuick(i).close();
+            }
+            extraCursors.clear();
+        }
         super.close();
     }
 
@@ -68,7 +74,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         if (key < keyCount) {
-            final Cursor c = cachedInstance ? cursor : cursor2;
+            final Cursor c;
+            if (cachedInstance) {
+                c = cursor;
+            } else {
+                c = new Cursor();
+                if (extraCursors == null) {
+                    extraCursors = new ObjList<>();
+                }
+                extraCursors.add(c);
+            }
             c.of(key, minValue, maxValue);
             return c;
         }
