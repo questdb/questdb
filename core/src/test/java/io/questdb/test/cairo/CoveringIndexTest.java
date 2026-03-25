@@ -2717,6 +2717,163 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFallbackInList3Keys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in3 VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2024-01-01T02:00:00', 'C', 3.0, 30)
+                    """);
+            engine.releaseAllWriters();
+
+            // 3-key IN-list with non-covered column — needs 3 independent cursors
+            assertSql("""
+                    price\textra
+                    1.0\t10
+                    2.0\t20
+                    3.0\t30
+                    """, "SELECT price, extra FROM t_in3 WHERE sym IN ('A', 'B', 'C')");
+        });
+    }
+
+    @Test
+    public void testFallbackInList5KeysMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in5 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in5 VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2024-01-01T02:00:00', 'C', 3.0, 30),
+                    ('2024-01-02T00:00:00', 'D', 4.0, 40),
+                    ('2024-01-02T01:00:00', 'E', 5.0, 50),
+                    ('2024-01-02T02:00:00', 'A', 6.0, 60),
+                    ('2024-01-03T00:00:00', 'B', 7.0, 70),
+                    ('2024-01-03T01:00:00', 'C', 8.0, 80)
+                    """);
+            engine.releaseAllWriters();
+
+            // 5-key IN-list across 3 partitions with non-covered column
+            assertSql("""
+                    price\textra
+                    1.0\t10
+                    2.0\t20
+                    3.0\t30
+                    4.0\t40
+                    5.0\t50
+                    6.0\t60
+                    7.0\t70
+                    8.0\t80
+                    """, "SELECT price, extra FROM t_in5 WHERE sym IN ('A', 'B', 'C', 'D', 'E')");
+        });
+    }
+
+    @Test
+    public void testFallbackInListWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_wal VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2024-01-01T02:00:00', 'C', 3.0, 30)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price\textra
+                    1.0\t10
+                    2.0\t20
+                    3.0\t30
+                    """, "SELECT price, extra FROM t_in_wal WHERE sym IN ('A', 'B', 'C')");
+        });
+    }
+
+    @Test
+    public void testCoveringInList5Keys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cov5 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cov5 VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2024-01-01T02:00:00', 'C', 3.0, 30),
+                    ('2024-01-02T00:00:00', 'D', 4.0, 40),
+                    ('2024-01-02T01:00:00', 'E', 5.0, 50)
+                    """);
+            engine.releaseAllWriters();
+
+            // 5-key covering IN-list — all columns covered, uses CoveringIndex path
+            assertSql("""
+                    price\tqty
+                    1.0\t10
+                    2.0\t20
+                    3.0\t30
+                    4.0\t40
+                    5.0\t50
+                    """, "SELECT price, qty FROM t_cov5 WHERE sym IN ('A', 'B', 'C', 'D', 'E')");
+        });
+    }
+
+    @Test
+    public void testLatestOnMultiKeyNonCovering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_nc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_nc VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2024-01-02T00:00:00', 'A', 3.0, 30),
+                    ('2024-01-02T01:00:00', 'C', 4.0, 40)
+                    """);
+            engine.releaseAllWriters();
+
+            // LATEST ON with non-covered column — uses LatestByValues with non-cached cursors
+            assertSql("""
+                    count
+                    3
+                    """, "SELECT count() FROM (SELECT * FROM t_latest_nc WHERE sym IN ('A', 'B', 'C') LATEST ON ts PARTITION BY sym)");
+        });
+    }
+
+    @Test
     public void testCoveringQuerySymbolIncludeColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
