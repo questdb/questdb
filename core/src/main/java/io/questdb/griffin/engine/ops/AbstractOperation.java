@@ -62,7 +62,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     public void clearSecurityContext() {
-        Misc.clear(securityContext);
+        securityContext = Misc.clear(securityContext);
     }
 
     @Override

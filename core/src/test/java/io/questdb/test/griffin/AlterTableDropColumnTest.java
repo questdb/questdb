@@ -203,23 +203,25 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
 
             // verify columns were not dropped
             assertSql(
-                    "column\n" +
-                            "i\n" +
-                            "sym\n" +
-                            "amt\n" +
-                            "timestamp\n" +
-                            "b\n" +
-                            "c\n" +
-                            "d\n" +
-                            "e\n" +
-                            "f\n" +
-                            "g\n" +
-                            "ik\n" +
-                            "j\n" +
-                            "k\n" +
-                            "l\n" +
-                            "m\n" +
-                            "n\n",
+                    """
+                            column
+                            i
+                            sym
+                            amt
+                            timestamp
+                            b
+                            c
+                            d
+                            e
+                            f
+                            g
+                            ik
+                            j
+                            k
+                            l
+                            m
+                            n
+                            """,
                     "SELECT \"column\" FROM table_columns('x')"
             );
         });

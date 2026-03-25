@@ -295,7 +295,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         authColumnNames.clear();
         command = DO_NOTHING;
         sqlExecutionContext = null;
-        securityContext = null;
+        clearSecurityContext();
         extraStrInfo.clear();
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
