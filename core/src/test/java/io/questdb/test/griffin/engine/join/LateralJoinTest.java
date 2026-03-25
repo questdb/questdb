@@ -369,7 +369,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub ON true
                             ORDER BY o.id, sub.val
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1326,7 +1326,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             FROM orders o
                             JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id LIMIT o.n) t
                             """,
-                    0,
+                    98,
                     "non-constant LIMIT in LATERAL join is not supported"
             );
         });
@@ -2257,7 +2257,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -2367,7 +2367,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -2660,7 +2660,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) x
                             ORDER BY t1.a, x.b
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -2754,7 +2754,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -3283,7 +3283,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub
                             ORDER BY o.id
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
