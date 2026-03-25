@@ -459,86 +459,40 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final SymbolTranslatingRecord symbolTranslatingRecord =
                 masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
-        // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
         if (keyedAsOfJoin) {
             asOfJoinMap.clear();
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
-        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
-        final long bwdScanMinGap = atom.getBwdScanMinGap();
-        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
-        long prevAsOfRowId = Long.MIN_VALUE;
-        boolean isForwardScanMode = false;
-        long bwdScanRowsAtPositionStart = 0;
 
         while (horizonIterator.next()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
             final long offset = atom.getOffset(offsetIdx);
 
-            // Position master record at the correct row
             masterRecord.setRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
             final long masterRowId = baseRowId + masterRowIdx;
 
-            // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-
-            // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
-                if (asOfRowId != Long.MIN_VALUE) {
-                    if (asOfRowId != prevAsOfRowId) {
-                        // ASOF position changed — decide scanning strategy
-                        if (!isForwardScanMode) {
-                            long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
-                            if (prevAsOfRowId != Long.MIN_VALUE) {
-                                long gap = asOfRowId - prevAsOfRowId;
-                                if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                        bwdScanCost,
-                                        gap,
-                                        bwdScanMinGap,
-                                        bwdScanSwitchFactor,
-                                        bwdScanAbsoluteThreshold
-                                )) {
-                                    isForwardScanMode = true;
-                                    slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
-                                }
-                            }
-                            if (!isForwardScanMode) {
-                                // Stay in backward-only: clear map, reset watermark
-                                asOfJoinMap.clear();
-                                slaveTimeFrameHelper.resetBackwardWatermark();
-                                bwdScanRowsAtPositionStart = slaveTimeFrameHelper.getBackwardScanRows();
-                            }
-                        }
-                        if (isForwardScanMode) {
-                            slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
-                        }
-                        prevAsOfRowId = asOfRowId;
-                    }
-                    // Look up key in map; backward scan on miss
-                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                            asOfRowId,
-                            masterKeyRecord,
-                            masterAsOfJoinMapSink,
-                            slaveAsOfJoinMapSink,
-                            asOfJoinMap,
-                            symbolTranslatingRecord
-                    );
-                }
+                matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
+                        asOfRowId,
+                        masterKeyRecord,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        asOfJoinMap,
+                        symbolTranslatingRecord
+                );
             } else {
-                // Timestamp-only ASOF JOIN: ASOF row IS the match
                 matchRowId = asOfRowId;
             }
 
-            // Aggregate the result
             Record matchedSlaveRecord = null;
             if (matchRowId != Long.MIN_VALUE) {
                 slaveTimeFrameHelper.recordAt(matchRowId);

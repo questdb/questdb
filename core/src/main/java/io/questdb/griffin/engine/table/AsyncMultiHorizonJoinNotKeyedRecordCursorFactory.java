@@ -340,14 +340,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             int slotId
     ) {
         final ObjList<Record> matchedSlaveRecords = atom.getMatchedSlaveRecords(slotId);
-        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
-        final long bwdScanMinGap = atom.getBwdScanMinGap();
-        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
-
-        // Per-slave adaptive scan state (pre-allocated per worker to avoid per-frame allocations)
-        final long[] prevAsOfRowIds = atom.getPrevAsOfRowIds(slotId);
-        final boolean[] isForwardScanModes = atom.getIsForwardScanModes(slotId);
-        final long[] bwdScanRowsAtPositionStarts = atom.getBwdScanRowsAtPositionStarts(slotId);
 
         for (int s = 0; s < slaveCount; s++) {
             atom.getSlaveTimeFrameHelper(slotId, s).toTop();
@@ -355,9 +347,6 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             if (asOfMap != null) {
                 asOfMap.clear();
             }
-            prevAsOfRowIds[s] = Long.MIN_VALUE;
-            isForwardScanModes[s] = false;
-            bwdScanRowsAtPositionStarts[s] = 0;
         }
 
         while (horizonIterator.next()) {
@@ -384,44 +373,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     final Record masterKeyRecord = atom.getMasterKeyRecord(slotId, s, masterRecord);
                     final SymbolTranslatingRecord symbolTranslatingRecord =
                             masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
-
-                    if (asOfRowId != Long.MIN_VALUE) {
-                        if (asOfRowId != prevAsOfRowIds[s]) {
-                            if (!isForwardScanModes[s]) {
-                                long bwdScanCost = helper.getBackwardScanRows() - bwdScanRowsAtPositionStarts[s];
-                                if (prevAsOfRowIds[s] != Long.MIN_VALUE) {
-                                    long gap = asOfRowId - prevAsOfRowIds[s];
-                                    if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                            bwdScanCost,
-                                            gap,
-                                            bwdScanMinGap,
-                                            bwdScanSwitchFactor,
-                                            bwdScanAbsoluteThreshold
-                                    )) {
-                                        isForwardScanModes[s] = true;
-                                        helper.initForwardWatermark(prevAsOfRowIds[s]);
-                                    }
-                                }
-                                if (!isForwardScanModes[s]) {
-                                    asOfJoinMap.clear();
-                                    helper.resetBackwardWatermark();
-                                    bwdScanRowsAtPositionStarts[s] = helper.getBackwardScanRows();
-                                }
-                            }
-                            if (isForwardScanModes[s]) {
-                                helper.forwardScanToPosition(asOfRowId, slaveSink, asOfJoinMap);
-                            }
-                            prevAsOfRowIds[s] = asOfRowId;
-                        }
-                        matchRowId = helper.backwardScanForKeyMatch(
-                                asOfRowId,
-                                masterKeyRecord,
-                                masterSink,
-                                slaveSink,
-                                asOfJoinMap,
-                                symbolTranslatingRecord
-                        );
-                    }
+                    matchRowId = helper.findKeyedAsOfMatch(
+                            asOfRowId, masterKeyRecord, masterSink, slaveSink,
+                            asOfJoinMap, symbolTranslatingRecord
+                    );
                 } else {
                     matchRowId = asOfRowId;
                 }

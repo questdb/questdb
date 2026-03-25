@@ -396,12 +396,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
-        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
-        final long bwdScanMinGap = atom.getBwdScanMinGap();
-        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
-        long prevAsOfRowId = Long.MIN_VALUE;
-        boolean isForwardScanMode = false;
-        long bwdScanRowsAtPositionStart = 0;
 
         while (horizonIterator.next()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
@@ -418,43 +412,14 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
-                if (asOfRowId != Long.MIN_VALUE) {
-                    if (asOfRowId != prevAsOfRowId) {
-                        if (!isForwardScanMode) {
-                            long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
-                            if (prevAsOfRowId != Long.MIN_VALUE) {
-                                long gap = asOfRowId - prevAsOfRowId;
-                                if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                        bwdScanCost,
-                                        gap,
-                                        bwdScanMinGap,
-                                        bwdScanSwitchFactor,
-                                        bwdScanAbsoluteThreshold
-                                )) {
-                                    isForwardScanMode = true;
-                                    slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
-                                }
-                            }
-                            if (!isForwardScanMode) {
-                                asOfJoinMap.clear();
-                                slaveTimeFrameHelper.resetBackwardWatermark();
-                                bwdScanRowsAtPositionStart = slaveTimeFrameHelper.getBackwardScanRows();
-                            }
-                        }
-                        if (isForwardScanMode) {
-                            slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
-                        }
-                        prevAsOfRowId = asOfRowId;
-                    }
-                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                            asOfRowId,
-                            masterKeyRecord,
-                            masterAsOfJoinMapSink,
-                            slaveAsOfJoinMapSink,
-                            asOfJoinMap,
-                            symbolTranslatingRecord
-                    );
-                }
+                matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
+                        asOfRowId,
+                        masterKeyRecord,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        asOfJoinMap,
+                        symbolTranslatingRecord
+                );
             } else {
                 matchRowId = asOfRowId;
             }

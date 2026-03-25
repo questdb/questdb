@@ -194,12 +194,18 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             // Create time frame cursors from slave factory - one per worker + owner
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
+            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    lookahead, slaveTsScale,
+                    bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+            );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
-                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
+                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                        lookahead, slaveTsScale,
+                        bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                ));
             }
 
             // Per-worker ASOF maps and SingleRecordSink targets for key comparison
@@ -341,18 +347,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerAsOfJoinMap;
         }
         return perWorkerAsOfJoinMaps != null ? perWorkerAsOfJoinMaps.getQuick(slotId) : null;
-    }
-
-    public long getBwdScanAbsoluteThreshold() {
-        return bwdScanAbsoluteThreshold;
-    }
-
-    public long getBwdScanMinGap() {
-        return bwdScanMinGap;
-    }
-
-    public long getBwdScanSwitchFactor() {
-        return bwdScanSwitchFactor;
     }
 
     public AsyncFilterContext getFilterContext() {

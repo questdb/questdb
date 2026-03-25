@@ -180,7 +180,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         private final ObjList<Map> asOfJoinMaps;
         private final long bwdScanAbsoluteThreshold;
         private final long bwdScanMinGap;
-        private final long[] bwdScanRowsAtPositionStarts;
         private final long bwdScanSwitchFactor;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
@@ -188,12 +187,10 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         private final HorizonTimestampIterator horizonIterator;
         private final MultiHorizonJoinRecord horizonJoinRecord;
         private final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
-        private final boolean[] isForwardScanModes;
         private final ObjList<RecordSink> masterAsOfJoinMapSinks;
         private final int masterTimestampColumnIndex;
         private final ObjList<Record> matchedSlaveRecords;
         private final long[] offsets;
-        private final long[] prevAsOfRowIds;
         private final VirtualRecord recordA;
         private final ObjList<RecordSink> slaveAsOfJoinMapSinks;
         private final int slaveCount;
@@ -228,9 +225,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.size();
-            this.prevAsOfRowIds = new long[slaveCount];
-            this.isForwardScanModes = new boolean[slaveCount];
-            this.bwdScanRowsAtPositionStarts = new long[slaveCount];
             this.slaveSymbolSources = new ObjList<>(slaveCount);
             this.slaveSymbolSources.setPos(slaveCount);
             this.matchedSlaveRecords = new ObjList<>(slaveCount);
@@ -271,7 +265,10 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     } else {
                         symbolTranslatingRecords.add(null);
                     }
-                    timeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, ss.getSlaveTsScale()));
+                    timeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                            lookahead, ss.getSlaveTsScale(),
+                            bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                    ));
                 }
             } catch (Throwable th) {
                 close();
@@ -354,9 +351,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
                     asOfJoinMaps.getQuick(s).clear();
                 }
-                prevAsOfRowIds[s] = Long.MIN_VALUE;
-                isForwardScanModes[s] = false;
-                bwdScanRowsAtPositionStarts[s] = 0;
             }
 
             while (horizonIterator.next()) {
@@ -383,46 +377,14 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             symbolTranslatingRecords.getQuick(s).of(masterRecord);
                             masterKeyRecord = symbolTranslatingRecords.getQuick(s);
                         }
-
-                        if (asOfRowId != Long.MIN_VALUE) {
-                            if (asOfRowId != prevAsOfRowIds[s]) {
-                                if (!isForwardScanModes[s]) {
-                                    long bwdScanCost = helper.getBackwardScanRows() - bwdScanRowsAtPositionStarts[s];
-                                    if (prevAsOfRowIds[s] != Long.MIN_VALUE) {
-                                        long gap = asOfRowId - prevAsOfRowIds[s];
-                                        if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                                bwdScanCost,
-                                                gap,
-                                                bwdScanMinGap,
-                                                bwdScanSwitchFactor,
-                                                bwdScanAbsoluteThreshold
-                                        )) {
-                                            isForwardScanModes[s] = true;
-                                            helper.initForwardWatermark(prevAsOfRowIds[s]);
-                                        }
-                                    }
-                                    if (!isForwardScanModes[s]) {
-                                        asOfJoinMaps.getQuick(s).clear();
-                                        helper.resetBackwardWatermark();
-                                        bwdScanRowsAtPositionStarts[s] = helper.getBackwardScanRows();
-                                    }
-                                }
-                                if (isForwardScanModes[s]) {
-                                    helper.forwardScanToPosition(
-                                            asOfRowId, slaveAsOfJoinMapSinks.getQuick(s), asOfJoinMaps.getQuick(s)
-                                    );
-                                }
-                                prevAsOfRowIds[s] = asOfRowId;
-                            }
-                            matchRowId = helper.backwardScanForKeyMatch(
-                                    asOfRowId,
-                                    masterKeyRecord,
-                                    masterAsOfJoinMapSinks.getQuick(s),
-                                    slaveAsOfJoinMapSinks.getQuick(s),
-                                    asOfJoinMaps.getQuick(s),
-                                    symbolTranslatingRecords.getQuick(s)
-                            );
-                        }
+                        matchRowId = helper.findKeyedAsOfMatch(
+                                asOfRowId,
+                                masterKeyRecord,
+                                masterAsOfJoinMapSinks.getQuick(s),
+                                slaveAsOfJoinMapSinks.getQuick(s),
+                                asOfJoinMaps.getQuick(s),
+                                symbolTranslatingRecords.getQuick(s)
+                        );
                     } else {
                         matchRowId = asOfRowId;
                     }
