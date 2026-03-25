@@ -36,6 +36,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -451,7 +452,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TimestampDriver driver = timestampType.getDriver();
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-06-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
@@ -501,7 +502,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             long timestamp = driver.parseFloorLiteral(timestampDay + "T22:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
@@ -1469,7 +1470,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             String timestampDay = "2022-06-02";
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-05-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
@@ -1856,7 +1857,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             utf8sink.put("33");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
@@ -2063,7 +2064,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                 writer.detachPartition(timestamp);
                 Assert.assertEquals(9, writer.size());
             }
@@ -2130,7 +2131,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             try (TableWriter writer = getWriter(tableName)) {
                 writer.detachPartition(timestamp);
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                 Assert.assertEquals(9, writer.size());
             }
 
@@ -2195,7 +2196,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
@@ -2269,7 +2270,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 writer.detachPartition(timestamp);
 
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-06-02T00:00:00.000000Z"));
                 row.putLong(0, 33L);
