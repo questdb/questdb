@@ -590,7 +590,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            SecurityContext securityContext
     ) {
         addColumn(
                 columnName,
@@ -601,7 +602,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
-                null
+                securityContext
         );
     }
 
@@ -821,11 +822,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        alterOp.authorize();
         return alterOp.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
     public long apply(UpdateOperation operation) {
+        operation.authorize();
         return operation.apply(this, true);
     }
 

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -83,46 +84,26 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         }
 
         int columnType = meta.getColumnType(columnIndex);
-        switch (columnType) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.VARCHAR:
-            case ColumnType.BYTE:
-            case ColumnType.BOOLEAN:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return true;
-        }
-        return false;
+        return switch (columnType) {
+            case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR, ColumnType.BYTE, ColumnType.BOOLEAN,
+                 ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE,
+                 ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> true;
+            default -> false;
+        };
     }
 
     public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount) {
-        switch (columnType) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.VARCHAR:
-                return generateNextType(columnType, varSizeConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.FLOAT:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.TIMESTAMP_NANO:
-            case ColumnType.DOUBLE:
-                return generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
-            default:
-                throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
-        }
+        return switch (columnType) {
+            case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR ->
+                    generateNextType(columnType, varSizeConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
+                 ColumnType.FLOAT, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
+                 ColumnType.DOUBLE ->
+                    generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
+            default ->
+                    throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
+        };
     }
-
 
     public static RecordMetadata generateColumnTypeChange(
             ObjList<FuzzTransaction> transactionList,
@@ -194,7 +175,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         builder.addColumnToList(columName, 0, newColumnType, symbolCapacity, cacheSymbolMap,
                 indexFlag, indexValueBlockCapacity, false);
         AlterOperation alterOp = builder.build();
-        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
             alterOp.withContext(context);
             wApi.apply(alterOp, true);
@@ -213,15 +194,9 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     }
 
     private static boolean isNullable(int columnType) {
-        switch (columnType) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.UUID:
-            case ColumnType.IPv4:
-            case ColumnType.BOOLEAN:
-                return false;
-            default:
-                return true;
-        }
+        return switch (columnType) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.UUID, ColumnType.IPv4, ColumnType.BOOLEAN -> false;
+            default -> true;
+        };
     }
 }
