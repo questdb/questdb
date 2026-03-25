@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
+    branches:
+      - steve-rm-bins  # TODO: remove before merging
   workflow_dispatch:
 
 jobs:
