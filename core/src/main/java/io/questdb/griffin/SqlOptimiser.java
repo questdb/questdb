@@ -829,7 +829,8 @@ public class SqlOptimiser implements Mutable {
                                 base.token.subSequence(dot + 1, base.token.length()),
                                 base.precedence,
                                 base.position
-                        )
+                        ),
+                        column.isIncludeIntoWildcard()
                 );
             }
         }
@@ -2576,7 +2577,7 @@ public class SqlOptimiser implements Mutable {
                 innerAlias = createColumnAlias(columnName, translatingModel);
             }
             addColumnToTranslatingModel(
-                    queryColumnPool.next().of(innerAlias, columnAst),
+                    queryColumnPool.next().of(innerAlias, columnAst, includeIntoWildcard),
                     translatingModel,
                     innerVirtualModel,
                     baseModel
