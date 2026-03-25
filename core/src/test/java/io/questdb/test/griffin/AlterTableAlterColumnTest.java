@@ -257,7 +257,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d DROP nonsense",
                 34,
-                "'index' or 'parquet' expected"
+                "'index' expected"
         );
     }
 
@@ -288,7 +288,38 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropParquetEncoding() throws Exception {
+    public void testResetParquetEncodingShowCreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (a INT, b DOUBLE, t TIMESTAMP) TIMESTAMP(t) PARTITION BY DAY");
+
+            execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
+
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'y' (\s
+                            \ta INT PARQUET(delta_binary_packed, zstd(3)),
+                            \tb DOUBLE,
+                            \tt TIMESTAMP
+                            ) timestamp(t) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE y");
+
+            execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(default)");
+
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'y' (\s
+                            \ta INT,
+                            \tb DOUBLE,
+                            \tt TIMESTAMP
+                            ) timestamp(t) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE y");
+        });
+    }
+
+    @Test
+    public void testResetParquetEncoding() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
@@ -304,7 +335,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertNotEquals(0, config);
             }
 
-            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET");
+            execute("ALTER TABLE y ALTER COLUMN a SET PARQUET(default)");
 
             try (TableWriter writer = getWriter("y")) {
                 int colIndex = writer.getMetadata().getColumnIndex("a");
@@ -315,16 +346,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropParquetEncodingInvalidColumnName() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN nonexistent DROP PARQUET",
-                27,
-                "column 'nonexistent' does not exist in table 'x'"
-        );
-    }
-
-    @Test
-    public void testDropParquetEncodingOnly() throws Exception {
+    public void testResetParquetEncodingKeepCompression() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE y (" +
@@ -350,7 +372,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropParquetEncodingThenConvert() throws Exception {
+    public void testResetParquetEncodingThenConvert() throws Exception {
         assertMemoryLeak(() -> {
             inputRoot = root;
             execute("CREATE TABLE x (" +
@@ -366,7 +388,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
             // seal the partition by inserting into the next day
             execute("INSERT INTO x VALUES (42, '2015-01-02T00:00:00.000000Z')");
 
-            execute("ALTER TABLE x ALTER COLUMN val DROP PARQUET");
+            execute("ALTER TABLE x ALTER COLUMN val SET PARQUET(default)");
 
             try (
                     Path path = new Path();
@@ -382,15 +404,6 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 );
             }
         });
-    }
-
-    @Test
-    public void testDropParquetUnexpectedToken() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN d DROP PARQUET extratoken",
-                42,
-                "unexpected token"
-        );
     }
 
     @Test

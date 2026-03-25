@@ -72,8 +72,6 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableDropPartition(TableToken tableToken);
 
-    void authorizeAlterTableDropParquetEncoding(TableToken tableToken);
-
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
