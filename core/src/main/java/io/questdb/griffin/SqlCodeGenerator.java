@@ -1251,7 +1251,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Predicates on slave columns end up as postJoinWhereClause on the slave model.
         if (slaveModel.getPostJoinWhereClause() != null) {
             throw SqlException.position(slaveModel.getPostJoinWhereClause().position)
-                    .put("HORIZON JOIN WHERE clause can only reference master table columns");
+                    .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         }
 
         // Predicates on offset pseudo-table columns end up as whereClause or
@@ -1263,7 +1263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final ExpressionNode where = jm.getWhereClause() != null ? jm.getWhereClause() : jm.getPostJoinWhereClause();
                 if (where != null) {
                     throw SqlException.position(where.position)
-                            .put("HORIZON JOIN WHERE clause can only reference master table columns");
+                            .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
                 }
             }
         }
@@ -3502,7 +3502,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("HORIZON JOIN slave table must support time frame cursors");
+                        .put("right-hand side of HORIZON JOIN must support time frame cursors");
             }
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
@@ -3510,14 +3510,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (masterTimestampColumnIndex == -1) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("HORIZON JOIN master table must have a designated timestamp");
+                        .put("left-hand side of HORIZON JOIN must have a designated timestamp");
             }
 
             // Create the inner join metadata (master + horizon columns + slave)
             // The horizon pseudo-table has two columns: offset (LONG) and timestamp (same type as master)
             if (horizonContext.getAlias() == null) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("HORIZON JOIN requires alias for RANGE/LIST to be specified");
+                        .put("HORIZON JOIN requires an alias for RANGE/LIST");
             }
             final CharSequence horizonAlias = horizonContext.getAlias().token;
             final CharSequence slaveAlias = slaveModel.getAlias() != null ? slaveModel.getAlias().token : slaveModel.getName();
@@ -3766,7 +3766,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                            .put("HORIZON JOIN master table must support random access or page frames");
+                            .put("left-hand side of HORIZON JOIN must support random access or page frames");
                 }
 
                 // Create sink instances from generated classes for single-threaded path
@@ -5792,18 +5792,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
             if (masterTimestampColumnIndex == -1) {
                 throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
-                        .put("HORIZON JOIN master table must have a designated timestamp");
+                        .put("left-hand side of HORIZON JOIN must have a designated timestamp");
             }
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
                 if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
-                            .put("HORIZON JOIN slave table must support time frame cursors");
+                            .put("right-hand side of HORIZON JOIN must support time frame cursors");
                 }
             }
-
-            final int workerCount = executionContext.getSharedQueryWorkerCount();
 
             // Build combined metadata: [master cols] [offset, timestamp] [slave0 cols] [slave1 cols] ...
             final CharSequence horizonAlias = horizonContext.getAlias().token;
@@ -5895,6 +5893,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 filterFactory.halfClose();
             }
 
+            final int workerCount = executionContext.getSharedQueryWorkerCount();
             if (supportsParallelism) {
                 perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
                         executionContext,
@@ -6052,7 +6051,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Verify master supports random access for ST path
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
-                            .put("HORIZON JOIN master table must support random access or page frames");
+                            .put("left-hand side of HORIZON JOIN must support random access or page frames");
                 }
 
                 // Transfer ownership

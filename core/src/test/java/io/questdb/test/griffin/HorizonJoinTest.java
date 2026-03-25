@@ -513,7 +513,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 0s STEP 1s AS h " +
                             "WHERE h.offset > 0",
                     129,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
+                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
             );
         });
     }
@@ -531,7 +531,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 0s STEP 1s AS h " +
                             "WHERE t.qty + p.price > 10",
                     136,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
+                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
             );
         });
     }
@@ -549,7 +549,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 0s STEP 1s AS h " +
                             "WHERE p.price > 10",
                     128,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
+                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
             );
         });
     }
@@ -2107,7 +2107,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 0s STEP 1s AS h " +
                             "WHERE t.qty > 0",
                     37,
-                    "HORIZON JOIN slave table must support time frame cursors"
+                    "right-hand side of HORIZON JOIN must support time frame cursors"
             );
         });
     }
@@ -6267,7 +6267,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN (SELECT * FROM asks LIMIT 100) AS a ON (t.sym = a.sym) " +
                             "LIST (0) AS h",
                     89,
-                    "HORIZON JOIN slave table must support time frame cursors"
+                    "right-hand side of HORIZON JOIN must support time frame cursors"
             );
         });
     }
@@ -6540,7 +6540,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "LIST (0) AS h " +
                             "WHERE a.ask > 0",
                     157,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
+                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
             );
         });
     }
@@ -6561,7 +6561,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "LIST (0) AS h " +
                             "WHERE b.bid > 0",
                     157,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
+                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
             );
         });
     }
@@ -6582,7 +6582,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "LIST (0, 1s) AS h " +
                             "WHERE h.offset > 0",
                     164,
-                    "HORIZON JOIN WHERE clause can only reference master table columns"
+                    "WHERE clause of HORIZON JOIN can only reference left-hand side columns"
             );
         });
     }
