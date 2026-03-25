@@ -5788,12 +5788,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean isSlaveFactoriesTransferred = false;
 
         try {
-            // Validate master timestamp
+            // validateBothTimestamps() already checks this before we get here
             final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
-            if (masterTimestampColumnIndex == -1) {
-                throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
-                        .put("left-hand side of HORIZON JOIN must have a designated timestamp");
-            }
+            assert masterTimestampColumnIndex != -1 : "master timestamp must be validated before entering generateMultiHorizonJoinFactory";
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {

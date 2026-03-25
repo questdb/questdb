@@ -1884,6 +1884,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     @Test
     public void testHorizonJoinParallelExecution() throws Exception {
+        assertMemoryLeak(() -> {
         // Test parallel execution of HORIZON JOIN GROUP BY with larger dataset
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 10);
@@ -1978,6 +1979,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+        });
     }
 
     @Test
@@ -4915,6 +4917,60 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiHorizonJoinDifferentSlaveTimestampTypes() throws Exception {
+        // Each source has a distinct timestamp type: master=TIMESTAMP_NS, slave0=TIMESTAMP, slave1=TIMESTAMP_NS.
+        // This exercises per-slave timestamp scaling where each slave has a different scale factor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP_NS, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE bids (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE asks (ts TIMESTAMP_NS, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)");
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'A', 20.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO bids VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0),
+                                ('2024-01-01T00:00:01.500000Z', 'A', 150.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO asks VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 101.0),
+                                ('2024-01-01T00:00:01.500000Z', 'A', 151.0)
+                            """
+            );
+
+            // At offset 0:
+            //   Trade 1 (ts=1s): bid ASOF = 100.0, ask ASOF = 101.0
+            //   Trade 2 (ts=2s): bid ASOF = 150.0, ask ASOF = 151.0
+            // avg(bid) = 125, avg(ask) = 126
+            assertQueryNoLeakCheck(
+                    """
+                            avg_bid\tavg_ask
+                            125.0\t126.0
+                            """,
+                    """
+                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                            FROM trades AS t
+                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                                LIST (0) AS h
+                            """,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMultiHorizonJoinDifferentTimestampTypes() throws Exception {
         // Slaves with different timestamp types exercise per-slave timestamp scaling
         assertMemoryLeak(() -> {
@@ -4963,6 +5019,33 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     null,
                     false,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            assertExceptionNoLeakCheck(
+                    """
+                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                            FROM trades_nots AS t
+                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                                LIST (0) AS h
+                            """,
+                    82,
+                    "left side of time series join has no timestamp"
             );
         });
     }
