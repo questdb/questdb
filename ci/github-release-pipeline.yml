@@ -12,21 +12,86 @@ stages:
   - stage: BuildAndRunOnAzure
     displayName: "Building Binaries"
     jobs:
-      - job: RunOn
-        displayName: "on Azure workers"
-        strategy:
-          matrix:
-            linux-jdk17:
-              imageName: 'ubuntu-latest'
-              poolName: "Azure Pipelines"
-              os: Linux
-            windows:
-              imageName: "windows-latest"
-              poolName: "Azure Pipelines"
-              os: Windows
+      # Build Rust library inside manylinux2014 for glibc 2.17 compatibility (x86-64)
+      - job: BuildRustLinuxX64
+        displayName: "Build Rust (manylinux2014 x86-64)"
         pool:
-          vmImage: $(imageName)
-          name: $(poolName)
+          vmImage: 'ubuntu-latest'
+        timeoutInMinutes: 30
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+
+          - bash: |
+              set -eux
+              docker run --rm \
+                -v "$(Build.SourcesDirectory):/build" \
+                quay.io/pypa/manylinux2014_x86_64 \
+                bash -c '
+                  set -eux
+                  yum install -y python3 curl
+                  curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --profile minimal
+                  export PATH="$HOME/.cargo/bin:$PATH"
+                  cd /build/core/rust/qdbr
+                  rustc --version --verbose
+                  cargo build --release
+                '
+              mkdir -p $(Build.ArtifactStagingDirectory)
+              cp core/rust/qdbr/target/release/libquestdbr.so $(Build.ArtifactStagingDirectory)/
+              ls -la $(Build.ArtifactStagingDirectory)/libquestdbr.so
+            displayName: "Build Rust in manylinux2014 container"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/libquestdbr.so'
+              artifactName: 'rust-linux-x64'
+
+      # Build Rust library inside manylinux_2_28 for glibc 2.28 compatibility (aarch64)
+      - job: BuildRustLinuxArm
+        displayName: "Build Rust (manylinux_2_28 aarch64)"
+        pool: hetzner-incus-arm
+        timeoutInMinutes: 30
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+
+          - bash: |
+              set -eux
+              docker run --rm \
+                -v "$(Build.SourcesDirectory):/build" \
+                quay.io/pypa/manylinux_2_28_aarch64 \
+                bash -c '
+                  set -eux
+                  yum install -y python3 curl
+                  curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --profile minimal
+                  export PATH="$HOME/.cargo/bin:$PATH"
+                  cd /build/core/rust/qdbr
+                  rustc --version --verbose
+                  cargo build --release
+                '
+              mkdir -p $(Build.ArtifactStagingDirectory)
+              cp core/rust/qdbr/target/release/libquestdbr.so $(Build.ArtifactStagingDirectory)/
+              ls -la $(Build.ArtifactStagingDirectory)/libquestdbr.so
+            displayName: "Build Rust in manylinux_2_28 container"
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/libquestdbr.so'
+              artifactName: 'rust-linux-arm64'
+
+      # Build QuestDB on Linux with pre-built Rust libraries
+      - job: BuildLinux
+        displayName: "Build QuestDB (Linux)"
+        dependsOn:
+          - BuildRustLinuxX64
+          - BuildRustLinuxArm
+        pool:
+          vmImage: 'ubuntu-latest'
+          name: 'Azure Pipelines'
         timeoutInMinutes: 60
         steps:
           - checkout: self
@@ -34,7 +99,29 @@ stages:
             lfs: false
             submodules: true
 
-          # --- GraalVM CE 17.0.9 install + SHA256 verify (Linux) ---
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Rust x86-64"
+            inputs:
+              artifactName: 'rust-linux-x64'
+              targetPath: '$(Build.SourcesDirectory)/rust-x64'
+
+          - task: DownloadPipelineArtifact@2
+            displayName: "Download Rust aarch64"
+            inputs:
+              artifactName: 'rust-linux-arm64'
+              targetPath: '$(Build.SourcesDirectory)/rust-arm64'
+
+          - bash: |
+              set -eux
+              mkdir -p core/target/classes/io/questdb/bin/linux-x86-64
+              mkdir -p core/target/classes/io/questdb/bin/linux-aarch64
+              cp rust-x64/libquestdbr.so core/target/classes/io/questdb/bin/linux-x86-64/
+              cp rust-arm64/libquestdbr.so core/target/classes/io/questdb/bin/linux-aarch64/
+              ls -la core/target/classes/io/questdb/bin/linux-x86-64/
+              ls -la core/target/classes/io/questdb/bin/linux-aarch64/
+            displayName: "Place pre-built Rust libraries"
+
+          # --- GraalVM CE 17.0.9 install + SHA256 verify ---
           - bash: |
               set -eux
 
@@ -57,10 +144,44 @@ stages:
               tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
 
               echo "##vso[task.setvariable variable=GRAALVM_HOME]${INSTALL_DIR}"
-            displayName: "Install GraalVM Community 17.0.9 (Linux, SHA256 verified)"
-            condition: eq( variables['os'], 'Linux')
+            displayName: "Install GraalVM Community 17.0.9 (SHA256 verified)"
 
-          # --- GraalVM CE 17.0.9 install + SHA256 verify (Windows) ---
+          - task: Maven@3
+            displayName: "Building QuestDB"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              goals: "package"
+              options: "-DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              javaHomeOption: 'Path'
+              jdkDirectory: '$(GRAALVM_HOME)'
+
+          - task: CopyFiles@2
+            displayName: "Copy archives"
+            inputs:
+              SourceFolder: '$(build.sourcesDirectory)/core/target'
+              Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
+              TargetFolder: '$(build.artifactstagingdirectory)'
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+      # Build QuestDB on Windows (Rust built natively)
+      - job: BuildWindows
+        displayName: "Build QuestDB (Windows)"
+        pool:
+          vmImage: 'windows-latest'
+          name: 'Azure Pipelines'
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: true
+
+          # --- GraalVM CE 17.0.9 install + SHA256 verify ---
           - powershell: |
               $ErrorActionPreference = "Stop"
 
@@ -99,8 +220,7 @@ stages:
 
               Write-Host "GRAALVM_HOME = $graalHome"
               Write-Host "##vso[task.setvariable variable=GRAALVM_HOME]$graalHome"
-            displayName: "Install GraalVM Community 17.0.9 (Windows, SHA256 verified)"
-            condition: eq( variables['os'], 'Windows')
+            displayName: "Install GraalVM Community 17.0.9 (SHA256 verified)"
 
           - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
             displayName: "Ensure Rust is installed"
@@ -115,9 +235,10 @@ stages:
               jdkDirectory: '$(GRAALVM_HOME)'
 
           - task: CopyFiles@2
+            displayName: "Copy rt archive"
             inputs:
               SourceFolder: '$(build.sourcesDirectory)/core/target'
-              Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
+              Contents: '$(build.sourcesDirectory)/core/target/questdb-*-rt-*.gz'
               TargetFolder: '$(build.artifactstagingdirectory)'
 
           - task: PublishBuildArtifacts@1
@@ -151,13 +272,13 @@ stages:
           - script: |
               # Do not continue on errors
               set -e
-              
+
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               echo "Checking if release ${tag_name} already exists..."
-              
+
               release_tag=$(gh release view ${tag_name} | grep -E "url:.*github.*/tag/" | sed 's#.*/##')
               echo "Using release tag ${release_tag}"
-              
+
               gh release upload ${release_tag} $(Build.ArtifactStagingDirectory)/drop/*.gz
               gh release edit ${release_tag} --draft=false --latest
             env:
@@ -173,4 +294,3 @@ stages:
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
               AWS_DEFAULT_REGION: eu-west-1
             displayName: "AMI: Deploy public image"
-

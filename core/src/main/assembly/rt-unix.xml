@@ -53,9 +53,9 @@
             <outputDirectory>${runtime.name}/lib</outputDirectory>
         </fileSet>
 
-        <!-- questdb native Rust lib — built by cargo into rust/ -->
+        <!-- questdb native Rust lib -->
         <fileSet>
-            <directory>target/classes/io/questdb/rust</directory>
+            <directory>target/classes/io/questdb/bin/${platform.dir.name}</directory>
             <includes>
                 <include>*questdbr.*</include>
             </includes>

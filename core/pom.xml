@@ -475,8 +475,8 @@
                 <plugins>
                     <!--
                     Builds the Rust native library (libquestdbr) from source.
-                    The binary is placed in target/classes/io/questdb/rust/ where Os.java
-                    picks it up via the dev path. Skip with -DskipNative.
+                    The binary is placed in target/classes/io/questdb/bin/<platform>/
+                    where Os.java picks it up via the classpath. Skip with -DskipNative.
                     -->
                     <plugin>
                         <groupId>org.questdb</groupId>
@@ -491,7 +491,8 @@
                                 <configuration>
                                     <path>${qdbr.path}</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
+                                    <copyWithPlatformDir>true</copyWithPlatformDir>
                                 </configuration>
                             </execution>
                         </executions>
