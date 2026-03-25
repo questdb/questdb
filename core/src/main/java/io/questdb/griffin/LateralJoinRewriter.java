@@ -2599,10 +2599,8 @@ class LateralJoinRewriter {
             for (int j = 0, sz = outerRefCols.size(); j < sz; j++) {
                 CharSequence colAlias = outerRefCols.getQuick(j).getAlias();
                 if (branchTop.getAliasToColumnMap().excludes(colAlias)) {
-                    CharSequence innerEquiv = outerToInnerAlias.get(colAlias);
-                    CharSequence astToken = innerEquiv != null ? innerEquiv : colAlias;
                     ExpressionNode ref = expressionNodePool.next().of(
-                            ExpressionNode.LITERAL, astToken, 0, 0
+                            ExpressionNode.LITERAL, colAlias, 0, 0
                     );
                     branchTop.addBottomUpColumn(queryColumnPool.next().of(colAlias, ref, false));
                 }

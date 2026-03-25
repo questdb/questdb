@@ -1903,7 +1903,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28h: PIVOT + multiple correlation columns — propagateNewColumns adds multiple cols
     @Test
     public void testT28hPivotMultiCorrelation() throws Exception {
         assertMemoryLeak(() -> {
