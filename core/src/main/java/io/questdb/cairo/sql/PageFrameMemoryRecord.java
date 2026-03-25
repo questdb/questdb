@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -37,21 +38,30 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.griffin.SqlKeywords;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -76,6 +86,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected int columnOffset;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
+    // True when any column in the current frame needs lazy fixed→var conversion.
+    protected boolean hasTypeCasts;
+    // Per-column first conversion target type for chained type conversions.
+    // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
+    protected IntList intermediateTypes;
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
     // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
     protected byte letter;
@@ -83,7 +98,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList pageSizes;
     protected long rowIdOffset;
     protected long rowIndex;
+    // Per-column source type tag for fixed→var type-cast columns.
+    // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
+    protected IntList sourceColumnTypes;
     protected boolean stableStrings;
+    // Reusable sinks for lazy fixed→varchar conversion.
+    private final StringSink stringSinkA = new StringSink();
+    private final StringSink stringSinkB = new StringSink();
+    private final Utf8StringSink varcharSinkA = new Utf8StringSink();
+    private final Utf8StringSink varcharSinkB = new Utf8StringSink();
     protected SymbolTableSource symbolTableSource;
 
     public PageFrameMemoryRecord() {
@@ -105,6 +128,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageSizes = other.auxPageSizes;
         this.columnOffset = other.columnOffset;
         this.stableStrings = other.stableStrings;
+        this.hasTypeCasts = other.hasTypeCasts;
         this.letter = letter;
     }
 
@@ -204,6 +228,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public boolean getBool(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    return v != 0 && v != Numbers.LONG_NULL;
+                }
+                return convertVarToBool(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex) == 1;
@@ -213,6 +248,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public byte getByte(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    return v == Numbers.LONG_NULL ? 0 : (byte) v;
+                }
+                return convertVarToByte(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
@@ -222,6 +268,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public char getChar(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    return v == Numbers.LONG_NULL ? 0 : (char) v;
+                }
+                return convertVarToChar(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
@@ -291,15 +348,66 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public double getDouble(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    double result = convertVarChainedToDouble(intermediate, -srcTag, columnIndex);
+                    if (rowIndex == 0) {
+                        System.err.println("DEBUG getDouble chained: col=" + columnIndex + " srcTag=" + srcTag + " intermediate=" + intermediate + " result=" + result);
+                    }
+                    return result;
+                }
+                double result = convertVarToDouble(-srcTag, columnIndex);
+                if (rowIndex == 0) {
+                    System.err.println("DEBUG getDouble var→fixed: col=" + columnIndex + " srcTag=" + srcTag + " result=" + result);
+                }
+                return result;
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
+            double result = Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
+            if (hasTypeCasts && rowIndex == 0) {
+                System.err.println("DEBUG getDouble raw: col=" + columnIndex + " srcTag=" + sourceColumnTypes.getQuick(columnIndex) + " result=" + result + " address=" + address);
+            }
+            return result;
         }
         return NullMemoryCMR.INSTANCE.getDouble(0);
     }
 
     @Override
+    public long getDate(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    if (v != Numbers.LONG_NULL && ColumnType.tagOf(intermediate) == ColumnType.TIMESTAMP) {
+                        return v / 1000; // micros to millis
+                    }
+                    return v;
+                }
+                return convertVarToDate(-srcTag, columnIndex);
+            }
+        }
+        return getLong(columnIndex);
+    }
+
+    @Override
     public float getFloat(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    return convertVarChainedToFloat(intermediate, -srcTag, columnIndex);
+                }
+                return convertVarToFloat(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
@@ -349,6 +457,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getIPv4(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    return v == Numbers.LONG_NULL ? Numbers.IPv4_NULL : (int) v;
+                }
+                return convertVarToIPv4(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
@@ -358,6 +477,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getInt(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    return v == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) v;
+                }
+                return convertVarToInt(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
@@ -372,6 +502,16 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getLong(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    return convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                }
+                return convertVarToLong(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
@@ -381,6 +521,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getLong128Hi(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                // UUID chained conversion is not supported; fall through to direct conversion.
+                return convertVarToUuidHi(-srcTag, columnIndex);
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
@@ -390,6 +537,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getLong128Lo(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                // UUID chained conversion is not supported; fall through to direct conversion.
+                return convertVarToUuidLo(-srcTag, columnIndex);
+            }
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
@@ -433,6 +587,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public short getShort(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    return v == Numbers.LONG_NULL ? 0 : (short) v;
+                }
+                return convertVarToShort(-srcTag, columnIndex);
+            }
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
@@ -442,16 +607,45 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public CharSequence getStrA(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag >= 0) {
+                return convertFixedToStr(srcTag, columnIndex, stringSinkA);
+            }
+            if (srcTag < -1) {
+                return convertVarToStr(-srcTag, columnIndex, stringSinkA);
+            }
+        }
         return getStr0(columnIndex, csViewA(columnIndex));
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag >= 0) {
+                return convertFixedToStr(srcTag, columnIndex, stringSinkB);
+            }
+            if (srcTag < -1) {
+                return convertVarToStr(-srcTag, columnIndex, stringSinkB);
+            }
+        }
         return getStr0(columnIndex, csViewB(columnIndex));
     }
 
     @Override
     public int getStrLen(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag >= 0) {
+                final CharSequence result = convertFixedToStr(srcTag, columnIndex, stringSinkA);
+                return result != null ? result.length() : TableUtils.NULL_LEN;
+            }
+            if (srcTag < -1) {
+                final CharSequence result = readVarValueForConversion(-srcTag, columnIndex);
+                return result != null ? result.length() : TableUtils.NULL_LEN;
+            }
+        }
         final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
         if (dataPageAddress != 0) {
             final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
@@ -501,22 +695,51 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public long getTimestamp(int columnIndex) {
+        if (hasTypeCasts) {
+            int srcTag = sourceColumnTypes.getQuick(columnIndex);
+            if (srcTag < -1) {
+                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
+                if (intermediate > 0) {
+                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
+                    if (v != Numbers.LONG_NULL && ColumnType.tagOf(intermediate) == ColumnType.DATE) {
+                        return v * 1000; // millis to micros
+                    }
+                    return v;
+                }
+                return convertVarToTimestamp(-srcTag, columnIndex);
+            }
+        }
+        return getLong(columnIndex);
+    }
+
+    @Override
     public long getUpdateRowId() {
         return rowIdOffset + rowIndex;
     }
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
+        if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) >= 0) {
+            return convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkA);
+        }
         return getVarchar(columnIndex, utf8ViewA(columnIndex));
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
+        if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) >= 0) {
+            return convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkB);
+        }
         return getVarchar(columnIndex, utf8ViewB(columnIndex));
     }
 
     @Override
     public int getVarcharSize(int columnIndex) {
+        if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) >= 0) {
+            final Utf8Sequence result = convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkA);
+            return result != null ? result.size() : TableUtils.NULL_LEN;
+        }
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
             if (frameFormat == PartitionFormat.PARQUET) {
@@ -534,12 +757,25 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
+        this.hasTypeCasts = frameMemory.needsColumnTypeCast();
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
+        this.intermediateTypes = null;
+        if (this.hasTypeCasts) {
+            // Copy source column types from PageFrameMemory.
+            final int n = frameMemory.getColumnCount();
+            if (this.sourceColumnTypes == null) {
+                this.sourceColumnTypes = new IntList(n);
+            }
+            this.sourceColumnTypes.setAll(n, -1);
+            for (int col = 0; col < n; col++) {
+                this.sourceColumnTypes.setQuick(col, frameMemory.getSourceColumnType(col));
+            }
+        }
     }
 
     @Override
@@ -626,6 +862,382 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
         return view;
+    }
+
+    private double convertVarChainedToDouble(int intermediateTag, int srcTag, int columnIndex) {
+        return switch (intermediateTag) {
+            case ColumnType.FLOAT -> {
+                float v = convertVarToFloat(srcTag, columnIndex);
+                yield Float.isNaN(v) ? Double.NaN : v;
+            }
+            case ColumnType.DOUBLE -> convertVarToDouble(srcTag, columnIndex);
+            default -> {
+                long v = convertVarChainedToLong(intermediateTag, srcTag, columnIndex);
+                yield v == Numbers.LONG_NULL ? Double.NaN : (double) v;
+            }
+        };
+    }
+
+    private float convertVarChainedToFloat(int intermediateTag, int srcTag, int columnIndex) {
+        return switch (intermediateTag) {
+            case ColumnType.FLOAT -> convertVarToFloat(srcTag, columnIndex);
+            case ColumnType.DOUBLE -> {
+                double v = convertVarToDouble(srcTag, columnIndex);
+                yield Double.isNaN(v) ? Float.NaN : (float) v;
+            }
+            default -> {
+                long v = convertVarChainedToLong(intermediateTag, srcTag, columnIndex);
+                yield v == Numbers.LONG_NULL ? Float.NaN : (float) v;
+            }
+        };
+    }
+
+    private long convertVarChainedToLong(int intermediateTag, int srcTag, int columnIndex) {
+        return switch (intermediateTag) {
+            case ColumnType.BOOLEAN -> convertVarToBool(srcTag, columnIndex) ? 1L : 0L;
+            case ColumnType.BYTE -> convertVarToByte(srcTag, columnIndex);
+            case ColumnType.SHORT -> convertVarToShort(srcTag, columnIndex);
+            case ColumnType.CHAR -> convertVarToChar(srcTag, columnIndex);
+            case ColumnType.INT -> {
+                int v = convertVarToInt(srcTag, columnIndex);
+                yield v == Numbers.INT_NULL ? Numbers.LONG_NULL : v;
+            }
+            case ColumnType.IPv4 -> {
+                int v = convertVarToIPv4(srcTag, columnIndex);
+                yield v == Numbers.IPv4_NULL ? Numbers.LONG_NULL : v;
+            }
+            case ColumnType.LONG -> convertVarToLong(srcTag, columnIndex);
+            case ColumnType.DATE -> convertVarToDate(srcTag, columnIndex);
+            case ColumnType.TIMESTAMP -> convertVarToTimestamp(srcTag, columnIndex);
+            case ColumnType.FLOAT -> {
+                float v = convertVarToFloat(srcTag, columnIndex);
+                yield Float.isNaN(v) ? Numbers.LONG_NULL : (long) v;
+            }
+            case ColumnType.DOUBLE -> {
+                double v = convertVarToDouble(srcTag, columnIndex);
+                yield Double.isNaN(v) ? Numbers.LONG_NULL : (long) v;
+            }
+            default -> Numbers.LONG_NULL;
+        };
+    }
+
+    private boolean convertVarToBool(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        return cs != null && SqlKeywords.isTrueKeyword(cs);
+    }
+
+    private byte convertVarToByte(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return (byte) Numbers.parseInt(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return 0;
+    }
+
+    private long convertVarToDate(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return DateFormatUtils.parseUTCDate(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    private char convertVarToChar(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        return cs != null && cs.length() > 0 ? cs.charAt(0) : (char) 0;
+    }
+
+    private double convertVarToDouble(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        return Numbers.parseDoubleQuiet(cs);
+    }
+
+    private float convertVarToFloat(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return Numbers.parseFloat(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Float.NaN;
+    }
+
+    private int convertVarToIPv4(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            return Numbers.parseIPv4Quiet(cs);
+        }
+        return Numbers.IPv4_NULL;
+    }
+
+    private int convertVarToInt(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            return Numbers.parseIntQuiet(cs);
+        }
+        return Numbers.INT_NULL;
+    }
+
+    private long convertVarToLong(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            return Numbers.parseLongQuiet(cs);
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    private short convertVarToShort(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return (short) Numbers.parseInt(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return 0;
+    }
+
+    private CharSequence convertVarToStr(int srcTag, int columnIndex, StringSink sink) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs == null) {
+            return null;
+        }
+        sink.clear();
+        sink.put(cs);
+        return sink;
+    }
+
+    private long convertVarToTimestamp(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return MicrosFormatUtils.parseTimestamp(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    private long convertVarToUuidHi(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return Uuid.parseHi(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    private long convertVarToUuidLo(int srcTag, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (cs != null) {
+            try {
+                return Uuid.parseLo(cs);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    private CharSequence readVarValueForConversion(int srcTag, int columnIndex) {
+        if (srcTag == ColumnType.VARCHAR) {
+            Utf8Sequence utf8 = getVarchar(columnIndex, utf8ViewA(columnIndex));
+            return utf8 != null ? utf8.asAsciiCharSequence() : null;
+        } else {
+            return getStr0(columnIndex, csViewA(columnIndex));
+        }
+    }
+
+    /**
+     * Converts a fixed-type value to a STRING CharSequence.
+     * Returns null for null values. Called only when the column needs a type cast.
+     */
+    private CharSequence convertFixedToStr(int srcType, int columnIndex, StringSink sink) {
+        final long address = pageAddresses.get(columnOffset + columnIndex);
+        if (address == 0) {
+            return null; // column top
+        }
+        sink.clear();
+        switch (srcType) {
+            case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex) != 0);
+            case ColumnType.BYTE -> sink.put((int) Unsafe.getUnsafe().getByte(address + rowIndex));
+            case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(address + (rowIndex << 1)));
+            case ColumnType.CHAR -> {
+                char val = Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
+                if (val == 0) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.INT -> {
+                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                if (val == Numbers.INT_NULL) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.LONG -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.FLOAT -> {
+                float val = Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
+                if (Numbers.isNull(val)) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.DOUBLE -> {
+                double val = Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
+                if (Numbers.isNull(val)) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.DATE -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                DateFormatUtils.appendDateTime(sink, val);
+            }
+            case ColumnType.TIMESTAMP -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                MicrosFormatUtils.appendDateTimeUSec(sink, val);
+            }
+            case ColumnType.TIMESTAMP_NANO -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                NanosFormatUtils.appendDateTimeNSec(sink, val);
+            }
+            case ColumnType.IPv4 -> {
+                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                if (val == Numbers.IPv4_NULL) {
+                    return null;
+                }
+                Numbers.intToIPv4Sink(sink, val);
+            }
+            case ColumnType.UUID -> {
+                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
+                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
+                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                    return null;
+                }
+                Numbers.appendUuid(lo, hi, sink);
+            }
+            default -> {
+                return null;
+            }
+        }
+        return sink;
+    }
+
+    /**
+     * Converts a fixed-type value to a VARCHAR Utf8Sequence.
+     * Returns null for null values. Called only when the column needs a type cast.
+     */
+    private Utf8Sequence convertFixedToVarchar(int srcType, int columnIndex, Utf8StringSink sink) {
+        final long address = pageAddresses.get(columnOffset + columnIndex);
+        if (address == 0) {
+            return null; // column top
+        }
+        sink.clear();
+        switch (srcType) {
+            case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex) != 0);
+            case ColumnType.BYTE -> sink.put((int) Unsafe.getUnsafe().getByte(address + rowIndex));
+            case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(address + (rowIndex << 1)));
+            case ColumnType.CHAR -> {
+                char val = Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
+                if (val == 0) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.INT -> {
+                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                if (val == Numbers.INT_NULL) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.LONG -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.FLOAT -> {
+                float val = Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
+                if (Numbers.isNull(val)) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.DOUBLE -> {
+                double val = Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
+                if (Numbers.isNull(val)) {
+                    return null;
+                }
+                sink.put(val);
+            }
+            case ColumnType.DATE -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                DateFormatUtils.appendDateTime(sink, val);
+            }
+            case ColumnType.TIMESTAMP -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                MicrosFormatUtils.appendDateTimeUSec(sink, val);
+            }
+            case ColumnType.TIMESTAMP_NANO -> {
+                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                if (val == Numbers.LONG_NULL) {
+                    return null;
+                }
+                NanosFormatUtils.appendDateTimeNSec(sink, val);
+            }
+            case ColumnType.IPv4 -> {
+                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                if (val == Numbers.IPv4_NULL) {
+                    return null;
+                }
+                Numbers.intToIPv4Sink(sink, val);
+            }
+            case ColumnType.UUID -> {
+                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
+                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
+                if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                    return null;
+                }
+                Numbers.appendUuid(lo, hi, sink);
+            }
+            default -> {
+                return null;
+            }
+        }
+        return sink;
     }
 
     protected @NotNull BorrowedArray borrowedArray(int columnIndex) {
@@ -748,11 +1360,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             DirectLongList auxPageAddresses,
             DirectLongList pageLimits,
             DirectLongList auxPageLimits,
-            int columnOffset
+            int columnOffset,
+            boolean hasTypeCasts,
+            IntList sourceColumnTypes,
+            IntList intermediateTypes
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
+        this.hasTypeCasts = hasTypeCasts;
+        this.sourceColumnTypes = sourceColumnTypes;
+        this.intermediateTypes = intermediateTypes;
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;

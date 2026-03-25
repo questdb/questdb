@@ -133,6 +133,12 @@ fn post_convert(
             // Timestamp microseconds → Date milliseconds: divide by 1000.
             scale_i64_in_place(&mut bufs.data_vec, 1000, true);
         }
+        // Fixed → Varchar: Java handles batch conversion after decode.
+        (src, ColumnTypeTag::Varchar) if is_fixed_to_var_source(src) => {}
+        // Fixed → String: Java handles batch conversion after decode.
+        (src, ColumnTypeTag::String) if is_fixed_to_var_source(src) => {}
+        // Var → fixed: Java handles batch conversion after decode.
+        (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst) if is_var_to_fixed_target(dst) => {}
         _ => return Ok(()),
     }
     bufs.data_ptr = bufs.data_vec.as_mut_ptr();
@@ -155,6 +161,44 @@ fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
         };
         unsafe { ptr.add(i).write_unaligned(converted) };
     }
+}
+
+/// Returns true for source types supported in fixed-to-var conversion.
+fn is_fixed_to_var_source(tag: ColumnTypeTag) -> bool {
+    matches!(
+        tag,
+        ColumnTypeTag::Boolean
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Char
+            | ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Float
+            | ColumnTypeTag::Double
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::Uuid
+    )
+}
+
+/// Returns true for target types supported in var-to-fixed conversion.
+fn is_var_to_fixed_target(tag: ColumnTypeTag) -> bool {
+    matches!(
+        tag,
+        ColumnTypeTag::Boolean
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Short
+            | ColumnTypeTag::Char
+            | ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Float
+            | ColumnTypeTag::Double
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::Uuid
+    )
 }
 
 impl ParquetDecoder {
@@ -214,21 +258,21 @@ impl ParquetDecoder {
                 // The output buffer is sized for the target type. The decode dispatch
                 // reads the source physical type from parquet and converts on the fly.
                 match (src_tag, to_column_type.tag()) {
-                    // Integer widening
-                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Int, ColumnTypeTag::Long) |
+                    // Integer widening (Timestamp/Date share i64 representation with Long)
+                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Int, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
                     // Integer/float widening
                     (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int, ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Float | ColumnTypeTag::Double) |
                     (ColumnTypeTag::Float, ColumnTypeTag::Double) |
                     // Integer narrowing
-                    (ColumnTypeTag::Long, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
                     (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
                     (ColumnTypeTag::Short, ColumnTypeTag::Byte) |
-                    // Float/double narrowing to integer (range-checked in decoder)
-                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    // Float/double narrowing to integer
+                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
                     // Timestamp/Date ↔ Long (same i64 representation)
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Long) |
                     (ColumnTypeTag::Long, ColumnTypeTag::Timestamp) |
@@ -245,6 +289,28 @@ impl ParquetDecoder {
                     (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
                         // Keep column_type as Boolean for decode; post-processing
                         // expands the 1-byte boolean values to 4-byte integers.
+                    }
+                    // Fixed → var-size (VARCHAR, STRING): decode as source fixed type,
+                    // post_convert produces the target var-size format.
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Float | ColumnTypeTag::Double |
+                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
+                     ColumnTypeTag::Boolean | ColumnTypeTag::IPv4 | ColumnTypeTag::Uuid |
+                     ColumnTypeTag::Char,
+                     ColumnTypeTag::Varchar | ColumnTypeTag::String) => {
+                        // Keep column_type as source; post_convert produces var-size output.
+                    }
+                    // Var → fixed-size: decode as source var type.
+                    // Java handles batch conversion after decode.
+                    (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst)
+                        if is_var_to_fixed_target(dst) =>
+                    {
+                        // Keep column_type as source var type; Java converts.
+                    }
+                    // Array pass-through: same element type and dimensions.
+                    (src_t, dst_t) if src_t == dst_t
+                        && src_t == ColumnTypeTag::Array => {
+                        column_type = to_column_type;
                     }
                     _ => {
                         return Err(fmt_err!(
@@ -378,21 +444,21 @@ impl ParquetDecoder {
             let src_tag = column_type.tag();
             if column_type != to_column_type {
                 match (src_tag, to_column_type.tag()) {
-                    // Integer widening
-                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Int, ColumnTypeTag::Long) |
+                    // Integer widening (Timestamp/Date share i64 representation with Long)
+                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
+                    (ColumnTypeTag::Int, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
                     // Integer/float widening
                     (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int, ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Float | ColumnTypeTag::Double) |
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Float | ColumnTypeTag::Double) |
                     (ColumnTypeTag::Float, ColumnTypeTag::Double) |
                     // Integer narrowing
-                    (ColumnTypeTag::Long, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
                     (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
                     (ColumnTypeTag::Short, ColumnTypeTag::Byte) |
-                    // Float/double narrowing to integer (range-checked in decoder)
-                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    // Float/double narrowing to integer
+                    (ColumnTypeTag::Double, ColumnTypeTag::Float | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Int | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
+                    (ColumnTypeTag::Float, ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp | ColumnTypeTag::Short | ColumnTypeTag::Byte) |
                     // Timestamp/Date ↔ Long (same i64 representation)
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Long) |
                     (ColumnTypeTag::Long, ColumnTypeTag::Timestamp) |
@@ -409,6 +475,28 @@ impl ParquetDecoder {
                     (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
                         // Keep column_type as Boolean for decode; post-processing
                         // expands the 1-byte boolean values to 4-byte integers.
+                    }
+                    // Fixed → var-size (VARCHAR, STRING): decode as source fixed type,
+                    // post_convert produces the target var-size format.
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Float | ColumnTypeTag::Double |
+                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
+                     ColumnTypeTag::Boolean | ColumnTypeTag::IPv4 | ColumnTypeTag::Uuid |
+                     ColumnTypeTag::Char,
+                     ColumnTypeTag::Varchar | ColumnTypeTag::String) => {
+                        // Keep column_type as source; post_convert produces var-size output.
+                    }
+                    // Var → fixed-size: decode as source var type.
+                    // Java handles batch conversion after decode.
+                    (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst)
+                        if is_var_to_fixed_target(dst) =>
+                    {
+                        // Keep column_type as source var type; Java converts.
+                    }
+                    // Array pass-through: same element type and dimensions.
+                    (src_t, dst_t) if src_t == dst_t
+                        && src_t == ColumnTypeTag::Array => {
+                        column_type = to_column_type;
                     }
                     _ => {
                         return Err(fmt_err!(

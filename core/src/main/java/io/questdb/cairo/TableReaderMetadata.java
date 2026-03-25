@@ -50,6 +50,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    // Maps writerIndex → first intermediate type tag for columns with chained
+    // type conversions (e.g. SYMBOL→TIMESTAMP→DOUBLE → writerIndex of DOUBLE col maps to TIMESTAMP tag).
+    private final IntIntHashMap firstConversionTargets = new IntIntHashMap();
     private final IntIntHashMap writerIndexToDenseIndex = new IntIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
@@ -153,6 +156,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
         }
+    }
+
+    public IntIntHashMap getFirstConversionTargetsMap() {
+        return firstConversionTargets;
     }
 
     public IntIntHashMap getWriterIndexToDenseIndexMap() {
@@ -386,6 +393,36 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     }
                 }
             }
+        }
+
+        // Build firstConversionTargets: for each live column with a multi-hop
+        // replacingIndex chain, find the first conversion target type. This is
+        // needed for parquet partitions where the data is stored under the
+        // original type, and chained ALTER COLUMN TYPE requires converting
+        // through intermediate types (e.g. SYMBOL → TIMESTAMP → DOUBLE).
+        firstConversionTargets.clear();
+        for (int d = 0, dc = columnMetadata.size(); d < dc; d++) {
+            int writerIdx = columnMetadata.getQuick(d).getWriterIndex();
+            int ri = TableUtils.getReplacingColumnIndex(mem, writerIdx);
+            if (ri < 0) {
+                continue; // no chain
+            }
+            int ri2 = TableUtils.getReplacingColumnIndex(mem, ri);
+            if (ri2 < 0) {
+                continue; // single hop, no intermediate
+            }
+            // Multi-hop chain. Walk to find the type of the column that
+            // directly replaced the parquet source (second-to-last in chain).
+            int firstTargetType = Math.abs(TableUtils.getColumnType(mem, ri));
+            while (true) {
+                int ri3 = TableUtils.getReplacingColumnIndex(mem, ri2);
+                if (ri3 < 0) {
+                    break;
+                }
+                firstTargetType = Math.abs(TableUtils.getColumnType(mem, ri2));
+                ri2 = ri3;
+            }
+            firstConversionTargets.put(writerIdx, firstTargetType);
         }
     }
 

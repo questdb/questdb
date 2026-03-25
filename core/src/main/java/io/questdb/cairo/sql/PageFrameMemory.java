@@ -103,7 +103,20 @@ public interface PageFrameMemory {
     long getRowIdOffset();
 
     /**
+     * Returns the source column type tag for a type-cast column, or -1 if
+     * the column does not require a type cast. Used by
+     * {@link PageFrameMemoryRecord} to perform lazy fixed→var conversion.
+     */
+    int getSourceColumnType(int columnIndex);
+
+    /**
      * Returns true if any column has a column top (zero address).
      */
     boolean hasColumnTops();
+
+    /**
+     * Returns true if any column requires a lazy type cast (e.g. fixed→varchar
+     * conversion for parquet partitions with ALTER COLUMN TYPE).
+     */
+    boolean needsColumnTypeCast();
 }

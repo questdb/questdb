@@ -279,7 +279,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final int functionCount = functions.size();
         try {
-            if (frameMemory.hasColumnTops()) {
+            if (frameMemory.hasColumnTops() || frameMemory.needsColumnTypeCast()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -407,7 +407,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.needsColumnTypeCast()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {

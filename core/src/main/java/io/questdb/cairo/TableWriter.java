@@ -63,6 +63,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.griffin.ConvertersNative;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
@@ -96,6 +97,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -1092,8 +1094,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     metadata
             );
 
-            // open new column files
-            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+            // open new column files (skip when last partition is parquet — no native files)
+            int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+            if ((txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))
+                    && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))) {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 setStateForTimestamp(path, partitionTimestamp);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
@@ -1746,32 +1750,76 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
 
-            // Build the list of columns to decode, mapping parquet indices to
-            // table column indices via the column ID stored in the parquet schema.
-            // Columns deleted from the table after the parquet was created are skipped.
+            // Build table-to-parquet column mapping, same as O3PartitionJob.
+            // The parquet file stores column IDs that may reference old (pre-type-conversion)
+            // writer indices. Walk the replacingIndex chain to find the correct mapping.
+            final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
+            for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
+                if (!ColumnType.isUndefined(parquetMetadata.getColumnType(i))) {
+                    parquetColIdToIdx.put(parquetMetadata.getColumnId(i), i);
+                }
+            }
+
+            // Build decode list by iterating table columns and mapping to parquet indices.
             parquetColumnIdsAndTypes.clear();
             int decodedColumnCount = 0;
-            for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
-                final int columnType = parquetMetadata.getColumnType(i);
-                if (ColumnType.isUndefined(columnType)) {
-                    continue;
+            final int tableColumnCount = this.metadata.getColumnCount();
+            // Track the table column index for each decoded column (for the write loop).
+            final int[] decodedTableColumnIdx = new int[tableColumnCount];
+
+            for (int i = 0; i < tableColumnCount; i++) {
+                final int tableColumnType = this.metadata.getColumnType(i);
+                if (tableColumnType <= 0) {
+                    continue; // deleted column
                 }
 
-                final int tableColumnIndex = parquetMetadata.getColumnId(i);
-                if (tableColumnIndex >= this.metadata.getColumnCount() || this.metadata.getColumnType(tableColumnIndex) <= 0) {
-                    // Column has been deleted from the table since the parquet was created
-                    continue;
+                // Find the parquet column, walking the replacingIndex chain for type conversions.
+                final int writerIndex = this.metadata.getColumnMetadata(i).getWriterIndex();
+                int parquetIdx = parquetColIdToIdx.get(writerIndex);
+                if (parquetIdx < 0) {
+                    int replacingIndex = this.metadata.getColumnMetadata(i).getReplacingIndex();
+                    while (replacingIndex >= 0 && parquetIdx < 0) {
+                        parquetIdx = parquetColIdToIdx.get(replacingIndex);
+                        replacingIndex = this.metadata.getColumnMetadata(replacingIndex).getReplacingIndex();
+                    }
+                }
+                if (parquetIdx < 0) {
+                    continue; // column not in parquet (added after parquet was created)
                 }
 
-                // Use the table's current column name, not the (potentially stale) parquet name,
-                // so that the native files match what openPartition() expects after renames.
-                final CharSequence columnName = this.metadata.getColumnName(tableColumnIndex);
-                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, tableColumnIndex);
+                final CharSequence columnName = this.metadata.getColumnName(i);
+                final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
 
-                parquetColumnIdsAndTypes.add(i);
-                parquetColumnIdsAndTypes.add(columnType);
+                // Determine decode type. For var→fixed conversions, request source var type
+                // so Rust decodes as VARCHAR_SLICE/STRING and Java batch-converts afterward.
+                // For all other conversions (fixed→fixed, fixed→var), request the table type
+                // and let Rust post_convert handle it.
+                final int parquetColumnType = parquetMetadata.getColumnType(parquetIdx);
+                int decodeType;
+                int srcTag = ColumnType.tagOf(parquetColumnType);
+                int dstTag = ColumnType.tagOf(tableColumnType);
+                if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
+                    decodeType = (srcTag == ColumnType.VARCHAR)
+                            ? ColumnType.VARCHAR_SLICE : parquetColumnType;
+                } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
+                    // Symbol→any: Rust supports Symbol→VarcharSlice remapping.
+                    decodeType = ColumnType.VARCHAR_SLICE;
+                } else if (!ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag)
+                        && !ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)
+                        && srcTag != dstTag) {
+                    // Fixed→fixed with different types (e.g., FLOAT in parquet, TIMESTAMP in table).
+                    // Decode as source type; Java converts via fixedToFixed afterward.
+                    decodeType = parquetColumnType;
+                } else {
+                    decodeType = tableColumnType;
+                }
 
-                if (ColumnType.isVarSize(columnType)) {
+                parquetColumnIdsAndTypes.add(parquetIdx);
+                parquetColumnIdsAndTypes.add(decodeType);
+                decodedTableColumnIdx[decodedColumnCount] = i;
+
+                // Open files based on TABLE type (not parquet type).
+                if (ColumnType.isVarSize(tableColumnType)) {
                     final long auxIndex = columnFdAndDataSize.size();
                     columnFdAndDataSize.add(-1); // aux
                     columnFdAndDataSize.add(-1); // data
@@ -1802,8 +1850,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
                 parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
+                    final int tableColIdx = decodedTableColumnIdx[columnIndex];
+                    final int tableColumnType = this.metadata.getColumnType(tableColIdx);
                     final int parquetIdx = parquetColumnIdsAndTypes.get(2L * columnIndex);
-                    final int columnType = parquetMetadata.getColumnType(parquetIdx);
+                    final int parquetColumnType = parquetMetadata.getColumnType(parquetIdx);
 
                     final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(columnIndex);
                     final long srcDataSize = rowGroupBuffers.getChunkDataSize(columnIndex);
@@ -1811,27 +1861,106 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
                     long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
 
-                    if (ColumnType.isVarSize(columnType)) {
-                        ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                        final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
-                        final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
-                        final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
+                    if (ColumnType.isVarSize(tableColumnType)) {
+                        // Target is var-size (same type, fixed→var via Rust post_convert,
+                        // or Symbol→varchar with data already in VARCHAR_SLICE format).
+                        int srcTag2 = ColumnType.tagOf(parquetColumnType);
+                        if (ColumnType.isSymbol(srcTag2) && !ColumnType.isVarchar(tableColumnType)) {
+                            // Symbol→String: decoded as VARCHAR_SLICE, convert to STRING format.
+                            final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
+                            final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                            long stringAuxSize = rowGroupRowCount * Long.BYTES;
+                            long stringAuxBuf = Unsafe.malloc(stringAuxSize, MemoryTag.NATIVE_DEFAULT);
+                            long stringDataSize = O3PartitionJob.estimateStringDataSizeFromVarcharSlice(srcAuxPtr, (int) rowGroupRowCount);
+                            long stringDataBuf = Unsafe.malloc(stringDataSize, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                O3PartitionJob.convertVarcharSliceToString(srcAuxPtr, (int) rowGroupRowCount, stringAuxBuf, stringDataBuf);
+                                appendBuffer(dstDataFd, stringDataBuf, stringDataSize);
+                                appendBuffer(dstAuxFd, stringAuxBuf, stringAuxSize);
+                            } finally {
+                                Unsafe.free(stringAuxBuf, stringAuxSize, MemoryTag.NATIVE_DEFAULT);
+                                Unsafe.free(stringDataBuf, stringDataSize, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } else {
+                            ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(tableColumnType);
+                            final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
+                            final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                            final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
 
-                        if (rowGroupIndex > 0) {
-                            // Adjust offsets in the auxiliary vector
-                            columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
-                            // Remove the extra entry for string columns
-                            final long adjust = columnTypeDriver.getMinAuxVectorSize();
-                            srcAuxPtr += adjust;
-                            srcAuxSize -= adjust;
+                            if (rowGroupIndex > 0) {
+                                columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
+                                final long adjust = columnTypeDriver.getMinAuxVectorSize();
+                                srcAuxPtr += adjust;
+                                srcAuxSize -= adjust;
+                            }
+
+                            appendBuffer(dstDataFd, srcDataPtr, srcDataSize);
+                            appendBuffer(dstAuxFd, srcAuxPtr, srcAuxSize);
+                            columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + srcDataSize);
                         }
-
-                        appendBuffer(dstDataFd, srcDataPtr, srcDataSize);
-                        appendBuffer(dstAuxFd, srcAuxPtr, srcAuxSize);
-                        columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + srcDataSize);
                     } else {
                         final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
-                        appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
+                        int srcTag2 = ColumnType.tagOf(parquetColumnType);
+                        int dstTag2 = ColumnType.tagOf(tableColumnType);
+
+                        if ((ColumnType.isVarSize(srcTag2) || ColumnType.isSymbol(srcTag2))
+                                && !ColumnType.isVarSize(dstTag2) && !ColumnType.isSymbol(dstTag2)) {
+                            // Var→fixed or Symbol→fixed: batch-convert decoded var data to fixed.
+                            // Symbol was decoded as VARCHAR_SLICE; use VARCHAR as effective source.
+                            int effectiveSrcType = ColumnType.isSymbol(srcTag2) ? ColumnType.VARCHAR : parquetColumnType;
+                            int firstTargetType = O3PartitionJob.findFirstConversionTarget(
+                                    tableColIdx, tableColumnType, this.metadata
+                            );
+
+                            if (ColumnType.tagOf(firstTargetType) != ColumnType.tagOf(tableColumnType)) {
+                                // Two-step: var→firstTarget, then firstTarget→finalTarget.
+                                long tmpSize = rowGroupRowCount * ColumnType.sizeOf(firstTargetType);
+                                long tmpBuf = Unsafe.malloc(tmpSize, MemoryTag.NATIVE_DEFAULT);
+                                long fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
+                                long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
+                                try {
+                                    O3PartitionJob.convertVarColumnToFixed(
+                                            effectiveSrcType, firstTargetType,
+                                            srcDataPtr, srcDataSize, srcAuxPtr,
+                                            (int) rowGroupRowCount, tmpBuf
+                                    );
+
+                                    ConvertersNative.fixedToFixed(tmpBuf, firstTargetType, fixBuf, tableColumnType, rowGroupRowCount);
+
+                                    appendBuffer(dstFixFd, fixBuf, fixSize);
+                                } finally {
+                                    Unsafe.free(tmpBuf, tmpSize, MemoryTag.NATIVE_DEFAULT);
+                                    Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
+                                }
+                            } else {
+                                long fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
+                                long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
+                                try {
+                                    O3PartitionJob.convertVarColumnToFixed(
+                                            effectiveSrcType, tableColumnType,
+                                            srcDataPtr, srcDataSize, srcAuxPtr,
+                                            (int) rowGroupRowCount, fixBuf
+                                    );
+                                    appendBuffer(dstFixFd, fixBuf, fixSize);
+                                } finally {
+                                    Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
+                                }
+                            }
+                        } else if (srcTag2 != dstTag2 && !ColumnType.isVarSize(srcTag2) && !ColumnType.isVarSize(dstTag2)
+                                && !ColumnType.isSymbol(srcTag2) && !ColumnType.isSymbol(dstTag2)) {
+                            // Fixed→fixed with different types: convert decoded source to target.
+                            long fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
+                            long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                ConvertersNative.fixedToFixed(srcDataPtr, parquetColumnType, fixBuf, tableColumnType, rowGroupRowCount);
+                                appendBuffer(dstFixFd, fixBuf, fixSize);
+                            } finally {
+                                Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } else {
+                            // Same type or fixed→var (Rust post_convert already handled it).
+                            appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
+                        }
                     }
                 }
             }
@@ -3427,12 +3556,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int replaceColumnIndex,
             TableWriterMetadata metadata
     ) {
-        // If this is a column type change, find the index of the very first column this one replaces
-        int prevReplaceColumnIndex = replaceColumnIndex;
-        while (prevReplaceColumnIndex > -1) {
-            replaceColumnIndex = prevReplaceColumnIndex;
-            prevReplaceColumnIndex = metadata.getReplacingColumnIndex(replaceColumnIndex);
-        }
+        // Keep the immediate predecessor as replacingIndex, not the
+        // original.  The chain A→B→C stores B.replacing=A, C.replacing=B
+        // so that parquet column mapping can walk C→B→A and find the
+        // field_id at any point in the chain.
 
         metadata.addColumn(
                 columnName,
