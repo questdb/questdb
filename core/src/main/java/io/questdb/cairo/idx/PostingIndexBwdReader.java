@@ -41,10 +41,12 @@ import io.questdb.std.str.Path;
  */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private final Cursor cursor = new Cursor();
+    private final Cursor cursor2 = new Cursor();
 
     @Override
     public void close() {
         cursor.close();
+        cursor2.close();
         super.close();
     }
 
@@ -66,10 +68,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         if (key < keyCount) {
-            // Always use cached cursor — posting cursors hold native memory
-            // that cannot be freed through the RowCursor interface.
-            cursor.of(key, minValue, maxValue);
-            return cursor;
+            final Cursor c = cachedInstance ? cursor : cursor2;
+            c.of(key, minValue, maxValue);
+            return c;
         }
 
         return EmptyRowCursor.INSTANCE;
