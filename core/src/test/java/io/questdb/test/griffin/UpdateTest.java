@@ -30,8 +30,10 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -1611,13 +1613,7 @@ public class UpdateTest extends AbstractCairoTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
-                    ReadOnlySecurityContext.INSTANCE,
-                    bindVariableService,
-                    null,
-                    -1,
-                    null
-            );
+            SqlExecutionContext roExecutionContext = createReadOnlyExecutionContext();
 
             try {
                 execute("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
@@ -1625,6 +1621,50 @@ public class UpdateTest extends AbstractCairoTest {
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
+        });
+    }
+
+    @Test
+    public void testUpdateReadonlyFailsAtExecutionTime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(2))" +
+                    " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
+
+            if (walEnabled) {
+                drainWalQueue();
+            }
+
+            SqlExecutionContext allowAllExecutionContext = createAllowAllExecutionContext();
+            SqlExecutionContext readOnlyExecutionContext = createReadOnlyExecutionContext();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cc = compiler.compile("UPDATE up SET x = 10", allowAllExecutionContext);
+                Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+                try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
+                    try {
+                        applyUpdate(updateOperation, readOnlyExecutionContext);
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
+                    }
+                }
+            }
+
+            if (walEnabled) {
+                drainWalQueue();
+            }
+
+            assertSql(
+                    """
+                            ts\tx
+                            1970-01-01T00:00:00.000000Z\t1
+                            1970-01-01T00:00:01.000000Z\t2
+                            """,
+                    "up"
+            );
         });
     }
 
@@ -3448,10 +3488,34 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     private void applyUpdate(UpdateOperation updateOperation) {
-        updateOperation.withContext(sqlExecutionContext);
-        try (TableWriter tableWriter = getWriter(updateOperation.getTableToken())) {
-            updateOperation.apply(tableWriter, false);
+        applyUpdate(updateOperation, sqlExecutionContext);
+    }
+
+    private void applyUpdate(UpdateOperation updateOperation, SqlExecutionContext executionContext) {
+        updateOperation.withContext(executionContext);
+        try (TableWriterAPI writer = engine.getTableWriterAPI(updateOperation.getTableToken(), "test")) {
+            writer.apply(updateOperation);
         }
+    }
+
+    private SqlExecutionContext createAllowAllExecutionContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllSecurityContext.INSTANCE,
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+    }
+
+    private SqlExecutionContext createReadOnlyExecutionContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                ReadOnlySecurityContext.INSTANCE,
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
     }
 
     private void createTablesToJoin(String createTableSql) throws SqlException {

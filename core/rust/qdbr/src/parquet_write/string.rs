@@ -28,13 +28,16 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, transmute_slice, ExactSizedIter,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
+    ExactSizedIter,
 };
 use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
+use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 const SIZE_OF_HEADER: usize = std::mem::size_of::<i32>();
 
@@ -60,7 +63,13 @@ pub fn string_to_page(
                     "invalid offset value in string aux column: {offset}"
                 )
             })?;
-            let maybe_utf16 = get_utf16(&data[offset..]);
+            let data = data.get(offset..).ok_or_else(|| {
+                fmt_err!(
+                    Layout,
+                    "offset value {offset} is out of bounds for string aux column data"
+                )
+            })?;
+            let maybe_utf16 = get_utf16(data)?;
             if maybe_utf16.is_none() {
                 null_count += 1;
             }
@@ -121,6 +130,103 @@ pub fn string_to_page(
     .map(Page::Data)
 }
 
+pub fn string_to_dict_pages(
+    offsets: &[i64],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + offsets.len();
+    let mut null_count = 0;
+
+    // Deduplicate on raw UTF-16 slices (zero-copy from data buffer),
+    // then convert only unique entries to UTF-8.
+    let mut dict_map: RapidHashMap<&[u16], u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<&[u16]> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(offsets.len());
+    let mut is_not_null: Vec<bool> = Vec::with_capacity(offsets.len());
+
+    for offset in offsets {
+        let offset = usize::try_from(*offset).map_err(|_| {
+            fmt_err!(
+                Layout,
+                "invalid offset value in string aux column: {offset}"
+            )
+        })?;
+        let data = data.get(offset..).ok_or_else(|| {
+            fmt_err!(
+                Layout,
+                "offset value {offset} is out of bounds for string aux column data"
+            )
+        })?;
+        match get_utf16(data)? {
+            Some(utf16) => {
+                let next_id = u32::try_from(dict_entries.len())
+                    .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+                let key = *dict_map.entry(utf16).or_insert_with(|| {
+                    dict_entries.push(utf16);
+                    next_id
+                });
+                keys.push(key);
+                is_not_null.push(true);
+            }
+            None => {
+                null_count += 1;
+                is_not_null.push(false);
+            }
+        }
+    }
+
+    // Convert only unique dict entries to UTF-8 and build dict buffer
+    let mut dict_buffer = Vec::new();
+    let mut stats = if options.write_statistics {
+        Some(BinaryMaxMinStats::new(&primitive_type))
+    } else {
+        None
+    };
+    for utf16 in &dict_entries {
+        let utf8 = String::from_utf16(utf16)
+            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 in dictionary entry: {e}"))?;
+        let utf8_bytes = utf8.as_bytes();
+        dict_buffer.extend_from_slice(&(utf8_bytes.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(utf8_bytes);
+        if let Some(ref mut s) = stats {
+            s.update(utf8_bytes);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(utf8_bytes));
+        }
+    }
+
+    // Encode data page
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| i >= column_top && is_not_null[i - column_top]);
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = offsets.len() - null_count;
+    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        statistics,
+        primitive_type,
+        options,
+        false,
+    )
+}
+
 fn encode_plain(
     utf16_slices: &[Option<&[u16]>],
     buffer: &mut Vec<u8>,
@@ -169,15 +275,22 @@ fn encode_delta(
     Ok(())
 }
 
-fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {
-    let (header, value_tail) = entry_tail.split_at(SIZE_OF_HEADER);
+fn get_utf16(entry_tail: &[u8]) -> ParquetResult<Option<&[u16]>> {
+    let (header, value_tail) = entry_tail
+        .split_at_checked(SIZE_OF_HEADER)
+        .ok_or_else(|| fmt_err!(Layout, "not enough bytes for string header"))?;
     let len_raw = types::decode::<i32>(header);
     if len_raw < 0 {
-        return None;
+        return Ok(None);
     }
+    // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+    // The byte content represents valid `u16` values.
     let utf16_tail: &[u16] = unsafe { transmute_slice(value_tail) };
     let char_count = len_raw as usize;
-    Some(&utf16_tail[..char_count])
+    let chars = utf16_tail
+        .get(..char_count)
+        .ok_or_else(|| fmt_err!(Layout, "not enough bytes for string value"))?;
+    Ok(Some(chars))
 }
 
 fn compute_utf8_length(utf16: &[u16]) -> usize {

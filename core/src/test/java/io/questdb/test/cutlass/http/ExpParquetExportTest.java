@@ -1262,6 +1262,22 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportInvalidCompressionLevel() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE level_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+
+                    params.clear();
+                    params.put("query", "SELECT * FROM level_invalid_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    params.put("compression_level", "-1");
+                    String expectedError = "{\"query\":\"SELECT * FROM level_invalid_test\",\"error\":\"GZIP compression level must be between 0 and 9\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
     public void testParquetExportLargeDataset() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {

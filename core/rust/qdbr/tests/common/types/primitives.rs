@@ -1,25 +1,18 @@
-mod common;
-
 use std::fmt::Debug;
-use std::sync::Arc;
 
 use parquet::{
-    basic::{LogicalType, Repetition},
+    basic::LogicalType,
     data_type::{
         BoolType, DataType, DoubleType, FixedLenByteArray, FixedLenByteArrayType, FloatType,
         Int32Type, Int64Type, Int96, Int96Type,
     },
-    file::properties::WriterVersion,
-    schema::types::Type,
 };
 use qdb_core::col_type::{self, nulls, ColumnTypeTag};
 
-use common::{
-    decode_file, decode_file_filtered, every_other_row_filter, generate_nulls, qdb_props,
-    write_parquet_column, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
-};
+use crate::common::encode::EncodeEncoding;
+use crate::common::Encoding;
 
-trait PrimitiveType {
+pub trait PrimitiveType {
     type T: Debug + Copy + PartialEq;
     type U: DataType;
     const NULL: Self::T;
@@ -32,14 +25,31 @@ trait PrimitiveType {
     const LOGICAL_TYPE: Option<LogicalType> = None;
     const FIXED_LEN: Option<i32> = None;
 
+    /// Valid encodings for QDB encoder (encode tests).
+    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[
+        EncodeEncoding::Plain,
+        EncodeEncoding::RleDictionary,
+        EncodeEncoding::DeltaBinaryPacked,
+    ];
+
+    /// Whether the QDB encoder detects nulls via a sentinel value in the data.
+    /// Types without null sentinels (Boolean, Byte, Short, Char) are always Required.
+    const HAS_NULL_SENTINEL: bool = true;
+
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T);
+
+    /// Generate a non-null native value for encode tests.
+    /// Override for types whose `generate_data` may produce the null sentinel.
+    fn generate_non_null_native(s: usize) -> Self::T {
+        Self::generate_data(s).1
+    }
 
     fn eq(a: Self::T, b: Self::T) -> bool {
         a == b
     }
 }
 
-fn generate_data<T: PrimitiveType>(count: usize) -> (Vec<<T::U as DataType>::T>, Vec<T::T>) {
+pub fn generate_data<T: PrimitiveType>(count: usize) -> (Vec<<T::U as DataType>::T>, Vec<T::T>) {
     let mut parquet = Vec::with_capacity(count);
     let mut native = Vec::with_capacity(count);
 
@@ -52,150 +62,7 @@ fn generate_data<T: PrimitiveType>(count: usize) -> (Vec<<T::U as DataType>::T>,
     (parquet, native)
 }
 
-fn encode_data<T: PrimitiveType>(
-    values: &[<T::U as DataType>::T],
-    nulls: &[bool],
-    version: WriterVersion,
-    encoding: Encoding,
-    repetition: Repetition,
-) -> Vec<u8>
-where
-    T::T: Clone,
-{
-    let mut col_builder =
-        Type::primitive_type_builder("col", <T::U as DataType>::get_physical_type())
-            .with_repetition(repetition);
-    if let Some(len) = T::FIXED_LEN {
-        col_builder = col_builder.with_length(len);
-    }
-    if let Some(lt) = T::LOGICAL_TYPE {
-        if let LogicalType::Decimal { scale, precision } = lt {
-            col_builder = col_builder.with_precision(precision).with_scale(scale);
-        }
-        col_builder = col_builder.with_logical_type(Some(lt));
-    }
-    let schema = Type::group_type_builder("schema")
-        .with_fields(vec![Arc::new(col_builder.build().unwrap())])
-        .build()
-        .unwrap();
-    let def_levels = common::def_levels_from_nulls(nulls);
-    let props = qdb_props(T::TAG, version, encoding);
-    write_parquet_column::<T::U>("col", schema, values, Some(&def_levels), Arc::new(props))
-}
-
-fn assert_decoding<T: PrimitiveType>(expected: Vec<T::T>, nulls: Vec<bool>, actual: Vec<u8>) {
-    let null_count = nulls.iter().filter(|x| **x).count();
-    assert_eq!(
-        actual.len(),
-        (expected.len() + null_count) * size_of::<T::T>()
-    );
-    assert_eq!(actual.len(), nulls.len() * size_of::<T::T>());
-
-    let actual = actual.as_ptr().cast::<T::T>();
-    let mut expected_offset = 0;
-    for (i, &is_null) in nulls.iter().enumerate() {
-        let current = unsafe { std::ptr::read_unaligned(actual.add(i)) };
-        let expected = if is_null {
-            T::NULL
-        } else {
-            let exp = expected[expected_offset];
-            expected_offset += 1;
-            exp
-        };
-        assert!(
-            T::eq(current, expected),
-            "mismatch at index {i}: {current:?} != {expected:?}"
-        );
-    }
-}
-
-fn run_primitive_test<T: PrimitiveType>(
-    version: WriterVersion,
-    encoding: Encoding,
-    null: Null,
-    repetition: Repetition,
-) {
-    let nulls = generate_nulls(COUNT, null);
-    let null_count = nulls.iter().filter(|x| **x).count();
-    let (parquet, native) = generate_data::<T>(COUNT - null_count);
-
-    let parquet_file = encode_data::<T>(&parquet, &nulls, version, encoding, repetition);
-    let (data, aux) = decode_file(&parquet_file);
-    assert_decoding::<T>(native, nulls, data);
-    assert!(aux.is_empty());
-}
-
-fn run_primitive_test_filtered<T: PrimitiveType>(
-    version: WriterVersion,
-    encoding: Encoding,
-    null: Null,
-    repetition: Repetition,
-) {
-    let nulls = generate_nulls(COUNT, null);
-    let null_count = nulls.iter().filter(|x| **x).count();
-    let (parquet, native) = generate_data::<T>(COUNT - null_count);
-
-    let parquet_file = encode_data::<T>(&parquet, &nulls, version, encoding, repetition);
-    let rows_filter = every_other_row_filter(COUNT);
-
-    // Build expected: interleave values with null sentinels for the full row set,
-    // then select only the filtered (even-indexed) rows.
-    let mut full_expected: Vec<T::T> = Vec::with_capacity(COUNT);
-    let mut val_idx = 0;
-    for &is_null in nulls.iter().take(COUNT) {
-        if is_null {
-            full_expected.push(T::NULL);
-        } else {
-            full_expected.push(native[val_idx]);
-            val_idx += 1;
-        }
-    }
-
-    // Select only filtered rows
-    let filtered_expected: Vec<T::T> = rows_filter
-        .iter()
-        .map(|&r| full_expected[r as usize])
-        .collect();
-    let (data, aux) = decode_file_filtered(&parquet_file, &rows_filter);
-
-    // The filtered data should have exactly rows_filter.len() elements
-    assert_eq!(
-        data.len(),
-        filtered_expected.len() * size_of::<T::T>(),
-        "filtered data size mismatch"
-    );
-
-    let actual = data.as_ptr().cast::<T::T>();
-    for (idx, &expected) in filtered_expected.iter().enumerate() {
-        let current = unsafe { std::ptr::read_unaligned(actual.add(idx)) };
-        assert!(
-            T::eq(current, expected),
-            "filtered mismatch at index {idx}: {current:?} != {expected:?}"
-        );
-    }
-    assert!(aux.is_empty());
-}
-
-fn run_all_combos<T: PrimitiveType>(name: &str) {
-    for version in &VERSIONS {
-        for encoding in T::ENCODINGS {
-            for null in &ALL_NULLS {
-                let repetition = if matches!(null, Null::None) {
-                    Repetition::REQUIRED
-                } else {
-                    Repetition::OPTIONAL
-                };
-                eprintln!(
-                    "Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}"
-                );
-                run_primitive_test::<T>(*version, *encoding, *null, repetition);
-                run_primitive_test_filtered::<T>(*version, *encoding, *null, repetition);
-            }
-        }
-    }
-}
-
-fn rnd(s: usize) -> usize {
+pub fn rnd(s: usize) -> usize {
     // Use a simple xorshift to generate pseudo-random data that changes more between rows, which can help catch edge cases in encoding/decoding.
     let mut l0 = s as i64 + 1;
     let mut l1 = s as i64 + 2;
@@ -214,7 +81,7 @@ fn rnd(s: usize) -> usize {
 
 // --- Boolean type ---
 
-struct Boolean;
+pub struct Boolean;
 
 impl PrimitiveType for Boolean {
     type T = u8;
@@ -222,6 +89,8 @@ impl PrimitiveType for Boolean {
     const NULL: Self::T = 0;
     const TAG: ColumnTypeTag = ColumnTypeTag::Boolean;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[EncodeEncoding::Plain];
+    const HAS_NULL_SENTINEL: bool = false;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let v = s.is_multiple_of(2);
@@ -231,7 +100,7 @@ impl PrimitiveType for Boolean {
 
 // --- Int32-backed types ---
 
-type GeoByte = ();
+pub type GeoByte = ();
 
 impl PrimitiveType for GeoByte {
     type T = i8;
@@ -244,9 +113,13 @@ impl PrimitiveType for GeoByte {
         let v = s as i8;
         (v as i32, v)
     }
+
+    fn generate_non_null_native(s: usize) -> Self::T {
+        (rnd(s) % 127) as i8 // avoid -1 (null sentinel)
+    }
 }
 
-struct GeoShort;
+pub struct GeoShort;
 
 impl PrimitiveType for GeoShort {
     type T = i16;
@@ -259,9 +132,13 @@ impl PrimitiveType for GeoShort {
         let v = s as i16;
         (v as i32, v)
     }
+
+    fn generate_non_null_native(s: usize) -> Self::T {
+        (rnd(s) % 32_000) as i16 // avoid -1 (null sentinel)
+    }
 }
 
-struct GeoInt;
+pub struct GeoInt;
 
 impl PrimitiveType for GeoInt {
     type T = i32;
@@ -274,15 +151,20 @@ impl PrimitiveType for GeoInt {
         let v = s as i32;
         (v, v)
     }
+
+    fn generate_non_null_native(s: usize) -> Self::T {
+        (rnd(s) as i32) & 0x7FFF_FFFE // avoid -1 (null sentinel)
+    }
 }
 
-struct Byte;
+pub struct Byte;
 
 impl PrimitiveType for Byte {
     type T = i8;
     type U = Int32Type;
     const NULL: Self::T = nulls::BYTE;
     const TAG: ColumnTypeTag = ColumnTypeTag::Byte;
+    const HAS_NULL_SENTINEL: bool = false;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
@@ -291,13 +173,14 @@ impl PrimitiveType for Byte {
     }
 }
 
-struct Short;
+pub struct Short;
 
 impl PrimitiveType for Short {
     type T = i16;
     type U = Int32Type;
     const NULL: Self::T = nulls::SHORT;
     const TAG: ColumnTypeTag = ColumnTypeTag::Short;
+    const HAS_NULL_SENTINEL: bool = false;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
@@ -306,7 +189,7 @@ impl PrimitiveType for Short {
     }
 }
 
-struct Int;
+pub struct Int;
 
 impl PrimitiveType for Int {
     type T = i32;
@@ -321,7 +204,7 @@ impl PrimitiveType for Int {
     }
 }
 
-struct IPv4;
+pub struct IPv4;
 
 impl PrimitiveType for IPv4 {
     type T = i32;
@@ -334,11 +217,15 @@ impl PrimitiveType for IPv4 {
         let v = s as i32;
         (v, v)
     }
+
+    fn generate_non_null_native(s: usize) -> Self::T {
+        (rnd(s) as i32) | 1 // avoid 0 (null sentinel)
+    }
 }
 
 // --- Int64-backed types ---
 
-struct GeoLong;
+pub struct GeoLong;
 
 impl PrimitiveType for GeoLong {
     type T = i64;
@@ -351,9 +238,13 @@ impl PrimitiveType for GeoLong {
         let v = s as i64;
         (v, v)
     }
+
+    fn generate_non_null_native(s: usize) -> Self::T {
+        (rnd(s) as i64) & 0x7FFF_FFFF_FFFF_FFFE // avoid -1 (null sentinel)
+    }
 }
 
-struct Long;
+pub struct Long;
 
 impl PrimitiveType for Long {
     type T = i64;
@@ -368,7 +259,7 @@ impl PrimitiveType for Long {
     }
 }
 
-struct Timestamp;
+pub struct Timestamp;
 
 impl PrimitiveType for Timestamp {
     type T = i64;
@@ -383,7 +274,7 @@ impl PrimitiveType for Timestamp {
     }
 }
 
-struct Date;
+pub struct Date;
 
 impl PrimitiveType for Date {
     type T = i64;
@@ -398,7 +289,7 @@ impl PrimitiveType for Date {
     }
 }
 
-struct DateInt32;
+pub struct DateInt32;
 
 impl PrimitiveType for DateInt32 {
     type T = i64;
@@ -406,6 +297,7 @@ impl PrimitiveType for DateInt32 {
     const NULL: Self::T = nulls::LONG;
     const TAG: ColumnTypeTag = ColumnTypeTag::Date;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[]; // decode-only
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Date);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -416,18 +308,18 @@ impl PrimitiveType for DateInt32 {
     }
 }
 
-// --- Int32-backed Char type (stored as u16/i16, read from Int32) ---
+// --- Int32-backed Char type ---
 
-struct Char;
+pub struct Char;
 
 impl PrimitiveType for Char {
     type T = i16;
     type U = Int32Type;
     const NULL: Self::T = nulls::SHORT;
     const TAG: ColumnTypeTag = ColumnTypeTag::Char;
+    const HAS_NULL_SENTINEL: bool = false;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        // Generate valid char code points (printable ASCII range)
         let v = (s % 95 + 32) as i16;
         (v as i32, v)
     }
@@ -435,7 +327,7 @@ impl PrimitiveType for Char {
 
 // --- Float-backed types ---
 
-struct Float;
+pub struct Float;
 
 impl PrimitiveType for Float {
     type T = f32;
@@ -443,6 +335,8 @@ impl PrimitiveType for Float {
     const NULL: Self::T = nulls::FLOAT;
     const TAG: ColumnTypeTag = ColumnTypeTag::Float;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] =
+        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
@@ -455,7 +349,7 @@ impl PrimitiveType for Float {
     }
 }
 
-struct DoubleInt32;
+pub struct DoubleInt32;
 
 impl PrimitiveType for DoubleInt32 {
     type T = f64;
@@ -463,6 +357,7 @@ impl PrimitiveType for DoubleInt32 {
     const NULL: Self::T = nulls::DOUBLE;
     const TAG: ColumnTypeTag = ColumnTypeTag::Double;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[]; // decode-only
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Decimal {
         scale: 2,
         precision: 9,
@@ -482,7 +377,7 @@ impl PrimitiveType for DoubleInt32 {
 
 // --- Double-backed types ---
 
-struct Double;
+pub struct Double;
 
 impl PrimitiveType for Double {
     type T = f64;
@@ -490,6 +385,8 @@ impl PrimitiveType for Double {
     const NULL: Self::T = nulls::DOUBLE;
     const TAG: ColumnTypeTag = ColumnTypeTag::Double;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] =
+        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
@@ -504,7 +401,7 @@ impl PrimitiveType for Double {
 
 // --- FixedLenByteArray-backed types ---
 
-struct Long128;
+pub struct Long128;
 
 impl PrimitiveType for Long128 {
     type T = col_type::Long128;
@@ -512,6 +409,8 @@ impl PrimitiveType for Long128 {
     const NULL: Self::T = col_type::Long128::NULL;
     const TAG: ColumnTypeTag = ColumnTypeTag::Long128;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] =
+        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
     const FIXED_LEN: Option<i32> = Some(16);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -531,7 +430,7 @@ impl PrimitiveType for Long128 {
     }
 }
 
-struct Long256;
+pub struct Long256;
 
 impl PrimitiveType for Long256 {
     type T = col_type::Long256;
@@ -539,6 +438,8 @@ impl PrimitiveType for Long256 {
     const NULL: Self::T = col_type::Long256::NULL;
     const TAG: ColumnTypeTag = ColumnTypeTag::Long256;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] =
+        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
     const FIXED_LEN: Option<i32> = Some(32);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -560,9 +461,9 @@ impl PrimitiveType for Long256 {
     }
 }
 
-// --- UUID type (FixedLenByteArray(16) with UUID logical type, byte-swapped) ---
+// --- UUID type ---
 
-struct Uuid;
+pub struct Uuid;
 
 impl PrimitiveType for Uuid {
     type T = u128;
@@ -570,14 +471,13 @@ impl PrimitiveType for Uuid {
     const NULL: Self::T = nulls::UUID;
     const TAG: ColumnTypeTag = ColumnTypeTag::Uuid;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] =
+        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
     const FIXED_LEN: Option<i32> = Some(16);
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Uuid);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
-        // Parquet stores UUIDs as big-endian bytes.
-        // The decoder reads the raw bytes as u128 (native/LE) then applies u128::from_be(),
-        // which is equivalent to u128::from_be_bytes(raw_bytes).
         let hi = (s as u64).wrapping_add(7777);
         let lo = s as u64;
         let mut raw_bytes = [0u8; 16];
@@ -590,7 +490,7 @@ impl PrimitiveType for Uuid {
 
 // --- Int96-backed types ---
 
-struct TimestampInt96;
+pub struct TimestampInt96;
 
 impl PrimitiveType for TimestampInt96 {
     type T = i64;
@@ -598,6 +498,7 @@ impl PrimitiveType for TimestampInt96 {
     const NULL: Self::T = nulls::LONG;
     const TAG: ColumnTypeTag = ColumnTypeTag::Timestamp;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
+    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[]; // decode-only
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         const JULIAN_UNIX_EPOCH: u32 = 2_440_588;
@@ -617,111 +518,4 @@ impl PrimitiveType for TimestampInt96 {
         let expected_nanos = days_since_epoch * NANOS_PER_DAY + nanos_in_day as i64;
         (int96, expected_nanos)
     }
-}
-
-// --- Tests ---
-
-#[test]
-fn test_boolean() {
-    run_all_combos::<Boolean>("Boolean");
-}
-
-#[test]
-fn test_geobyte() {
-    run_all_combos::<GeoByte>("GeoByte");
-}
-
-#[test]
-fn test_geoshort() {
-    run_all_combos::<GeoShort>("GeoShort");
-}
-
-#[test]
-fn test_geoint() {
-    run_all_combos::<GeoInt>("GeoInt");
-}
-
-#[test]
-fn test_geolong() {
-    run_all_combos::<GeoLong>("GeoLong");
-}
-
-#[test]
-fn test_byte() {
-    run_all_combos::<Byte>("Byte");
-}
-
-#[test]
-fn test_short() {
-    run_all_combos::<Short>("Short");
-}
-
-#[test]
-fn test_int() {
-    run_all_combos::<Int>("Int");
-}
-
-#[test]
-fn test_ipv4() {
-    run_all_combos::<IPv4>("IPv4");
-}
-
-#[test]
-fn test_long() {
-    run_all_combos::<Long>("Long");
-}
-
-#[test]
-fn test_timestamp() {
-    run_all_combos::<Timestamp>("Timestamp");
-}
-
-#[test]
-fn test_date() {
-    run_all_combos::<Date>("Date");
-}
-
-#[test]
-fn test_date_int32() {
-    run_all_combos::<DateInt32>("DateInt32");
-}
-
-#[test]
-fn test_float() {
-    run_all_combos::<Float>("Float");
-}
-
-#[test]
-fn test_double() {
-    run_all_combos::<Double>("Double");
-}
-
-#[test]
-fn test_double_int32() {
-    run_all_combos::<DoubleInt32>("DoubleInt32");
-}
-
-#[test]
-fn test_long128() {
-    run_all_combos::<Long128>("Long128");
-}
-
-#[test]
-fn test_long256() {
-    run_all_combos::<Long256>("Long256");
-}
-
-#[test]
-fn test_char() {
-    run_all_combos::<Char>("Char");
-}
-
-#[test]
-fn test_uuid() {
-    run_all_combos::<Uuid>("Uuid");
-}
-
-#[test]
-fn test_timestamp_int96() {
-    run_all_combos::<TimestampInt96>("TimestampInt96");
 }
