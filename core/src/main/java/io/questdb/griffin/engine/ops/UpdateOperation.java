@@ -82,16 +82,17 @@ public class UpdateOperation extends AbstractOperation {
         return svc.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 
+    @Override
     public void authorize() {
         final SecurityContext securityContext = this.securityContext;
         if (securityContext == null) {
-            throw CairoException.critical(0)
+            throw CairoException.nonCritical()
                     .put("update security context is empty [table=")
                     .put(getTableToken().getTableName())
                     .put(']');
         }
         if (updateColumnNames.size() == 0) {
-            throw CairoException.critical(0)
+            throw CairoException.nonCritical()
                     .put("update authorization columns are empty [table=")
                     .put(getTableToken().getTableName())
                     .put(']');
@@ -173,16 +174,16 @@ public class UpdateOperation extends AbstractOperation {
         circuitBreaker.statefulThrowExceptionIfTripped();
     }
 
+    @Override
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        super.withContext(sqlExecutionContext);
+        circuitBreaker = sqlExecutionContext.getSimpleCircuitBreaker();
+    }
+
     private void copyUpdateColumnNames(ObjList<CharSequence> columnNames) {
         updateColumnNames.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             updateColumnNames.add(Chars.toString(columnNames.getQuick(i)));
         }
-    }
-
-    @Override
-    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
-        super.withContext(sqlExecutionContext);
-        circuitBreaker = sqlExecutionContext.getSimpleCircuitBreaker();
     }
 }

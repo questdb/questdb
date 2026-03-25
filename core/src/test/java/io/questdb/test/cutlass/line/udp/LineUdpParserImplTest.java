@@ -32,6 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpLexer;
 import io.questdb.cutlass.line.udp.LineUdpParserImpl;
@@ -612,7 +613,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
         try (TableWriter writer = getWriter("t_ilp21")) {
             writer.removeColumn("event");
-            writer.addColumn("event", ColumnType.SHORT);
+            writer.addColumn("event", ColumnType.SHORT, AllowAllSecurityContext.INSTANCE);
         }
         engine.releaseInactive();
 
