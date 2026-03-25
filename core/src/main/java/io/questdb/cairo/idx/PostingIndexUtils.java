@@ -191,6 +191,7 @@ public final class PostingIndexUtils {
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
     public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
     public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
+    public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
 
     private PostingIndexUtils() {
     }

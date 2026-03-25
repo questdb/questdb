@@ -37,6 +37,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -2136,6 +2137,93 @@ public class PostingIndexWriter implements IndexWriter {
         reencodeAllGenerations(maxValue, maxValue, true);
     }
 
+    /**
+     * Writes raw (uncompressed) covered column values for the current gen's
+     * posting entries to the sidecar files. Each sidecar file gets a block:
+     * [valueCount: 4B][raw values: valueCount × elemSize].
+     *
+     * @param totalValues total number of posting values in this gen
+     * @return the sidecar offset (position in .pc0 before this gen's block)
+     */
+    private int writeSidecarGenData(int totalValues) {
+        if (coverCount <= 0 || totalValues == 0
+                || (coveredColumnMems == null && coveredColumnAddrs == null)) {
+            return 0;
+        }
+        // Lazily open sidecar files on first gen flush
+        if (sidecarMems == null && partitionPath != null) {
+            try (Path p = new Path().of(partitionPath)) {
+                openSidecarFiles(p, indexName, columnNameTxn);
+            }
+        }
+        if (sidecarMems == null) {
+            return 0;
+        }
+        int sidecarOffset = (int) sidecarMems[0].getAppendOffset();
+
+        for (int c = 0; c < coverCount; c++) {
+            long colAddr = coveredColumnMems != null
+                    ? coveredColumnMems[c].addressOf(0)
+                    : coveredColumnAddrs[c];
+            long colTop = coveredColumnTops[c];
+            int shift = coveredColumnShifts[c];
+            int colType = coveredColumnTypes[c];
+            int valueSize = 1 << shift;
+
+            sidecarMems[c].putInt(totalValues);
+
+            for (int idx = 0; idx < activeKeyCount; idx++) {
+                int key = activeKeyIds[idx];
+                int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+                int spillCount = getSpillCount(key);
+
+                // Write spill values first (earlier values)
+                if (spillCount > 0) {
+                    long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+                    for (int i = 0; i < spillCount; i++) {
+                        long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
+                        writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
+                    }
+                }
+
+                // Then pending values
+                long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+                for (int i = 0; i < pendingCount; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
+                    writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
+                }
+            }
+        }
+        return sidecarOffset;
+    }
+
+    private void writeSidecarValue(MemoryMARW mem, long colAddr, long colTop, long rowId,
+                                    int shift, int valueSize, int colType) {
+        if (rowId < colTop) {
+            writeNullSentinel(mem, valueSize, colType);
+        } else {
+            long srcOffset = (rowId - colTop) << shift;
+            if (valueSize == Long.BYTES) {
+                mem.putLong(Unsafe.getUnsafe().getLong(colAddr + srcOffset));
+            } else if (valueSize == Integer.BYTES) {
+                mem.putInt(Unsafe.getUnsafe().getInt(colAddr + srcOffset));
+            } else if (valueSize == Short.BYTES) {
+                mem.putShort(Unsafe.getUnsafe().getShort(colAddr + srcOffset));
+            } else {
+                mem.putByte(Unsafe.getUnsafe().getByte(colAddr + srcOffset));
+            }
+        }
+    }
+
+    private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
+        switch (valueSize) {
+            case Long.BYTES -> mem.putLong(Numbers.LONG_NULL);
+            case Integer.BYTES -> mem.putInt(Numbers.INT_NULL);
+            case Short.BYTES -> mem.putShort((short) (ColumnType.isGeoHash(colType) ? GeoHashes.SHORT_NULL : 0));
+            case Byte.BYTES -> mem.putByte((byte) (ColumnType.isGeoHash(colType) ? GeoHashes.BYTE_NULL : 0));
+        }
+    }
+
     @Override
     public void sync(boolean async) {
         // Flush pending data from native buffers to mmap'd files before syncing,
@@ -2513,11 +2601,15 @@ public class PostingIndexWriter implements IndexWriter {
         int minKey = activeKeyIds[0];
         int maxKey = activeKeyIds[activeKeyCount - 1];
 
+        // Write per-gen sidecar data: raw covered column values in posting order
+        int sidecarOffset = writeSidecarGenData((int) totalValues);
+
         genCount++;
         // Ensure value-file writes are visible before publishing via metadata page
         Unsafe.getUnsafe().storeFence();
         writeMetadataPage(genCount, maxValue,
-                genCount - 1, genOffset, totalGenSize, -activeKeyCount, minKey, maxKey);
+                genCount - 1, genOffset, totalGenSize, -activeKeyCount, minKey, maxKey,
+                sidecarOffset);
 
         // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
@@ -2731,6 +2823,15 @@ public class PostingIndexWriter implements IndexWriter {
                                     int overrideGenIndex, long overrideFileOffset,
                                     long overrideSize, int overrideKeyCount,
                                     int overrideMinKey, int overrideMaxKey) {
+        writeMetadataPage(genCount, maxValue, overrideGenIndex, overrideFileOffset,
+                overrideSize, overrideKeyCount, overrideMinKey, overrideMaxKey, 0);
+    }
+
+    private void writeMetadataPage(int genCount, long maxValue,
+                                    int overrideGenIndex, long overrideFileOffset,
+                                    long overrideSize, int overrideKeyCount,
+                                    int overrideMinKey, int overrideMaxKey,
+                                    int overrideSidecarOffset) {
         // Compute inactive page offset
         long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
                 ? PostingIndexUtils.PAGE_B_OFFSET
@@ -2771,6 +2872,7 @@ public class PostingIndexWriter implements IndexWriter {
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
             keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
+            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET, overrideSidecarOffset);
         }
 
         // Write sequence_end last
