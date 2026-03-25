@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class LateralJoinTest extends AbstractCairoTest {
@@ -397,7 +398,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2, 'info_b', '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // LEFT JOIN ON condition has a correlated reference
             assertQueryNoLeakCheck(
                     """
                             id\tval\tinfo
@@ -3640,6 +3640,419 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) s
                             ORDER BY c.id, p.id
                             """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT62bLateralOnNonEqualityFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 2, '2024-01-01T00:00:00.000000Z'),
+                    (2, 3, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 30, '2024-01-01T00:30:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z'),
+                    (2, 50, '2024-01-01T01:20:00.000000Z'),
+                    (2, 60, '2024-01-01T01:30:00.000000Z'),
+                    (2, 70, '2024-01-01T01:40:00.000000Z')
+                    """);
+
+            // t1.n controls how many rows from t2 to keep via ON rn <= t1.n
+            // id=1, n=2 → keep rows with rn<=2 → val 10, 20
+            // id=2, n=3 → keep rows with rn<=3 → val 40, 50, 60
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\trn
+                            1\t10\t1
+                            1\t20\t2
+                            2\t40\t1
+                            2\t50\t2
+                            2\t60\t3
+                            """,
+                    """
+                            SELECT t1.id, sub.val, sub.rn
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub ON sub.rn <= t1.n
+                            ORDER BY t1.id, sub.rn
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T62c: LATERAL ON with equality + non-equality conditions mixed
+    @Test
+    public void testT62cLateralOnMixedConditions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, cat SYMBOL, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, cat SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 'A', 2, '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', 3, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 'A', 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'A', 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'A', 30, '2024-01-01T00:30:00.000000Z'),
+                    (1, 'X', 99, '2024-01-01T00:40:00.000000Z'),
+                    (2, 'B', 40, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'B', 50, '2024-01-01T01:20:00.000000Z'),
+                    (2, 'B', 60, '2024-01-01T01:30:00.000000Z'),
+                    (2, 'B', 70, '2024-01-01T01:40:00.000000Z')
+                    """);
+
+            // ON has equality (sub.cat = t1.cat) + non-equality (sub.rn <= t1.n)
+            // id=1, cat=A, n=2: cat filter excludes val=99(cat=X), rn filter keeps val 10,20
+            // id=2, cat=B, n=3: rn filter keeps val 40,50,60
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\trn
+                            1\t10\t1
+                            1\t20\t2
+                            2\t40\t1
+                            2\t50\t2
+                            2\t60\t3
+                            """,
+                    """
+                            SELECT t1.id, sub.val, sub.rn
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, cat, row_number() OVER (ORDER BY ts) AS rn
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub ON sub.cat = t1.cat AND sub.rn <= t1.n
+                            ORDER BY t1.id, sub.rn
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T62d: LATERAL ON with pure equality condition (separate from WHERE correlation)
+    @Test
+    public void testT62dLateralOnEqualityFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, cat SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, cat SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 'A', 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'X', 99, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'A', 20, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'B', 30, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'Z', 88, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t20
+                            2\t30
+                            """,
+                    """
+                            SELECT t1.id, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, cat
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub ON sub.cat = t1.cat
+                            ORDER BY t1.id, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT63MmComplianceCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE mm_book (
+                        mm_id SYMBOL, symbol SYMBOL, side SYMBOL,
+                        price DOUBLE, qty DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    CREATE TABLE mm_obligations (
+                        mm_id SYMBOL, symbol SYMBOL, obligation_id INT,
+                        min_qty DOUBLE, max_spread DOUBLE, spread_type SYMBOL,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+
+            // MM1/AAPL: full book, tight spread → compliant
+            // MM2/AAPL: only BID side → early fail SellQuantity
+            execute("""
+                    INSERT INTO mm_book VALUES
+                    ('mm1', 'AAPL', 'BID', 100.0, 200.0, '2024-01-01T00:00:00.000000Z'),
+                    ('mm1', 'AAPL', 'ASK', 102.0, 200.0, '2024-01-01T00:00:01.000000Z'),
+                    ('mm2', 'AAPL', 'BID',  50.0, 100.0, '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO mm_obligations VALUES
+                    ('mm1', 'AAPL', 1, 100.0, 0.05, 'Pct', '2024-01-01T00:00:00.000000Z'),
+                    ('mm2', 'AAPL', 2, 100.0, 0.05, 'Pct', '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            mm_id\tsymbol\tobligation_id\tnon_compliance_reason\tavg_price_buy\tavg_price_sell\tqty_buy\tqty_sell\tspread
+                            mm1\tAAPL\t1\tNone\t100.0\t102.0\t200.0\t200.0\t0.020000000000000018
+                            mm2\tAAPL\t2\tSellQuantity\tnull\tnull\t100.0\t0.0\tnull
+                            """,
+                    """
+                             WITH
+                              side_totals AS (
+                                SELECT mm_id, symbol, side, sum(qty) AS total_qty
+                                FROM mm_book
+                                WHERE qty > 0
+                                GROUP BY mm_id, symbol, side
+                              ),
+                              both_sides AS (
+                                SELECT mm_id, symbol,
+                                       coalesce(sum(CASE WHEN side = 'BID' THEN total_qty END), 0) AS qty_buy,
+                                       coalesce(sum(CASE WHEN side = 'ASK' THEN total_qty END), 0) AS qty_sell
+                                FROM side_totals
+                                GROUP BY mm_id, symbol
+                              ),
+                              with_obligations AS (
+                                SELECT b.mm_id, b.symbol, b.qty_buy, b.qty_sell,
+                                       o.obligation_id, o.min_qty, o.max_spread, o.spread_type
+                                FROM both_sides b
+                                JOIN mm_obligations o ON b.mm_id = o.mm_id AND b.symbol = o.symbol
+                              ),
+                              pre_check AS (
+                                SELECT *,
+                                       CASE
+                                         WHEN qty_buy = 0 AND qty_sell = 0 THEN 'NoOrders'
+                                         WHEN qty_buy = 0               THEN 'BuyQuantity'
+                                         WHEN qty_sell = 0              THEN 'SellQuantity'
+                                         WHEN qty_buy < min_qty AND qty_sell < min_qty THEN 'Quantity'
+                                         WHEN qty_buy < min_qty         THEN 'BuyQuantity'
+                                         WHEN qty_sell < min_qty        THEN 'SellQuantity'
+                                         ELSE NULL
+                                       END AS early_fail
+                                FROM with_obligations
+                              ),
+                              bid_sweep AS (
+                                SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
+                                       sum(bk.price * LEAST(bk.qty,
+                                           GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
+                                       ) / p.min_qty AS avg_price_buy
+                                FROM pre_check p
+                                JOIN LATERAL (
+                                  SELECT price, qty,
+                                         sum(qty) OVER (ORDER BY price DESC) AS cum_qty
+                                  FROM mm_book
+                                  WHERE mm_id = p.mm_id AND symbol = p.symbol
+                                    AND side = 'BID' AND qty > 0
+                                ) bk ON bk.cum_qty - bk.qty < p.min_qty
+                                WHERE p.early_fail IS NULL
+                                GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
+                              ),
+                              ask_sweep AS (
+                                SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
+                                       sum(bk.price * LEAST(bk.qty,
+                                           GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
+                                       ) / p.min_qty AS avg_price_sell
+                                FROM pre_check p
+                                JOIN LATERAL (
+                                  SELECT price, qty,
+                                         sum(qty) OVER (ORDER BY price ASC) AS cum_qty
+                                  FROM mm_book
+                                  WHERE mm_id = p.mm_id AND symbol = p.symbol
+                                    AND side = 'ASK' AND qty > 0
+                                ) bk ON bk.cum_qty - bk.qty < p.min_qty
+                                WHERE p.early_fail IS NULL
+                                GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
+                              )
+                            SELECT
+                              p.mm_id, p.symbol, p.obligation_id,
+                              CASE
+                                WHEN p.early_fail IS NOT NULL THEN p.early_fail
+                                WHEN p.spread_type = 'Pct'
+                                  AND (a.avg_price_sell / b.avg_price_buy) - 1 > p.max_spread THEN 'Spread'
+                                WHEN p.spread_type = 'Abs'
+                                  AND a.avg_price_sell - b.avg_price_buy > p.max_spread THEN 'Spread'
+                                ELSE 'None'
+                              END AS non_compliance_reason,
+                              b.avg_price_buy,
+                              a.avg_price_sell,
+                              p.qty_buy,
+                              p.qty_sell,
+                              CASE WHEN p.spread_type = 'Pct'
+                                THEN (a.avg_price_sell / b.avg_price_buy) - 1
+                                ELSE a.avg_price_sell - b.avg_price_buy
+                              END AS spread
+                            FROM pre_check p
+                            LEFT JOIN bid_sweep b ON p.mm_id = b.mm_id AND p.symbol = b.symbol
+                              AND p.obligation_id = b.obligation_id
+                            LEFT JOIN ask_sweep a ON p.mm_id = a.mm_id AND p.symbol = a.symbol
+                              AND p.obligation_id = a.obligation_id
+                            ORDER BY p.mm_id, p.symbol
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // Ignored: mat views do not support window functions on the base table
+    @Ignore
+    @Test
+    public void testT63bMmComplianceMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE mm_book (
+                        mm_id SYMBOL, symbol SYMBOL, side SYMBOL,
+                        price DOUBLE, qty DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    CREATE TABLE mm_obligations (
+                        mm_id SYMBOL, symbol SYMBOL, obligation_id INT,
+                        min_qty DOUBLE, max_spread DOUBLE, spread_type SYMBOL,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            execute("""
+                    CREATE MATERIALIZED VIEW mm_compliance WITH BASE mm_book AS (
+                    WITH
+                      side_totals AS (
+                        SELECT mm_id, symbol, side, sum(qty) AS total_qty
+                        FROM mm_book
+                        WHERE qty > 0
+                        GROUP BY mm_id, symbol, side
+                      ),
+                      both_sides AS (
+                        SELECT mm_id, symbol,
+                               coalesce(sum(CASE WHEN side = 'BID' THEN total_qty END), 0) AS qty_buy,
+                               coalesce(sum(CASE WHEN side = 'ASK' THEN total_qty END), 0) AS qty_sell
+                        FROM side_totals
+                        GROUP BY mm_id, symbol
+                      ),
+                      with_obligations AS (
+                        SELECT b.mm_id, b.symbol, b.qty_buy, b.qty_sell,
+                               o.obligation_id, o.min_qty, o.max_spread, o.spread_type
+                        FROM both_sides b
+                        JOIN mm_obligations o ON b.mm_id = o.mm_id AND b.symbol = o.symbol
+                      ),
+                      pre_check AS (
+                        SELECT *,
+                               CASE
+                                 WHEN qty_buy = 0 AND qty_sell = 0 THEN 'NoOrders'
+                                 WHEN qty_buy = 0               THEN 'BuyQuantity'
+                                 WHEN qty_sell = 0              THEN 'SellQuantity'
+                                 WHEN qty_buy < min_qty AND qty_sell < min_qty THEN 'Quantity'
+                                 WHEN qty_buy < min_qty         THEN 'BuyQuantity'
+                                 WHEN qty_sell < min_qty        THEN 'SellQuantity'
+                                 ELSE NULL
+                               END AS early_fail
+                        FROM with_obligations
+                      ),
+                      bid_sweep AS (
+                        SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
+                               sum(bk.price * LEAST(bk.qty,
+                                   GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
+                               ) / p.min_qty AS avg_price_buy
+                        FROM pre_check p
+                        JOIN LATERAL (
+                          SELECT price, qty,
+                                 sum(qty) OVER (ORDER BY price DESC) AS cum_qty
+                          FROM mm_book
+                          WHERE mm_id = p.mm_id AND symbol = p.symbol
+                            AND side = 'BID' AND qty > 0
+                        ) bk ON bk.cum_qty - bk.qty < p.min_qty
+                        WHERE p.early_fail IS NULL
+                        GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
+                      ),
+                      ask_sweep AS (
+                        SELECT p.mm_id, p.symbol, p.obligation_id, p.min_qty,
+                               sum(bk.price * LEAST(bk.qty,
+                                   GREATEST(0, p.min_qty - (bk.cum_qty - bk.qty)))
+                               ) / p.min_qty AS avg_price_sell
+                        FROM pre_check p
+                        JOIN LATERAL (
+                          SELECT price, qty,
+                                 sum(qty) OVER (ORDER BY price ASC) AS cum_qty
+                          FROM mm_book
+                          WHERE mm_id = p.mm_id AND symbol = p.symbol
+                            AND side = 'ASK' AND qty > 0
+                        ) bk ON bk.cum_qty - bk.qty < p.min_qty
+                        WHERE p.early_fail IS NULL
+                        GROUP BY p.mm_id, p.symbol, p.obligation_id, p.min_qty
+                      )
+                    SELECT
+                      p.mm_id, p.symbol, p.obligation_id,
+                      CASE
+                        WHEN p.early_fail IS NOT NULL THEN p.early_fail
+                        WHEN p.spread_type = 'Pct'
+                          AND (a.avg_price_sell / b.avg_price_buy) - 1 > p.max_spread THEN 'Spread'
+                        WHEN p.spread_type = 'Abs'
+                          AND a.avg_price_sell - b.avg_price_buy > p.max_spread THEN 'Spread'
+                        ELSE 'None'
+                      END AS non_compliance_reason,
+                      b.avg_price_buy,
+                      a.avg_price_sell,
+                      p.qty_buy,
+                      p.qty_sell,
+                      CASE WHEN p.spread_type = 'Pct'
+                        THEN (a.avg_price_sell / b.avg_price_buy) - 1
+                        ELSE a.avg_price_sell - b.avg_price_buy
+                      END AS spread
+                    FROM pre_check p
+                    LEFT JOIN bid_sweep b ON p.mm_id = b.mm_id AND p.symbol = b.symbol
+                      AND p.obligation_id = b.obligation_id
+                    LEFT JOIN ask_sweep a ON p.mm_id = a.mm_id AND p.symbol = a.symbol
+                      AND p.obligation_id = a.obligation_id
+                    ORDER BY p.mm_id, p.symbol
+                    )
+                    """);
+
+            execute("""
+                    INSERT INTO mm_book VALUES
+                    ('mm1', 'AAPL', 'BID', 100.0, 200.0, '2024-01-01T00:00:00.000000Z'),
+                    ('mm1', 'AAPL', 'ASK', 102.0, 200.0, '2024-01-01T00:00:01.000000Z'),
+                    ('mm2', 'AAPL', 'BID',  50.0, 100.0, '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO mm_obligations VALUES
+                    ('mm1', 'AAPL', 1, 100.0, 0.05, 'Pct', '2024-01-01T00:00:00.000000Z'),
+                    ('mm2', 'AAPL', 2, 100.0, 0.05, 'Pct', '2024-01-01T00:00:01.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+
+            assertQueryNoLeakCheck(
+                    """
+                            mm_id\tsymbol\tobligation_id\tnon_compliance_reason\tavg_price_buy\tavg_price_sell\tqty_buy\tqty_sell\tspread
+                            mm1\tAAPL\t1\tNone\t100.0\t102.0\t200.0\t200.0\t0.020000000000000018
+                            mm2\tAAPL\t2\tSellQuantity\tnull\tnull\t100.0\t0.0\tnull
+                            """,
+                    "SELECT * FROM mm_compliance ORDER BY mm_id, symbol",
                     null, true, false
             );
         });

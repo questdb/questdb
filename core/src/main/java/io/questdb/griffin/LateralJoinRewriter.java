@@ -32,10 +32,9 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-
-import io.questdb.std.Mutable;
 
 import java.util.ArrayDeque;
 
@@ -1141,6 +1140,8 @@ class LateralJoinRewriter implements Mutable {
                         countColAliases, outerRefJoinModel, joinModel, depth
                 );
 
+                ExpressionNode originalOnCondition = joinModel.getJoinCriteria();
+
                 topInner = joinModel.getNestedModel();
                 CharSequence lateralAlias = joinModel.getAlias() != null
                         ? joinModel.getAlias().token : null;
@@ -1166,6 +1167,15 @@ class LateralJoinRewriter implements Mutable {
                     ExpressionNode outerRef = ExpressionNode.deepClone(expressionNodePool, outerCol);
                     ExpressionNode eq = createBinaryOp("=", innerRef, outerRef);
                     joinCriteria = joinCriteria == null ? eq : createBinaryOp("and", joinCriteria, eq);
+                }
+
+                if (originalOnCondition != null) {
+                    if (hasCorrelatedExprAtDepth(originalOnCondition, depth)) {
+                        originalOnCondition = rewriteOuterRefs(originalOnCondition, outerToInnerAlias, depth);
+                    }
+                    joinCriteria = joinCriteria == null
+                            ? originalOnCondition
+                            : createBinaryOp("and", joinCriteria, originalOnCondition);
                 }
                 joinModel.setJoinCriteria(joinCriteria);
 
