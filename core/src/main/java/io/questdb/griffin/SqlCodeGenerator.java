@@ -6054,7 +6054,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .put("left-hand side of HORIZON JOIN must support random access or page frames");
                 }
 
-                // Transfer ownership
+                // Before passing the objects to the cursor factory,
+                // transfer ownership away from variables handled in our local try-catch block.
                 final JoinRecordMetadata innerMetadata0 = innerMetadata;
                 innerMetadata = null;
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
@@ -6116,7 +6117,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
 
             if (keyTypesCopy.getColumnCount() == 0) {
-                // Transfer ownership to the factory constructor.
+                // Transfer ownership to the factory
                 final JoinRecordMetadata innerMetadata0 = innerMetadata;
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
@@ -6166,7 +6167,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // These calls may throw, so ownership transfer must happen after them.
+            // These calls may throw, so ownership transfer must happen after them
             final ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
                     executionContext,
                     parentModel.getColumns(),
@@ -6181,7 +6182,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
             );
 
-            // Transfer ownership to the factory constructor.
+            // Transfer ownership to the factory
             final JoinRecordMetadata innerMetadata0 = innerMetadata;
             final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
             final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
@@ -6255,7 +6256,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.free(slaveFactories.getQuick(s));
                 }
             } else if (!isSlaveFactoriesTransferred) {
-                // Ownership has not been transferred yet: free all slave factories.
+                // Ownership has not been transferred yet: free all slave factories
                 for (int s = 0, n = slaveFactories.size(); s < n; s++) {
                     Misc.free(slaveFactories.getQuick(s));
                 }
