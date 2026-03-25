@@ -735,10 +735,11 @@ class LateralJoinRewriter {
             rnWindowExpr.getOrderByDirection().add(orderByDirSave.getQuick(i));
         }
 
-        boolean hasAggregate = current.getGroupBy().size() > 0
+        boolean needsWrapping = current.getGroupBy().size() > 0
                 || (current.getNestedModel() != null && current.getNestedModel().getGroupBy().size() > 0)
-                || hasAggregateFunctions(current);
-        if (hasAggregate) {
+                || hasAggregateFunctions(current)
+                || current.isDistinct();
+        if (needsWrapping) {
             for (int i = 0, n = groupingCols.size(); i < n; i++) {
                 rnWindowExpr.getPartitionBy().add(
                         ExpressionNode.deepClone(expressionNodePool, groupingCols.getQuick(i)));
@@ -822,20 +823,9 @@ class LateralJoinRewriter {
     }
 
     private void compensateSampleBy(QueryModel inner) throws SqlException {
-        ObjList<ExpressionNode> groupBy = inner.getGroupBy();
         for (int i = 0, n = groupingCols.size(); i < n; i++) {
             ExpressionNode col = groupingCols.getQuick(i);
             ensureColumnInSelect(inner, col, col.token);
-            boolean isFound = false;
-            for (int j = 0, m = groupBy.size(); j < m; j++) {
-                if (expressionsEqual(groupBy.getQuick(j), col)) {
-                    isFound = true;
-                    break;
-                }
-            }
-            if (!isFound) {
-                inner.addGroupBy(ExpressionNode.deepClone(expressionNodePool, col));
-            }
         }
     }
 
@@ -1658,8 +1648,7 @@ class LateralJoinRewriter {
         boolean hasAggregates = hasAggregateFunctions(current);
         if (current.getSampleBy() != null) {
             compensateSampleBy(current);
-        }
-        if (hasGroupBy || hasAggregates) {
+        } else if (hasGroupBy || hasAggregates) {
             compensateAggregate(current, isLeftJoin, countColAliases);
         }
         if (hasWindowColumns(current)) {

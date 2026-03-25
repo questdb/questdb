@@ -1247,7 +1247,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference
                 QueryColumn col = queryColumnPool.next();
-                col.of(thisColumn.getAlias(), thatColumn.getAst());
+                col.of(thisColumn.getAlias(), thatColumn.getAst(), thisColumn.isIncludeIntoWildcard());
                 bottomUpColumns.setQuick(i, col);
 
                 int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());

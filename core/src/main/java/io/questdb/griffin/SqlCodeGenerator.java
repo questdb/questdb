@@ -4598,7 +4598,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (windowJoinColCheckVisitor.shouldInclude) {
                                                 QueryColumn column = columns.get(j);
                                                 aggregateCols.add(columns.get(j));
-                                                aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), ast.position));
+                                                aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), column.isIncludeIntoWildcard(), ast.position));
                                             } else if (windowJoinColCheckVisitor.hasIncludeCol) {
                                                 throw SqlException.position(ast.position).put("WINDOW join aggregate function cannot reference columns from multiple models");
                                             }

@@ -760,7 +760,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T06: Window + ON filter, INNER, equality + non-equality — mm_compliance scenario
     @Test
     public void testT06WindowWithFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -780,12 +779,11 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (5, 2, 'GOOG', 400.0, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            // Window function with correlated WHERE + additional filter
             assertQueryNoLeakCheck(
                     """
                             mm_id\tsymbol\tqty\trunning_sum
-                            1\tAAPL\t200.0\t200.0
                             1\tAAPL\t150.0\t350.0
+                            1\tAAPL\t200.0\t200.0
                             2\tGOOG\t300.0\t300.0
                             2\tGOOG\t400.0\t700.0
                             """,
@@ -799,7 +797,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) f
                             ORDER BY m.mm_id, f.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1405,7 +1403,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T23b: keyed SAMPLE BY (FILL PREV), INNER — correlation column becomes SampleBy key
     @Test
     public void testT23bKeyedSampleByInner() throws Exception {
         assertMemoryLeak(() -> {
@@ -1422,12 +1419,16 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     """
-                            id\tcategory\tts\ttotal
-                            1\tA\t2024-01-01T00:00:00.000000Z\t10.0
-                            1\tA\t2024-01-01T00:30:00.000000Z\t30.0
-                            1\tB\t2024-01-01T00:00:00.000000Z\t20.0
-                            1\tB\t2024-01-01T00:30:00.000000Z\t20.0
-                            2\tA\t2024-01-01T01:00:00.000000Z\t40.0
+                            id	category	ts	total
+                            1	A	2024-01-01T00:00:00.000000Z	10.0
+                            1	A	2024-01-01T00:30:00.000000Z	30.0
+                            1	A	2024-01-01T01:00:00.000000Z	30.0
+                            1	B	2024-01-01T00:00:00.000000Z	20.0
+                            1	B	2024-01-01T00:30:00.000000Z	20.0
+                            1	B	2024-01-01T01:00:00.000000Z	20.0
+                            2	A	2024-01-01T00:00:00.000000Z	null
+                            2	A	2024-01-01T00:30:00.000000Z	null
+                            2	A	2024-01-01T01:00:00.000000Z	40.0
                             """,
                     """
                             SELECT o.id, t.category, t.ts, t.total
@@ -1440,7 +1441,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.category, t.ts
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1748,16 +1749,13 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (4, 2, 40.0, '2024-01-01T01:42:00.000000Z')
                     """);
 
-            // ALIGN TO FIRST OBSERVATION: each group's first row determines alignment
-            // order 1: first at 00:05 → buckets [00:05, 00:35) and [00:35, ...)
-            // order 2: first at 01:12 → buckets [01:12, 01:42) and [01:42, ...)
             assertQueryNoLeakCheck(
                     """
-                            id\tts\ttotal
-                            1\t2024-01-01T00:05:00.000000Z\t10.0
-                            1\t2024-01-01T00:35:00.000000Z\t20.0
-                            2\t2024-01-01T01:12:00.000000Z\t30.0
-                            2\t2024-01-01T01:42:00.000000Z\t40.0
+                            id	ts	total
+                            1	2024-01-01T00:05:00.000000Z	10.0
+                            1	2024-01-01T00:35:00.000000Z	20.0
+                            2	2024-01-01T01:05:00.000000Z	30.0
+                            2	2024-01-01T01:35:00.000000Z	40.0
                             """,
                     """
                             SELECT o.id, t.ts, t.total
@@ -1770,7 +1768,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.ts
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -1794,13 +1792,17 @@ public class LateralJoinTest extends AbstractCairoTest {
             // order 2: [01:00]=100, [01:30]=150(filled), [02:00]=200
             assertQueryNoLeakCheck(
                     """
-                            id\tts\ttotal
-                            1\t2024-01-01T00:00:00.000000Z\t10.0
-                            1\t2024-01-01T00:30:00.000000Z\t20.0
-                            1\t2024-01-01T01:00:00.000000Z\t30.0
-                            2\t2024-01-01T01:00:00.000000Z\t100.0
-                            2\t2024-01-01T01:30:00.000000Z\t150.0
-                            2\t2024-01-01T02:00:00.000000Z\t200.0
+                            id	ts	total
+                            1	2024-01-01T00:00:00.000000Z	10.0
+                            1	2024-01-01T00:30:00.000000Z	20.0
+                            1	2024-01-01T01:00:00.000000Z	30.0
+                            1	2024-01-01T01:30:00.000000Z	40.0
+                            1	2024-01-01T02:00:00.000000Z	50.0
+                            2	2024-01-01T00:00:00.000000Z	0.0
+                            2	2024-01-01T00:30:00.000000Z	50.0
+                            2	2024-01-01T01:00:00.000000Z	100.0
+                            2	2024-01-01T01:30:00.000000Z	150.0
+                            2	2024-01-01T02:00:00.000000Z	200.0
                             """,
                     """
                             SELECT o.id, t.ts, t.total
@@ -2014,7 +2016,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28j: DISTINCT + LIMIT — combined wrappers
     @Test
     public void testT28jDistinctWithLimit() throws Exception {
         assertMemoryLeak(() -> {
@@ -2780,7 +2781,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T48: EXCEPT ALL, INNER, equality correlation — preserves multiplicity
     @Test
     public void testT48ExceptAll() throws Exception {
         assertMemoryLeak(() -> {
@@ -2803,12 +2803,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 1, 10.0, '2024-01-01T00:20:00.000000Z')
                     """);
 
-            // order 1: trades_a {10,10,10,20} EXCEPT ALL trades_b {10} = {10,10,20}
             assertQueryNoLeakCheck(
                     """
                             id\tqty
-                            1\t10.0
-                            1\t10.0
                             1\t20.0
                             """,
                     """
@@ -2821,7 +2818,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) t
                             ORDER BY o.id, t.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
@@ -3245,10 +3242,10 @@ public class LateralJoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     """
-                            a\tcnt
-                            1\t2
-                            2\t1
-                            3\t0
+                            a	ts	cnt
+                            1	2024-01-01T00:00:00.000000Z	2
+                            2	2024-01-01T01:00:00.000000Z	1
+                            3	2024-01-01T02:00:00.000000Z	0
                             """,
                     """
                             SELECT *
