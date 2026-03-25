@@ -63,10 +63,14 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     private long activePageOffset;
     private MillisecondClock clock;
     private long columnTxn;
+    private FilesFacade ff;
+    private String readerColumnName;
+    private String readerPartitionPath;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
     private long partitionTxn;
     private long spinLockTimeoutMs;
+    private long valueFileTxn; // txn suffix of the currently opened .pv file
     private long valueMemSize = -1;
 
     @Override
@@ -184,10 +188,13 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         this.partitionTxn = partitionTxn;
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
         this.clock = configuration.getMillisecondClock();
+        this.readerPartitionPath = path.toString();
+        this.readerColumnName = columnName.toString();
+        this.ff = configuration.getFilesFacade();
         final int plen = path.size();
 
         try {
-            FilesFacade ff = configuration.getFilesFacade();
+            FilesFacade ff = this.ff;
             LPSZ name = PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
             keyMem.of(
                     ff,
@@ -206,9 +213,15 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 throw CairoException.critical(0).put("Unsupported Posting index version: ").put(version);
             }
 
+            // valueFileTxn determines which .pv file to open.
+            // -1 (COLUMN_NAME_TXN_NONE) or 0 (pre-upgrade zero-fill) = same as columnNameTxn.
+            // After seal, set to the bumped txn of the sealed .pv file.
+            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+            this.valueFileTxn = (metaValueTxn <= 0) ? columnNameTxn : metaValueTxn;
+
             this.valueMem.of(
                     configuration.getFilesFacade(),
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn),
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -224,13 +237,25 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         }
     }
 
+    private void openSidecarFilesIfPresent(Path path, CharSequence columnName, long columnNameTxn) {
+        openSidecarFilesIfPresent(ff, path, columnName, columnNameTxn);
+    }
+
     private void openSidecarFilesIfPresent(
             CairoConfiguration configuration,
             Path path,
             CharSequence columnName,
             long columnNameTxn
     ) {
-        FilesFacade ff = configuration.getFilesFacade();
+        openSidecarFilesIfPresent(configuration.getFilesFacade(), path, columnName, columnNameTxn);
+    }
+
+    private void openSidecarFilesIfPresent(
+            FilesFacade ff,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn
+    ) {
         int plen = path.size();
         LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, columnName, columnNameTxn);
         if (!ff.exists(pciFile)) {
@@ -295,7 +320,27 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         long maxSeq = Math.max(seqA, seqB);
         if (maxSeq != keyFileSequence) {
             readIndexMetadataFromBestPage();
-            if (valueMemSize > 0) {
+
+            // Check if the value file txn changed (seal wrote a new .pv file)
+            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+            long newValueFileTxn = (metaValueTxn <= 0) ? columnTxn : metaValueTxn;
+            if (newValueFileTxn != valueFileTxn && readerPartitionPath != null && ff != null) {
+                // Value file changed — close old mapping and open new .pv.
+                // Old .pv file stays on disk for other readers with active cursors.
+                valueFileTxn = newValueFileTxn;
+                Misc.free(valueMem);
+                try (Path p = new Path().of(readerPartitionPath)) {
+                    ((MemoryCMR) valueMem).of(ff,
+                            PostingIndexUtils.valueFileName(p, readerColumnName, valueFileTxn),
+                            ff.getMapPageSize(), valueMemSize,
+                            MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                }
+                // Also reopen sidecar files for covering index
+                closeSidecarMems();
+                try (Path p = new Path().of(readerPartitionPath)) {
+                    openSidecarFilesIfPresent(p, readerColumnName, valueFileTxn);
+                }
+            } else if (valueMemSize > 0) {
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
             }
             // snapshotMetadata (inside readIndexMetadataFromBestPage) already

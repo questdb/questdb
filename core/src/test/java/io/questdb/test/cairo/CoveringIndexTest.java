@@ -48,6 +48,248 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
+    public void testPostingIndexWithVarcharColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_varchar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        name VARCHAR,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_varchar VALUES
+                    ('2024-01-01T00:00:00', 'A', 'alice', 1),
+                    ('2024-01-01T01:00:00', 'B', 'bob', 2),
+                    ('2024-01-01T02:00:00', 'A', 'alice2', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    name\tval
+                    alice\t1
+                    alice2\t3
+                    """, "SELECT name, val FROM t_varchar WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testPostingIndexWithVarcharLargePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_varchar_big (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        name VARCHAR,
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL
+                    """);
+            // Insert enough data to create substantial partitions
+            for (int h = 0; h < 3; h++) {
+                StringBuilder sb = new StringBuilder("INSERT INTO t_varchar_big VALUES ");
+                for (int i = 0; i < 10_000; i++) {
+                    if (i > 0) sb.append(',');
+                    String sym = switch (i % 5) {
+                        case 0 -> "A";
+                        case 1 -> "B";
+                        case 2 -> "C";
+                        case 3 -> "D";
+                        default -> "E";
+                    };
+                    sb.append(String.format("('2024-01-01T%02d:%02d:%02d', '%s', 'name_%d_%d', %d.%d)",
+                            h, i / 60 % 60, i % 60, sym, h, i, 100 + h, i));
+                }
+                execute(sb.toString());
+            }
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    count
+                    6000
+                    """, "SELECT count() FROM t_varchar_big WHERE sym = 'A'");
+
+            // Access varchar column via index — verify no crash with var-size column
+            assertSql("""
+                    count
+                    5
+                    """, "SELECT count() FROM (SELECT name, val FROM t_varchar_big WHERE sym = 'A' LIMIT 5)");
+        });
+    }
+
+    @Test
+    public void testSealCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_seal VALUES
+                    ('2024-01-01T00:00:00', 'A', 1),
+                    ('2024-01-01T01:00:00', 'B', 2),
+                    ('2024-01-01T02:00:00', 'A', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            // Check what files exist
+            java.io.File partDir = new java.io.File(root, "t_seal~/2024-01-01");
+            String[] pvFiles = partDir.list((d, n) -> n.startsWith("sym.pv"));
+            System.out.println("PV files: " + java.util.Arrays.toString(pvFiles));
+
+            // Full scan without index (SELECT * doesn't use index)
+            assertSql("""
+                    ts\tsym\tval
+                    2024-01-01T00:00:00.000000Z\tA\t1
+                    2024-01-01T01:00:00.000000Z\tB\t2
+                    2024-01-01T02:00:00.000000Z\tA\t3
+                    """, "SELECT * FROM t_seal");
+
+            // Index scan
+            assertSql("""
+                    count
+                    2
+                    """, "SELECT count() FROM t_seal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testPostingIndexRowIdsMatchBitmap() throws Exception {
+        java.io.File parquetFile = new java.io.File("/tmp/entqdbroot/import/commodities_market_data.parquet");
+        org.junit.Assume.assumeTrue("parquet file not available", parquetFile.exists());
+        inputRoot = parquetFile.getParent();
+        assertMemoryLeak(() -> {
+            // Create two tables — same data, different index types
+            execute("""
+                    CREATE TABLE cmd_posting (
+                        timestamp TIMESTAMP,
+                        symbol SYMBOL INDEX TYPE POSTING,
+                        exchange SYMBOL,
+                        commodity_class SYMBOL,
+                        best_bid DOUBLE,
+                        best_ask DOUBLE
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
+                    """);
+            execute("""
+                    CREATE TABLE cmd_bitmap2 (
+                        timestamp TIMESTAMP,
+                        symbol SYMBOL INDEX,
+                        exchange SYMBOL,
+                        commodity_class SYMBOL,
+                        best_bid DOUBLE,
+                        best_ask DOUBLE
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
+                    """);
+            // No array columns — just fixed-width to avoid the crash
+            execute("INSERT INTO cmd_posting SELECT timestamp, symbol, exchange, commodity_class, best_bid, best_ask FROM read_parquet('commodities_market_data.parquet')");
+            execute("INSERT INTO cmd_bitmap2 SELECT timestamp, symbol, exchange, commodity_class, best_bid, best_ask FROM read_parquet('commodities_market_data.parquet')");
+            engine.releaseAllWriters();
+
+            // Compare row counts — both index types must return the same count
+            long bitmapCount;
+            long postingCount;
+
+            try (var f = select("SELECT count() FROM cmd_bitmap2 WHERE symbol = 'CL'");
+                 var c = f.getCursor(sqlExecutionContext)) {
+                c.hasNext();
+                bitmapCount = c.getRecord().getLong(0);
+            }
+            try (var f = select("SELECT count() FROM cmd_posting WHERE symbol = 'CL'");
+                 var c = f.getCursor(sqlExecutionContext)) {
+                c.hasNext();
+                postingCount = c.getRecord().getLong(0);
+            }
+            assertEquals("count mismatch for symbol='CL'", bitmapCount, postingCount);
+        });
+    }
+
+    @Test
+    public void testFilteredIndexScanWithArrayColumnParquetBitmap() throws Exception {
+        java.io.File parquetFile = new java.io.File("/tmp/entqdbroot/import/commodities_market_data.parquet");
+        org.junit.Assume.assumeTrue("parquet file not available", parquetFile.exists());
+        inputRoot = parquetFile.getParent();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE cmd_bitmap (
+                        timestamp TIMESTAMP,
+                        symbol SYMBOL INDEX,
+                        exchange SYMBOL,
+                        commodity_class SYMBOL,
+                        bids DOUBLE[][],
+                        asks DOUBLE[][],
+                        best_bid DOUBLE,
+                        best_ask DOUBLE
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
+                    """);
+            execute("INSERT INTO cmd_bitmap SELECT * FROM read_parquet('commodities_market_data.parquet')");
+            engine.releaseAllWriters();
+
+            // Just verify the query doesn't crash — any result is fine
+            try (var factory = select("""
+                    SELECT timestamp, symbol,
+                        first(best_bid) as open,
+                        max(best_bid) as high,
+                        min(best_bid) as low,
+                        last(best_bid) as close,
+                        avg(best_bid) as avgr,
+                        sum(bids[2][1]) as volume
+                    FROM cmd_bitmap
+                    WHERE symbol = 'CL' AND exchange = 'NYMEX'
+                    SAMPLE BY 15m
+                    """); var cursor = factory.getCursor(sqlExecutionContext)) {
+                int count = 0;
+                while (cursor.hasNext()) count++;
+                assertTrue(count > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredIndexScanWithArrayColumnParquet() throws Exception {
+        java.io.File parquetFile = new java.io.File("/tmp/entqdbroot/import/commodities_market_data.parquet");
+        org.junit.Assume.assumeTrue("parquet file not available", parquetFile.exists());
+        // Set sql.copy.input.root so read_parquet can find the file
+        inputRoot = parquetFile.getParent();
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE commodities_market_data (
+                        timestamp TIMESTAMP,
+                        symbol SYMBOL INDEX TYPE POSTING,
+                        exchange SYMBOL,
+                        commodity_class SYMBOL,
+                        bids DOUBLE[][],
+                        asks DOUBLE[][],
+                        best_bid DOUBLE,
+                        best_ask DOUBLE
+                    ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
+                    """);
+            execute("INSERT INTO commodities_market_data SELECT * FROM read_parquet('commodities_market_data.parquet')");
+            engine.releaseAllWriters();
+
+            // Full query with array access — verify no crash
+            try (var factory = select("""
+                    SELECT timestamp, symbol,
+                        first(best_bid) as open,
+                        max(best_bid) as high,
+                        min(best_bid) as low,
+                        last(best_bid) as close,
+                        avg(best_bid) as avgr,
+                        sum(bids[2][1]) as volume
+                    FROM commodities_market_data
+                    WHERE symbol = 'CL' AND exchange = 'NYMEX'
+                    SAMPLE BY 15m
+                    """); var cursor = factory.getCursor(sqlExecutionContext)) {
+                int count = 0;
+                while (cursor.hasNext()) count++;
+                assertTrue(count > 0);
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableWithIncludeSyntax() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

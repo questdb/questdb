@@ -5692,7 +5692,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int i = 0, n = indexers.size(); i < n; i++) {
                 ColumnIndexer indexer = indexers.getQuick(i);
                 if (indexer != null) {
-                    indexers.getQuick(i).releaseIndexWriter();
+                    indexer.releaseIndexWriter();
                 }
             }
             denseIndexers.clear();

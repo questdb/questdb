@@ -174,6 +174,7 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_MAX_VALUE = 24;
     public static final int PAGE_OFFSET_GEN_COUNT = 32;
     public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
+    public static final int PAGE_OFFSET_VALUE_FILE_TXN = 40; // 8 bytes: txn suffix for the .pv file
     public static final int PAGE_OFFSET_GEN_DIR = 64;
     public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
 
