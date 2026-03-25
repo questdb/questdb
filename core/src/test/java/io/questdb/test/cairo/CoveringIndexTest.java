@@ -3679,7 +3679,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             drainWalQueue();
             execute("INSERT INTO t_multi_commit VALUES ('2024-01-01T02:00:00', 'B', 20.0)");
             drainWalQueue();
-            engine.releaseAllWriters(); // seal merges all 3 gens
+            engine.releaseAllWriters();
 
             assertSql("""
                     price

@@ -1631,8 +1631,10 @@ public class PostingIndexWriter implements IndexWriter {
 
                     // Phase 3: Re-encode into single generation using stride-indexed format
                     // with adaptive per-stride encoding (delta vs flat).
-                    // Write to a NEW value file (.pv.{txn+1}) at offset 0 — the old .pv
-                    // is left untouched so concurrent readers keep their valid mmap.
+                    // Seal path: write to a NEW value file (.pv.{txn+1}) so concurrent
+                    // readers keep their valid mmap on the old file.
+                    // Rollback path: write in-place to existing valueMem (no concurrent
+                    // readers during an active writer session).
                     {
                         int sc = PostingIndexUtils.strideCount(keyCount);
                         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
