@@ -5769,13 +5769,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> bindVarFunctions = null;
         Function filter = null;
         ExpressionNode filterExpr = null;
-        final boolean parallelHorizonJoinEnabled = executionContext.isParallelHorizonJoinEnabled();
-        boolean supportsParallelism = parallelHorizonJoinEnabled && masterFactory.supportsPageFrameCursor();
-
-        final boolean canStealFilter = parallelHorizonJoinEnabled
-                && masterFactory.supportsFilterStealing()
-                && masterFactory.getBaseFactory().supportsPageFrameCursor();
-        supportsParallelism |= canStealFilter;
+        final boolean canStealFilter;
+        boolean supportsParallelism;
+        if (executionContext.isParallelHorizonJoinEnabled()) {
+            canStealFilter = masterFactory.supportsFilterStealing()
+                    && masterFactory.getBaseFactory().supportsPageFrameCursor();
+            supportsParallelism = masterFactory.supportsPageFrameCursor() || canStealFilter;
+        } else {
+            canStealFilter = false;
+            supportsParallelism = false;
+        }
 
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
