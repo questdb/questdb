@@ -650,7 +650,7 @@ class LateralJoinRewriter {
             ExpressionNode joinCriteria = innerJoin.getJoinCriteria();
             if (hasCorrelatedExprAtDepth(joinCriteria, depth)) {
                 innerJoin.setJoinCriteria(
-                        rewriteOuterRefs(joinCriteria, outerToInnerAlias)
+                        rewriteOuterRefs(joinCriteria, outerToInnerAlias, depth)
                 );
             }
         }
@@ -828,7 +828,7 @@ class LateralJoinRewriter {
             extractCorrelatedPredicates(current.getWhereClause(), branchCorrelated, branchNonCorrelated, depth);
 
             for (int j = 0, m = branchCorrelated.size(); j < m; j++) {
-                branchCorrelated.setQuick(j, rewriteOuterRefs(branchCorrelated.getQuick(j), outerToInnerAlias));
+                branchCorrelated.setQuick(j, rewriteOuterRefs(branchCorrelated.getQuick(j), outerToInnerAlias, depth));
             }
             current.setWhereClause(conjoin(branchNonCorrelated));
             if (branchCorrelated.size() > 0) {
@@ -842,14 +842,14 @@ class LateralJoinRewriter {
             if (current.getSampleBy() != null
                     && hasCorrelatedExprAtDepth(current.getSampleBy(), depth)) {
                 current.setSampleBy(
-                        rewriteOuterRefs(current.getSampleBy(), outerToInnerAlias));
+                        rewriteOuterRefs(current.getSampleBy(), outerToInnerAlias, depth));
             }
             ObjList<ExpressionNode> branchLatestBy = current.getLatestBy();
             for (int j = 0, m = branchLatestBy.size(); j < m; j++) {
                 ExpressionNode lb = branchLatestBy.getQuick(j);
                 if (hasCorrelatedExprAtDepth(lb, depth)) {
                     branchLatestBy.setQuick(j,
-                            rewriteOuterRefs(lb, outerToInnerAlias));
+                            rewriteOuterRefs(lb, outerToInnerAlias, depth));
                 }
             }
 
@@ -1636,21 +1636,21 @@ class LateralJoinRewriter {
         if (current.getSampleBy() != null
                 && hasCorrelatedExprAtDepth(current.getSampleBy(), depth)) {
             current.setSampleBy(
-                    rewriteOuterRefs(current.getSampleBy(), outerToInnerAlias));
+                    rewriteOuterRefs(current.getSampleBy(), outerToInnerAlias, depth));
         }
         ObjList<ExpressionNode> latestBy = current.getLatestBy();
         for (int li = 0, ln = latestBy.size(); li < ln; li++) {
             ExpressionNode lb = latestBy.getQuick(li);
             if (hasCorrelatedExprAtDepth(lb, depth)) {
                 latestBy.setQuick(li,
-                        rewriteOuterRefs(lb, outerToInnerAlias));
+                        rewriteOuterRefs(lb, outerToInnerAlias, depth));
             }
         }
 
         if (current.getWhereClause() != null
                 && hasCorrelatedExprAtDepth(current.getWhereClause(), depth)) {
             current.setWhereClause(
-                    rewriteOuterRefs(current.getWhereClause(), outerToInnerAlias));
+                    rewriteOuterRefs(current.getWhereClause(), outerToInnerAlias, depth));
         }
 
         // 5. Neumann-style push: handle each branch independently
@@ -1700,7 +1700,7 @@ class LateralJoinRewriter {
                     for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
                         ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
                         if (hasCorrelatedExprAtDepth(pred, depth)) {
-                            ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias);
+                            ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias, depth);
                             if (jmNested != null) {
                                 ExpressionNode w = jmNested.getWhereClause();
                                 jmNested.setWhereClause(w != null ? createBinaryOp("and", w, rewritten) : rewritten);
@@ -2008,7 +2008,7 @@ class LateralJoinRewriter {
             ExpressionNode expr = groupBy.getQuick(i);
             if (hasCorrelatedExprAtDepth(expr, depth)) {
                 groupBy.setQuick(i,
-                        rewriteOuterRefs(expr, outerToInnerAlias));
+                        rewriteOuterRefs(expr, outerToInnerAlias, depth));
             }
         }
     }
@@ -2023,7 +2023,7 @@ class LateralJoinRewriter {
             ExpressionNode expr = orderBy.getQuick(i);
             if (hasCorrelatedExprAtDepth(expr, depth)) {
                 orderBy.setQuick(i,
-                        rewriteOuterRefs(expr, outerToInnerAlias));
+                        rewriteOuterRefs(expr, outerToInnerAlias, depth));
             }
         }
     }
@@ -2055,7 +2055,7 @@ class LateralJoinRewriter {
                     model.removeColumn(j);
                 }
             } else {
-                ExpressionNode rewritten = rewriteOuterRefs(ast, aliasMap);
+                ExpressionNode rewritten = rewriteOuterRefs(ast, aliasMap, 0);
                 if (rewritten != ast) {
                     col.of(col.getAlias(), rewritten);
                 }
@@ -2086,13 +2086,14 @@ class LateralJoinRewriter {
 
     private ExpressionNode rewriteOuterRefs(
             ExpressionNode node,
-            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            int depth
     ) {
         if (node == null) {
             return null;
         }
         if (node.type == ExpressionNode.QUERY && node.queryModel != null) {
-            rewriteOuterRefsInSubquery(node.queryModel, outerToInnerAlias);
+            rewriteOuterRefsInSubquery(node.queryModel, outerToInnerAlias, depth);
             return node;
         }
         if (node.type == ExpressionNode.LITERAL) {
@@ -2103,7 +2104,7 @@ class LateralJoinRewriter {
                 );
             }
 
-            if (Chars.indexOf(node.token, '.') < 0 && node.lateralDepth > 0) {
+            if (Chars.indexOf(node.token, '.') < 0 && node.lateralDepth == depth) {
                 ObjList<CharSequence> keys = outerToInnerAlias.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     CharSequence key = keys.getQuick(i);
@@ -2124,22 +2125,22 @@ class LateralJoinRewriter {
             }
             return node;
         }
-        node.lhs = rewriteOuterRefs(node.lhs, outerToInnerAlias);
-        node.rhs = rewriteOuterRefs(node.rhs, outerToInnerAlias);
+        node.lhs = rewriteOuterRefs(node.lhs, outerToInnerAlias, depth);
+        node.rhs = rewriteOuterRefs(node.rhs, outerToInnerAlias, depth);
         for (int i = 0, n = node.args.size(); i < n; i++) {
             node.args.setQuick(i, rewriteOuterRefs(
-                    node.args.getQuick(i), outerToInnerAlias));
+                    node.args.getQuick(i), outerToInnerAlias, depth));
         }
         if (node.windowExpression != null) {
             ObjList<ExpressionNode> partitionBy = node.windowExpression.getPartitionBy();
             for (int i = 0, n = partitionBy.size(); i < n; i++) {
                 partitionBy.setQuick(i, rewriteOuterRefs(
-                        partitionBy.getQuick(i), outerToInnerAlias));
+                        partitionBy.getQuick(i), outerToInnerAlias, depth));
             }
             ObjList<ExpressionNode> winOrderBy = node.windowExpression.getOrderBy();
             for (int i = 0, n = winOrderBy.size(); i < n; i++) {
                 winOrderBy.setQuick(i, rewriteOuterRefs(
-                        winOrderBy.getQuick(i), outerToInnerAlias));
+                        winOrderBy.getQuick(i), outerToInnerAlias, depth));
             }
         }
         return node;
@@ -2151,31 +2152,31 @@ class LateralJoinRewriter {
     ) {
         ExpressionNode where = model.getWhereClause();
         if (where != null) {
-            ExpressionNode rewritten = rewriteOuterRefs(where, aliasMap);
+            ExpressionNode rewritten = rewriteOuterRefs(where, aliasMap, 0);
             if (rewritten != where) {
                 model.setWhereClause(rewritten);
             }
         }
         ObjList<ExpressionNode> groupBy = model.getGroupBy();
         for (int j = 0, sz = groupBy.size(); j < sz; j++) {
-            groupBy.setQuick(j, rewriteOuterRefs(groupBy.getQuick(j), aliasMap));
+            groupBy.setQuick(j, rewriteOuterRefs(groupBy.getQuick(j), aliasMap, 0));
         }
         ObjList<ExpressionNode> orderBy = model.getOrderBy();
         for (int j = 0, sz = orderBy.size(); j < sz; j++) {
-            orderBy.setQuick(j, rewriteOuterRefs(orderBy.getQuick(j), aliasMap));
+            orderBy.setQuick(j, rewriteOuterRefs(orderBy.getQuick(j), aliasMap, 0));
         }
         if (model.getSampleBy() != null) {
-            model.setSampleBy(rewriteOuterRefs(model.getSampleBy(), aliasMap));
+            model.setSampleBy(rewriteOuterRefs(model.getSampleBy(), aliasMap, 0));
         }
         ObjList<ExpressionNode> latestBy = model.getLatestBy();
         for (int j = 0, sz = latestBy.size(); j < sz; j++) {
-            latestBy.setQuick(j, rewriteOuterRefs(latestBy.getQuick(j), aliasMap));
+            latestBy.setQuick(j, rewriteOuterRefs(latestBy.getQuick(j), aliasMap, 0));
         }
         for (int j = 1, sz = model.getJoinModels().size(); j < sz; j++) {
             QueryModel jm = model.getJoinModels().getQuick(j);
             ExpressionNode jc = jm.getJoinCriteria();
             if (jc != null) {
-                ExpressionNode rewritten = rewriteOuterRefs(jc, aliasMap);
+                ExpressionNode rewritten = rewriteOuterRefs(jc, aliasMap, 0);
                 if (rewritten != jc) {
                     jm.setJoinCriteria(rewritten);
                 }
@@ -2185,46 +2186,47 @@ class LateralJoinRewriter {
 
     private void rewriteOuterRefsInSubquery(
             QueryModel subquery,
-            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            int depth
     ) {
         ObjList<QueryColumn> cols = subquery.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
             QueryColumn col = cols.getQuick(i);
             ExpressionNode ast = col.getAst();
-            ExpressionNode rewritten = rewriteOuterRefs(ast, outerToInnerAlias);
+            ExpressionNode rewritten = rewriteOuterRefs(ast, outerToInnerAlias, depth);
             if (rewritten != ast) {
                 col.of(col.getAlias(), rewritten);
             }
         }
         if (subquery.getWhereClause() != null) {
             subquery.setWhereClause(
-                    rewriteOuterRefs(subquery.getWhereClause(), outerToInnerAlias)
+                    rewriteOuterRefs(subquery.getWhereClause(), outerToInnerAlias, depth)
             );
         }
         ObjList<ExpressionNode> orderBy = subquery.getOrderBy();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             orderBy.setQuick(i,
-                    rewriteOuterRefs(orderBy.getQuick(i), outerToInnerAlias));
+                    rewriteOuterRefs(orderBy.getQuick(i), outerToInnerAlias, depth));
         }
         ObjList<ExpressionNode> groupBy = subquery.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             groupBy.setQuick(i,
-                    rewriteOuterRefs(groupBy.getQuick(i), outerToInnerAlias));
+                    rewriteOuterRefs(groupBy.getQuick(i), outerToInnerAlias, depth));
         }
         if (subquery.getSampleBy() != null) {
             subquery.setSampleBy(
-                    rewriteOuterRefs(subquery.getSampleBy(), outerToInnerAlias));
+                    rewriteOuterRefs(subquery.getSampleBy(), outerToInnerAlias, depth));
         }
         ObjList<ExpressionNode> latestBy = subquery.getLatestBy();
         for (int i = 0, n = latestBy.size(); i < n; i++) {
             latestBy.setQuick(i,
-                    rewriteOuterRefs(latestBy.getQuick(i), outerToInnerAlias));
+                    rewriteOuterRefs(latestBy.getQuick(i), outerToInnerAlias, depth));
         }
         if (subquery.getLimitLo() != null) {
             subquery.setLimit(
-                    rewriteOuterRefs(subquery.getLimitLo(), outerToInnerAlias),
+                    rewriteOuterRefs(subquery.getLimitLo(), outerToInnerAlias, depth),
                     subquery.getLimitHi() != null
-                            ? rewriteOuterRefs(subquery.getLimitHi(), outerToInnerAlias)
+                            ? rewriteOuterRefs(subquery.getLimitHi(), outerToInnerAlias, depth)
                             : null
             );
         }
@@ -2232,15 +2234,15 @@ class LateralJoinRewriter {
             QueryModel jm = subquery.getJoinModels().getQuick(i);
             if (jm.getJoinCriteria() != null) {
                 jm.setJoinCriteria(
-                        rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias)
+                        rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth)
                 );
             }
         }
         if (subquery.getNestedModel() != null) {
-            rewriteOuterRefsInSubquery(subquery.getNestedModel(), outerToInnerAlias);
+            rewriteOuterRefsInSubquery(subquery.getNestedModel(), outerToInnerAlias, depth);
         }
         if (subquery.getUnionModel() != null) {
-            rewriteOuterRefsInSubquery(subquery.getUnionModel(), outerToInnerAlias);
+            rewriteOuterRefsInSubquery(subquery.getUnionModel(), outerToInnerAlias, depth);
         }
     }
 
@@ -2254,7 +2256,7 @@ class LateralJoinRewriter {
             ExpressionNode ast = col.getAst();
             if (hasCorrelatedExprAtDepth(ast, depth)) {
                 col.of(col.getAlias(),
-                        rewriteOuterRefs(ast, outerToInnerAlias));
+                        rewriteOuterRefs(ast, outerToInnerAlias, depth));
             }
         }
     }
@@ -2373,7 +2375,7 @@ class LateralJoinRewriter {
         ExpressionNode joinCrit = null;
         for (int j = 0, m = correlatedPreds.size(); j < m; j++) {
             ExpressionNode rewritten = rewriteOuterRefs(
-                    correlatedPreds.getQuick(j), outerToInnerAlias);
+                    correlatedPreds.getQuick(j), outerToInnerAlias, depth);
             joinCrit = joinCrit == null ? rewritten : createBinaryOp("and", joinCrit, rewritten);
         }
 
@@ -2582,16 +2584,8 @@ class LateralJoinRewriter {
             }
             current = current.getNestedModel();
         }
-
-        if (joinModel != null) {
-            if (isAllEqualities) {
-                ExpressionNode existingCrit = joinModel.getJoinCriteria();
-                if (existingCrit != null) {
-                    joinModel.setJoinCriteria(rewriteOuterRefs(existingCrit, outerToInnerAlias));
-                }
-            } else {
-                joinModel.setJoinCriteria(simpleChainCriteria);
-            }
+        if (joinModel != null && !isAllEqualities) {
+            joinModel.setJoinCriteria(simpleChainCriteria);
         }
 
         ObjList<QueryColumn> branchTopCols = branchTop.getBottomUpColumns();
