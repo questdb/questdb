@@ -1003,8 +1003,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
             this.sidecarOrdinal = 0;
-            // Compute prefix count for var-sized sidecar addressing.
-            // Only needed when covering columns exist.
             if (coverCount > 0) {
                 int deltaKeyStartCount = 0;
                 for (int k = 0; k < localKey; k++) {
@@ -1040,9 +1038,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
-            // Compute sidecar base: sum of counts for keys before this one.
-            // Only needed when covering columns exist — O(idx) scan is expensive
-            // for high-cardinality indexes (5M+ keys).
+            // Compute sidecar base only when covering columns exist.
+            // O(idx) scan is expensive for high-cardinality indexes but only
+            // runs when covered values are actually needed.
             if (coverCount > 0) {
                 int sidecarBase = 0;
                 for (int i = 0; i < idx; i++) {
@@ -1089,9 +1087,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
-            // Compute sidecar base: sum of counts for keys before this one.
-            // Only needed when covering columns exist — O(idx) scan is expensive
-            // for high-cardinality indexes (5M+ keys).
+            // Compute sidecar base only when covering columns exist.
+            // O(idx) scan is expensive for high-cardinality indexes but only
+            // runs when covered values are actually needed.
             if (coverCount > 0) {
                 int sidecarBase = 0;
                 for (int i = 0; i < idx; i++) {
