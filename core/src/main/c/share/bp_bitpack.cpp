@@ -147,6 +147,209 @@ static void unpack_32bit_avx2(const uint8_t *src, int32_t count, int64_t min_val
     }
 }
 
+// ============= Lemire-style AVX2 unpack using shuffle+variable-shift =============
+// For each group of 8 values (8*W bits = W bytes of packed data):
+// 1. Load W bytes into low part of __m256i
+// 2. Shuffle bytes so each 32-bit lane holds the 4 bytes containing one value
+// 3. Variable-shift right to align the value to bit 0 in each lane
+// 4. Mask to W bits
+// 5. Widen 8 × uint32 → 8 × int64, add minValue, store
+//
+// The shuffle mask and shift amounts are precomputed per bitwidth.
+// This gives true SIMD extraction: 8 values per ~5 AVX2 instructions.
+
+#if HAS_X86_64
+
+// Generate shuffle mask + shift amounts for a given bitwidth.
+// For value k (0..7), bit position = k*W. Byte offset = (k*W)/8.
+// The 4 bytes starting at that offset contain the value's bits.
+// Shuffle mask selects those 4 bytes into lane k's position.
+struct UnpackParams {
+    alignas(32) uint8_t shuffle_lo[32]; // for values 0-7, maps to lanes 0-7 of 32-bit
+    alignas(32) int32_t shifts[8];      // right-shift per lane
+    uint32_t mask;
+};
+
+static UnpackParams make_unpack_params(int bit_width) {
+    UnpackParams p{};
+    p.mask = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
+
+    for (int k = 0; k < 8; k++) {
+        int bit_pos = k * bit_width;
+        int byte_off = bit_pos >> 3;
+        int bit_shift = bit_pos & 7;
+        p.shifts[k] = bit_shift;
+
+        // vpshufb operates on two independent 128-bit lanes.
+        // Since we broadcast the source (same 16 bytes in both lanes),
+        // indices must be 0-15 in both lanes.
+        for (int b = 0; b < 4; b++) {
+            int src_byte = byte_off + b;
+            if (src_byte < 16) {
+                p.shuffle_lo[k * 4 + b] = (uint8_t) src_byte;
+            } else {
+                p.shuffle_lo[k * 4 + b] = 0x80; // zero (out of range)
+            }
+        }
+    }
+    return p;
+}
+
+// For bit_width <= 16: 8 values × W bits ≤ 128 bits = 16 bytes.
+// All source bytes fit in the low 128-bit lane of vpshufb.
+// This gives true SIMD extraction: vpshufb + vpsrlvd + vpand.
+__attribute__((target("avx2")))
+static void unpack_lemire_avx2(const uint8_t *src, int32_t count,
+                                int32_t bit_width, int64_t min_value, int64_t *dest) {
+    UnpackParams params = make_unpack_params(bit_width);
+    __m256i vbase = _mm256_set1_epi64x(min_value);
+
+    if (bit_width <= 16) {
+        // True SIMD path: vpshufb rearranges bytes, vpsrlvd shifts, vpand masks.
+        // The shuffle mask places each value's bytes into separate 32-bit lanes.
+        // Both 128-bit halves of the shuffle mask select from the same 16 source bytes.
+        __m256i vmask32 = _mm256_set1_epi32(params.mask);
+        __m256i vshuf = _mm256_load_si256(reinterpret_cast<const __m256i*>(params.shuffle_lo));
+        __m256i vshift = _mm256_load_si256(reinterpret_cast<const __m256i*>(params.shifts));
+
+        int bytes_per_8 = (8 * bit_width + 7) >> 3;
+
+        int i = 0;
+        for (; i + 7 < count; i += 8) {
+            int byte_off = (i * bit_width) >> 3;
+            // Load 16 bytes, broadcast to both 128-bit lanes
+            __m128i loaded = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + byte_off));
+            __m256i data = _mm256_broadcastsi128_si256(loaded);
+            // Shuffle: each 32-bit lane gets its value's bytes
+            __m256i shuffled = _mm256_shuffle_epi8(data, vshuf);
+            // Variable shift right: align each value to bit 0
+            __m256i shifted = _mm256_srlv_epi32(shuffled, vshift);
+            // Mask to bit_width bits
+            __m256i masked = _mm256_and_si256(shifted, vmask32);
+            // Widen 8 × uint32 → 8 × int64 and add min_value
+            __m128i lo4 = _mm256_castsi256_si128(masked);
+            __m128i hi4 = _mm256_extracti128_si256(masked, 1);
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i),
+                                _mm256_add_epi64(_mm256_cvtepu32_epi64(lo4), vbase));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i + 4),
+                                _mm256_add_epi64(_mm256_cvtepu32_epi64(hi4), vbase));
+        }
+        // Tail
+        for (; i < count; i++) {
+            int64_t bp = (int64_t)i * bit_width;
+            int bo = (int)(bp >> 3);
+            int bs = (int)(bp & 7);
+            uint64_t raw;
+            std::memcpy(&raw, src + bo, sizeof(raw));
+            dest[i] = min_value + (int64_t)((raw >> bs) & params.mask);
+        }
+    } else {
+        // bit_width 17-31: scalar extract + SIMD widen (cross-lane shuffle too complex)
+        int i = 0;
+        for (; i + 7 < count; i += 8) {
+            uint32_t vals[8];
+            for (int k = 0; k < 8; k++) {
+                int64_t bp = (int64_t)(i + k) * bit_width;
+                int bo = (int)(bp >> 3);
+                int bs = (int)(bp & 7);
+                uint64_t r;
+                std::memcpy(&r, src + bo, sizeof(r));
+                vals[k] = (uint32_t)((r >> bs) & params.mask);
+            }
+            __m128i lo4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(vals));
+            __m128i hi4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(vals + 4));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i),
+                                _mm256_add_epi64(_mm256_cvtepu32_epi64(lo4), vbase));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i + 4),
+                                _mm256_add_epi64(_mm256_cvtepu32_epi64(hi4), vbase));
+        }
+        for (; i < count; i++) {
+            int64_t bp = (int64_t)i * bit_width;
+            int bo = (int)(bp >> 3);
+            int bs = (int)(bp & 7);
+            uint64_t raw;
+            std::memcpy(&raw, src + bo, sizeof(raw));
+            dest[i] = min_value + (int64_t)((raw >> bs) & params.mask);
+        }
+    }
+}
+
+#endif // HAS_X86_64
+
+// ============= Hybrid AVX2 unpack for arbitrary bitwidths 1-31 ==================
+// Scalar extraction (8-byte load + shift + mask per value) into a uint32 buffer,
+// then SIMD widen (cvtepu32_epi64) + add (epi64) + store (256-bit).
+// The widen+store is the bottleneck in the Java scalar path — this eliminates it.
+// Processes 8 values per iteration: scalar extract 8 × uint32, then 2 × AVX2 stores.
+
+__attribute__((target("avx2")))
+static void unpack_general_avx2(const uint8_t *src, int32_t count,
+                                 int32_t bit_width, int64_t min_value, int64_t *dest) {
+    uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
+    __m256i vbase = _mm256_set1_epi64x(min_value);
+
+    int i = 0;
+    for (; i + 7 < count; i += 8) {
+        uint32_t vals[8];
+        for (int k = 0; k < 8; k++) {
+            int64_t bp = (int64_t)(i + k) * bit_width;
+            int bo = (int)(bp >> 3);
+            int bs = (int)(bp & 7);
+            uint64_t raw;
+            std::memcpy(&raw, src + bo, sizeof(raw));
+            vals[k] = (uint32_t)((raw >> bs) & mask32);
+        }
+        __m128i lo4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(vals));
+        __m128i hi4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(vals + 4));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i),
+                            _mm256_add_epi64(_mm256_cvtepu32_epi64(lo4), vbase));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i + 4),
+                            _mm256_add_epi64(_mm256_cvtepu32_epi64(hi4), vbase));
+    }
+    for (; i < count; i++) {
+        int64_t bp = (int64_t)i * bit_width;
+        int bo = (int)(bp >> 3);
+        int bs = (int)(bp & 7);
+        uint64_t raw;
+        std::memcpy(&raw, src + bo, sizeof(raw));
+        dest[i] = min_value + (int64_t)((raw >> bs) & mask32);
+    }
+}
+
+__attribute__((target("avx2")))
+static void unpack_from_general_avx2(const uint8_t *src, int32_t start_index, int32_t value_count,
+                                      int32_t bit_width, int64_t min_value, int64_t *dest) {
+    uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
+    __m256i vbase = _mm256_set1_epi64x(min_value);
+
+    int i = 0;
+    for (; i + 7 < value_count; i += 8) {
+        uint32_t vals[8];
+        for (int k = 0; k < 8; k++) {
+            int64_t bp = (int64_t)(start_index + i + k) * bit_width;
+            int bo = (int)(bp >> 3);
+            int bs = (int)(bp & 7);
+            uint64_t raw;
+            std::memcpy(&raw, src + bo, sizeof(raw));
+            vals[k] = (uint32_t)((raw >> bs) & mask32);
+        }
+        __m128i lo4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(vals));
+        __m128i hi4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(vals + 4));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i),
+                            _mm256_add_epi64(_mm256_cvtepu32_epi64(lo4), vbase));
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dest + i + 4),
+                            _mm256_add_epi64(_mm256_cvtepu32_epi64(hi4), vbase));
+    }
+    for (; i < value_count; i++) {
+        int64_t bp = (int64_t)(start_index + i) * bit_width;
+        int bo = (int)(bp >> 3);
+        int bs = (int)(bp & 7);
+        uint64_t raw;
+        std::memcpy(&raw, src + bo, sizeof(raw));
+        dest[i] = min_value + (int64_t)((raw >> bs) & mask32);
+    }
+}
+
 #endif // HAS_X86_64
 
 // ============= Dispatch =============
@@ -166,6 +369,10 @@ static void unpack_all_values(const uint8_t *src, int32_t value_count,
                 unpack_32bit_avx2(src, value_count, min_value, dest);
                 return;
             default:
+                if (bit_width > 0 && bit_width < 32) {
+                    unpack_general_avx2(src, value_count, bit_width, min_value, dest);
+                    return;
+                }
                 break;
         }
     }
@@ -224,6 +431,10 @@ static void unpack_values_from(const uint8_t *src, int32_t start_index, int32_t 
                 unpack_32bit_avx2(src + start_index * 4, value_count, min_value, dest);
                 return;
             default:
+                if (bit_width > 0 && bit_width < 32) {
+                    unpack_from_general_avx2(src, start_index, value_count, bit_width, min_value, dest);
+                    return;
+                }
                 break;
         }
     }

@@ -177,6 +177,10 @@ public final class BitpackUtils {
      * @param dest       destination array
      */
     public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth, long minValue, long destAddr) {
+        if (PostingIndexNative.isNativeAvailable() && valueCount > 0 && bitWidth > 0 && bitWidth <= 32) {
+            PostingIndexNative.unpackAllValuesNative(srcAddr, valueCount, bitWidth, minValue, destAddr);
+            return;
+        }
         long buffer = 0;
         int bufferBits = 0;
         int srcOffset = 0;
@@ -223,8 +227,8 @@ public final class BitpackUtils {
         if (valueCount == 0) {
             return;
         }
-        // Dispatch to native for byte-aligned widths where AVX2 gives a real speedup.
-        if (PostingIndexNative.isNativeAvailable() && (bitWidth == 8 || bitWidth == 16 || bitWidth == 32)) {
+        // Dispatch to native for all widths 1-32 — AVX2 widen+store is faster than Java Unsafe.putLong.
+        if (PostingIndexNative.isNativeAvailable() && bitWidth > 0 && bitWidth <= 32) {
             PostingIndexNative.unpackValuesFrom(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
             return;
         }
