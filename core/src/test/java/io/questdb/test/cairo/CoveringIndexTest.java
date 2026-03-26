@@ -4362,4 +4362,321 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT label FROM t_cover_string WHERE sym = 'X'");
         });
     }
+
+    @Test
+    public void testCoveringQueryStringNull() throws Exception {
+        // STRING column in INCLUDE with NULL values
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_string_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cover_string_null VALUES
+                    ('2024-01-01T00:00:00', 'X', 'hello'),
+                    ('2024-01-01T01:00:00', 'X', NULL),
+                    ('2024-01-01T02:00:00', 'X', 'foo')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    label
+                    hello
+                    \n\
+                    foo
+                    """, "SELECT label FROM t_cover_string_null WHERE sym = 'X'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryVarcharEmpty() throws Exception {
+        // Empty string (zero-length VARCHAR) in INCLUDE
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_varchar_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price),
+                        name VARCHAR,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cover_varchar_empty VALUES
+                    ('2024-01-01T00:00:00', 'A', 'alice', 10.0),
+                    ('2024-01-01T01:00:00', 'A', '', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 'anna', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    name\tprice
+                    alice\t10.0
+                    \t20.0
+                    anna\t30.0
+                    """, "SELECT name, price FROM t_cover_varchar_empty WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryVarcharMultiCommit() throws Exception {
+        // Multi-commit (multi-gen) with var-sized covered column
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_varchar_mc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price),
+                        name VARCHAR,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_cover_varchar_mc VALUES ('2024-01-01T00:00:00', 'A', 'alice', 10.0)");
+            execute("INSERT INTO t_cover_varchar_mc VALUES ('2024-01-01T01:00:00', 'A', 'anna', 20.0)");
+            execute("INSERT INTO t_cover_varchar_mc VALUES ('2024-01-01T02:00:00', 'B', 'bob', 30.0)");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    name\tprice
+                    alice\t10.0
+                    anna\t20.0
+                    """, "SELECT name, price FROM t_cover_varchar_mc WHERE sym = 'A'");
+
+            assertSql("""
+                    name\tprice
+                    bob\t30.0
+                    """, "SELECT name, price FROM t_cover_varchar_mc WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryStringMultiCommit() throws Exception {
+        // Multi-commit (multi-gen) with STRING covered column
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_string_mc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_cover_string_mc VALUES ('2024-01-01T00:00:00', 'X', 'hello')");
+            execute("INSERT INTO t_cover_string_mc VALUES ('2024-01-01T01:00:00', 'X', 'world')");
+            execute("INSERT INTO t_cover_string_mc VALUES ('2024-01-01T02:00:00', 'Y', 'foo')");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    label
+                    hello
+                    world
+                    """, "SELECT label FROM t_cover_string_mc WHERE sym = 'X'");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnVarchar() throws Exception {
+        // LATEST ON with VARCHAR covered column
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_varchar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price),
+                        name VARCHAR,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_varchar VALUES
+                    ('2024-01-01T00:00:00', 'A', 'alice', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 'bob', 20.0),
+                    ('2024-01-02T00:00:00', 'A', 'anna', 30.0),
+                    ('2024-01-02T01:00:00', 'B', 'bea', 40.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    name\tprice
+                    anna\t30.0
+                    """, "SELECT name, price FROM t_latest_varchar WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+
+            assertSql("""
+                    name\tprice
+                    bea\t40.0
+                    """, "SELECT name, price FROM t_latest_varchar WHERE sym = 'B' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnString() throws Exception {
+        // LATEST ON with STRING covered column
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_string (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_string VALUES
+                    ('2024-01-01T00:00:00', 'X', 'hello'),
+                    ('2024-01-02T00:00:00', 'X', 'world'),
+                    ('2024-01-02T01:00:00', 'Y', 'bar')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    label
+                    world
+                    """, "SELECT label FROM t_latest_string WHERE sym = 'X' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringInListVarchar() throws Exception {
+        // IN-list with VARCHAR covered column
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_varchar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price),
+                        name VARCHAR,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_varchar VALUES
+                    ('2024-01-01T00:00:00', 'A', 'alice', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 'bob', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 'anna', 30.0),
+                    ('2024-01-01T03:00:00', 'C', 'carol', 40.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // IN list with covering VARCHAR — results grouped by key (A first, then B)
+            assertSql("""
+                    name\tprice
+                    alice\t10.0
+                    anna\t30.0
+                    bob\t20.0
+                    """, "SELECT name, price FROM t_in_varchar WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCoveringInListString() throws Exception {
+        // IN-list with STRING covered column
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_string (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_string VALUES
+                    ('2024-01-01T00:00:00', 'X', 'hello'),
+                    ('2024-01-01T01:00:00', 'Y', 'world'),
+                    ('2024-01-01T02:00:00', 'X', 'foo')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    label
+                    hello
+                    foo
+                    world
+                    """, "SELECT label FROM t_in_string WHERE sym IN ('X', 'Y')");
+        });
+    }
+
+    @Test
+    public void testFallbackVarcharWithNonCoveredColumn() throws Exception {
+        // Selecting non-covered column alongside covered VARCHAR forces fallback to regular scan
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fb_varchar (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name),
+                        name VARCHAR,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fb_varchar VALUES
+                    ('2024-01-01T00:00:00', 'A', 'alice', 1),
+                    ('2024-01-01T01:00:00', 'B', 'bob', 2),
+                    ('2024-01-01T02:00:00', 'A', 'anna', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            // extra is not in INCLUDE — falls back to regular indexed scan
+            assertSql("""
+                    name\textra
+                    alice\t1
+                    anna\t3
+                    """, "SELECT name, extra FROM t_fb_varchar WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testFallbackStringWithNonCoveredColumn() throws Exception {
+        // Selecting non-covered column alongside covered STRING forces fallback to regular scan
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fb_string (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label),
+                        label STRING,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fb_string VALUES
+                    ('2024-01-01T00:00:00', 'X', 'hello', 1),
+                    ('2024-01-01T01:00:00', 'Y', 'world', 2),
+                    ('2024-01-01T02:00:00', 'X', 'foo', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            // extra is not in INCLUDE — falls back to regular indexed scan
+            assertSql("""
+                    label\textra
+                    hello\t1
+                    foo\t3
+                    """, "SELECT label, extra FROM t_fb_string WHERE sym = 'X'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryVarcharMultiPartition() throws Exception {
+        // VARCHAR covering across multiple partitions
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_varchar_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price),
+                        name VARCHAR,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cover_varchar_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 'alice', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 'bob', 20.0),
+                    ('2024-01-02T00:00:00', 'A', 'anna', 30.0),
+                    ('2024-01-03T00:00:00', 'A', 'amy', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    name\tprice
+                    alice\t10.0
+                    anna\t30.0
+                    amy\t50.0
+                    """, "SELECT name, price FROM t_cover_varchar_mp WHERE sym = 'A'");
+        });
+    }
 }

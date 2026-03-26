@@ -855,13 +855,62 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return 0;
         }
 
+        private final io.questdb.std.str.DirectString fallbackStrA = new io.questdb.std.str.DirectString();
+        private final io.questdb.std.str.DirectString fallbackStrB = new io.questdb.std.str.DirectString();
+
         @Override
         public CharSequence getStrA(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                int readerCol = columnIndexes.getQuick(col);
+                int colBase = tableReader.getColumnBase(partitionIndex);
+                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
+                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
+                long dataOffset = auxMem.getLong(rowId * Long.BYTES);
+                int len = dataMem.getInt(dataOffset);
+                if (len == TableUtils.NULL_LEN) return null;
+                fallbackStrA.of(dataMem.addressOf(dataOffset + Integer.BYTES), len);
+                return fallbackStrA;
+            }
             return null;
         }
 
         @Override
         public CharSequence getStrB(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                int readerCol = columnIndexes.getQuick(col);
+                int colBase = tableReader.getColumnBase(partitionIndex);
+                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
+                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
+                long dataOffset = auxMem.getLong(rowId * Long.BYTES);
+                int len = dataMem.getInt(dataOffset);
+                if (len == TableUtils.NULL_LEN) return null;
+                fallbackStrB.of(dataMem.addressOf(dataOffset + Integer.BYTES), len);
+                return fallbackStrB;
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                int readerCol = columnIndexes.getQuick(col);
+                int colBase = tableReader.getColumnBase(partitionIndex);
+                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
+                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
+                return io.questdb.cairo.VarcharTypeDriver.getSplitValue(auxMem, dataMem, rowId, 0);
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                int readerCol = columnIndexes.getQuick(col);
+                int colBase = tableReader.getColumnBase(partitionIndex);
+                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
+                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
+                return io.questdb.cairo.VarcharTypeDriver.getSplitValue(auxMem, dataMem, rowId, 1);
+            }
             return null;
         }
 
