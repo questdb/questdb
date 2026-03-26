@@ -361,6 +361,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             while (firstSparseGen < gen && genLookup.getGenKeyCount(firstSparseGen) >= 0) {
                 firstSparseGen++;
             }
+            // per-column offset computation follows
 
             for (int c = 0; c < coverCount; c++) {
                 if (sidecarMems[c] == null) {
@@ -372,17 +373,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 if (firstSparseGen == 0) {
                     // No dense gens before this one — scan from file start
                     offset = 0;
-                } else {
-                    // Dense gen(s) precede. The gen dir sidecar offset (from column 0)
-                    // gives the start of the first sparse gen's block. For column 0
-                    // this is exact; for other columns we need to scan from their
-                    // respective first sparse block position. Since we can't determine
-                    // the dense block size per column without parsing stride-indexed
-                    // format, we use the gen dir offset as a best-effort base. This is
-                    // exact for single-column and correct when all columns grow evenly.
-                    // TODO: for multi-column post-seal, read stride index to compute
-                    //  exact per-column dense block sizes.
+                } else if (c == 0) {
+                    // Column 0: use gen dir sidecar offset (exact for column 0)
                     offset = genLookup.getGenSidecarOffset(firstSparseGen);
+                } else {
+                    // Other columns: compute sealed data size from stride index sentinel.
+                    // Each column's sealed sidecar has different sizes due to compression.
+                    offset = computeSealedSidecarSize(sidecarMems[c], sealedGenKeyCount);
                 }
 
                 int colType = sidecarColumnTypes[c];
@@ -412,6 +409,26 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 }
                 currentGenSidecarOffsets[c] = (int) offset;
             }
+        }
+
+        /**
+         * Computes the total size of sealed (stride-indexed) sidecar data by
+         * reading the stride index sentinel. Format: [strideIndex: (sc+1)×4B]
+         * [stride data]. The sentinel at strideIndex[sc] gives total data size.
+         */
+        private long computeSealedSidecarSize(MemoryMR mem, int keyCount) {
+            if (keyCount <= 0 || mem == null || mem.size() < 4) {
+                return 0;
+            }
+            int sc = PostingIndexUtils.strideCount(keyCount);
+            int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+            long sentinelPos = (long) sc * Integer.BYTES;
+            if (sentinelPos + Integer.BYTES > mem.size()) {
+                return 0;
+            }
+            int totalStrideDataSize = Unsafe.getUnsafe().getInt(mem.addressOf(sentinelPos));
+            // siSize + totalStrideDataSize = total sealed bytes in this sidecar file
+            return siSize + totalStrideDataSize;
         }
 
         private long findDenseVarBlockBase(int includeIdx) {
