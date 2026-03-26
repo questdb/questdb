@@ -2109,7 +2109,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "RANGE FROM 0s TO 0s STEP 1s AS h " +
                             "WHERE t.qty > 0",
                     37,
-                    "right-hand side of HORIZON JOIN must support time frame cursors"
+                    "right-hand side of HORIZON JOIN can only be a table with an optional filter"
             );
         });
     }
@@ -5024,33 +5024,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            assertExceptionNoLeakCheck(
-                    """
-                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
-                            FROM trades_nots AS t
-                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
-                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
-                                LIST (0) AS h
-                            """,
-                    74,
-                    "left side of time series join has no timestamp"
-            );
-        });
-    }
-
-    @Test
     public void testMultiHorizonJoinEmptyMasterKeyed() throws Exception {
         // Empty master table with two keyed slaves → no output rows
         assertMemoryLeak(() -> {
@@ -5671,6 +5644,33 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     null,
                     false,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE asks (ts #TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            assertExceptionNoLeakCheck(
+                    """
+                            SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask
+                            FROM trades_nots AS t
+                            HORIZON JOIN bids AS b ON (t.sym = b.sym)
+                            HORIZON JOIN asks AS a ON (t.sym = a.sym)
+                                LIST (0) AS h
+                            """,
+                    74,
+                    "left side of time series join has no timestamp"
             );
         });
     }
@@ -6350,7 +6350,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN (SELECT * FROM asks LIMIT 100) AS a ON (t.sym = a.sym) " +
                             "LIST (0) AS h",
                     89,
-                    "right-hand side of HORIZON JOIN must support time frame cursors"
+                    "right-hand side of HORIZON JOIN can only be a table with an optional filter"
             );
         });
     }

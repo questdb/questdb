@@ -3502,7 +3502,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                        .put("right-hand side of HORIZON JOIN must support time frame cursors");
+                        .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
             }
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
@@ -3766,7 +3766,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModel.getJoinKeywordPosition())
-                            .put("left-hand side of HORIZON JOIN must support random access or page frames");
+                            .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
 
                 // Create sink instances from generated classes for single-threaded path
@@ -5796,7 +5796,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int s = 0; s < slaveCount; s++) {
                 if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
-                            .put("right-hand side of HORIZON JOIN must support time frame cursors");
+                            .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
             }
 
@@ -6048,7 +6048,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Verify master supports random access for ST path
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
-                            .put("left-hand side of HORIZON JOIN must support random access or page frames");
+                            .put("left-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
 
                 // Before passing the objects to the cursor factory,
