@@ -980,12 +980,14 @@ public class SqlOptimiser implements Mutable {
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
         final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
+        // outer column's should use innerColumn alias
+        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias());
 
         // pull literals only into a translating model
         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
         groupByModel.addBottomUpColumn(innerColumn);
         windowModel.addBottomUpColumn(innerColumn);
-        outerVirtualModel.addBottomUpColumn(innerColumn);
+        outerVirtualModel.addBottomUpColumn(outerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
@@ -6486,6 +6488,9 @@ public class SqlOptimiser implements Mutable {
             registerWindowFunction(wc, hash);
             // Emit literals referenced by the window column to inner models
             emitLiterals(node, translatingModel, innerVirtualModel, baseModel, true, true, false);
+            // Emit partition-by and order-by columns of the window spec
+            replaceLiteralList(innerVirtualModel, translatingModel, baseModel, wc.getPartitionBy());
+            replaceLiteralList(innerVirtualModel, translatingModel, baseModel, wc.getOrderBy());
             return nextLiteral(alias);
         }
         return node;

@@ -4455,6 +4455,349 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testT72NonConstantLimitExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES (1, 10, '2024-01-01T00:10:00.000000Z')");
+
+            assertException(
+                    """
+                            SELECT t1.id, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val FROM t2 WHERE t2.t1_id = t1.id LIMIT abs(2)
+                            ) sub
+                            """,
+                    97,
+                    "non-constant LIMIT in LATERAL join is not supported"
+            );
+        });
+    }
+
+    // T73: Window function embedded in expression (not top-level WindowExpression column)
+    @Test
+    public void testT73EmbeddedWindowExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z'),
+                    (2, 40, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id	val	doubled_running
+                            1	10	20.0
+                            1	20	60.0
+                            2	30	60.0
+                            2	40	140.0
+                            """,
+                    """
+                            SELECT t1.id, sub.val, sub.doubled_running
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, (sum(val) OVER (ORDER BY ts)) * 2 AS doubled_running
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub
+                            ORDER BY t1.id, sub.val
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T74: Window function inside UNION branch of lateral
+    @Test
+    public void testT74WindowInUnionBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (2, 30, '2024-01-01T01:10:00.000000Z'),
+                    (2, 40, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // Each UNION branch has its own row_number() window function
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\trn
+                            1\t10\t1
+                            1\t20\t2
+                            2\t30\t1
+                            2\t40\t2
+                            """,
+                    """
+                            SELECT t1.id, sub.val, sub.rn
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                                UNION ALL
+                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                                FROM t3
+                                WHERE t3.t1_id = t1.id
+                            ) sub
+                            ORDER BY t1.id, sub.val
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T75: SELECT * with simple lateral — outer ref elimination + wildcard handling
+    @Test
+    public void testT75WildcardWithOuterRefElimination() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_a INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // SELECT * must not expose __qdb_outer_ref__ columns
+            assertQueryNoLeakCheck(
+                    """
+                            a\tts\tval\tts1
+                            1\t2024-01-01T00:00:00.000000Z\t10\t2024-01-01T00:10:00.000000Z
+                            1\t2024-01-01T00:00:00.000000Z\t20\t2024-01-01T00:20:00.000000Z
+                            2\t2024-01-01T01:00:00.000000Z\t30\t2024-01-01T01:10:00.000000Z
+                            """,
+                    """
+                            SELECT *
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, ts FROM t2 WHERE t2.t1_a = t1.a
+                            ) sub
+                            ORDER BY t1.a, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T76: UNION branch with non-eq correlation blocks outer ref elimination
+    @Test
+    public void testT76UnionBranchBlocksElimination() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (threshold INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (0, 100, '2024-01-01T00:00:00.000000Z'),
+                    (1, 200, '2024-01-01T00:00:01.000000Z'),
+                    (2, 300, '2024-01-01T00:00:02.000000Z')
+                    """);
+
+            // Branch 1: equality correlation (can eliminate)
+            // Branch 2: non-equality correlation t3.threshold < t1.id (blocks elimination)
+            // id=1: t2 val=10; t3 threshold<1 → threshold=0(val=100)
+            // id=2: t2 val=20; t3 threshold<2 → threshold=0(val=100), threshold=1(val=200)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t100
+                            2\t20
+                            2\t100
+                            2\t200
+                            """,
+                    """
+                            SELECT t1.id, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val FROM t2 WHERE t2.t1_id = t1.id
+                                UNION ALL
+                                SELECT val FROM t3 WHERE t3.threshold < t1.id
+                            ) sub
+                            ORDER BY t1.id, sub.val
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T77: LATEST BY inside UNION branch of lateral
+    @Test
+    public void testT77LatestByInUnionBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades_a VALUES
+                    (1, 'X', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'X', 15.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'Y', 5.0,  '2024-01-01T00:30:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades_b VALUES
+                    (2, 'X', 20.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'Y', 25.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 'Y', 30.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // LATEST BY inside each UNION branch: keeps last row per category
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\tqty
+                            1\tX\t15.0
+                            1\tY\t5.0
+                            2\tX\t20.0
+                            2\tY\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, qty FROM trades_a
+                                WHERE order_id = o.id
+                                LATEST ON ts PARTITION BY category
+                                UNION ALL
+                                SELECT category, qty FROM trades_b
+                                WHERE order_id = o.id
+                                LATEST ON ts PARTITION BY category
+                            ) sub
+                            ORDER BY o.id, sub.category
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T78: LEFT lateral with empty outer table — zero rows propagated
+    @Test
+    public void testT78EmptyOuterTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 VALUES (1, 10, '2024-01-01T00:10:00.000000Z')");
+
+            // Empty outer with INNER → 0 rows
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            """,
+                    """
+                            SELECT t1.id, sub.val
+                            FROM t1
+                            JOIN LATERAL (SELECT val FROM t2 WHERE t2.t1_id = t1.id) sub
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+
+            // Empty outer with LEFT → 0 rows (LEFT doesn't create rows from nothing)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            """,
+                    """
+                            SELECT t1.id, sub.val
+                            FROM t1
+                            LEFT JOIN LATERAL (SELECT val FROM t2 WHERE t2.t1_id = t1.id) sub
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T79: Correlated ref only in ORDER BY (not in WHERE, SELECT, or GROUP BY)
+    // Bug: outer ref in ORDER BY expression not resolved after decorrelation
+    @Ignore
+    @Test
+    public void testT79CorrelatedRefInOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, sort_dir INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (2, -1, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z'),
+                    (2, 40, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // ORDER BY uses outer column in expression: val * t1.sort_dir
+            // id=1 sort_dir=1: order by val*1 ASC → 10, 20
+            // id=2 sort_dir=-1: order by val*(-1) ASC → 40, 30 (since -40 < -30)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t20
+                            2\t40
+                            2\t30
+                            """,
+                    """
+                            SELECT t1.id, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val FROM t2
+                                WHERE t2.t1_id = t1.id
+                                ORDER BY val * t1.sort_dir
+                            ) sub
+                            """,
+                    null, false, true
+            );
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

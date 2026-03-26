@@ -107,9 +107,13 @@ class LateralJoinRewriter implements Mutable {
 
     public void rewrite(QueryModel model) throws SqlException {
         outerRefId = 0;
+        System.err.println("=== BEFORE ===");
+        dumpModel(model, 0, "PRE");
         analyzeCorrelation(model, 0);
         decorrelate(model);
         tryEliminateOuterRefs(model);
+        System.err.println("=== AFTER ===");
+        dumpModel(model, 0, "ROOT");
     }
 
     private static boolean allLiteralsBelongTo(
@@ -447,12 +451,10 @@ class LateralJoinRewriter implements Mutable {
         if (node.type == ExpressionNode.LITERAL) {
             int dotPos = Chars.indexOf(node.token, '.');
             if (dotPos > 0) {
-                CharSequence tableAlias = node.token.subSequence(0, dotPos);
-                int jmIndex = outerModel.getModelAliasIndex(tableAlias, 0, tableAlias.length());
+                int jmIndex = outerModel.getModelAliasIndex(node.token, 0, dotPos);
                 if (jmIndex >= 0 && jmIndex < lateralJoinIndex
-                        && cannotResolveAliasLocally(tableAlias, tableAlias.length(), innerModel)) {
-                    CharSequence colName = node.token.subSequence(dotPos + 1, node.token.length());
-                    ensureCorrelatedColumnSet(correlatedColumns, jmIndex).put(colName, node.position);
+                        && cannotResolveAliasLocally(node.token, dotPos, innerModel)) {
+                    ensureCorrelatedColumnSet(correlatedColumns, jmIndex).put(node.token, node.position, dotPos + 1, node.token.length());
                     node.lateralDepth = lateralDepth;
                     hasCorrelation = true;
                 }
@@ -1241,6 +1243,35 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    private void dumpModel(QueryModel m, int indent, String label) {
+        if (m == null) return;
+        String pad = " ".repeat(indent);
+        System.err.println(pad + label + " @" + System.identityHashCode(m)
+                + " table=" + (m.getTableNameExpr() != null ? m.getTableNameExpr().token : "null")
+                + " alias=" + (m.getAlias() != null ? m.getAlias().token : "null")
+                + " cols=" + m.getBottomUpColumns().size()
+                + " joins=" + m.getJoinModels().size()
+                + " where=" + (m.getWhereClause() != null ? m.getWhereClause() : "null")
+                + (m.getLimitHi() != null ? " LIMIT=" + m.getLimitHi() : "")
+                + " subQ=" + m.isNestedModelIsSubQuery());
+        for (int i = 0, n = m.getBottomUpColumns().size(); i < n; i++) {
+            QueryColumn c = m.getBottomUpColumns().getQuick(i);
+            String extra = "";
+            if (c instanceof WindowExpression we) {
+                extra = " WIN(partBy=" + we.getPartitionBy().size() + " orderBy=" + we.getOrderBy().size() + ")";
+            }
+            System.err.println(pad + "  col[" + i + "] alias=" + c.getAlias() + " ast=" + c.getAst().token + extra);
+        }
+        for (int i = 1, n = m.getJoinModels().size(); i < n; i++) {
+            QueryModel jm = m.getJoinModels().getQuick(i);
+            System.err.println(pad + "  jm[" + i + "] type=" + jm.getJoinType() + " alias=" + (jm.getAlias() != null ? jm.getAlias().token : "null")
+                    + " crit=" + (jm.getJoinCriteria() != null ? jm.getJoinCriteria() : "null"));
+            dumpModel(jm.getNestedModel(), indent + 4, "JM");
+        }
+        dumpModel(m.getNestedModel(), indent + 2, "N");
+        dumpModel(m.getUnionModel(), indent + 2, "U");
+    }
+
     private CharSequence ensureColumnInSelect(
             QueryModel model,
             ExpressionNode colExpr,
@@ -1567,8 +1598,7 @@ class LateralJoinRewriter implements Mutable {
         }
         int dot = Chars.indexOf(token, '.');
         if (dot > 0 && Chars.startsWith(token, outerRefAlias)) {
-            CharSequence unqualified = token.subSequence(dot + 1, token.length());
-            return aliasMap.get(unqualified);
+            return aliasMap.get(token, dot + 1, token.length());
         }
         return null;
     }
@@ -2122,6 +2152,16 @@ class LateralJoinRewriter implements Mutable {
                 );
             }
 
+            int dot = Chars.indexOf(node.token, '.');
+            if (dot > 0 && Chars.startsWith(node.token, OUTER_REF_PREFIX)) {
+                mapped = outerToInnerAlias.get(node.token, dot + 1, node.token.length());
+                if (mapped != null) {
+                    return expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, mapped, node.precedence, node.position
+                    );
+                }
+            }
+
             if (Chars.indexOf(node.token, '.') < 0 && node.lateralDepth == depth) {
                 ObjList<CharSequence> keys = outerToInnerAlias.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
@@ -2129,8 +2169,7 @@ class LateralJoinRewriter implements Mutable {
                     if (key != null) {
                         int kDot = Chars.indexOf(key, '.');
                         if (kDot > 0 && Chars.equalsIgnoreCase(
-                                node.token,
-                                key.subSequence(kDot + 1, key.length()))) {
+                                node.token, key, kDot + 1, key.length())) {
                             mapped = outerToInnerAlias.get(key);
                             if (mapped != null) {
                                 return expressionNodePool.next().of(
@@ -2695,10 +2734,8 @@ class LateralJoinRewriter implements Mutable {
                 if (joinAlias != null) {
                     int dotPos = Chars.indexOf(colRef, '.');
                     if (dotPos > 0) {
-                        CharSequence prefix = colRef.subSequence(0, dotPos);
-                        CharSequence suffix = colRef.subSequence(dotPos + 1, colRef.length());
-                        if (Chars.equalsIgnoreCase(prefix, joinAlias)
-                                && Chars.equalsIgnoreCase(suffix, countAlias)) {
+                        if (Chars.equalsIgnoreCase(joinAlias, colRef, 0, dotPos)
+                                && Chars.equalsIgnoreCase(countAlias, colRef, dotPos + 1, colRef.length())) {
                             isMatch = true;
                         }
                     }
