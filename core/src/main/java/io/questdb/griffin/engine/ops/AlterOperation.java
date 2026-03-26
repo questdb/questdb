@@ -272,8 +272,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
             case CONVERT_PARTITION_TO_PARQUET ->
                     securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
-            case CONVERT_PARTITION_TO_NATIVE ->
-                    securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
+            case CONVERT_PARTITION_TO_NATIVE -> securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
             case SET_PARQUET_ENCODING -> securityContext.authorizeAlterTableSetParquetSettings(tableToken);
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
