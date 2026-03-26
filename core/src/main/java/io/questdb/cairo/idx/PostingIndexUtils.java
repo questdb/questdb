@@ -1072,7 +1072,10 @@ public final class PostingIndexUtils {
             if (magic != COVER_INFO_MAGIC) {
                 return 0;
             }
-            return ff.readNonNegativeInt(fd, 4);
+            int count = ff.readNonNegativeInt(fd, 4);
+            // Guard against corrupted .pci: a garbled count could cause
+            // billions of removeQuiet iterations in removeSidecarFiles.
+            return count >= 0 && count <= 2048 ? count : 0;
         } finally {
             ff.close(fd);
         }

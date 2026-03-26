@@ -1747,11 +1747,13 @@ public class PostingIndexWriter implements IndexWriter {
                             sidecarStrideIndexBufs = new long[coverCount];
                             for (int c = 0; c < coverCount; c++) {
                                 if (inPlace) {
-                                    // In-place rollback: truncate sidecar to 0 before
-                                    // writing stride data. Without this, data is appended
-                                    // after old per-gen raw blocks, producing corrupt offsets.
+                                    // In-place rollback: reset write position to 0 so new
+                                    // stride data overwrites old per-gen raw blocks. Do NOT
+                                    // truncate — concurrent readers have MAP_SHARED mappings
+                                    // and truncation causes SIGBUS for pages beyond the new
+                                    // file size. Tail data past the new write position is
+                                    // harmless garbage ignored by metadata.
                                     sidecarMems[c].jumpTo(0);
-                                    sidecarMems[c].truncate();
                                 }
                                 sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                                 // Reserve stride index space in sidecar file
@@ -2319,9 +2321,10 @@ public class PostingIndexWriter implements IndexWriter {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
             case ColumnType.FLOAT -> mem.putInt(Float.floatToIntBits(Float.NaN));
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
-                    mem.putLong(Numbers.LONG_NULL);
-            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.GEOINT -> mem.putInt(Numbers.INT_NULL);
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> mem.putLong(Numbers.LONG_NULL);
+            case ColumnType.GEOLONG -> mem.putLong(GeoHashes.NULL);
+            case ColumnType.INT, ColumnType.SYMBOL -> mem.putInt(Numbers.INT_NULL);
+            case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
             case ColumnType.SHORT -> mem.putShort((short) 0);
             case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
             case ColumnType.BYTE, ColumnType.BOOLEAN -> mem.putByte((byte) 0);
