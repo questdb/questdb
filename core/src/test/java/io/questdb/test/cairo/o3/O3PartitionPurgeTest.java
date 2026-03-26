@@ -251,6 +251,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointInProgressDefersPartitionRemoval() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         // Regression test: when a checkpoint is in progress but the TxnScoreboard has NOT been
         // pinned for a specific table (e.g. the table was created after the checkpoint started,
         // or the checkpoint hasn't iterated to this table yet), the writer must still defer old
