@@ -183,19 +183,33 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
+        return deepClone(pool, node, null, null, null);
+    }
+
+    public static ExpressionNode deepClone(
+            final ObjectPool<ExpressionNode> pool,
+            final ExpressionNode node,
+            final ObjectPool<QueryModel> queryModelPool,
+            final ObjectPool<QueryColumn> queryColumnPool,
+            final ObjectPool<WindowExpression> windowExpressionPool
+    ) {
         if (node == null) {
             return null;
         }
         ExpressionNode copy = pool.next();
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
+            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i), queryModelPool, queryColumnPool, windowExpressionPool));
         }
         copy.token = node.token;
-        copy.queryModel = node.queryModel;
+        if (node.queryModel != null && queryModelPool != null) {
+            copy.queryModel = node.queryModel.deepClone(queryModelPool, queryColumnPool, pool, windowExpressionPool);
+        } else {
+            copy.queryModel = node.queryModel;
+        }
         copy.precedence = node.precedence;
         copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
+        copy.lhs = ExpressionNode.deepClone(pool, node.lhs, queryModelPool, queryColumnPool, windowExpressionPool);
+        copy.rhs = ExpressionNode.deepClone(pool, node.rhs, queryModelPool, queryColumnPool, windowExpressionPool);
         copy.type = node.type;
         copy.paramCount = node.paramCount;
         copy.intrinsicValue = node.intrinsicValue;

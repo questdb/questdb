@@ -752,6 +752,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (joinCriteria != null) {
             dst.setJoinCriteria(ExpressionNode.deepClone(expressionNodePool, joinCriteria));
         }
+        if (asOfJoinTolerance != null) {
+            dst.setAsOfJoinTolerance(ExpressionNode.deepClone(expressionNodePool, asOfJoinTolerance));
+        }
 
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             QueryModel dstJm = joinModels.getQuick(i).deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool);
@@ -805,7 +808,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (sampleBy != null) {
-            dst.setSampleBy(ExpressionNode.deepClone(expressionNodePool, sampleBy));
+            if (sampleByUnit != null) {
+                dst.setSampleBy(ExpressionNode.deepClone(expressionNodePool, sampleBy), ExpressionNode.deepClone(expressionNodePool, sampleByUnit));
+            } else {
+                dst.setSampleBy(ExpressionNode.deepClone(expressionNodePool, sampleBy));
+            }
+        }
+        if (sampleByTimezoneName != null) {
+            dst.setSampleByTimezoneName(ExpressionNode.deepClone(expressionNodePool, sampleByTimezoneName));
         }
         for (int i = 0, n = sampleByFill.size(); i < n; i++) {
             dst.sampleByFill.add(ExpressionNode.deepClone(expressionNodePool, sampleByFill.getQuick(i)));
@@ -870,7 +880,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
         dst.copyHints(hintsMap);
         for (int i = 0, n = expressionModels.size(); i < n; i++) {
-            dst.addExpressionModel(ExpressionNode.deepClone(expressionNodePool, expressionModels.getQuick(i)));
+            dst.addExpressionModel(ExpressionNode.deepClone(expressionNodePool, expressionModels.getQuick(i), queryModelPool, queryColumnPool, windowExpressionPool));
         }
 
         dst.setDistinct(distinct);

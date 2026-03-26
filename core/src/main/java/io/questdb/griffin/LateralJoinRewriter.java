@@ -913,7 +913,7 @@ class LateralJoinRewriter implements Mutable {
         QueryModel current = inner.getUnionModel();
         while (current != null) {
             QueryModel branchOuterRef = queryModelPool.next();
-            branchOuterRef.setNestedModel(outerRefJm.getNestedModel());
+            branchOuterRef.setNestedModel(outerRefJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
             branchOuterRef.setAlias(outerRefJm.getAlias());
             branchOuterRef.setJoinType(QueryModel.JOIN_CROSS);
             LowerCaseCharSequenceObjHashMap<CharSequence> srcMap = outerRefJm.getColumnNameToAliasMap();
@@ -1009,7 +1009,7 @@ class LateralJoinRewriter implements Mutable {
                         }
                     }
                     QueryModel deepOuterRef = queryModelPool.next();
-                    deepOuterRef.setNestedModel(branchOuterRef.getNestedModel());
+                    deepOuterRef.setNestedModel(branchOuterRef.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
                     deepOuterRef.setAlias(branchOuterRef.getAlias());
                     deepOuterRef.setJoinType(QueryModel.JOIN_CROSS);
                     LowerCaseCharSequenceObjHashMap<CharSequence> deepSrc = branchOuterRef.getColumnNameToAliasMap();
@@ -1359,7 +1359,7 @@ class LateralJoinRewriter implements Mutable {
             }
 
             QueryModel clonedOuterRef = queryModelPool.next();
-            clonedOuterRef.setNestedModel(outerRefJm.getNestedModel());
+            clonedOuterRef.setNestedModel(outerRefJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
             clonedOuterRef.setAlias(outerRefJm.getAlias());
             clonedOuterRef.setJoinType(QueryModel.JOIN_CROSS);
             LowerCaseCharSequenceObjHashMap<CharSequence> srcMap = outerRefJm.getColumnNameToAliasMap();
