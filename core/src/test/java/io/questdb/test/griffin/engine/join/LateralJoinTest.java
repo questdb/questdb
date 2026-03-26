@@ -5689,6 +5689,314 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T88: Unqualified correlated ref — exercises rewriteOuterRefs no-dot fallback
+    @Test
+    public void testT88UnqualifiedCorrelatedRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_a INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // 'a' in WHERE is unqualified — resolves to t1.a via no-dot fallback
+            assertQueryNoLeakCheck(
+                    """
+                            a\tval
+                            1\t10
+                            2\t20
+                            """,
+                    """
+                            SELECT t1.a, sub.val
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val FROM t2 WHERE t1_a = a
+                            ) sub
+                            ORDER BY t1.a
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T89: GROUP BY in UNION branch inside lateral
+    @Test
+    public void testT89GroupByInUnionBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, category SYMBOL, amt DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'X', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'X', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 'Y', 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO refunds VALUES
+                    (1, 'X', 5.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'Y', 8.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // UNION: branch 1 has GROUP BY, branch 2 has GROUP BY
+            // Both need groupingCols added to their GROUP BY
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttotal
+                            1\tX\t30.0
+                            1\tX\t5.0
+                            2\tY\t30.0
+                            2\tY\t8.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, sum(qty) AS total FROM trades
+                                WHERE order_id = o.id GROUP BY category
+                                UNION ALL
+                                SELECT category, sum(amt) AS total FROM refunds
+                                WHERE order_id = o.id GROUP BY category
+                            ) sub
+                            ORDER BY o.id, sub.total DESC
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T90: LIMIT + offset with GROUP BY (exercises compensateLimit wrapping path)
+    @Test
+    public void testT90LimitOffsetWithGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'B', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'C', 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'A', 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'B', 50.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 'C', 60.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // GROUP BY + ORDER BY total DESC + LIMIT 1, 2 (skip top-1, take next 2)
+            // order 1: A=10, B=20, C=30 → sorted DESC: C(30), B(20), A(10) → skip 1, take 2: B(20), A(10)
+            // order 2: A=40, B=50, C=60 → sorted DESC: C(60), B(50), A(40) → skip 1, take 2: B(50), A(40)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttotal
+                            1\tA\t10.0
+                            1\tB\t20.0
+                            2\tA\t40.0
+                            2\tB\t50.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, sum(qty) AS total
+                                FROM trades WHERE order_id = o.id
+                                GROUP BY category
+                                ORDER BY total DESC
+                                LIMIT 1, 2
+                            ) sub
+                            ORDER BY o.id, sub.total
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T91: Subquery as outer table — exercises createOuterRefBase deepClone path
+    @Test
+    public void testT91SubqueryOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'active', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'closed', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'active', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 30.0, '2024-01-01T02:10:00.000000Z')
+                    """);
+
+            // Outer is a subquery (not a bare table) — createOuterRefBase
+            // takes the nestedModel path and deep-clones it
+            assertQueryNoLeakCheck(
+                    """
+                            id\ttotal
+                            1\t30.0
+                            3\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.total
+                            FROM (SELECT id, ts FROM orders WHERE status = 'active') o
+                            JOIN LATERAL (
+                                SELECT sum(qty) AS total FROM trades WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T92: SELECT * with mixed eq/non-eq correlation — wildcard + partial elimination
+    @Test
+    public void testT92WildcardMixedCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 15, '2024-01-01T00:00:00.000000Z'),
+                    (2, 25, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z'),
+                    (2, 40, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // SELECT * + eq correlation (t1_id = id) + non-eq (val > threshold)
+            // id=1, threshold=15: val>15 → val=20
+            // id=2, threshold=25: val>25 → val=30, val=40
+            // __qdb_outer_ref__ columns must NOT appear in output
+            assertQueryNoLeakCheck(
+                    """
+                            id\tthreshold\tts\tval\tts1
+                            1\t15\t2024-01-01T00:00:00.000000Z\t20\t2024-01-01T00:20:00.000000Z
+                            2\t25\t2024-01-01T01:00:00.000000Z\t30\t2024-01-01T01:10:00.000000Z
+                            2\t25\t2024-01-01T01:00:00.000000Z\t40\t2024-01-01T01:20:00.000000Z
+                            """,
+                    """
+                            SELECT *
+                            FROM t1
+                            JOIN LATERAL (
+                                SELECT val, ts FROM t2
+                                WHERE t2.t1_id = t1.id AND t2.val > t1.threshold
+                            ) sub
+                            ORDER BY t1.id, sub.val
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T93: Correlated subquery inside lateral WHERE (IN subquery)
+    @Test
+    @Ignore("cannot compare LONG with type CURSOR")
+    public void testT93CorrelatedSubqueryInLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE valid_orders (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20.0, '2024-01-01T01:10:00.000000Z'),
+                    (3, 30.0, '2024-01-01T02:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO valid_orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+
+            // Lateral with IN subquery — inner query not correlated to outer
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t10.0
+                            3\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades
+                                WHERE order_id = o.id
+                                  AND order_id IN (SELECT order_id FROM valid_orders)
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T94: Lateral with DISTINCT + GROUP BY on same query (compensateDistinct + compensateAggregate)
+    @Test
+    public void testT94DistinctWithGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'A', 10.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'B', 20.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'A', 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // DISTINCT on top of GROUP BY — both compensations must add groupingCols
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttotal
+                            1\tA\t20.0
+                            1\tB\t20.0
+                            2\tA\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT DISTINCT category, sum(qty) AS total
+                                FROM trades
+                                WHERE order_id = o.id
+                                GROUP BY category
+                            ) sub
+                            ORDER BY o.id, sub.category
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

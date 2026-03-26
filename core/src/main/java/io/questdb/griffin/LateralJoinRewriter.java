@@ -108,7 +108,7 @@ class LateralJoinRewriter implements Mutable {
     public void rewrite(QueryModel model) throws SqlException {
         if (analyzeCorrelation(model, 0)) {
             outerRefId = 0;
-            decorrelate(model);
+            decorrelate(model, 0, null);
             tryEliminateOuterRefs(model, null);
         }
     }
@@ -127,7 +127,6 @@ class LateralJoinRewriter implements Mutable {
                 return Chars.startsWith(node.token, alias)
                         && dot == alias.length();
             }
-            // Unqualified: accept only if columnMap is provided (single source)
             return columnMap != null && columnMap.contains(node.token);
         }
         if (!allLiteralsBelongTo(node.lhs, alias, columnMap)
@@ -1225,10 +1224,6 @@ class LateralJoinRewriter implements Mutable {
         return outerRefBase;
     }
 
-    private void decorrelate(QueryModel model) throws SqlException {
-        decorrelate(model, 0, null);
-    }
-
     private void decorrelate(QueryModel model, int lateralDepth, QueryModel parent) throws SqlException {
         if (model.getNestedModel() != null) {
             decorrelate(model.getNestedModel(), lateralDepth, model);
@@ -1434,7 +1429,7 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         CharSequence alias = createColumnAlias(preferredAlias, model);
-        QueryColumn qc = queryColumnPool.next().of(alias, colExpr);
+        QueryColumn qc = queryColumnPool.next().of(alias, colExpr, false);
         if (model.addField(qc)) {
             cols.insert(0, 1, null);
             cols.setQuick(0, qc);
