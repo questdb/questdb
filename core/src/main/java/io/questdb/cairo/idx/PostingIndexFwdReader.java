@@ -584,17 +584,17 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 // Serve from block buffer first
                 while (blockBufferPos < blockBufferEnd) {
                     long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
+                    blockBufferPos++;
+
                     if (value > maxValue) {
                         return false;
                     }
-                    blockBufferPos++;
-
                     if (value >= minValue) {
                         this.next = value;
-                        sidecarOrdinal++;
+                        if (coverCount > 0) sidecarOrdinal++;
                         return true;
                     }
-                    sidecarOrdinal++;
+                    if (coverCount > 0) sidecarOrdinal++;
                 }
 
                 // Try to decode next block in current generation
@@ -788,24 +788,26 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
             int numDeltas = count - 1;
 
+            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
+            Unsafe.getUnsafe().putLong(blockBufferAddr, cumulative);
+
             if (numDeltas > 0) {
                 long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
                 if (bitWidth == 0) {
+                    // Constant delta: direct cumulative sum without intermediate buffer.
+                    // Avoids writing 63 deltas to blockDeltasAddr then reading them back.
                     for (int i = 0; i < numDeltas; i++) {
-                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
+                        cumulative += minD;
+                        Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (i + 1) * Long.BYTES, cumulative);
                     }
                 } else {
                     BitpackUtils.unpackAllValues(packedDataAddr, numDeltas, bitWidth, minD, blockDeltasAddr);
+                    packedDataAddr += BitpackUtils.packedDataSize(numDeltas, bitWidth);
+                    for (int i = 0; i < numDeltas; i++) {
+                        cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
+                        Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (i + 1) * Long.BYTES, cumulative);
+                    }
                 }
-            }
-            packedDataAddr += BitpackUtils.packedDataSize(numDeltas, bitWidth);
-
-            // Cumulative sum from firstValue
-            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
-            Unsafe.getUnsafe().putLong(blockBufferAddr, cumulative);
-            for (int i = 0; i < numDeltas; i++) {
-                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
-                Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (i + 1) * Long.BYTES, cumulative);
             }
 
             blockBufferPos = 0;
