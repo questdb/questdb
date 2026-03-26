@@ -109,7 +109,7 @@ class LateralJoinRewriter implements Mutable {
         outerRefId = 0;
         analyzeCorrelation(model, 0);
         decorrelate(model);
-        tryEliminateOuterRefs(model);
+        tryEliminateOuterRefs(model, null);
     }
 
     private static boolean allLiteralsBelongTo(
@@ -2918,10 +2918,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return true;
-    }
-
-    private void tryEliminateOuterRefs(QueryModel model) throws SqlException {
-        tryEliminateOuterRefs(model, null);
     }
 
     private void tryEliminateOuterRefs(QueryModel model, QueryModel parent) throws SqlException {

@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -52,16 +51,9 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
 
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
+        final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
         if (index < 0) {
             return columnNameIndexMap.valueAt(index);
-        }
-        final int dot = Chars.indexOfLastUnquoted(columnName, '.', lo, hi);
-        if (dot != -1) {
-            index = columnNameIndexMap.keyIndex(columnName, dot + 1, hi);
-            if (index < 0) {
-                return columnNameIndexMap.valueAt(index);
-            }
         }
         return -1;
     }
