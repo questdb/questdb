@@ -39,8 +39,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
-import java.util.concurrent.atomic.AtomicIntegerArray;
-
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 /**
@@ -57,7 +55,8 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  * ({@code record.setRowIndex(rowIndex)}).
  * <p>
  * Thread safety: {@link #ensurePartitionOpened(int)} uses double-checked
- * locking with {@link AtomicIntegerArray} for acquire/release fences.
+ * locking with acquire/release fences via {@link IntList#getVolatile(int)}
+ * and {@link IntList#setOrdered(int, int)}.
  */
 public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
@@ -66,14 +65,13 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final DirectLongList frameRowCounts;
     private final Object openLock = new Object();
     private final LongList partitionCeilings = new LongList();
+    private final IntList partitionFirstFrame = new IntList();
+    private final IntList partitionOpened = new IntList();
     private final LongList partitionTimestamps = new LongList();
     private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     private int frameCount;
     private TablePageFrameCursor frameCursor;
     private int partitionCount;
-    // Per-partition: first global frame index (populated during of())
-    private int[] partitionFirstFrame;
-    private AtomicIntegerArray partitionOpened;
 
     public ConcurrentTimeFrameState() {
         try {
@@ -104,21 +102,21 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
      * uninitialized cache entries with real column addresses.
      */
     public void ensurePartitionOpened(int partitionIndex) {
-        if (partitionOpened.get(partitionIndex) != 0) { // acquire fence
+        if (partitionOpened.getVolatile(partitionIndex) != 0) { // acquire
             return;
         }
         synchronized (openLock) {
-            if (partitionOpened.get(partitionIndex) != 0) {
+            if (partitionOpened.getVolatile(partitionIndex) != 0) {
                 return;
             }
             frameCursor.toPartition(partitionIndex);
-            int globalFrame = partitionFirstFrame[partitionIndex];
+            int globalFrame = partitionFirstFrame.getQuick(partitionIndex);
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 addressCache.updateAddresses(globalFrame, frame);
                 globalFrame++;
             }
-            partitionOpened.set(partitionIndex, 1); // release fence
+            partitionOpened.setOrdered(partitionIndex, 1); // release
         }
     }
 
@@ -184,17 +182,8 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         frameRowCounts.reopen();
         frameRowCounts.clear();
 
-        // Allocate per-partition tracking arrays
-        if (partitionFirstFrame == null || partitionFirstFrame.length < partitionCount) {
-            partitionFirstFrame = new int[partitionCount];
-        }
-        if (partitionOpened == null || partitionOpened.length() < partitionCount) {
-            partitionOpened = new AtomicIntegerArray(partitionCount);
-        } else {
-            for (int i = 0; i < partitionCount; i++) {
-                partitionOpened.set(i, 0);
-            }
-        }
+        partitionFirstFrame.setAll(partitionCount, 0);
+        partitionOpened.setAll(partitionCount, 0);
 
         final TableReader tableReader = frameCursor.getTableReader();
         frameCount = 0;
@@ -212,7 +201,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             final int columnCount = columnIndexes.size();
 
             for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                partitionFirstFrame[partitionIndex] = frameCount;
+                partitionFirstFrame.setQuick(partitionIndex, frameCount);
 
                 final long partitionRowCount = tableReader.getPartitionRowCountFromMetadata(partitionIndex);
                 if (partitionRowCount <= 0) {
@@ -326,7 +315,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameCount++;
         }
-        partitionOpened.set(partitionIndex, 1);
+        partitionOpened.setQuick(partitionIndex, 1);
     }
 
     /**
@@ -368,7 +357,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         }
         // Mark all partitions as opened so ensurePartitionOpened is a no-op
         for (int i = 0; i < partitionCount; i++) {
-            partitionOpened.set(i, 1);
+            partitionOpened.setQuick(i, 1);
         }
     }
 
