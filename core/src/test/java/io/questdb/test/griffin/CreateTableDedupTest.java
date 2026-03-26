@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -712,14 +713,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                             .ofDedupEnable(1, tableToken);
                     setDedupAlterBuilder.setDedupKeyFlag(1);
                     AlterOperation ao = setDedupAlterBuilder.build();
-                    ao.withContext(sqlExecutionContext);
+                    ao.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
                     ao.withSqlStatement("ALTER TABLE " + tableToken.getTableName() + " DEDUP UPSERT KEYS (ts, sym)");
 
                     AlterOperationBuilder dropColumnAlterBuilder = new AlterOperationBuilder()
                             .ofDropColumn(1, tableToken, 0)
                             .ofDropColumn("sym");
+                    AlterOperation dropColumnOp = dropColumnAlterBuilder.build();
+                    dropColumnOp.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
 
-                    tw1.apply(dropColumnAlterBuilder.build(), true);
+                    tw1.apply(dropColumnOp, true);
                     try {
                         tw2.apply(ao, true);
                         Assert.fail();

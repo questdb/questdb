@@ -33,6 +33,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -162,7 +163,7 @@ public class O3Test extends AbstractO3Test {
 
                                     CharSequence newCol = "price" + i;
                                     short colType = columnTypes[i % columnTypes.length];
-                                    writer.addColumn(newCol, colType);
+                                    writer.addColumn(newCol, colType, AllowAllSecurityContext.INSTANCE);
                                     newCols.add(newCol);
                                     newColTypes.add(colType);
 
@@ -1906,7 +1907,7 @@ public class O3Test extends AbstractO3Test {
             TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
             TableWriter.Row row;
             // lets add column
-            w.addColumn("v", ColumnType.DOUBLE);
+            w.addColumn("v", ColumnType.DOUBLE, AllowAllSecurityContext.INSTANCE);
 
             // this row goes into a non-recent partition
             // triggering O3

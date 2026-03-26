@@ -36,12 +36,13 @@ import io.questdb.std.str.Utf8Sequence;
 // It handles memory with a different lifetime than the PartitionDescriptor.
 public class PartitionDescriptor implements QuietCloseable, Mutable {
     public static final int COLUMN_ADDR_OFFSET = 3;
-    public static final int COLUMN_ENTRY_SIZE = 9;
+    public static final int COLUMN_ENTRY_SIZE = 10;
     public static final int COLUMN_ID_AND_TYPE_OFFSET = 1; // two 4-byte integers packed into a single 8-byte long
     //    The following constants are used to document the column data layout in the columnData DirectLongList
     public static final int COLUMN_SECONDARY_ADDR_OFFSET = 5;
     public static final int COLUMN_SECONDARY_SIZE_OFFSET = 6;
     public static final int COLUMN_SIZE_OFFSET = 4;
+    public static final int PARQUET_ENCODING_CONFIG_OFFSET = 9;
     public static final int SYMBOL_OFFSET_ADDR_OFFSET = 7;
     public static final int SYMBOL_OFFSET_COUNT_OFFSET = 8;
     // A single DirectLongList to store all the column-related data
@@ -64,7 +65,8 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
             long columnSecondaryAddr,
             long columnSecondarySize,
             long symbolOffsetsAddr,
-            long symbolOffsetsCount
+            long symbolOffsetsCount,
+            int parquetEncodingConfig
     ) {
         addColumn0(columnName, columnType, columnId, columnTop);
         columnData.add(columnAddr);
@@ -73,6 +75,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         columnData.add(columnSecondarySize);
         columnData.add(symbolOffsetsAddr);
         columnData.add(symbolOffsetsCount);
+        columnData.add(parquetEncodingConfig);
     }
 
     // start column add operation
@@ -81,7 +84,8 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
             final CharSequence columnName,
             int columnType,
             int columnId,
-            long columnTop
+            long columnTop,
+            int parquetEncodingConfig
     ) {
         addColumn0(columnName, columnType, columnId, columnTop);
         columnData.add(0); // columnAddr
@@ -90,6 +94,7 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         columnData.add(0); // columnSecondarySize
         columnData.add(0); // symbolOffsetsAddr
         columnData.add(0); // symbolOffsetsCount
+        columnData.add(parquetEncodingConfig);
     }
 
     @Override

@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
@@ -125,7 +126,8 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         false,
                         0L,
                         0L,
-                        0.01
+                        0.01,
+                        0.0
                 );
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
@@ -139,6 +141,77 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         "Row group ordinal must be less then 1, got 1000");
 
                 // Once again with the correct row group id
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+
+                final long updatedParquetPartitionSize = ff.length(path.$());
+                Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
+            }
+        });
+    }
+
+    @Test
+    public void testPerColumnEncodingWithCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "enc_test";
+            final long rows = 10;
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute("CREATE TABLE " + tableName + " AS (SELECT" +
+                    " x id," +
+                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
+                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
+
+            // Set per-column parquet encoding
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN id SET PARQUET(delta_binary_packed, zstd)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater()
+            ) {
+                final TableToken table = engine.getTableTokenIfExists(tableName);
+                path.concat(root)
+                        .concat(table.getDirNameUtf8())
+                        .concat("1970-01-05")
+                        .slash$();
+                path.put(".1").slash$();
+                ff.mkdirs(path, configuration.getMkDirMode());
+                path.concat("data.parquet").$();
+
+                // Encode with per-column encoding config from metadata
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, path);
+
+                Assert.assertTrue(ff.exists(path.$()));
+                final long parquetPartitionSize = ff.length(path.$());
+
+                // Update with ZSTD compression
+                long compressionCodec = ParquetCompression.packCompressionCodecLevel(
+                        ParquetCompression.COMPRESSION_ZSTD, 1
+                );
+
+                // Update the partition, adding a row.
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
+                updater.of(
+                        path.$(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
+                        parquetPartitionSize,
+                        1,  // index of the timestamp column
+                        compressionCodec,
+                        false,
+                        false,
+                        0L,
+                        0L,
+                        0.01,
+                        0.0
+                );
+
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
