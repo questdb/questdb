@@ -1861,7 +1861,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLikeWithConst() throws Exception {
-        IntrinsicModel m = modelOf("sym like 'X'");                                             
+        IntrinsicModel m = modelOf("sym like 'X'");
         Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
         assertFilter(m, null);
     }
