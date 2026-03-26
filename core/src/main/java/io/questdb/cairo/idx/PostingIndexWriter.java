@@ -225,12 +225,11 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void close() {
         try {
-            if (keyMem.isOpen() && partitionPath != null) {
-                if (coveredColumnMems != null && coveredColumnMems.length > 0
-                        && !coveredColumnMems[0].isOpen()) {
-                    coveredColumnMems = null;
-                }
-                seal();
+            // Flush buffered data but do NOT seal. Per-gen sidecars make
+            // covering work without seal. Seal is an optional compaction
+            // triggered explicitly from TableWriter.syncColumns().
+            if (keyMem.isOpen()) {
+                flushAllPending();
             }
         } finally {
             try {
@@ -2216,11 +2215,16 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
-        switch (valueSize) {
-            case Long.BYTES -> mem.putLong(Numbers.LONG_NULL);
-            case Integer.BYTES -> mem.putInt(Numbers.INT_NULL);
-            case Short.BYTES -> mem.putShort((short) (ColumnType.isGeoHash(colType) ? GeoHashes.SHORT_NULL : 0));
-            case Byte.BYTES -> mem.putByte((byte) (ColumnType.isGeoHash(colType) ? GeoHashes.BYTE_NULL : 0));
+        switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
+            case ColumnType.FLOAT -> mem.putInt(Float.floatToIntBits(Float.NaN));
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                    mem.putLong(Numbers.LONG_NULL);
+            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.GEOINT -> mem.putInt(Numbers.INT_NULL);
+            case ColumnType.SHORT -> mem.putShort((short) 0);
+            case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
+            case ColumnType.BYTE, ColumnType.BOOLEAN -> mem.putByte((byte) 0);
+            case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);
         }
     }
 

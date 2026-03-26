@@ -813,7 +813,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenDirect(int gen, int idx) {
             this.isCurrentGenDense = false;
             this.currentGenSidecarOffset = genLookup.getGenSidecarOffset(gen);
-            this.sidecarOrdinal = 0;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -825,8 +824,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             this.flatMode = false;
 
-            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            // Compute sidecar base: sum of counts for keys before this one
+            int sidecarBase = 0;
+            for (int i = 0; i < idx; i++) {
+                sidecarBase += Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+            }
+            this.sidecarOrdinal = sidecarBase;
+
+            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
@@ -841,7 +847,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private void loadSparseGenWithBinarySearch(int gen) {
             this.isCurrentGenDense = false;
             this.currentGenSidecarOffset = genLookup.getGenSidecarOffset(gen);
-            this.sidecarOrdinal = 0;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -861,8 +866,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             this.flatMode = false;
 
-            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            // Compute sidecar base: sum of counts for keys before this one
+            int sidecarBase = 0;
+            for (int i = 0; i < idx; i++) {
+                sidecarBase += Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+            }
+            this.sidecarOrdinal = sidecarBase;
+
+            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
