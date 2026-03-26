@@ -78,6 +78,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
     private final LongList partitionCeilings = new LongList();
+    // Per-partition: first global frame index (populated during buildFrameCache())
+    private final IntList partitionFirstFrame = new IntList();
     private final BitSet partitionOpened = new BitSet();
     private final LongList partitionTimestamps = new LongList();
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
@@ -90,8 +92,6 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private int partitionCount;
-    // Per-partition: first global frame index (populated during buildFrameCache())
-    private int[] partitionFirstFrame;
     private TableReader tableReader;
     private int workerCount;
 
@@ -449,14 +449,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             final IntList columnIndexes = frameCursor.getColumnIndexes();
             final int columnCount = columnIndexes.size();
 
-            // Allocate per-partition tracking arrays
-            if (partitionFirstFrame == null || partitionFirstFrame.length < partitionCount) {
-                partitionFirstFrame = new int[partitionCount];
-            }
+            partitionFirstFrame.setAll(partitionCount, 0);
             partitionOpened.clear();
 
             for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                partitionFirstFrame[partitionIndex] = frameCount;
+                partitionFirstFrame.setQuick(partitionIndex, frameCount);
 
                 final long partitionRowCount = tableReader.getPartitionRowCountFromMetadata(partitionIndex);
                 if (partitionRowCount <= 0) {
@@ -526,7 +523,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
 
         frameCursor.toPartition(partitionIndex);
-        int globalFrame = partitionFirstFrame[partitionIndex];
+        int globalFrame = partitionFirstFrame.getQuick(partitionIndex);
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             frameAddressCache.updateAddresses(globalFrame, frame);
