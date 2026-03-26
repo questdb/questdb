@@ -106,7 +106,8 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *   [24-31]     maxValue (8B)
  *   [32-35]     genCount (4B)
  *   [36-39]     formatVersion (4B)
- *   [40-63]     reserved (24B)
+ *   [40-47]     valueFileTxn (8B) — txn suffix of the .pv file after seal
+ *   [48-63]     reserved (16B)
  *   [64-4087]   gen dir: up to 125 entries × 32B
  *   [4088-4095] sequence_end (8B) — must equal sequence_start for valid page
  * </pre>

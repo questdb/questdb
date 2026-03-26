@@ -782,12 +782,12 @@ public class PostingIndexWriter implements IndexWriter {
             // Stride didn't exist in gen 0 — write empty delta stride
             int ks = PostingIndexUtils.keysInStride(keyCount, stride);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-            long headerFilePos = valueMem.getAppendOffset();
+            long headerFilePos = sealTarget.getAppendOffset();
             for (int i = 0; i < deltaHeaderSize; i += Integer.BYTES) {
-                valueMem.putInt(0);
+                sealTarget.putInt(0);
             }
             // Zero header = delta mode, all counts 0, all offsets 0
-            long headerAddr = valueMem.addressOf(headerFilePos);
+            long headerAddr = sealTarget.addressOf(headerFilePos);
             Unsafe.getUnsafe().setMemory(headerAddr, deltaHeaderSize, (byte) 0);
             return;
         }

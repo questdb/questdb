@@ -379,6 +379,15 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
                 if (seqStart == seqEnd && keyCount >= this.keyCount
                         && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                    // If VALUE_FILE_TXN changed (seal created a new .pv file),
+                    // fall through to reloadConditionally() for full file reopen.
+                    long metaValueTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+                    long effectiveTxn = metaValueTxn > 0 ? metaValueTxn : this.valueFileTxn;
+                    if (effectiveTxn != this.valueFileTxn) {
+                        reloadConditionally();
+                        return;
+                    }
+
                     genLookup.snapshotMetadata(keyMem, genCount, tryPage);
 
                     Unsafe.getUnsafe().loadFence();
