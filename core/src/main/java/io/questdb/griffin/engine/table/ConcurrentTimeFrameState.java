@@ -76,8 +76,13 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private AtomicIntegerArray partitionOpened;
 
     public ConcurrentTimeFrameState() {
-        this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
-        this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
+        try {
+            this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+            this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

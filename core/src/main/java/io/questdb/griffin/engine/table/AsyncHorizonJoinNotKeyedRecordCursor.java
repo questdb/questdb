@@ -50,7 +50,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private final RecordCursorFactory slaveFactory;
-    private final ConcurrentTimeFrameState slaveTimeFrameState = new ConcurrentTimeFrameState();
+    private final ConcurrentTimeFrameState slaveTimeFrameState;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
     private boolean isExhausted;
@@ -65,6 +65,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
     ) {
         try {
             this.isOpen = true;
+            this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.groupByFunctions = groupByFunctions;
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(groupByFunctions);
