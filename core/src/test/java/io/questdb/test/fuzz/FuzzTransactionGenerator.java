@@ -73,8 +73,7 @@ public class FuzzTransactionGenerator {
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion,
-            double probabilityOfSetParquetEncoding,
-            double probabilityOfDropParquetEncoding
+            double probabilityOfSetParquetEncoding
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -133,13 +132,6 @@ public class FuzzTransactionGenerator {
             transactionCount++;
         }
 
-        // Decide if SET PARQUET ENCODING will be generated
-        boolean generateDropParquetEncoding = rnd.nextDouble() < probabilityOfDropParquetEncoding;
-        int dropParquetEncodingIteration = generateDropParquetEncoding ? rnd.nextInt(transactionCount) : -1;
-        if (generateDropParquetEncoding) {
-            transactionCount++;
-        }
-
         long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
@@ -156,11 +148,6 @@ public class FuzzTransactionGenerator {
                 generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion++, rnd, meta);
                 continue;
             }
-            if (i == dropParquetEncodingIteration) {
-                generateDropParquetEncoding(transactionList, metaVersion, waitBarrierVersion++, rnd, meta);
-                continue;
-            }
-
             final double rndDouble = rnd.nextDouble();
             double aggregateProbability = 0;
             boolean wantSomething = false;
@@ -360,6 +347,7 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
+<<<<<<< HEAD
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
             long lastTimestamp, Rnd rnd
@@ -547,18 +535,6 @@ public class FuzzTransactionGenerator {
                 compression = codecs[rnd.nextInt(codecs.length)];
                 if (compression == ParquetCompression.COMPRESSION_ZSTD) {
                     level = 1 + rnd.nextInt(ParquetCompression.ZSTD_MAX_COMPRESSION_LEVEL);
-                }
-            }
-
-            // Need at least encoding or compression
-            if (encoding == 0 && compression < 0) {
-                // Pick the first valid encoding for this column type (PLAIN is
-                // not valid for SYMBOL/VARCHAR, so we can't hardcode it).
-                for (int e = 1; e < ParquetEncoding.MAX_ENUM_INT; e++) {
-                    if (ParquetEncoding.isValidForColumnType(e, colType)) {
-                        encoding = e;
-                        break;
-                    }
                 }
             }
 

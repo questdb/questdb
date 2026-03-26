@@ -2096,38 +2096,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void dropColumnParquetEncoding(CharSequence columnName, int dropFlags) {
-        checkDistressed();
-        int columnIndex = metadata.getColumnIndexQuiet(columnName);
-        if (columnIndex < 0) {
-            LOG.error().$("cannot drop parquet encoding, column does not exist [table=").$(tableToken)
-                    .$(", column=").$safe(columnName).I$();
-            return;
-        }
-        commit();
-        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        int currentConfig = columnMetadata.getParquetEncodingConfig();
-        boolean dropEncoding = (dropFlags & 1) != 0;
-        boolean dropCompression = (dropFlags & 2) != 0;
-
-        int newConfig;
-        if (dropEncoding && dropCompression) {
-            newConfig = 0;
-        } else {
-            int encoding = dropEncoding ? 0 : TableUtils.getParquetConfigEncoding(currentConfig);
-            int compression = dropCompression ? 0 : TableUtils.getParquetConfigCompression(currentConfig);
-            int level = dropCompression ? 0 : TableUtils.getParquetConfigCompressionLevel(currentConfig);
-            if (encoding == 0 && compression == 0) {
-                newConfig = 0;
-            } else {
-                newConfig = TableUtils.packParquetConfig(encoding, compression, level);
-            }
-        }
-        columnMetadata.setParquetEncodingConfig(newConfig);
-        writeMetadataToDisk();
-    }
-
-    @Override
     public void dropIndex(@NotNull CharSequence name) {
         checkDistressed();
 

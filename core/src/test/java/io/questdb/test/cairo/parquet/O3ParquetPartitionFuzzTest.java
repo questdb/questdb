@@ -156,8 +156,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
                     0,
-                    0.3,
-                    0.2
+                    0.3
             );
 
             try {
