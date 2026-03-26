@@ -97,6 +97,8 @@ public final class WindowExpression extends QueryColumn {
         dst.nullsDescPos = this.nullsDescPos;
         dst.baseWindowName = this.baseWindowName;
         dst.baseWindowNamePosition = this.baseWindowNamePosition;
+        dst.windowName = this.windowName;
+        dst.windowNamePosition = this.windowNamePosition;
         return dst;
     }
 

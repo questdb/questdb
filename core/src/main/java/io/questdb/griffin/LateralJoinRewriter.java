@@ -1612,7 +1612,15 @@ class LateralJoinRewriter implements Mutable {
         if (node.type == ExpressionNode.LITERAL && node.lateralDepth == depth) {
             return true;
         }
-        return hasCorrelatedLiteral(node.lhs, depth) || hasCorrelatedLiteral(node.rhs, depth);
+        if (hasCorrelatedLiteral(node.lhs, depth) || hasCorrelatedLiteral(node.rhs, depth)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasCorrelatedLiteral(node.args.getQuick(i), depth)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasNonEqualityCorrelation(ExpressionNode where, int depth) {
@@ -1640,8 +1648,16 @@ class LateralJoinRewriter implements Mutable {
         if (node.type == ExpressionNode.LITERAL && Chars.startsWith(node.token, outerRefAlias)) {
             return lookupOuterRefAlias(node.token, outerRefAlias, aliasMap) == null;
         }
-        return hasUnmappedOuterRefLiteral(node.lhs, outerRefAlias, aliasMap)
-                || hasUnmappedOuterRefLiteral(node.rhs, outerRefAlias, aliasMap);
+        if (hasUnmappedOuterRefLiteral(node.lhs, outerRefAlias, aliasMap)
+                || hasUnmappedOuterRefLiteral(node.rhs, outerRefAlias, aliasMap)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasUnmappedOuterRefLiteral(node.args.getQuick(i), outerRefAlias, aliasMap)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasWindowColumns(QueryModel model) {

@@ -3743,6 +3743,54 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T62c2: LEFT LATERAL with ON non-equality condition — NULL fill for unmatched + ON filter
+    @Test
+    public void testT62c2LeftLateralOnFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 2, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1, '2024-01-01T01:00:00.000000Z'),
+                    (3, 5, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 30, '2024-01-01T00:30:00.000000Z'),
+                    (2, 40, '2024-01-01T01:10:00.000000Z'),
+                    (2, 50, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // LEFT + ON rn <= t1.n: unmatched rows get NULL
+            // id=1, n=2: rows with rn<=2 → val 10,20
+            // id=2, n=1: rows with rn<=1 → val 40
+            // id=3, n=5: no trades for t1_id=3 → NULL
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\trn
+                            1\t10\t1
+                            1\t20\t2
+                            2\t40\t1
+                            3\tnull\tnull
+                            """,
+                    """
+                            SELECT t1.id, sub.val, sub.rn
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT val, row_number() OVER (ORDER BY ts) AS rn
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub ON sub.rn <= t1.n
+                            ORDER BY t1.id, sub.rn
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T62d: LATERAL ON with pure equality condition (separate from WHERE correlation)
     @Test
     public void testT62dLateralOnEqualityFilter() throws Exception {
