@@ -54,7 +54,81 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class TimeFrameCursorTest extends AbstractCairoTest {
+
+    @Test
+    public void testConcurrentStatePartitionOpeningFromMultipleThreads() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                    " FROM long_sequence(120)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                ConcurrentTimeFrameState sharedState = new ConcurrentTimeFrameState();
+                try {
+                    TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                            sqlExecutionContext,
+                            PartitionFrameCursorFactory.ORDER_ASC
+                    );
+                    RecordMetadata metadata = baseFactory.getMetadata();
+                    sharedState.of(
+                            pageFrameCursor,
+                            metadata,
+                            pageFrameCursor.getColumnIndexes(),
+                            pageFrameCursor.isExternal(),
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            sqlExecutionContext.getSharedQueryWorkerCount()
+                    );
+
+                    int partitionCount = sharedState.getPartitionCount();
+                    Assert.assertTrue(partitionCount >= 5);
+
+                    // Open all partitions concurrently from multiple threads.
+                    int threadCount = 4;
+                    CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    AtomicInteger errors = new AtomicInteger(0);
+                    Thread[] threads = new Thread[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        threads[i] = new Thread(() -> {
+                            try {
+                                barrier.await();
+                                for (int p = 0; p < partitionCount; p++) {
+                                    sharedState.ensurePartitionOpened(p);
+                                }
+                            } catch (Throwable e) {
+                                errors.incrementAndGet();
+                            }
+                        });
+                        threads[i].start();
+                    }
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+                    Assert.assertEquals(0, errors.get());
+
+                    // Verify cursor reads all data correctly after concurrent opening.
+                    ConcurrentTimeFrameCursor cursor = baseFactory.newTimeFrameCursor();
+                    Assert.assertNotNull(cursor);
+                    try {
+                        cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
+                        assertForwardScan(cursor, 120);
+                    } finally {
+                        Misc.free(cursor);
+                    }
+                } finally {
+                    Misc.free(sharedState);
+                }
+            }
+            execute("DROP TABLE x");
+        });
+    }
 
     @Test
     public void testConcurrentStateRetryAfterFailedPartitionOpen() throws Exception {
@@ -74,7 +148,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 Assert.assertNotNull(cursor);
                 try {
                     TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
-                            sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC
+                            sqlExecutionContext,
+                            PartitionFrameCursorFactory.ORDER_ASC
                     );
                     RecordMetadata metadata = baseFactory.getMetadata();
                     sharedState.of(
@@ -124,6 +199,53 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentStateWithIntervalFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            // 72 rows across 3 partitions (days 1970-01-01, 1970-01-02, 1970-01-03).
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                    " FROM long_sequence(72)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+
+            // Timestamp filter narrows to 2 partitions (48 rows).
+            // This triggers the eager fallback in ConcurrentTimeFrameState.of().
+            try (RecordCursorFactory factory = select("x WHERE t < '1970-01-03'")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                ConcurrentTimeFrameState sharedState = new ConcurrentTimeFrameState();
+                ConcurrentTimeFrameCursor cursor = baseFactory.newTimeFrameCursor();
+                Assert.assertNotNull(cursor);
+                try {
+                    TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                            sqlExecutionContext,
+                            PartitionFrameCursorFactory.ORDER_ASC
+                    );
+                    Assert.assertTrue("expected interval filter", pageFrameCursor.hasIntervalFilter());
+
+                    RecordMetadata metadata = baseFactory.getMetadata();
+                    sharedState.of(
+                            pageFrameCursor,
+                            metadata,
+                            pageFrameCursor.getColumnIndexes(),
+                            pageFrameCursor.isExternal(),
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            sqlExecutionContext.getSharedQueryWorkerCount()
+                    );
+                    cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
+
+                    Assert.assertTrue(sharedState.getFrameCount() > 0);
+                    assertForwardScan(cursor, 48);
+                } finally {
+                    Misc.free(cursor);
+                    Misc.free(sharedState);
+                }
+            }
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
     public void testEmptyTable() throws Exception {
         testBothCursors(
                 "CREATE TABLE x (" +
@@ -135,6 +257,36 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     Assert.assertFalse(cursor.prev());
                 }
         );
+    }
+
+    @Test
+    public void testLazyOpenWithColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            // 12 rows in partition 0 (hours 0-11).
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                    " FROM long_sequence(12)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+            // Add column after initial data — creates column tops.
+            execute("ALTER TABLE x ADD COLUMN b INT");
+            // 36 more rows: 12 append to partition 0 (column b top = 12),
+            // 24 go to partition 1 (column b top = 0).
+            execute("INSERT INTO x" +
+                    " SELECT rnd_int(), timestamp_sequence(12 * 60 * 60 * 1_000_000L, 60 * 60 * 1_000_000L), rnd_int()" +
+                    " FROM long_sequence(36)");
+
+            try (RecordCursorFactory factory = select("x")) {
+                Assert.assertTrue(factory.supportsTimeFrameCursor());
+                // Test TimeFrameCursorImpl (lazy partition opening with column top splits).
+                try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    assertForwardScan(cursor, 48);
+                }
+                // Test ConcurrentTimeFrameCursorImpl.
+                testWithConcurrentCursor(factory, cursor -> assertForwardScan(cursor, 48));
+            }
+            execute("DROP TABLE x");
+        });
     }
 
     @Test
@@ -650,6 +802,25 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertForwardScan(TimeFrameCursor cursor, long expectedRows) {
+        Record record = cursor.getRecord();
+        TimeFrame frame = cursor.getTimeFrame();
+        int tsIndex = cursor.getTimestampIndex();
+        long totalRows = 0;
+        long prevTimestamp = Long.MIN_VALUE;
+        while (cursor.next()) {
+            cursor.open();
+            for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
+                cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                long ts = record.getTimestamp(tsIndex);
+                Assert.assertTrue("timestamps must be non-decreasing", ts >= prevTimestamp);
+                prevTimestamp = ts;
+                totalRows++;
+            }
+        }
+        Assert.assertEquals(expectedRows, totalRows);
     }
 
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
