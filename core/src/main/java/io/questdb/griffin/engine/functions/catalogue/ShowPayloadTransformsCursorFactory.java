@@ -42,6 +42,14 @@ import io.questdb.std.Misc;
 
 public class ShowPayloadTransformsCursorFactory extends AbstractRecordCursorFactory {
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
+
+    static {
+        METADATA.add(new TableColumnMetadata("name", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("target_table", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("select_sql", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("dlq_table", ColumnType.STRING));
+    }
+
     private RecordCursorFactory innerFactory;
 
     public ShowPayloadTransformsCursorFactory() {
@@ -87,13 +95,6 @@ public class ShowPayloadTransformsCursorFactory extends AbstractRecordCursorFact
 
     private void closeInnerFactory() {
         innerFactory = Misc.free(innerFactory);
-    }
-
-    static {
-        METADATA.add(new TableColumnMetadata("name", ColumnType.STRING));
-        METADATA.add(new TableColumnMetadata("target_table", ColumnType.STRING));
-        METADATA.add(new TableColumnMetadata("select_sql", ColumnType.STRING));
-        METADATA.add(new TableColumnMetadata("dlq_table", ColumnType.STRING));
     }
 
     private enum EmptyCursor implements NoRandomAccessRecordCursor {

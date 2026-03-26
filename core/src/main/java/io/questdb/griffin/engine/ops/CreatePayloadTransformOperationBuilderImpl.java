@@ -30,12 +30,12 @@ import io.questdb.std.Mutable;
 public class CreatePayloadTransformOperationBuilderImpl implements CreatePayloadTransformOperationBuilder, Mutable {
     private int dlqPartitionBy = -1;
     private CharSequence dlqTable;
-    private long dlqTtlValue;
     private CharSequence dlqTtlUnit;
+    private long dlqTtlValue;
     private boolean ignoreIfExists;
+    private boolean isReplace;
     private CharSequence name;
     private int namePosition;
-    private boolean isReplace;
     private CharSequence selectSql;
     private int selectSqlPosition;
     private CharSequence targetTable;

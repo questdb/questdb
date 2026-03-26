@@ -29,13 +29,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -48,6 +49,468 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
         super.setUp();
         unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testIngestColumnNotInTargetTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                // Transform SELECT produces 'extra' column which doesn't exist in target table
+                // DDL validation rejects this at CREATE time
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                try {
+                    engine.execute("""
+                            CREATE PAYLOAD TRANSFORM bad_cols
+                            INTO readings
+                            AS SELECT
+                                now() AS ts,
+                                json_extract(payload(), '$.sensor')::STRING AS sensor,
+                                json_extract(payload(), '$.value')::DOUBLE AS value,
+                                json_extract(payload(), '$.extra')::STRING AS extra
+                            """);
+                    Assert.fail("expected SqlException");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "column not found in target table [column=extra");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIngestColumnsInDifferentOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // SELECT produces columns in reverse order: value, sensor, ts
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM reordered
+                        INTO readings
+                        AS SELECT
+                            json_extract(payload(), '$.value')::DOUBLE AS value,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            now() AS ts
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=reordered", "{\"sensor\":\"temp_1\",\"value\":42.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "temp_1\t42.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestCairoExceptionReturns500() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                // Create transform targeting table, then drop the table
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM target_missing
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Wait for the transform to be visible, then drop the target table
+                assertIngestSuccess(engine, "/ingest?transform=target_missing", "{\"sensor\":\"s1\",\"value\":1.0}");
+                engine.execute("DROP TABLE readings");
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=target_missing");
+                        request.withContent().put("{\"sensor\":\"s1\",\"value\":1.0}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("500", Utf8s.toString(rsp.getStatusCode()));
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "\"status\":\"error\"");
+                    }
+                });
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDeclareOverride() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM override_test
+                        INTO readings
+                        AS DECLARE OVERRIDABLE @sensor_name := 'default_sensor'
+                        SELECT
+                            now() AS ts,
+                            @sensor_name AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=override_test&sensor_name=custom_sensor", "{\"value\":42.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "custom_sensor\t42.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDeclareOverrideDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM default_test
+                        INTO readings
+                        AS DECLARE OVERRIDABLE @sensor_name := 'default_sensor'
+                        SELECT
+                            now() AS ts,
+                            @sensor_name AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // No override - should use default value
+                assertIngestSuccess(engine, "/ingest?transform=default_test", "{\"value\":99.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "default_sensor\t99.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDeclareOverrideMultiple() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM multi_override
+                        INTO readings
+                        AS DECLARE OVERRIDABLE @sensor_name := 'default', OVERRIDABLE @multiplier := '1'
+                        SELECT
+                            now() AS ts,
+                            @sensor_name AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE * @multiplier::DOUBLE AS value
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=multi_override&sensor_name=temp_1&multiplier=10", "{\"value\":5.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "temp_1\t50.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDeclareOverrideNonOverridable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // @sensor_name is NOT OVERRIDABLE
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM not_overridable
+                        INTO readings
+                        AS DECLARE @sensor_name := 'fixed_sensor'
+                        SELECT
+                            now() AS ts,
+                            @sensor_name AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=not_overridable&sensor_name=hacked");
+                        request.withContent().put("{\"value\":1.0}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "variable is not overridable");
+                    }
+                });
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDlqExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Pre-create the DLQ table before creating the transform
+                engine.execute("""
+                        CREATE TABLE my_dlq (
+                            ts TIMESTAMP,
+                            transform_name SYMBOL,
+                            payload VARCHAR,
+                            query VARCHAR,
+                            stage SYMBOL,
+                            error VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM dlq_exists
+                        INTO readings
+                        DLQ my_dlq PARTITION BY DAY
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Verify transform works, then drop target table to trigger runtime error
+                assertIngestSuccess(engine, "/ingest?transform=dlq_exists", "{\"sensor\":\"s1\",\"value\":1.0}");
+                engine.execute("DROP TABLE readings");
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=dlq_exists");
+                        request.withContent().put("{\"sensor\":\"s2\",\"value\":2.0}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("500", Utf8s.toString(rsp.getStatusCode()));
+                        }
+                    }
+                });
+
+                // DLQ should receive error records even though it was pre-created
+                assertSqlEventually(engine,
+                        "SELECT transform_name, stage FROM my_dlq",
+                        "transform_name\tstage\n" +
+                                "dlq_exists\ttransform\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDlqNotConfigured() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Transform without DLQ
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM no_dlq
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Verify transform works, then drop target table to trigger runtime error
+                assertIngestSuccess(engine, "/ingest?transform=no_dlq", "{\"sensor\":\"temp_1\",\"value\":23.5}");
+                engine.execute("DROP TABLE readings");
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=no_dlq");
+                        request.withContent().put("{\"sensor\":\"temp_1\",\"value\":23.5}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("500", Utf8s.toString(rsp.getStatusCode()));
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        // Error returned, no DLQ (just verify no crash)
+                        TestUtils.assertContains(sink.toString(), "\"status\":\"error\"");
+                    }
+                });
+            }
+        });
+    }
+
+    @Test
+    public void testIngestEmptyPayload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM empty_body
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Send empty body - payload() returns empty string, json_extract returns NULLs
+                assertIngestSuccess(engine, "/ingest?transform=empty_body", "");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "\tnull\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDlqOnTransformError() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM dlq_test
+                        INTO readings
+                        DLQ dlq_errors PARTITION BY DAY
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Verify transform works, then drop target table to trigger runtime error
+                assertIngestSuccess(engine, "/ingest?transform=dlq_test", "{\"sensor\":\"temp_1\",\"value\":23.5}");
+                engine.execute("DROP TABLE readings");
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=dlq_test");
+                        request.withContent().put("{\"sensor\":\"temp_2\",\"value\":99.0}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("500", Utf8s.toString(rsp.getStatusCode()));
+                        }
+                    }
+                });
+
+                // Verify DLQ contains the error
+                assertSqlEventually(engine,
+                        "SELECT transform_name, stage FROM dlq_errors",
+                        "transform_name\tstage\n" +
+                                "dlq_test\ttransform\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestExcessivelyLargePayload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM large_payload
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Build a large payload (~100KB)
+                StringBuilder sb = new StringBuilder();
+                sb.append("{\"sensor\":\"");
+                for (int i = 0; i < 100_000; i++) {
+                    sb.append('x');
+                }
+                sb.append("\",\"value\":1.0}");
+
+                assertIngestSuccess(engine, "/ingest?transform=large_payload", sb.toString());
+
+                assertSqlEventually(engine,
+                        "SELECT length(sensor) AS len, value FROM readings",
+                        "len\tvalue\n" +
+                                "100000\t1.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestFewerColumnsThanTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                // Table has 4 columns, transform only produces 3 (skips 'label')
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE, label STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM partial
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=partial", "{\"sensor\":\"temp_1\",\"value\":99.9}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value, label FROM readings",
+                        "sensor\tvalue\tlabel\n" +
+                                "temp_1\t99.9\t\n"
+                );
+            }
+        });
     }
 
     @Test
@@ -66,40 +529,14 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                             json_extract(payload(), '$.sensor')::STRING AS sensor,
                             json_extract(payload(), '$.value')::DOUBLE AS value
                         """);
-                // WAL table needs to be applied before transform is visible for lookup
-                Os.sleep(2000);
 
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=json_readings");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":23.5}");
+                assertIngestSuccess(engine, "/ingest?transform=json_readings", "{\"sensor\":\"temp_1\",\"value\":23.5}");
 
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                        String statusCode = Utf8s.toString(rsp.getStatusCode());
-                        if (!"200".equals(statusCode)) {
-                            throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
-                        }
-                    }
-                    TestUtils.assertContains(sink.toString(), "\"status\":\"ok\"");
-                    TestUtils.assertContains(sink.toString(), "\"rows_inserted\":1");
-                }
-
-                // Allow WAL to apply
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value FROM readings",
-                            new StringSink(),
-                            "sensor\tvalue\n" +
-                                    "temp_1\t23.5\n"
-                    );
-                }
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "temp_1\t23.5\n"
+                );
             }
         });
     }
@@ -122,6 +559,87 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                         rsp.getResponse().copyTextTo(sink);
                     }
                     TestUtils.assertContains(sink.toString(), "missing 'transform' query parameter");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIngestNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                // Table without designated timestamp - uses copyUnordered path
+                engine.execute("CREATE TABLE logs (level STRING, message STRING)");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM log_entry
+                        INTO logs
+                        AS SELECT
+                            json_extract(payload(), '$.level')::STRING AS level,
+                            json_extract(payload(), '$.msg')::STRING AS message
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=log_entry", "{\"level\":\"INFO\",\"msg\":\"hello\"}");
+
+                assertSqlEventually(engine,
+                        "SELECT level, message FROM logs",
+                        "level\tmessage\n" +
+                                "INFO\thello\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestMultipleRequests() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM json_readings2
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=json_readings2", "{\"sensor\":\"temp_1\",\"value\":10.0}");
+                assertIngestSuccess(engine, "/ingest?transform=json_readings2", "{\"sensor\":\"temp_2\",\"value\":20.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings ORDER BY sensor",
+                        "sensor\tvalue\n" +
+                                "temp_1\t10.0\n" +
+                                "temp_2\t20.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestNonExistentTransformWithSpecialChars() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+
+                // Try SQL injection via transform name - single quotes and special chars
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.POST().url("/ingest?transform=';DROP TABLE readings;--");
+                    request.withContent().put("body");
+
+                    Utf8StringSink sink = new Utf8StringSink();
+                    try (HttpClient.ResponseHeaders rsp = request.send()) {
+                        rsp.await();
+                        rsp.getResponse().copyTextTo(sink);
+                    }
+                    TestUtils.assertContains(sink.toString(), "transform not found");
                 }
             }
         });
@@ -151,486 +669,73 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testIngestColumnsInDifferentOrder() throws Exception {
+    public void testIngestTransformOmitsTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
                 serverMain.start();
                 final CairoEngine engine = serverMain.getEngine();
 
+                // Table has designated timestamp, but transform SELECT omits it
                 engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                // SELECT produces columns in reverse order: value, sensor, ts
                 engine.execute("""
-                        CREATE PAYLOAD TRANSFORM reordered
+                        CREATE PAYLOAD TRANSFORM no_ts
                         INTO readings
                         AS SELECT
-                            json_extract(payload(), '$.value')::DOUBLE AS value,
-                            json_extract(payload(), '$.sensor')::STRING AS sensor,
-                            now() AS ts
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=reordered");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":42.0}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                        String statusCode = Utf8s.toString(rsp.getStatusCode());
-                        if (!"200".equals(statusCode)) {
-                            throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
-                        }
-                    }
-                }
-
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value FROM readings",
-                            new StringSink(),
-                            "sensor\tvalue\n" +
-                                    "temp_1\t42.0\n"
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestFewerColumnsThanTable() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                // Table has 4 columns, transform only produces 3 (skips 'label')
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE, label STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM partial
-                        INTO readings
-                        AS SELECT
-                            now() AS ts,
                             json_extract(payload(), '$.sensor')::STRING AS sensor,
                             json_extract(payload(), '$.value')::DOUBLE AS value
                         """);
-                Os.sleep(2000);
 
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=partial");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":99.9}");
+                // Should use copyUnordered since cursor has no timestamp column
+                assertIngestSuccess(engine, "/ingest?transform=no_ts", "{\"sensor\":\"temp_1\",\"value\":77.0}");
 
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                        String statusCode = Utf8s.toString(rsp.getStatusCode());
-                        if (!"200".equals(statusCode)) {
-                            throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
-                        }
-                    }
-                }
-
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value, label FROM readings",
-                            new StringSink(),
-                            "sensor\tvalue\tlabel\n" +
-                                    "temp_1\t99.9\t\n"
-                    );
-                }
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "temp_1\t77.0\n"
+                );
             }
         });
     }
 
-    @Test
-    public void testIngestColumnNotInTargetTable() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
+    /**
+     * Sends a POST to the ingest endpoint and asserts HTTP 200.
+     * Retries via assertEventually to wait for WAL apply of the transform definition.
+     */
+    private void assertIngestSuccess(CairoEngine engine, String url, String body) throws Exception {
+        TestUtils.assertEventually(() -> {
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                request.POST().url(url);
+                request.withContent().put(body);
 
-                // Transform SELECT produces 'extra' column which doesn't exist in target table
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM bad_cols
-                        INTO readings
-                        AS SELECT
-                            now() AS ts,
-                            json_extract(payload(), '$.sensor')::STRING AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value,
-                            json_extract(payload(), '$.extra')::STRING AS extra
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=bad_cols");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":23.5,\"extra\":\"x\"}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
+                Utf8StringSink sink = new Utf8StringSink();
+                try (HttpClient.ResponseHeaders rsp = request.send()) {
+                    rsp.await();
+                    rsp.getResponse().copyTextTo(sink);
+                    String statusCode = Utf8s.toString(rsp.getStatusCode());
+                    if (!"200".equals(statusCode)) {
+                        throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
                     }
-                    TestUtils.assertContains(sink.toString(), "column not found in target table [column=extra]");
                 }
+                TestUtils.assertContains(sink.toString(), "\"status\":\"ok\"");
             }
         });
     }
 
-    @Test
-    public void testIngestDlqNotConfigured() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM no_dlq
-                        INTO readings
-                        AS SELECT
-                            now() AS ts,
-                            json_extract(payload(), '$.sensor')::STRING AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value
-                        """);
-                Os.sleep(2000);
-
-                // Send invalid JSON - json_extract will return null, cast to DOUBLE produces NaN which is fine
-                // Use a transform with extra columns to trigger an error
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM no_dlq_bad
-                        INTO readings
-                        AS SELECT
-                            now() AS ts,
-                            json_extract(payload(), '$.sensor')::STRING AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value,
-                            json_extract(payload(), '$.extra')::STRING AS extra
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=no_dlq_bad");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":23.5}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                    }
-                    // Error returned, no DLQ (just verify no crash)
-                    TestUtils.assertContains(sink.toString(), "column not found in target table");
-                }
+    /**
+     * Asserts SQL query results, retrying via assertEventually to wait for WAL apply.
+     */
+    private void assertSqlEventually(CairoEngine engine, String query, String expected) throws Exception {
+        TestUtils.assertEventually(() -> {
+            try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                TestUtils.assertSql(
+                        engine,
+                        ctx,
+                        query,
+                        new StringSink(),
+                        expected
+                );
             }
         });
     }
-
-    @Test
-    public void testIngestDlqOnTransformError() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM dlq_test
-                        INTO readings
-                        DLQ dlq_errors PARTITION BY DAY
-                        AS SELECT
-                            now() AS ts,
-                            json_extract(payload(), '$.sensor')::STRING AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value,
-                            json_extract(payload(), '$.extra')::STRING AS extra
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=dlq_test");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":23.5}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                    }
-                    // HTTP error is still returned
-                    TestUtils.assertContains(sink.toString(), "column not found in target table");
-                }
-
-                Os.sleep(2000);
-
-                // Verify DLQ contains the error
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT transform_name, stage, error FROM dlq_errors",
-                            new StringSink(),
-                            "transform_name\tstage\terror\n" +
-                                    "dlq_test\ttransform\tcolumn not found in target table [column=extra]\n"
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestDeclareOverride() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM override_test
-                        INTO readings
-                        AS DECLARE OVERRIDABLE @sensor_name := 'default_sensor'
-                        SELECT
-                            now() AS ts,
-                            @sensor_name AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=override_test&sensor_name=custom_sensor");
-                    request.withContent().put("{\"value\":42.0}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                        String statusCode = Utf8s.toString(rsp.getStatusCode());
-                        if (!"200".equals(statusCode)) {
-                            throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
-                        }
-                    }
-                }
-
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value FROM readings",
-                            new StringSink(),
-                            "sensor\tvalue\n" +
-                                    "custom_sensor\t42.0\n"
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestDeclareOverrideDefault() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM default_test
-                        INTO readings
-                        AS DECLARE OVERRIDABLE @sensor_name := 'default_sensor'
-                        SELECT
-                            now() AS ts,
-                            @sensor_name AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value
-                        """);
-                Os.sleep(2000);
-
-                // No override - should use default value
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=default_test");
-                    request.withContent().put("{\"value\":99.0}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                        String statusCode = Utf8s.toString(rsp.getStatusCode());
-                        if (!"200".equals(statusCode)) {
-                            throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
-                        }
-                    }
-                }
-
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value FROM readings",
-                            new StringSink(),
-                            "sensor\tvalue\n" +
-                                    "default_sensor\t99.0\n"
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestDeclareOverrideNonOverridable() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                // @sensor_name is NOT OVERRIDABLE
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM not_overridable
-                        INTO readings
-                        AS DECLARE @sensor_name := 'fixed_sensor'
-                        SELECT
-                            now() AS ts,
-                            @sensor_name AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=not_overridable&sensor_name=hacked");
-                    request.withContent().put("{\"value\":1.0}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                    }
-                    TestUtils.assertContains(sink.toString(), "variable is not overridable");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestDeclareOverrideMultiple() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM multi_override
-                        INTO readings
-                        AS DECLARE OVERRIDABLE @sensor_name := 'default', OVERRIDABLE @multiplier := '1'
-                        SELECT
-                            now() AS ts,
-                            @sensor_name AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE * @multiplier::DOUBLE AS value
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=multi_override&sensor_name=temp_1&multiplier=10");
-                    request.withContent().put("{\"value\":5.0}");
-
-                    Utf8StringSink sink = new Utf8StringSink();
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        rsp.getResponse().copyTextTo(sink);
-                        String statusCode = Utf8s.toString(rsp.getStatusCode());
-                        if (!"200".equals(statusCode)) {
-                            throw new AssertionError("Expected 200 but got " + statusCode + ": " + sink);
-                        }
-                    }
-                }
-
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value FROM readings",
-                            new StringSink(),
-                            "sensor\tvalue\n" +
-                                    "temp_1\t50.0\n"
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestMultipleRequests() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM json_readings2
-                        INTO readings
-                        AS SELECT
-                            now() AS ts,
-                            json_extract(payload(), '$.sensor')::STRING AS sensor,
-                            json_extract(payload(), '$.value')::DOUBLE AS value
-                        """);
-                Os.sleep(2000);
-
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    // First request
-                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=json_readings2");
-                    request.withContent().put("{\"sensor\":\"temp_1\",\"value\":10.0}");
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        TestUtils.assertEquals("200", Utf8s.toString(rsp.getStatusCode()));
-                    }
-
-                    // Second request
-                    httpClient.disconnect();
-                    request = httpClient.newRequest("localhost", HTTP_PORT);
-                    request.POST().url("/ingest?transform=json_readings2");
-                    request.withContent().put("{\"sensor\":\"temp_2\",\"value\":20.0}");
-                    try (HttpClient.ResponseHeaders rsp = request.send()) {
-                        rsp.await();
-                        TestUtils.assertEquals("200", Utf8s.toString(rsp.getStatusCode()));
-                    }
-                }
-
-                Os.sleep(2000);
-
-                try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
-                    TestUtils.assertSql(
-                            engine,
-                            ctx,
-                            "SELECT sensor, value FROM readings ORDER BY sensor",
-                            new StringSink(),
-                            "sensor\tvalue\n" +
-                                    "temp_1\t10.0\n" +
-                                    "temp_2\t20.0\n"
-                    );
-                }
-            }
-        });
-    }
-
 }

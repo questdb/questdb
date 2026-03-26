@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
 
 import java.io.Closeable;
 
@@ -44,7 +45,7 @@ public class PayloadTransformStore implements Closeable {
     public static final char STATUS_ACTIVE = 'A';
     public static final char STATUS_REMOVED = 'R';
     private static final Log LOG = LogFactory.getLog(PayloadTransformStore.class);
-    // Column indices for the system table
+    // Column indices for the system table (used for writes)
     private static final int COL_DLQ_PARTITION_BY = 5;
     private static final int COL_DLQ_TABLE = 4;
     private static final int COL_DLQ_TTL_UNIT = 7;
@@ -53,19 +54,36 @@ public class PayloadTransformStore implements Closeable {
     private static final int COL_SELECT_SQL = 3;
     private static final int COL_STATUS = 8;
     private static final int COL_TARGET_TABLE = 2;
+    // Query-result column indices for lookupTransform SELECT
+    private static final int QRY_DLQ_PARTITION_BY = 4;
+    private static final int QRY_DLQ_TABLE = 3;
+    private static final int QRY_DLQ_TTL_UNIT = 6;
+    private static final int QRY_DLQ_TTL_VALUE = 5;
+    private static final int QRY_NAME = 0;
+    private static final int QRY_SELECT_SQL = 2;
+    private static final int QRY_STATUS = 7;
+    private static final int QRY_TARGET_TABLE = 1;
     private static final String TABLE_NAME_SUFFIX = "payload_transforms";
+    // Thread-safe cache: transform name -> definition.
+    // Null values are not stored; a missing key means cache miss.
+    private final ConcurrentHashMap<PayloadTransformDefinition> cache = new ConcurrentHashMap<>();
     private final CairoEngine engine;
     private final String tableName;
-    private boolean isInitialized;
+    private volatile boolean isInitialized;
 
     public PayloadTransformStore(CairoEngine engine) {
         this.engine = engine;
         this.tableName = engine.getConfiguration().getSystemTableNamePrefix() + TABLE_NAME_SUFFIX;
     }
 
+    public void clear() {
+        cache.clear();
+        isInitialized = false;
+    }
+
     @Override
     public void close() {
-        // nothing to close - writers are obtained per-operation
+        clear();
     }
 
     public void createTransform(
@@ -98,6 +116,16 @@ public class PayloadTransformStore implements Closeable {
             row.append();
             writer.commit();
         }
+        // Eagerly populate cache with the new definition
+        final PayloadTransformDefinition def = new PayloadTransformDefinition();
+        def.setName(Chars.toString(name));
+        def.setTargetTable(Chars.toString(targetTable));
+        def.setSelectSql(Chars.toString(selectSql));
+        def.setDlqTable(dlqTable != null ? Chars.toString(dlqTable) : null);
+        def.setDlqPartitionBy(dlqPartitionBy);
+        def.setDlqTtlValue(dlqTtlValue);
+        def.setDlqTtlUnit(dlqTtlUnit != null ? Chars.toString(dlqTtlUnit) : null);
+        cache.put(Chars.toString(name), def);
     }
 
     public void dropTransform(SqlExecutionContext executionContext, CharSequence name) throws SqlException {
@@ -112,6 +140,7 @@ public class PayloadTransformStore implements Closeable {
             row.append();
             writer.commit();
         }
+        cache.remove(Chars.toString(name));
     }
 
     public String getTableName() {
@@ -142,14 +171,16 @@ public class PayloadTransformStore implements Closeable {
 
     public boolean isTransformExists(SqlExecutionContext executionContext, CharSequence name) throws SqlException {
         ensureInitialized(executionContext);
-        final String sql = "SELECT status FROM \"" + tableName + "\" WHERE name = '" + name + "' LATEST ON ts PARTITION BY name";
+        final String escapedName = Chars.toString(name).replace("'", "''");
+        final String sql = "SELECT status FROM \"" + tableName + "\" WHERE name = '" + escapedName + "' LATEST ON ts PARTITION BY name";
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.query().$(sql).compile(executionContext).getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             if (cursor.hasNext()) {
-                return cursor.getRecord().getSymA(0).charAt(0) == STATUS_ACTIVE;
+                CharSequence status = cursor.getRecord().getSymA(0);
+                return status != null && status.charAt(0) == STATUS_ACTIVE;
             }
             return false;
         }
@@ -160,9 +191,19 @@ public class PayloadTransformStore implements Closeable {
             CharSequence name,
             PayloadTransformDefinition def
     ) throws SqlException {
+        // Check cache first - zero-allocation lookup
+        final String nameStr = Chars.toString(name);
+        final PayloadTransformDefinition cached = cache.get(nameStr);
+        if (cached != null) {
+            def.copyFrom(cached);
+            return def;
+        }
+
+        // Cache miss - query system table
         ensureInitialized(executionContext);
+        final String escapedName = nameStr.replace("'", "''");
         final String sql = "SELECT name, target_table, select_sql, dlq_table, dlq_partition_by, dlq_ttl_value, dlq_ttl_unit, status "
-                + "FROM \"" + tableName + "\" WHERE name = '" + name + "' LATEST ON ts PARTITION BY name";
+                + "FROM \"" + tableName + "\" WHERE name = '" + escapedName + "' LATEST ON ts PARTITION BY name";
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.query().$(sql).compile(executionContext).getRecordCursorFactory();
@@ -170,17 +211,30 @@ public class PayloadTransformStore implements Closeable {
         ) {
             if (cursor.hasNext()) {
                 Record record = cursor.getRecord();
-                CharSequence status = record.getSymA(7);
+                CharSequence status = record.getSymA(QRY_STATUS);
                 if (status == null || status.charAt(0) != STATUS_ACTIVE) {
                     return null;
                 }
-                def.setName(Chars.toString(record.getSymA(0)));
-                def.setTargetTable(Chars.toString(record.getStrA(1)));
-                def.setSelectSql(Chars.toString(record.getStrA(2)));
-                def.setDlqTable(Chars.toString(record.getStrA(3)));
-                def.setDlqPartitionBy(record.getInt(4));
-                def.setDlqTtlValue(record.getLong(5));
-                def.setDlqTtlUnit(Chars.toString(record.getStrA(6)));
+                def.setName(Chars.toString(record.getSymA(QRY_NAME)));
+                CharSequence targetTable = record.getStrA(QRY_TARGET_TABLE);
+                CharSequence selectSql = record.getStrA(QRY_SELECT_SQL);
+                if (targetTable == null || selectSql == null) {
+                    LOG.error().$("corrupt transform definition, missing target_table or select_sql [name=").$(name).$(']').$();
+                    return null;
+                }
+                def.setTargetTable(Chars.toString(targetTable));
+                def.setSelectSql(Chars.toString(selectSql));
+                CharSequence dlqTable = record.getStrA(QRY_DLQ_TABLE);
+                def.setDlqTable(dlqTable != null ? Chars.toString(dlqTable) : null);
+                def.setDlqPartitionBy(record.getInt(QRY_DLQ_PARTITION_BY));
+                def.setDlqTtlValue(record.getLong(QRY_DLQ_TTL_VALUE));
+                CharSequence dlqTtlUnit = record.getStrA(QRY_DLQ_TTL_UNIT);
+                def.setDlqTtlUnit(dlqTtlUnit != null ? Chars.toString(dlqTtlUnit) : null);
+
+                // Populate cache for subsequent lookups
+                final PayloadTransformDefinition cacheEntry = new PayloadTransformDefinition();
+                cacheEntry.copyFrom(def);
+                cache.put(nameStr, cacheEntry);
                 return def;
             }
         }
@@ -191,8 +245,14 @@ public class PayloadTransformStore implements Closeable {
         if (isInitialized && engine.getTableTokenIfExists(tableName) != null) {
             return;
         }
-        isInitialized = false;
-        init(executionContext);
+        synchronized (this) {
+            if (isInitialized && engine.getTableTokenIfExists(tableName) != null) {
+                return;
+            }
+            isInitialized = false;
+            cache.clear();
+            init(executionContext);
+        }
     }
 
 }

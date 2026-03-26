@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,13 +53,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -69,6 +70,11 @@ import static java.net.HttpURLConnection.HTTP_INTERNAL_ERROR;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class IngestProcessor implements HttpRequestHandler {
+    private static final int DLQ_COL_ERROR = 5;
+    private static final int DLQ_COL_PAYLOAD = 2;
+    private static final int DLQ_COL_QUERY = 3;
+    private static final int DLQ_COL_STAGE = 4;
+    private static final int DLQ_COL_TRANSFORM_NAME = 1;
     private static final Log LOG = LogFactory.getLog(IngestProcessor.class);
     private static final LocalValue<IngestProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_TRANSFORM = new Utf8String("transform");
@@ -89,7 +95,6 @@ public class IngestProcessor implements HttpRequestHandler {
     }
 
     class PostProcessor implements HttpPostPutProcessor {
-        private final PayloadTransformDefinition transformDef = new PayloadTransformDefinition();
         private IngestProcessorState transientState;
 
         @Override
@@ -125,8 +130,7 @@ public class IngestProcessor implements HttpRequestHandler {
                 sqlExecutionContext.initNow();
 
                 final PayloadTransformStore store = engine.getPayloadTransformStore();
-                transformDef.clear();
-                final PayloadTransformDefinition def = store.lookupTransform(sqlExecutionContext, transformName, transformDef);
+                final PayloadTransformDefinition def = store.lookupTransform(sqlExecutionContext, transformName, transientState.getTransformDef());
                 if (def == null) {
                     sendError(context, HTTP_BAD_REQUEST, "transform not found: " + transformName);
                     return;
@@ -134,18 +138,21 @@ public class IngestProcessor implements HttpRequestHandler {
 
                 final LowerCaseCharSequenceObjHashMap<CharSequence> overrides = buildOverrideValues(header);
 
+                // Decode UTF-8 body into a pooled CharSequence to avoid heap String copy
                 final DirectUtf8Sink bodySink = transientState.getBodySink();
-                final String payload = bodySink.toString();
-                sqlExecutionContext.setPayload(payload);
+                final StringSink payloadSink = transientState.getPayloadSink();
+                payloadSink.clear();
+                if (!Utf8s.utf8ToUtf16(bodySink, payloadSink)) {
+                    sendError(context, HTTP_BAD_REQUEST, "invalid UTF-8 in request body");
+                    return;
+                }
+                sqlExecutionContext.setPayload(payloadSink);
 
                 try {
                     final long rowCount = executeTransform(sqlExecutionContext, def, overrides);
                     sendSuccess(context, rowCount);
                 } catch (SqlException | CairoException e) {
-                    CharSequence errorMsg = e instanceof SqlException
-                            ? ((SqlException) e).getFlyweightMessage()
-                            : ((CairoException) e).getFlyweightMessage();
-                    writeToDlq(sqlExecutionContext, def, payload, "transform", errorMsg);
+                    writeToDlq(sqlExecutionContext, def, payloadSink, "transform", ((FlyweightMessageContainer) e).getFlyweightMessage());
                     throw e;
                 } finally {
                     sqlExecutionContext.setPayload(null);
@@ -172,13 +179,15 @@ public class IngestProcessor implements HttpRequestHandler {
 
         @Override
         public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            transientState = LV.get(context);
             transientState.send(context);
         }
 
         private LowerCaseCharSequenceObjHashMap<CharSequence> buildOverrideValues(HttpRequestHeader header) {
             final Utf8SequenceObjHashMap<DirectUtf8String> params = header.getUrlParams();
             final ObjList<Utf8String> keys = params.keys();
-            LowerCaseCharSequenceObjHashMap<CharSequence> overrides = null;
+            final LowerCaseCharSequenceObjHashMap<CharSequence> overrides = transientState.getOverrides();
+            boolean hasOverrides = false;
 
             for (int i = 0, n = keys.size(); i < n; i++) {
                 Utf8String key = keys.getQuick(i);
@@ -189,15 +198,13 @@ public class IngestProcessor implements HttpRequestHandler {
                 if (value == null) {
                     continue;
                 }
-                if (overrides == null) {
-                    overrides = new LowerCaseCharSequenceObjHashMap<>();
-                }
+                hasOverrides = true;
                 // Variable names use @prefix; values are single-quoted string constants
                 String varName = "@" + Utf8s.toString(key);
                 String quotedValue = "'" + Utf8s.toString(value).replace("'", "''") + "'";
                 overrides.put(varName, quotedValue);
             }
-            return overrides;
+            return hasOverrides ? overrides : null;
         }
 
         private long executeTransform(
@@ -221,7 +228,8 @@ public class IngestProcessor implements HttpRequestHandler {
 
                 try (TableRecordMetadata writerMetadata = sqlExecutionContext.getMetadataForWrite(targetToken)) {
                     final int cursorColCount = cursorMetadata.getColumnCount();
-                    final ListColumnFilter columnFilter = new ListColumnFilter(cursorColCount);
+                    final ListColumnFilter columnFilter = transientState.getColumnFilter();
+                    columnFilter.clear();
                     for (int i = 0; i < cursorColCount; i++) {
                         CharSequence colName = cursorMetadata.getColumnName(i);
                         int writerIndex = writerMetadata.getColumnIndexQuiet(colName);
@@ -232,7 +240,7 @@ public class IngestProcessor implements HttpRequestHandler {
                         columnFilter.add(writerIndex + 1);
                     }
                     final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                            new BytecodeAssembler(),
+                            transientState.getBytecodeAssembler(),
                             cursorMetadata,
                             writerMetadata,
                             columnFilter,
@@ -254,20 +262,16 @@ public class IngestProcessor implements HttpRequestHandler {
                     ) {
                         long rowCount;
                         try {
-                            if (writerTimestampIndex == -1) {
-                                rowCount = SqlCompilerImpl.copyUnordered(sqlExecutionContext, cursor, writer, copier);
-                            } else if (cursorTimestampIndex < 0) {
-                                // Target has a timestamp but the transform doesn't produce it
+                            if (writerTimestampIndex == -1 || cursorTimestampIndex < 0) {
                                 rowCount = SqlCompilerImpl.copyUnordered(sqlExecutionContext, cursor, writer, copier);
                             } else {
-                                int tsIndex = cursorTimestampIndex;
                                 rowCount = SqlCompilerImpl.copyOrderedBatched(
                                         sqlExecutionContext,
                                         writer,
                                         cursorMetadata,
                                         cursor,
                                         copier,
-                                        tsIndex,
+                                        cursorTimestampIndex,
                                         Long.MAX_VALUE,
                                         0
                                 );
@@ -316,19 +320,20 @@ public class IngestProcessor implements HttpRequestHandler {
             }
             try {
                 final TableToken dlqToken = engine.verifyTableName(dlqTable);
-                final Utf8StringSink utf8Sink = new Utf8StringSink();
+                final Utf8StringSink utf8Sink = transientState.getDlqSink();
+                utf8Sink.clear();
                 try (TableWriterAPI writer = engine.getTableWriterAPI(dlqToken, "ingest-dlq")) {
                     TableWriter.Row row = writer.newRow(sqlCtx.getMicrosecondTimestamp());
-                    row.putSym(1, def.getName());
+                    row.putSym(DLQ_COL_TRANSFORM_NAME, def.getName());
                     utf8Sink.put(payload);
-                    row.putVarchar(2, utf8Sink);
+                    row.putVarchar(DLQ_COL_PAYLOAD, utf8Sink);
                     utf8Sink.clear();
                     utf8Sink.put(def.getSelectSql());
-                    row.putVarchar(3, utf8Sink);
-                    row.putSym(4, stage);
+                    row.putVarchar(DLQ_COL_QUERY, utf8Sink);
+                    row.putSym(DLQ_COL_STAGE, stage);
                     utf8Sink.clear();
                     utf8Sink.put(error);
-                    row.putVarchar(5, utf8Sink);
+                    row.putVarchar(DLQ_COL_ERROR, utf8Sink);
                     row.append();
                     writer.commit();
                 }

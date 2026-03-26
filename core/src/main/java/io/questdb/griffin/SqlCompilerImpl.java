@@ -196,7 +196,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
-    private LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls;
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls = new LowerCaseCharSequenceObjHashMap<>();
     private boolean overrideDeclare;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -383,7 +383,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         clear();
         // Build ExpressionNode declarations from string values after clear(),
         // so they're allocated from the fresh pool.
-        this.externalDecls = new LowerCaseCharSequenceObjHashMap<>();
+        this.externalDecls.clear();
         ObjList<CharSequence> keys = overrideValues.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence varName = keys.getQuick(i);
@@ -1884,7 +1884,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         functionParser.clear();
         compiledQuery.clear();
         columnNames.clear();
-        externalDecls = null;
+        externalDecls.clear();
         overrideDeclare = false;
     }
 
@@ -2930,7 +2930,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        final ExecutionModel model = externalDecls != null
+        final ExecutionModel model = externalDecls.size() > 0
                 ? parser.parse(lexer, executionContext, this, externalDecls, overrideDeclare)
                 : parser.parse(lexer, executionContext, this);
         try {
@@ -4505,15 +4505,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(op.getTargetTablePosition(), "target table does not exist [name=").put(op.getTargetTable()).put(']');
             }
 
-            // Validate the SELECT SQL: must be a SELECT with no real table references
-            validateTransformSql(executionContext, op);
+            // Validate the SELECT SQL: must be a SELECT with no real table references,
+            // and output columns must exist in the target table
+            validateTransformSql(executionContext, op, targetToken);
 
-            // If DLQ specified and table doesn't exist, create it
+            // If DLQ specified: create if missing, validate schema, authorize insert
             if (op.getDlqTable() != null) {
-                final TableToken dlqToken = executionContext.getTableTokenIfExists(op.getDlqTable());
+                TableToken dlqToken = executionContext.getTableTokenIfExists(op.getDlqTable());
                 if (dlqToken == null) {
                     createDlqTable(executionContext, op);
+                    dlqToken = executionContext.getTableTokenIfExists(op.getDlqTable());
                 }
+                assert dlqToken != null;
+                validateDlqSchema(executionContext, dlqToken, op);
+                executionContext.getSecurityContext().authorizeInsert(dlqToken);
             }
 
             // Write the transform definition to the system table
@@ -4531,8 +4536,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
             return true;
         } catch (Throwable th) {
-            if (th instanceof CairoException) {
-                ((CairoException) th).position(op.getNamePosition());
+            if (th instanceof CairoException ce) {
+                ce.position(op.getNamePosition());
             }
             QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
             throw th;
@@ -4559,7 +4564,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .$(PartitionBy.toString(op.getDlqPartitionBy()));
             }
             if (op.getDlqTtlValue() > 0 && op.getDlqTtlUnit() != null) {
-                query.$(" TTL ").$((int) op.getDlqTtlValue())
+                query.$(" TTL ").$(op.getDlqTtlValue())
                         .$(' ').$(op.getDlqTtlUnit());
             }
             query.$(" WAL");
@@ -5177,6 +5182,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return token;
     }
 
+    private void validateDlqSchema(
+            SqlExecutionContext executionContext,
+            TableToken dlqToken,
+            CreatePayloadTransformOperation op
+    ) throws SqlException {
+        try (TableRecordMetadata meta = executionContext.getMetadataForWrite(dlqToken)) {
+            final String[] expectedNames = {"ts", "transform_name", "payload", "query", "stage", "error"};
+            final int[] expectedTypes = {
+                    ColumnType.TIMESTAMP, ColumnType.SYMBOL, ColumnType.VARCHAR,
+                    ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.VARCHAR
+            };
+            if (meta.getColumnCount() < expectedNames.length) {
+                throw SqlException.$(op.getNamePosition(), "DLQ table has incompatible schema, expected at least ")
+                        .put(expectedNames.length).put(" columns [table=").put(dlqToken.getTableName()).put(']');
+            }
+            for (int i = 0; i < expectedNames.length; i++) {
+                int idx = meta.getColumnIndexQuiet(expectedNames[i]);
+                if (idx == -1) {
+                    throw SqlException.$(op.getNamePosition(), "DLQ table missing column [column=")
+                            .put(expectedNames[i]).put(", table=").put(dlqToken.getTableName()).put(']');
+                }
+                if (idx != i) {
+                    throw SqlException.$(op.getNamePosition(), "DLQ table column in wrong position [column=")
+                            .put(expectedNames[i]).put(", expected=").put(i).put(", actual=").put(idx)
+                            .put(", table=").put(dlqToken.getTableName()).put(']');
+                }
+                if (meta.getColumnType(i) != expectedTypes[i]) {
+                    throw SqlException.$(op.getNamePosition(), "DLQ table column type mismatch [column=")
+                            .put(expectedNames[i]).put(", expected=").put(ColumnType.nameOf(expectedTypes[i]))
+                            .put(", actual=").put(ColumnType.nameOf(meta.getColumnType(i)))
+                            .put(", table=").put(dlqToken.getTableName()).put(']');
+                }
+            }
+        }
+    }
+
     private void validateNoTableReferences(QueryModel model) throws SqlException {
         ExpressionNode tableName = model.getTableNameExpr();
         if (tableName != null && tableName.type == ExpressionNode.LITERAL) {
@@ -5202,7 +5243,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void validateTransformSql(SqlExecutionContext executionContext, CreatePayloadTransformOperation op) throws SqlException {
+    private void validateTransformSql(SqlExecutionContext executionContext, CreatePayloadTransformOperation op, TableToken targetToken) throws SqlException {
         lexer.of(op.getSelectSql());
         clear();
 
@@ -5230,7 +5271,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             queryModel = optimiser.optimise(queryModel, executionContext, this);
             try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
-                // factory created and freed - SQL is valid
+                // Validate that every output column exists in the target table and types are convertible
+                RecordMetadata cursorMetadata = factory.getMetadata();
+                try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(targetToken)) {
+                    for (int i = 0, n = cursorMetadata.getColumnCount(); i < n; i++) {
+                        CharSequence colName = cursorMetadata.getColumnName(i);
+                        int writerIndex = writerMetadata.getColumnIndexQuiet(colName);
+                        if (writerIndex == -1) {
+                            throw SqlException.$(
+                                    queryModel.getBottomUpColumns().getQuick(i).getAst().position,
+                                    "column not found in target table [column="
+                            ).put(colName).put(", table=").put(targetToken.getTableName()).put(']');
+                        }
+                        int fromType = cursorMetadata.getColumnType(i);
+                        int toType = writerMetadata.getColumnType(writerIndex);
+                        if (!ColumnType.isConvertibleFrom(fromType, toType)) {
+                            throw SqlException.inconvertibleTypes(
+                                    queryModel.getBottomUpColumns().getQuick(i).getAst().position,
+                                    fromType, colName,
+                                    toType, writerMetadata.getColumnName(writerIndex)
+                            );
+                        }
+                    }
+                }
             }
         } catch (SqlException e) {
             e.setPosition(e.getPosition() + selectSqlPosition);

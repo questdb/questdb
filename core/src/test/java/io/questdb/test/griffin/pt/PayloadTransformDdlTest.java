@@ -24,9 +24,13 @@
 
 package io.questdb.test.griffin.pt;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pt.PayloadTransformDefinition;
 import io.questdb.cairo.pt.PayloadTransformStore;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -226,6 +230,189 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             Assert.assertEquals("my_transform", def.getName());
             Assert.assertEquals("target", def.getTargetTable());
             Assert.assertEquals(VALID_SELECT, def.getSelectSql());
+        });
+    }
+
+    @Test
+    public void testRejectColumnNotInTargetTablePosition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS price, 'extra' AS extra");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("column not found in target table [column=extra"));
+                // Position must point within the SELECT SQL, not at 0
+                Assert.assertTrue("error position should be > 0", e.getPosition() > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testRejectColumnNotInTargetTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS price, 'extra' AS extra");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("column not found in target table [column=extra"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDlqTableWithWrongColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE TABLE bad_dlq (
+                        ts TIMESTAMP,
+                        wrong_name SYMBOL,
+                        payload VARCHAR,
+                        query VARCHAR,
+                        stage SYMBOL,
+                        error VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("DLQ table missing column [column=transform_name"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDlqTableWithWrongColumnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // payload and transform_name swapped
+            execute("""
+                    CREATE TABLE bad_dlq (
+                        ts TIMESTAMP,
+                        payload VARCHAR,
+                        transform_name SYMBOL,
+                        query VARCHAR,
+                        stage SYMBOL,
+                        error VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("DLQ table column in wrong position [column=transform_name"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDlqTableWithWrongColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // transform_name is STRING instead of SYMBOL
+            execute("""
+                    CREATE TABLE bad_dlq (
+                        ts TIMESTAMP,
+                        transform_name STRING,
+                        payload VARCHAR,
+                        query VARCHAR,
+                        stage SYMBOL,
+                        error VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("DLQ table column type mismatch [column=transform_name"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDlqTableTooFewColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bad_dlq (ts TIMESTAMP, transform_name SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("DLQ table has incompatible schema"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDlqWithoutInsertPermission() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE TABLE my_dlq (
+                        ts TIMESTAMP,
+                        transform_name SYMBOL,
+                        payload VARCHAR,
+                        query VARCHAR,
+                        stage SYMBOL,
+                        error VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            engine.getPayloadTransformStore().init(sqlExecutionContext);
+            drainWalQueue();
+
+            // Security context that allows everything except INSERT on the DLQ table
+            AllowAllSecurityContext noInsertCtx = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    if ("my_dlq".equals(tableToken.getTableName())) {
+                        throw CairoException.authorization().put("Write permission denied");
+                    }
+                }
+            };
+            SqlExecutionContextImpl restrictedCtx = new SqlExecutionContextImpl(engine, 1)
+                    .with(noInsertCtx, bindVariableService, null, -1, null);
+            try {
+                execute("CREATE PAYLOAD TRANSFORM denied INTO target DLQ my_dlq PARTITION BY DAY AS " + VALID_SELECT, restrictedCtx);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("Write permission denied"));
+            }
+        });
+    }
+
+    @Test
+    public void testAcceptDlqTableWithCorrectSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE TABLE good_dlq (
+                        ts TIMESTAMP,
+                        transform_name SYMBOL,
+                        payload VARCHAR,
+                        query VARCHAR,
+                        stage SYMBOL,
+                        error VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Should not throw
+            execute("CREATE PAYLOAD TRANSFORM ok INTO target DLQ good_dlq PARTITION BY DAY AS " + VALID_SELECT);
+        });
+    }
+
+    @Test
+    public void testRejectIncompatibleColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, value UUID) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS value");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage().contains("inconvertible types"));
+                Assert.assertTrue("error position should be > 0", e.getPosition() > 0);
+            }
         });
     }
 

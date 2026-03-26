@@ -53,6 +53,11 @@ public final class QueryBuilder implements Mutable {
         return this;
     }
 
+    public QueryBuilder $(long value) {
+        sink.put(value);
+        return this;
+    }
+
     @Override
     public void clear() {
         sink.clear();

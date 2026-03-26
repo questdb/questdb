@@ -29,8 +29,8 @@ import io.questdb.std.Mutable;
 public class PayloadTransformDefinition implements Mutable {
     private int dlqPartitionBy;
     private String dlqTable;
-    private long dlqTtlValue;
     private String dlqTtlUnit;
+    private long dlqTtlValue;
     private String name;
     private String selectSql;
     private String targetTable;
@@ -46,6 +46,16 @@ public class PayloadTransformDefinition implements Mutable {
         dlqTtlUnit = null;
     }
 
+    public void copyFrom(PayloadTransformDefinition other) {
+        this.name = other.name;
+        this.targetTable = other.targetTable;
+        this.selectSql = other.selectSql;
+        this.dlqTable = other.dlqTable;
+        this.dlqPartitionBy = other.dlqPartitionBy;
+        this.dlqTtlValue = other.dlqTtlValue;
+        this.dlqTtlUnit = other.dlqTtlUnit;
+    }
+
     public int getDlqPartitionBy() {
         return dlqPartitionBy;
     }
@@ -54,12 +64,12 @@ public class PayloadTransformDefinition implements Mutable {
         return dlqTable;
     }
 
-    public long getDlqTtlValue() {
-        return dlqTtlValue;
-    }
-
     public String getDlqTtlUnit() {
         return dlqTtlUnit;
+    }
+
+    public long getDlqTtlValue() {
+        return dlqTtlValue;
     }
 
     public String getName() {

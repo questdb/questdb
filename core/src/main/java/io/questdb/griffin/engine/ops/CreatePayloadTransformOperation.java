@@ -37,8 +37,8 @@ import org.jetbrains.annotations.Nullable;
 public class CreatePayloadTransformOperation implements Operation {
     private final int dlqPartitionBy;
     private final String dlqTable;
-    private final long dlqTtlValue;
     private final String dlqTtlUnit;
+    private final long dlqTtlValue;
     private final boolean ignoreIfExists;
     private final boolean isReplace;
     private final String name;
@@ -100,12 +100,12 @@ public class CreatePayloadTransformOperation implements Operation {
         return dlqTable;
     }
 
-    public long getDlqTtlValue() {
-        return dlqTtlValue;
-    }
-
     public String getDlqTtlUnit() {
         return dlqTtlUnit;
+    }
+
+    public long getDlqTtlValue() {
+        return dlqTtlValue;
     }
 
     public String getName() {
