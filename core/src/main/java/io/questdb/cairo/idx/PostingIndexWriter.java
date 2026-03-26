@@ -1195,9 +1195,12 @@ public class PostingIndexWriter implements IndexWriter {
             boolean isNew = !ff.exists(pciFile);
             sidecarInfoMem = Vm.getCMARWInstance();
             long pciSize = isNew ? 0L : ff.length(pciFile);
+            if (pciSize < 0) {
+                pciSize = 0L; // I/O error reading length — treat as new file
+            }
             sidecarInfoMem.of(ff, pciFile,
                     configuration.getDataIndexValueAppendPageSize(),
-                    Math.max(0L, pciSize),
+                    pciSize,
                     MemoryTag.MMAP_INDEX_WRITER);
             path.trimTo(plen);
             if (isNew) {
@@ -1212,7 +1215,8 @@ public class PostingIndexWriter implements IndexWriter {
             sidecarMems = new MemoryMARW[coverCount];
             for (int c = 0; c < coverCount; c++) {
                 LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, columnNameTxn, c);
-                long existingSize = ff.exists(pcFile) ? Math.max(0L, ff.length(pcFile)) : 0L;
+                long fileLen = ff.exists(pcFile) ? ff.length(pcFile) : -1L;
+                long existingSize = fileLen > 0 ? fileLen : 0L;
                 sidecarMems[c] = Vm.getCMARWInstance();
                 sidecarMems[c].of(ff, pcFile,
                         configuration.getDataIndexValueAppendPageSize(),

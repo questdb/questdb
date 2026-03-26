@@ -338,7 +338,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 // Also reopen sidecar files for covering index
                 closeSidecarMems();
                 try (Path p = new Path().of(readerPartitionPath)) {
-                    openSidecarFilesIfPresent(p, readerColumnName, valueFileTxn);
+                    openSidecarFilesIfPresent(p, readerColumnName, columnTxn);
                 }
             } else if (valueMemSize > 0) {
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
