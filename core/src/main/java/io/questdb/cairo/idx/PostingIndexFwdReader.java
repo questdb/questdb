@@ -349,11 +349,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          * scan starts from the first sparse gen's position.
          */
         private void computePerColumnSidecarOffsets(int gen) {
-            if (currentGenSidecarOffsets == null || currentGenSidecarOffsets.length < coverCount) {
-                currentGenSidecarOffsets = new int[Math.max(coverCount, 1)];
-            }
-            if (sidecarMems == null || sidecarColumnTypes == null) {
+            if (sidecarMems == null || sidecarColumnTypes == null || coverCount == 0) {
                 return;
+            }
+            if (currentGenSidecarOffsets == null || currentGenSidecarOffsets.length < coverCount) {
+                currentGenSidecarOffsets = new int[coverCount];
             }
 
             // Find the first sparse gen (skip dense gens which have stride-indexed sidecars)
