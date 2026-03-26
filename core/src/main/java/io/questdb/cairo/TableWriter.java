@@ -2952,8 +2952,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return SWITCH_NO_PARQUET;
         }
 
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         squashPartitionForce(partitionIndex);
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
@@ -3008,18 +3006,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
             }
 
-            if (lastPartitionConverted) {
-                closeActivePartition(false);
-            }
-
             // remove old partition dir
             safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
 
-            if (lastPartitionConverted) {
-                // Open last partition as read-only
-                openPartition(partitionTimestamp, txWriter.getTransientRowCount());
-                setAppendPosition(txWriter.getTransientRowCount(), false);
-            }
             return SWITCH_OK;
         } catch (CairoException e) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
