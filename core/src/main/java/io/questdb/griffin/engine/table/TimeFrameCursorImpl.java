@@ -42,7 +42,6 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.BitSet;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -541,70 +540,4 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         return Math.min(partitionHi, maxTimestampHi);
     }
 
-    /**
-     * A lightweight PageFrame with correct structure but zero column addresses.
-     * Used to populate the uninitialized address cache during the upfront phase.
-     */
-    private record UninitializedPageFrame(int partitionIndex, long lo, long hi, byte format) implements PageFrame {
-
-        @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getAuxPageSize(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return null;
-        }
-
-        @Override
-        public int getColumnCount() {
-            return 0;
-        }
-
-        @Override
-        public long getPageAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getPageSize(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            return null;
-        }
-
-        @Override
-        public int getParquetRowGroup() {
-            return -1;
-        }
-
-        @Override
-        public int getParquetRowGroupHi() {
-            return -1;
-        }
-
-        @Override
-        public int getParquetRowGroupLo() {
-            return -1;
-        }
-
-        @Override
-        public long getPartitionHi() {
-            return hi;
-        }
-
-        @Override
-        public long getPartitionLo() {
-            return lo;
-        }
-    }
 }

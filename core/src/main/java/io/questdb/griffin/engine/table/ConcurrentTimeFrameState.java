@@ -24,14 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -367,70 +365,4 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         }
     }
 
-    /**
-     * A lightweight PageFrame with correct structure but zero column addresses.
-     * Used to populate the uninitialized address cache during the upfront phase.
-     */
-    private record UninitializedPageFrame(int partitionIndex, long lo, long hi, byte format) implements PageFrame {
-
-        @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getAuxPageSize(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return null;
-        }
-
-        @Override
-        public int getColumnCount() {
-            return 0;
-        }
-
-        @Override
-        public long getPageAddress(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public long getPageSize(int columnIndex) {
-            return 0;
-        }
-
-        @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            return null;
-        }
-
-        @Override
-        public int getParquetRowGroup() {
-            return -1;
-        }
-
-        @Override
-        public int getParquetRowGroupHi() {
-            return -1;
-        }
-
-        @Override
-        public int getParquetRowGroupLo() {
-            return -1;
-        }
-
-        @Override
-        public long getPartitionHi() {
-            return hi;
-        }
-
-        @Override
-        public long getPartitionLo() {
-            return lo;
-        }
-    }
 }
