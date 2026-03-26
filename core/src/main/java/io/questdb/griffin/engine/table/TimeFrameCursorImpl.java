@@ -130,6 +130,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             return null;
         }
         int partitionIndex = framePartitionIndexes.get(frameIndex);
+        assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
         return tableReader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
 
