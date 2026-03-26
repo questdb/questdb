@@ -29,10 +29,21 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 
 /**
- * A lightweight PageFrame with correct structure but zero column addresses.
+ * A mutable, reusable PageFrame with correct structure but zero column addresses.
  * Used to populate the uninitialized address cache during the upfront phase.
+ * A single instance is kept per cursor and reconfigured via {@link #of(int, long, long, byte)}
+ * to avoid per-frame allocation.
  */
-record UninitializedPageFrame(int partitionIndex, long lo, long hi, byte format) implements PageFrame {
+class UninitializedPageFrame implements PageFrame {
+    private byte format;
+    private long hi;
+    private long lo;
+    private int partitionIndex;
+
+    @Override
+    public byte format() {
+        return format;
+    }
 
     @Override
     public long getAuxPageAddress(int columnIndex) {
@@ -92,5 +103,18 @@ record UninitializedPageFrame(int partitionIndex, long lo, long hi, byte format)
     @Override
     public long getPartitionLo() {
         return lo;
+    }
+
+    public UninitializedPageFrame of(int partitionIndex, long lo, long hi, byte format) {
+        this.partitionIndex = partitionIndex;
+        this.lo = lo;
+        this.hi = hi;
+        this.format = format;
+        return this;
+    }
+
+    @Override
+    public int partitionIndex() {
+        return partitionIndex;
     }
 }

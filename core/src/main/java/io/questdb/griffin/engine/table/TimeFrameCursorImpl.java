@@ -82,6 +82,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
+    private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     // Reusable buffer for column tops, avoids per-partition allocation.
     private final LongList columnTops = new LongList();
     private int frameCount = 0;
@@ -417,7 +418,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
      * column addresses will be patched by {@link #ensurePartitionOpened(int)}.
      */
     private void addUninitializedFrame(int partitionIndex, long lo, long hi) {
-        frameAddressCache.add(frameCount, new UninitializedPageFrame(partitionIndex, lo, hi, PartitionFormat.NATIVE));
+        frameAddressCache.add(frameCount, uninitializedFrame.of(partitionIndex, lo, hi, PartitionFormat.NATIVE));
         framePartitionIndexes.add(partitionIndex);
         frameRowCounts.add(hi - lo);
         frameCount++;
