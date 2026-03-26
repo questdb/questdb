@@ -153,6 +153,7 @@ public final class PostingIndexUtils {
     public static final int BLOCK_CAPACITY = 64;
     public static final int COVER_INFO_MAGIC = 0x50434930; // "PCI0"
     public static final int DENSE_STRIDE = 256;
+    public static final int MAX_COVER_COUNT = 4096; // corruption guard for readCoverCountFromInfoFile
     public static final int PACKED_BATCH_SIZE = 256;
 
     // Stride block mode constants — see class javadoc for when each mode wins
@@ -1075,7 +1076,9 @@ public final class PostingIndexUtils {
             int count = ff.readNonNegativeInt(fd, 4);
             // Guard against corrupted .pci: a garbled count could cause
             // billions of removeQuiet iterations in removeSidecarFiles.
-            return count >= 0 && count <= 2048 ? count : 0;
+            // No table can have more than a few thousand columns, so any
+            // value beyond that is corruption.
+            return count >= 0 && count <= MAX_COVER_COUNT ? count : 0;
         } finally {
             ff.close(fd);
         }
