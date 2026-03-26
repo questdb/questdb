@@ -66,6 +66,8 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final Object openLock = new Object();
     private final LongList partitionCeilings = new LongList();
     private final LongList partitionTimestamps = new LongList();
+    // Reusable buffer for column tops, avoids per-partition allocation.
+    private final LongList columnTops = new LongList();
     private int frameCount;
     private TablePageFrameCursor frameCursor;
     private int partitionCount;
@@ -275,17 +277,17 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         // because factory metadata (e.g. SelectedRecordCursorFactory) may not
         // implement getWriterIndex().
         final RecordMetadata readerMetadata = tableReader.getMetadata();
-        final long[] columnTops = new long[columnCount];
+        columnTops.clear();
         for (int i = 0; i < columnCount; i++) {
             final int readerColumnIndex = columnIndexes.getQuick(i);
             final int writerIndex = readerMetadata.getWriterIndex(readerColumnIndex);
             final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
             if (recordIndex > -1) {
-                columnTops[i] = columnVersionReader.getColumnTopByIndex(recordIndex);
+                columnTops.add(columnVersionReader.getColumnTopByIndex(recordIndex));
             } else if (columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp) {
-                columnTops[i] = 0; // column exists from start, no top
+                columnTops.add(0); // column exists from start, no top
             } else {
-                columnTops[i] = partitionRowCount; // column doesn't exist — all-null
+                columnTops.add(partitionRowCount); // column doesn't exist — all-null
             }
         }
 
@@ -294,7 +296,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
             // Shrink frame boundary at column top splits
             for (int i = 0; i < columnCount; i++) {
-                long top = columnTops[i];
+                long top = columnTops.getQuick(i);
                 if (top > lo && top < adjustedHi) {
                     adjustedHi = top;
                 }
