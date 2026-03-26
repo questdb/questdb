@@ -82,6 +82,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long activePageOffset;
     private int blockCapacity;
     private long columnNameTxn;
+    private long sidecarTxn; // txn for sidecar file naming (.pk's txn, before VALUE_FILE_TXN override)
     private boolean sealBumpedTxn;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private int coverCount;
@@ -330,7 +331,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         if (partitionPath != null) {
             try (Path p = new Path().of(partitionPath)) {
-                openSidecarFiles(p, indexName, columnNameTxn);
+                openSidecarFiles(p, indexName, sidecarTxn);
             }
         }
         long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
@@ -375,7 +376,7 @@ public class PostingIndexWriter implements IndexWriter {
                 savedSidecarBufs = new long[coverCount];
                 savedSidecarSizes = new long[coverCount];
                 for (int c = 0; c < coverCount; c++) {
-                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, columnNameTxn, c);
+                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, sidecarTxn, c);
                     if (ff.exists(pcFile)) {
                         long fileLen = ff.length(pcFile);
                         if (fileLen > 0) {
@@ -407,7 +408,7 @@ public class PostingIndexWriter implements IndexWriter {
             // Open sidecar files (truncates to 0 and starts fresh)
             if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
                 try (Path p = new Path().of(partitionPath)) {
-                    openSidecarFiles(p, indexName, columnNameTxn);
+                    openSidecarFiles(p, indexName, sidecarTxn);
                 }
             }
 
@@ -1179,6 +1180,57 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Opens sidecar files for append, preserving existing data. Used by
+     * writeSidecarGenData to add per-gen raw blocks after seal's stride-indexed
+     * data. Creates files if they don't exist, writes .pci header only when new.
+     */
+    private void openSidecarFilesForAppend(Path path, CharSequence name, long columnNameTxn) {
+        if (coverCount <= 0) {
+            return;
+        }
+        final int plen = path.size();
+        try {
+            LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, columnNameTxn);
+            boolean isNew = !ff.exists(pciFile);
+            sidecarInfoMem = Vm.getCMARWInstance();
+            long pciSize = isNew ? 0L : ff.length(pciFile);
+            sidecarInfoMem.of(ff, pciFile,
+                    configuration.getDataIndexValueAppendPageSize(),
+                    Math.max(0L, pciSize),
+                    MemoryTag.MMAP_INDEX_WRITER);
+            path.trimTo(plen);
+            if (isNew) {
+                sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
+                sidecarInfoMem.putInt(coverCount);
+                for (int c = 0; c < coverCount; c++) {
+                    sidecarInfoMem.putInt(coveredColumnIndices[c]);
+                    sidecarInfoMem.putInt(coveredColumnTypes[c]);
+                }
+            }
+
+            sidecarMems = new MemoryMARW[coverCount];
+            for (int c = 0; c < coverCount; c++) {
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, columnNameTxn, c);
+                long existingSize = ff.exists(pcFile) ? Math.max(0L, ff.length(pcFile)) : 0L;
+                sidecarMems[c] = Vm.getCMARWInstance();
+                sidecarMems[c].of(ff, pcFile,
+                        configuration.getDataIndexValueAppendPageSize(),
+                        existingSize,
+                        MemoryTag.MMAP_INDEX_WRITER);
+                if (existingSize > 0) {
+                    sidecarMems[c].jumpTo(existingSize);
+                }
+                path.trimTo(plen);
+            }
+        } catch (Throwable e) {
+            closeSidecarMems();
+            throw e;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     private static void writeNullSentinel(long addr, int valueSize, int columnType) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE -> {
@@ -1679,11 +1731,13 @@ public class PostingIndexWriter implements IndexWriter {
                         if (coverCount > 0 && sidecarMems != null) {
                             sidecarStrideIndexBufs = new long[coverCount];
                             for (int c = 0; c < coverCount; c++) {
-                                // Truncate sidecar to 0 before writing stride data.
-                                // Without this, in-place rollback appends after old
-                                // per-gen raw data, producing corrupt stride offsets.
-                                sidecarMems[c].jumpTo(0);
-                                sidecarMems[c].truncate();
+                                if (inPlace) {
+                                    // In-place rollback: truncate sidecar to 0 before
+                                    // writing stride data. Without this, data is appended
+                                    // after old per-gen raw blocks, producing corrupt offsets.
+                                    sidecarMems[c].jumpTo(0);
+                                    sidecarMems[c].truncate();
+                                }
                                 sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                                 // Reserve stride index space in sidecar file
                                 for (int i = 0; i < siSize; i += Integer.BYTES) {
@@ -2161,10 +2215,13 @@ public class PostingIndexWriter implements IndexWriter {
                 || (coveredColumnMems == null && coveredColumnAddrs == null)) {
             return 0;
         }
-        // Lazily open sidecar files on first gen flush
+        // Lazily open sidecar files on first gen flush.
+        // Use append mode to preserve existing data (e.g., stride-indexed
+        // sidecar from a prior seal). openSidecarFiles() truncates, which
+        // is correct for seal but wrong here.
         if (sidecarMems == null && partitionPath != null) {
             try (Path p = new Path().of(partitionPath)) {
-                openSidecarFiles(p, indexName, columnNameTxn);
+                openSidecarFilesForAppend(p, indexName, sidecarTxn);
             }
         }
         if (sidecarMems == null) {
@@ -2296,6 +2353,7 @@ public class PostingIndexWriter implements IndexWriter {
         this.partitionPath = path.toString();
         this.indexName = name.toString();
         this.columnNameTxn = columnNameTxn;
+        this.sidecarTxn = columnNameTxn; // sidecar files always use the .pk file's txn
         final int plen = path.size();
         boolean kFdUnassigned = true;
 

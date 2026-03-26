@@ -4238,4 +4238,57 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCoveringAfterSealThenNewCommitValues() throws Exception {
+        // After seal + reopen + new commit: verify covered values from both gens.
+        // Gen0 (sealed) has stride-indexed sidecar; gen1 (raw) appends after it.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_postseal_vals";
+                int plen = path.size();
+                int rowCount = 30;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                    }
+                    // Write 20 rows to key 0, close (seal creates dense gen0 + stride sidecar)
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3},
+                                new int[]{2}, new int[]{ColumnType.DOUBLE}, 1
+                        );
+                        for (int i = 0; i < 20; i++) writer.add(0, i);
+                        writer.setMaxValue(19);
+                        writer.commit();
+                    }
+                    // Reopen, add 10 more rows (gen1 raw sidecar appended after seal's stride data)
+                    PostingIndexWriter w2 = new PostingIndexWriter(configuration);
+                    w2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    w2.configureCovering(
+                            new long[]{colAddr}, new long[]{0}, new int[]{3},
+                            new int[]{2}, new int[]{ColumnType.DOUBLE}, 1
+                    );
+                    for (int i = 20; i < 30; i++) w2.add(0, i);
+                    w2.setMaxValue(29);
+                    w2.commit();
+                    // Verify ALL 30 covered values across both gens
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        assertTrue(cc.hasCovering());
+                        for (int i = 0; i < 30; i++) {
+                            assertTrue("row " + i, cc.hasNext());
+                            assertEquals(i, cc.next());
+                            assertEquals("value at row " + i, 10.0 * (i + 1), cc.getCoveredDouble(0), 0.001);
+                        }
+                        assertFalse(cc.hasNext());
+                    }
+                    w2.close();
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
 }
