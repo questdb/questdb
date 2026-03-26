@@ -61,13 +61,13 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  */
 public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    private final LongList columnTops = new LongList();
     private final DirectIntList framePartitionIndexes;
     private final DirectLongList frameRowCounts;
     private final Object openLock = new Object();
     private final LongList partitionCeilings = new LongList();
     private final LongList partitionTimestamps = new LongList();
-    // Reusable buffer for column tops, avoids per-partition allocation.
-    private final LongList columnTops = new LongList();
+    private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     private int frameCount;
     private TablePageFrameCursor frameCursor;
     private int partitionCount;
@@ -346,7 +346,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
      * column addresses will be patched by {@link #ensurePartitionOpened(int)}.
      */
     private void addUninitializedFrame(int partitionIndex, long lo, long hi) {
-        addressCache.add(frameCount, new UninitializedPageFrame(partitionIndex, lo, hi, PartitionFormat.NATIVE));
+        addressCache.add(frameCount, uninitializedFrame.of(partitionIndex, lo, hi, PartitionFormat.NATIVE));
         framePartitionIndexes.add(partitionIndex);
         frameRowCounts.add(hi - lo);
         frameCount++;

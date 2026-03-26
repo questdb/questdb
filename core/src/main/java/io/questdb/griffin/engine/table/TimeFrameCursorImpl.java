@@ -68,6 +68,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  * should start with a {@link #next()} call.
  */
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
+    private final LongList columnTops = new LongList();
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     // Off-heap because it's per-frame and can be large unlike per-partition lists
@@ -82,8 +83,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
-    // Reusable buffer for column tops, avoids per-partition allocation.
-    private final LongList columnTops = new LongList();
+    private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     private int frameCount = 0;
     private TablePageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
@@ -417,7 +417,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
      * column addresses will be patched by {@link #ensurePartitionOpened(int)}.
      */
     private void addUninitializedFrame(int partitionIndex, long lo, long hi) {
-        frameAddressCache.add(frameCount, new UninitializedPageFrame(partitionIndex, lo, hi, PartitionFormat.NATIVE));
+        frameAddressCache.add(frameCount, uninitializedFrame.of(partitionIndex, lo, hi, PartitionFormat.NATIVE));
         framePartitionIndexes.add(partitionIndex);
         frameRowCounts.add(hi - lo);
         frameCount++;
