@@ -250,6 +250,72 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointInProgressDefersPartitionRemoval() throws Exception {
+        // Regression test: when a checkpoint is in progress but the TxnScoreboard has NOT been
+        // pinned for a specific table (e.g. the table was created after the checkpoint started,
+        // or the checkpoint hasn't iterated to this table yet), the writer must still defer old
+        // partition directory removal. Without this fix, a backup that reads partition data from
+        // the live db directory can find a partition version referenced by the checkpoint's _txn
+        // snapshot already deleted on disk.
+        assertMemoryLeak(() -> {
+            // Start a checkpoint on an empty database. This sets isInProgress() = true
+            // but does NOT pin the TxnScoreboard for any table.
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
+
+            try (Path path = new Path()) {
+                // Create the table AFTER the checkpoint started. Its scoreboard is NOT pinned
+                // by the checkpoint — this simulates the race window.
+                execute("create table tbl as (select x, cast('1970-01-10T10' as "
+                        + timestampType.getTypeName() + ") ts from long_sequence(1)) "
+                        + "timestamp(ts) partition by DAY BYPASS WAL");
+
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName("tbl"))
+                        .concat("1970-01-10");
+                int len = path.size();
+
+                // O3 insert → creates partition version .1 (old unversioned dir goes to
+                // partitionRemoveCandidates). processPartitionRemoveCandidates0 checks:
+                //   anyReadersBeforeCommittedTxn = false (no scoreboard pin for tbl)
+                //   checkpointInProgress = true  (checkpoint is active)
+                // With the fix, the removal is deferred. Without it, .0 would be deleted.
+                execute("insert into tbl select 4, '1970-01-10T09'");
+
+                // Version .1 is the current partition
+                testPartitionExist(path, len, true);
+
+                // Another O3 insert → creates .2, old .1 goes to remove candidates.
+                // Same logic: no scoreboard pin, but isInProgress() defers removal.
+                execute("insert into tbl select 5, '1970-01-10T08'");
+
+                // .1 must still exist (deferred by checkpoint), .2 is the current version
+                testPartitionExist(path, len, true, true);
+
+                // Async purge should also not remove .1 since there is no scoreboard entry
+                // that would protect .1, but O3PartitionPurgeJob re-checks in-flight state.
+                // (The purge job may or may not remove .1 depending on scoreboard implementation;
+                // the key assertion is .1 survived processPartitionRemoveCandidates0 above.)
+            } finally {
+                engine.checkpointRelease();
+            }
+
+            // After checkpoint release, old versions can be cleaned up
+            runPartitionPurgeJobs();
+
+            try (Path path = new Path()) {
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName("tbl"))
+                        .concat("1970-01-10");
+                int len = path.size();
+                // .1 should be purged now, .2 is the current version
+                testPartitionExist(path, len, false, true);
+            }
+            Assert.assertEquals("0 partition purge errors expected", 0,
+                    engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
     public void testDedupWithPartitionPurge() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {

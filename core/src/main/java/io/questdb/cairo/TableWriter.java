@@ -7767,6 +7767,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void processPartitionRemoveCandidates0(int n) {
         boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // When a backup checkpoint is in progress, defer partition removal to async purge.
+        // The backup reads partition data from the live db directory, and removing old partition
+        // versions while the checkpoint is snapshotting metadata can cause the backup to reference
+        // partition directories that no longer exist.
+        boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
         long lastCommittedTxn = this.getTxn();
@@ -7777,7 +7782,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long txn = partitionRemoveCandidates.get(i + 1);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback
-                if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
+                if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
                     setPathForNativePartition(
                             other,
                             timestampType,
