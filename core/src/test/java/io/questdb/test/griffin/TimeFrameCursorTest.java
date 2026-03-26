@@ -113,12 +113,14 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(0, errors.get());
 
-                    // Verify cursor reads all data correctly after concurrent opening.
+                    // Verify cursor reads all data correctly after concurrent opening,
+                    // including column values (not just row count).
+                    TestUtils.printSql(engine, sqlExecutionContext, "x", sink);
                     ConcurrentTimeFrameCursor cursor = baseFactory.newTimeFrameCursor();
                     Assert.assertNotNull(cursor);
                     try {
                         cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
-                        assertForwardScan(cursor, 120);
+                        assertForwardScanWithColumnData(cursor, sink);
                     } finally {
                         Misc.free(cursor);
                     }
@@ -617,6 +619,29 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetPartitionWithLazyPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // 72 rows across 3 partitions (days 1970-01-01, 1970-01-02, 1970-01-03).
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                    " FROM long_sequence(72)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+            // Convert middle partition to parquet.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01-02'");
+
+            try (RecordCursorFactory factory = select("x")) {
+                Assert.assertTrue(factory.supportsTimeFrameCursor());
+                try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    assertForwardScan(cursor, 72);
+                }
+                testWithConcurrentCursor(factory, cursor -> assertForwardScan(cursor, 72));
+            }
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
     public void testSeekEstimate() throws Exception {
         testBothCursors(
                 "CREATE TABLE x AS (SELECT" +
@@ -800,6 +825,65 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSeekEstimateWithLazyPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // 72 rows across 3 partitions.
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence('2020-01-01', 3_600_000_000) t" +
+                    " FROM long_sequence(72)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+
+            try (RecordCursorFactory factory = select("x")) {
+                Assert.assertTrue(factory.supportsTimeFrameCursor());
+                try (TimeFrameCursor cursor = factory.getTimeFrameCursor(sqlExecutionContext)) {
+                    TimeFrame frame = cursor.getTimeFrame();
+
+                    // Seek to the last partition without opening any partitions first.
+                    cursor.seekEstimate(Long.MAX_VALUE);
+                    Assert.assertEquals(2, frame.getFrameIndex());
+
+                    // Open the frame — triggers lazy partition open.
+                    long rowCount = cursor.open();
+                    Assert.assertTrue(rowCount > 0);
+
+                    // Verify data can be read from the lazily opened partition.
+                    Record record = cursor.getRecord();
+                    cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), 0));
+                    // Timestamp must be within the third day.
+                    long ts = record.getTimestamp(1);
+                    Assert.assertTrue(ts >= 2 * Micros.DAY_MICROS);
+                }
+            }
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testSingleRowPartitions() throws Exception {
+        testBothCursors(
+                "CREATE TABLE x AS (SELECT" +
+                        " rnd_int() a," +
+                        " timestamp_sequence(0, 24 * 60 * 60 * 1_000_000L) t" +
+                        " FROM long_sequence(5)" +
+                        ") TIMESTAMP (t) PARTITION BY DAY",
+                cursor -> assertForwardScan(cursor, 5)
+        );
+    }
+
+    @Test
+    public void testSingleRowTable() throws Exception {
+        testBothCursors(
+                "CREATE TABLE x AS (SELECT" +
+                        " rnd_int() a," +
+                        " timestamp_sequence(0, 1_000_000L) t" +
+                        " FROM long_sequence(1)" +
+                        ") TIMESTAMP (t) PARTITION BY DAY",
+                cursor -> assertForwardScan(cursor, 1)
+        );
+    }
+
+    @Test
     public void testTimeFrameBoundaries() throws Exception {
         final int[] partitionBys = new int[]{
                 PartitionBy.NONE,
@@ -937,6 +1021,24 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(expectedRows, totalRows);
+    }
+
+    private static void assertForwardScanWithColumnData(TimeFrameCursor cursor, CharSequence expected) {
+        Record record = cursor.getRecord();
+        TimeFrame frame = cursor.getTimeFrame();
+        final StringSink actualSink = new StringSink();
+        actualSink.put("a\tt\n");
+        while (cursor.next()) {
+            cursor.open();
+            for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
+                cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                actualSink.put(record.getInt(0));
+                actualSink.put('\t');
+                MicrosFormatUtils.appendDateTimeUSec(actualSink, record.getTimestamp(1));
+                actualSink.put('\n');
+            }
+        }
+        TestUtils.assertEquals(expected, actualSink);
     }
 
     private static void executeWithPool(CustomisableRunnable runnable) throws Exception {
