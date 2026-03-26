@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.MemoryFCRImpl;
@@ -79,6 +80,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
+    private final ObjList<CharSequence> authColumnNames = new ObjList<>();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
@@ -243,10 +245,57 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
+    public void authorize() {
+        final SecurityContext securityContext = this.securityContext;
+        if (securityContext == null) {
+            throw CairoException.nonCritical()
+                    .put("alter security context is empty [table=")
+                    .put(getTableToken().getTableName())
+                    .put(']');
+        }
+        final TableToken tableToken = getTableToken();
+        switch (command) {
+            case ADD_COLUMN -> securityContext.authorizeAlterTableAddColumn(tableToken);
+            case DROP_COLUMN -> securityContext.authorizeAlterTableDropColumn(tableToken, getAuthColumnNames());
+            case RENAME_COLUMN -> securityContext.authorizeAlterTableRenameColumn(tableToken, getAuthColumnNames());
+            case CHANGE_COLUMN_TYPE ->
+                    securityContext.authorizeAlterTableAlterColumnType(tableToken, getAuthColumnNames());
+            case CHANGE_SYMBOL_CAPACITY ->
+                    securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, getAuthColumnNames());
+            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthColumnNames());
+            case DROP_INDEX -> securityContext.authorizeAlterTableDropIndex(tableToken, getAuthColumnNames());
+            case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE ->
+                    securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
+            case DROP_PARTITION, FORCE_DROP_PARTITION, SQUASH_PARTITIONS ->
+                    securityContext.authorizeAlterTableDropPartition(tableToken);
+            case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
+            case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
+                    securityContext.authorizeAlterTableSetParam(tableToken);
+            case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
+            case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
+            // TODO: need to add new permissions for CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE,
+            //  SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING
+            //  and also need new authorize...() methods on SecurityContext.
+            //case CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE ->
+            //        securityContext.authorizeAlterTableSetType(tableToken);
+            //case SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING ->
+            //        securityContext.authorizeAlterTableSetParam(tableToken);
+            case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
+            case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
+                    securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
+            default -> {
+                // DO_NOTHING, RENAME_TABLE (handled by engine directly)
+            }
+        }
+    }
+
+    @Override
     public void clear() {
+        authColumnNames.clear();
         command = DO_NOTHING;
         sqlExecutionContext = null;
-        securityContext = null;
+        clearSecurityContext();
         extraStrInfo.clear();
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
@@ -708,6 +757,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    }
+
+    private ObjList<CharSequence> getAuthColumnNames() {
+        authColumnNames.clear();
+        for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
+            authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(i)));
+        }
+        return authColumnNames;
     }
 
     private CairoEngine getCairoEngine() {

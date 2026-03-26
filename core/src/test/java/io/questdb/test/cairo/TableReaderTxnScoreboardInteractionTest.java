@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -96,7 +97,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(3));
 
-                w.addColumn("z", ColumnType.LONG);
+                w.addColumn("z", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
 
                 try (TableReader reader = getReader(tt)) {
                     Assert.assertEquals(4, reader.getTxn());
@@ -161,14 +162,6 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertMin(int min, TxnScoreboard txnScoreboard) {
-        Assert.assertTrue(min == ((TxnScoreboardV2) txnScoreboard).getMin() || -1 == ((TxnScoreboardV2) txnScoreboard).getMin());
-    }
-
-    private static long getMin(TxnScoreboard scoreboard) {
-        return ((TxnScoreboardV2) scoreboard).getMin();
-    }
-
     private static void addRow(TableWriter w) {
         TableWriter.Row r = w.newRow();
         r.putByte(0, (byte) 9);
@@ -183,5 +176,13 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 .col("a", ColumnType.BYTE)
                 .col("b", ColumnType.SHORT);
         return AbstractCairoTest.create(model);
+    }
+
+    private static long getMin(TxnScoreboard scoreboard) {
+        return ((TxnScoreboardV2) scoreboard).getMin();
+    }
+
+    private void assertMin(int min, TxnScoreboard txnScoreboard) {
+        Assert.assertTrue(min == ((TxnScoreboardV2) txnScoreboard).getMin() || -1 == ((TxnScoreboardV2) txnScoreboard).getMin());
     }
 }
