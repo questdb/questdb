@@ -31,6 +31,8 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -1303,12 +1305,20 @@ public class PostingIndexWriter implements IndexWriter {
 
         try {
         for (int c = 0; c < coverCount; c++) {
+            int colType = coveredColumnTypes[c];
+            int shift = coveredColumnShifts[c];
+
+            // Var-sized columns: write per-stride offset-based block (no ALP compression).
+            // Fixed-sized columns: ALP-compressed per-key blocks with stride index.
+            if (shift < 0) {
+                writeSidecarVarStrideData(sidecarMems[c], c, coveredColumnTops[c], colType, ks, keyCounts, keyOffsets, mergedValuesAddr);
+                continue;
+            }
+
             long colAddr = coveredColumnMems != null
                     ? coveredColumnMems[c].addressOf(0)
                     : coveredColumnAddrs[c];
             long colTop = coveredColumnTops[c];
-            int shift = coveredColumnShifts[c];
-            int colType = coveredColumnTypes[c];
             int valueSize = 1 << shift;
 
             // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
@@ -2267,39 +2277,199 @@ public class PostingIndexWriter implements IndexWriter {
         int sidecarOffset = (int) sidecarMems[0].getAppendOffset();
 
         for (int c = 0; c < coverCount; c++) {
-            long colAddr = coveredColumnMems != null
-                    ? coveredColumnMems[c].addressOf(0)
-                    : coveredColumnAddrs[c];
-            long colTop = coveredColumnTops[c];
-            int shift = coveredColumnShifts[c];
             int colType = coveredColumnTypes[c];
-            int valueSize = 1 << shift;
+            long colTop = coveredColumnTops[c];
 
-            sidecarMems[c].putInt(totalValues);
+            if (ColumnType.isVarSize(colType)) {
+                writeSidecarVarGenBlock(sidecarMems[c], c, colTop, colType, totalValues);
+            } else {
+                long colAddr = coveredColumnMems != null
+                        ? coveredColumnMems[c].addressOf(0)
+                        : coveredColumnAddrs[c];
+                int shift = coveredColumnShifts[c];
+                int valueSize = 1 << shift;
 
-            for (int idx = 0; idx < activeKeyCount; idx++) {
-                int key = activeKeyIds[idx];
-                int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
-                int spillCount = getSpillCount(key);
+                sidecarMems[c].putInt(totalValues);
 
-                // Write spill values first (earlier values)
-                if (spillCount > 0) {
-                    long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-                    for (int i = 0; i < spillCount; i++) {
-                        long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
+                for (int idx = 0; idx < activeKeyCount; idx++) {
+                    int key = activeKeyIds[idx];
+                    int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+                    int spillCount = getSpillCount(key);
+
+                    if (spillCount > 0) {
+                        long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+                        for (int i = 0; i < spillCount; i++) {
+                            long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
+                            writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
+                        }
+                    }
+
+                    long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+                    for (int i = 0; i < pendingCount; i++) {
+                        long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
                         writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
                     }
-                }
-
-                // Then pending values
-                long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
-                for (int i = 0; i < pendingCount; i++) {
-                    long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
-                    writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
                 }
             }
         }
         return sidecarOffset;
+    }
+
+    /**
+     * Writes var-sized sidecar data for one stride in the sealed path.
+     * Format per stride: [totalCount:4B][offsets:(totalCount+1)×4B][concatenated bytes]
+     * where totalCount = sum of keyCounts for all keys in the stride.
+     */
+    private void writeSidecarVarStrideData(
+            MemoryMARW mem, int covIdx, long colTop, int colType,
+            int ks, int[] keyCounts, long[] keyOffsets, long mergedValuesAddr
+    ) {
+        boolean isVarchar = ColumnType.tagOf(colType) == ColumnType.VARCHAR;
+        int totalCount = 0;
+        for (int j = 0; j < ks; j++) {
+            totalCount += keyCounts[j];
+        }
+
+        // Write count + offset array placeholders
+        long blockStart = mem.getAppendOffset();
+        mem.putInt(totalCount);
+        long offsetsStart = mem.getAppendOffset();
+        for (int i = 0; i <= totalCount; i++) {
+            mem.putInt(0);
+        }
+        long dataStart = mem.getAppendOffset();
+
+        int valueOrdinal = 0;
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            long keyOff = keyOffsets[j];
+            for (int i = 0; i < count; i++) {
+                long rowId = Unsafe.getUnsafe().getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                int off = (int) (mem.getAppendOffset() - dataStart);
+                mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
+                if (rowId >= colTop) {
+                    if (isVarchar) {
+                        writeVarcharValue(mem, covIdx, rowId - colTop);
+                    } else {
+                        writeStringValue(mem, covIdx, rowId - colTop);
+                    }
+                }
+                // else: NULL — offset[i] == offset[i+1] (zero-length)
+                valueOrdinal++;
+            }
+        }
+        // Sentinel offset
+        int endOff = (int) (mem.getAppendOffset() - dataStart);
+        mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, endOff);
+    }
+
+    /**
+     * Writes a per-gen sidecar block for a var-sized column (VARCHAR or STRING).
+     * Format: [count:4B][offsets: (count+1)×4B][concatenated raw bytes]
+     * NULL values have offset[i] == offset[i+1] (zero-length) with a separate
+     * null bitmap not needed — the reader checks for zero-length spans.
+     */
+    private void writeSidecarVarGenBlock(MemoryMARW mem, int covIdx, long colTop, int colType, int totalValues) {
+        // Reserve space: count + (totalValues+1) offsets
+        long blockStart = mem.getAppendOffset();
+        mem.putInt(totalValues);
+        long offsetsStart = mem.getAppendOffset();
+        for (int i = 0; i <= totalValues; i++) {
+            mem.putInt(0); // placeholder offsets
+        }
+        long dataStart = mem.getAppendOffset();
+
+        int valueOrdinal = 0;
+        boolean isVarchar = ColumnType.tagOf(colType) == ColumnType.VARCHAR;
+
+        for (int idx = 0; idx < activeKeyCount; idx++) {
+            int key = activeKeyIds[idx];
+            int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            int spillCount = getSpillCount(key);
+
+            if (spillCount > 0) {
+                long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+                for (int i = 0; i < spillCount; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
+                    int off = (int) (mem.getAppendOffset() - dataStart);
+                    mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
+                    writeVarValue(mem, covIdx, colTop, rowId, isVarchar);
+                    valueOrdinal++;
+                }
+            }
+
+            long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+            for (int i = 0; i < pendingCount; i++) {
+                long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
+                int off = (int) (mem.getAppendOffset() - dataStart);
+                mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
+                writeVarValue(mem, covIdx, colTop, rowId, isVarchar);
+                valueOrdinal++;
+            }
+        }
+        // Sentinel offset
+        int endOff = (int) (mem.getAppendOffset() - dataStart);
+        mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, endOff);
+    }
+
+    private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, boolean isVarchar) {
+        if (rowId < colTop) {
+            return; // NULL — zero-length (offset[i] == offset[i+1])
+        }
+        if (isVarchar) {
+            writeVarcharValue(mem, covIdx, rowId - colTop);
+        } else {
+            writeStringValue(mem, covIdx, rowId - colTop);
+        }
+    }
+
+    private void writeVarcharValue(MemoryMARW mem, int covIdx, long row) {
+        // VARCHAR: coveredColumnAuxMems[c] = secondary (.v aux), coveredColumnMems[c] = primary (.d data)
+        MemoryMA auxMem = coveredColumnAuxMems != null ? coveredColumnAuxMems[covIdx] : null;
+        MemoryMA dataMem = coveredColumnMems != null ? coveredColumnMems[covIdx] : null;
+        if (auxMem == null) {
+            return;
+        }
+        long auxOffset = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * row;
+        int header = Unsafe.getUnsafe().getInt(auxMem.addressOf(auxOffset));
+        if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
+            return; // NULL
+        }
+        // Inlined check: bit 0 of header
+        if ((header & 1) != 0) {
+            // Inlined: data starts at auxEntry + 1, size in header bits 4-7
+            int size = (header >>> 4) & 0xF;
+            if (size > 0) {
+                long auxEntryAddr = auxMem.addressOf(auxOffset);
+                mem.putBlockOfBytes(auxEntryAddr + 1, size);
+            }
+        } else {
+            // Non-inlined: size in header bits 4-31, data in .d file
+            int size = (header >>> 4) & 0x0FFFFFFF;
+            if (size > 0 && dataMem != null) {
+                long dataOffset = Unsafe.getUnsafe().getLong(auxMem.addressOf(auxOffset + 8)) >>> 16;
+                long srcAddr = dataMem.addressOf(dataOffset);
+                mem.putBlockOfBytes(srcAddr, size);
+            }
+        }
+    }
+
+    private void writeStringValue(MemoryMARW mem, int covIdx, long row) {
+        // STRING: aux (.i) has 8-byte offsets, data (.d) has [len:4B][UTF-16 chars]
+        MemoryMA auxMem = coveredColumnAuxMems != null ? coveredColumnAuxMems[covIdx] : null;
+        MemoryMA dataMem = coveredColumnMems != null ? coveredColumnMems[covIdx] : null;
+        if (auxMem == null || dataMem == null) {
+            return;
+        }
+        long dataOffset = Unsafe.getUnsafe().getLong(auxMem.addressOf(row << 3));
+        int len = Unsafe.getUnsafe().getInt(dataMem.addressOf(dataOffset));
+        if (len == TableUtils.NULL_LEN) {
+            return; // NULL
+        }
+        // Write length prefix + UTF-16 chars as a single block
+        int totalBytes = Integer.BYTES + len * Character.BYTES;
+        long dataAddr = dataMem.addressOf(dataOffset);
+        mem.putBlockOfBytes(dataAddr, totalBytes);
     }
 
     private void writeSidecarValue(MemoryMARW mem, long colAddr, long colTop, long rowId,

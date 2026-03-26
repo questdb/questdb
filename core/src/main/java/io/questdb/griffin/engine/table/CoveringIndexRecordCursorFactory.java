@@ -47,6 +47,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -668,11 +669,37 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public CharSequence getStrA(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredStrA(includeIdx);
+            }
             return null;
         }
 
         @Override
         public CharSequence getStrB(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredStrB(includeIdx);
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredVarcharA(includeIdx);
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredVarcharB(includeIdx);
+            }
             return null;
         }
 

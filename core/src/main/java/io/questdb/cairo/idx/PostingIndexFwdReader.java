@@ -33,7 +33,10 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Forward reader for Delta + FoR64 BitPacking bitmap index.
@@ -127,6 +130,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int sealedGenKeyCount;
         private boolean isCurrentGenDense;
         private int currentGenSidecarOffset; // offset into .pc* for raw sidecar block
+        private int denseVarKeyStartCount; // prefix count for this key in the stride (for var-sized columns)
         private double[][] decodedDoubles;
         private int[][] decodedInts;
         private long[][] decodedLongs;
@@ -255,6 +259,99 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return Unsafe.getUnsafe().getByte(addr);
         }
 
+        // Var-sized sidecar readers. Both per-gen and per-stride var-sized blocks use
+        // the same format: [count:4B][offsets:(count+1)×4B][concatenated bytes].
+        // The offset pair [offsets[ordinal], offsets[ordinal+1]] defines the byte range.
+        // Zero-length range means NULL.
+
+        private final DirectUtf8String varcharViewA = new DirectUtf8String();
+        private final DirectUtf8String varcharViewB = new DirectUtf8String();
+        private final DirectString stringViewA = new DirectString();
+        private final DirectString stringViewB = new DirectString();
+
+        @Override
+        public Utf8Sequence getCoveredVarcharA(int includeIdx) {
+            return getVarSidecarUtf8(includeIdx, varcharViewA);
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharB(int includeIdx) {
+            return getVarSidecarUtf8(includeIdx, varcharViewB);
+        }
+
+        @Override
+        public CharSequence getCoveredStrA(int includeIdx) {
+            return getVarSidecarStr(includeIdx, stringViewA);
+        }
+
+        @Override
+        public CharSequence getCoveredStrB(int includeIdx) {
+            return getVarSidecarStr(includeIdx, stringViewB);
+        }
+
+        private Utf8Sequence getVarSidecarUtf8(int includeIdx, DirectUtf8String view) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
+            // For dense (sealed): ordinal = prefix count for this key + per-key ordinal
+            // For sparse (unsealed): use gen-global ordinal
+            int ordinal = isCurrentGenDense
+                    ? denseVarKeyStartCount + sidecarOrdinal - 1
+                    : sidecarOrdinal - 1;
+            long blockBase = isCurrentGenDense
+                    ? findDenseVarBlockBase(includeIdx)
+                    : currentGenSidecarOffset;
+            if (blockBase < 0) return null;
+            MemoryMR mem = sidecarMems[includeIdx];
+            int count = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
+            if (ordinal >= count) return null;
+            long offsetsAddr = mem.addressOf(blockBase + 4);
+            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
+            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            if (lo == hi) return null; // NULL
+            long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+            long dataAddr = mem.addressOf(dataBase + lo);
+            return view.of(dataAddr, dataAddr + (hi - lo));
+        }
+
+        private CharSequence getVarSidecarStr(int includeIdx, DirectString view) {
+            if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
+            int ordinal = isCurrentGenDense
+                    ? denseVarKeyStartCount + sidecarOrdinal - 1
+                    : sidecarOrdinal - 1;
+            long blockBase = isCurrentGenDense
+                    ? findDenseVarBlockBase(includeIdx)
+                    : currentGenSidecarOffset;
+            if (blockBase < 0) return null;
+            MemoryMR mem = sidecarMems[includeIdx];
+            int count = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
+            if (ordinal >= count) return null;
+            long offsetsAddr = mem.addressOf(blockBase + 4);
+            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
+            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            if (lo == hi) return null; // NULL
+            long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+            long dataAddr = mem.addressOf(dataBase + lo);
+            // STRING sidecar stores [len:4B][UTF-16 chars]
+            int len = Unsafe.getUnsafe().getInt(dataAddr);
+            if (len < 0) return null;
+            return view.of(dataAddr + Integer.BYTES, len);
+        }
+
+        private long findDenseVarBlockBase(int includeIdx) {
+            // For dense (sealed) gens, the sidecar file has a stride index at
+            // the beginning. Each stride's var-block is at siSize + strideOffset.
+            if (sidecarMems == null || sidecarMems[includeIdx] == null || sealedGenKeyCount <= 0) {
+                return -1;
+            }
+            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
+            MemoryMR mem = sidecarMems[includeIdx];
+            if ((long) stride * Integer.BYTES + Integer.BYTES > mem.size()) {
+                return -1;
+            }
+            int strideOff = Unsafe.getUnsafe().getInt(mem.addressOf((long) stride * Integer.BYTES));
+            return siSize + strideOff;
+        }
+
         @Override
         public long seekToLast() {
             long lastRowId = -1;
@@ -316,6 +413,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
                 int colType = sidecarColumnTypes[c];
+
+                // Var-sized columns (VARCHAR, STRING) use offset-based format
+                // in the sidecar, not ALP compression. Skip ALP decoding —
+                // getCoveredVarcharA/getCoveredStrA reads directly from the
+                // sidecar memory using the stride's var-block position.
+                if (ColumnType.isVarSize(colType)) {
+                    continue;
+                }
 
                 switch (ColumnType.tagOf(colType)) {
                     case ColumnType.DOUBLE: {
@@ -730,6 +835,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
                 int endCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
                 int count = endCount - startCount;
+                this.denseVarKeyStartCount = startCount;
 
                 if (count == 0) {
                     clearBlockState();
@@ -802,6 +908,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
             this.sidecarOrdinal = 0;
+            // Compute prefix count for var-sized sidecar addressing
+            int deltaKeyStartCount = 0;
+            for (int k = 0; k < localKey; k++) {
+                deltaKeyStartCount += Unsafe.getUnsafe().getInt(countsAddr + (long) k * Integer.BYTES);
+            }
+            this.denseVarKeyStartCount = deltaKeyStartCount;
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
