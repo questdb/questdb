@@ -165,7 +165,6 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
                     0,
-                    0.0,
                     0.0
             );
 
