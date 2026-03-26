@@ -1184,6 +1184,11 @@ public class PostingIndexWriter implements IndexWriter {
      * Opens sidecar files for append, preserving existing data. Used by
      * writeSidecarGenData to add per-gen raw blocks after seal's stride-indexed
      * data. Creates files if they don't exist, writes .pci header only when new.
+     * <p>
+     * When reopening existing files, the .pci header is preserved as-is. This is
+     * safe because the covered column configuration (INCLUDE clause) is part of
+     * the table schema and cannot change within a column version — schema changes
+     * create new file versions via columnNameTxn bump.
      */
     private void openSidecarFilesForAppend(Path path, CharSequence name, long columnNameTxn) {
         if (coverCount <= 0) {
@@ -1695,6 +1700,12 @@ public class PostingIndexWriter implements IndexWriter {
                     // with adaptive per-stride encoding (delta vs flat).
                     // Seal: write to a NEW .pv.{txn+1} file, protecting concurrent readers.
                     // In-place (rollback): rewrite valueMem at offset 0, no new file.
+                    //
+                    // Note: sealTarget is set here and nulled at the end. On exception,
+                    // sealTarget may remain non-null. This is not a leak — close() always
+                    // frees sealValueMem/valueMem and resets sealTarget. On the non-inPlace
+                    // exception path, the orphaned .pv.{newTxn} file stays on disk until
+                    // purge/vacuum cleanup.
                     {
                         int sc = PostingIndexUtils.strideCount(keyCount);
                         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
@@ -2083,6 +2094,12 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
+    /**
+     * FD-based open — used by O3CopyJob and O3PartitionJob. These callers never
+     * call configureCovering(), so coverCount stays 0 and sidecar operations are
+     * skipped. The sidecarTxn field is not set here (stays 0) which is safe
+     * because no sidecar code path runs without coverCount > 0.
+     */
     @Override
     public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
         close();
@@ -2203,6 +2220,12 @@ public class PostingIndexWriter implements IndexWriter {
         // Rollback writes in-place to the existing valueMem at offset 0 — same
         // approach as BitmapIndexWriter.rollbackValues() which writes in-place to
         // keyMem/valueMem. No new .pv file, no columnNameTxn bump.
+        //
+        // Safety: in-place rewrite overwrites MAP_SHARED pages visible to concurrent
+        // readers. This is safe under QuestDB's scoreboard coordination — readers
+        // only access committed data, and rollback only affects uncommitted gens.
+        // Sidecar files are also truncated in the inPlace path (reencodeAllGenerations),
+        // which carries the same concurrent-reader risk as BitmapIndexWriter rollback.
         reencodeAllGenerations(maxValue, maxValue, true);
     }
 
@@ -2210,6 +2233,11 @@ public class PostingIndexWriter implements IndexWriter {
      * Writes raw (uncompressed) covered column values for the current gen's
      * posting entries to the sidecar files. Each sidecar file gets a block:
      * [valueCount: 4B][raw values: valueCount × elemSize].
+     * <p>
+     * Values are written in the same order as flushAllPending() encodes posting
+     * data: sorted activeKeyIds, spill values first then pending values per key.
+     * This ensures the sidecar ordinal (tracked by the reader's cursor) matches
+     * the posting entry position within the gen.
      *
      * @param totalValues total number of posting values in this gen
      * @return the sidecar offset (position in .pc0 before this gen's block)

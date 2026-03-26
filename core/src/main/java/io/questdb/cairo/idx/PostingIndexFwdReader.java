@@ -214,6 +214,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // Raw sidecar readers for sparse (unsealed) gens.
         // Format: [valueCount: 4B][raw values: valueCount × elemSize]
         // sidecarOrdinal tracks position within this gen's block.
+        // Element sizes (Double.BYTES, Integer.BYTES, etc.) match the writer's
+        // writeSidecarValue() which uses 1 << shift for each column type.
+        // Each .pc{N} file contains a single column type, so there is no
+        // cross-type confusion even with multiple covered columns.
 
         private double getRawSidecarDouble(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return Double.NaN;
