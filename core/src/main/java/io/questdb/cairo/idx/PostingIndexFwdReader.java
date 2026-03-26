@@ -784,15 +784,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private void decodeNextBlock() {
             int b = currentBlock;
-            int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
-            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
+            // Read metadata directly from mmap — no intermediate copy.
+            int count = Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
+            int bitWidth = Unsafe.getUnsafe().getByte(srcBitWidthsAddr + b) & 0xFF;
             int numDeltas = count - 1;
 
-            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
+            long cumulative = Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES);
             Unsafe.getUnsafe().putLong(blockBufferAddr, cumulative);
 
             if (numDeltas > 0) {
-                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
+                long minD = Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES);
                 if (bitWidth == 0) {
                     // Constant delta: direct cumulative sum without intermediate buffer.
                     // Avoids writing 63 deltas to blockDeltasAddr then reading them back.
@@ -1111,6 +1112,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             readDeltaBlockMetadata();
         }
 
+        // Source addresses for block metadata — read directly from mmap,
+        // no copy into cursor-local arrays. Set by readDeltaBlockMetadata().
+        private long srcValueCountsAddr; // N × 1B (byte → int widened on read)
+        private long srcFirstValuesAddr; // N × 8B
+        private long srcMinDeltasAddr;   // N × 8B
+        private long srcBitWidthsAddr;   // N × 1B (byte → int widened on read)
+
         private void readDeltaBlockMetadata() {
             if (totalValueCount == 0) {
                 clearBlockState();
@@ -1125,28 +1133,18 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             pos += 4;
 
-            ensureMetadataCapacity(blockCount);
-
-            for (int b = 0; b < blockCount; b++) {
-                Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
-            }
+            // Store pointers directly into the mmap'd file — no copy needed.
+            // decodeNextBlock reads from these addresses one block at a time.
+            srcValueCountsAddr = pos;
             pos += blockCount;
 
-            for (int b = 0; b < blockCount; b++) {
-                Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
-                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
-            }
+            srcFirstValuesAddr = pos;
             pos += (long) blockCount * Long.BYTES;
 
-            for (int b = 0; b < blockCount; b++) {
-                Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
-                        Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
-            }
+            srcMinDeltasAddr = pos;
             pos += (long) blockCount * Long.BYTES;
 
-            for (int b = 0; b < blockCount; b++) {
-                Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
-            }
+            srcBitWidthsAddr = pos;
             pos += blockCount;
 
             // pos now points to the start of packed data for block 0
@@ -1163,7 +1161,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 int lo = 0, hi = blockCount - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
-                    if (Unsafe.getUnsafe().getLong(firstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
+                    if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
                         lo = mid;
                     } else {
                         hi = mid - 1;
@@ -1178,9 +1176,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // skipped values in the sidecar offset calculation
             int skippedValueCount = 0;
             for (int b = 0; b < startBlock; b++) {
-                int vc = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
+                int vc = Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
                 int numDeltas = vc - 1;
-                packedDataStart += BitpackUtils.packedDataSize(numDeltas, Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES));
+                packedDataStart += BitpackUtils.packedDataSize(numDeltas, Unsafe.getUnsafe().getByte(srcBitWidthsAddr + b) & 0xFF);
                 skippedValueCount += vc;
             }
             this.sidecarStrideKeyStart += skippedValueCount;
@@ -1190,7 +1188,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (maxValue < Long.MAX_VALUE && blockCount > 0) {
                 // Find first block whose firstValue > maxValue — all subsequent blocks can be skipped
                 for (int b = startBlock; b < blockCount; b++) {
-                    if (Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES) > maxValue) {
+                    if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES) > maxValue) {
                         endBlock = b;
                         break;
                     }
