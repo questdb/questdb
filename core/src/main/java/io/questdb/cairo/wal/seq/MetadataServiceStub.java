@@ -75,11 +75,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void dropColumnParquetEncoding(CharSequence columnName, int dropFlags) {
-        throw CairoException.critical(0).put("drop parquet encoding does not update sequencer metadata");
-    }
-
-    @Override
     default void dropIndex(@NotNull CharSequence columnName) {
         throw CairoException.critical(0).put("drop index does not update sequencer metadata");
     }

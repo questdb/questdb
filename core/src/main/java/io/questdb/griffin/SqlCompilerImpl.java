@@ -163,9 +163,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
-    private static final int PARQUET_DROP_COMPRESSION_FLAG = 0b10;
-    private static final int PARQUET_DROP_ENCODING_FLAG = 0b01;
-    private static final int PARQUET_DROP_FLAGS_ALL = PARQUET_DROP_COMPRESSION_FLAG | PARQUET_DROP_ENCODING_FLAG;
     private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
@@ -1490,30 +1487,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDropParquetEncoding(
-            SecurityContext securityContext,
-            int tableNamePosition,
-            TableToken tableToken,
-            CharSequence columnName,
-            TableRecordMetadata tableMetadata
-    ) throws SqlException {
-        // Syntax: ALTER TABLE t ALTER COLUMN c DROP PARQUET
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
-        }
-
-        alterOperationBuilder.ofDropParquetEncoding(
-                tableNamePosition,
-                tableToken,
-                tableMetadata.getTableId(),
-                columnName,
-                PARQUET_DROP_FLAGS_ALL
-        );
-        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
-        compiledQuery.ofAlter(alterOperationBuilder.build());
-    }
-
     private void alterTableRenameColumn(
             SecurityContext securityContext,
             int tableNamePosition,
@@ -1695,7 +1668,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int packedCompression = compression >= 0 ? compression + 1 : 0;
         // Level is also shifted +1 (0=not set, 1=level 0, 2=level 1, etc.)
         int packedLevel = level >= 0 ? level + 1 : 0;
-        int parquetEncodingConfig = TableUtils.packParquetConfig(encoding, packedCompression, packedLevel);
+        int parquetEncodingConfig = encoding == ParquetEncoding.ENCODING_DEFAULT && packedCompression == 0
+                ? 0
+                : TableUtils.packParquetConfig(encoding, packedCompression, packedLevel);
         alterOperationBuilder.ofSetParquetEncoding(
                 tableNamePosition,
                 tableToken,
@@ -1703,7 +1678,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 parquetEncodingConfig
         );
-        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableSetParquetSettings(tableToken);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -2236,8 +2211,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final int action;
                 if (isParquetKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_PARQUET;
+                    securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
                 } else if (isNativeKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_NATIVE;
+                    securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
                 }
@@ -2339,7 +2316,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 indexValueCapacity
                         );
                     } else if (isDropKeyword(tok)) {
-                        tok = expectToken(lexer, "'index' or 'parquet'");
+                        tok = expectToken(lexer, "'index'");
                         if (isIndexKeyword(tok)) {
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok != null && !isSemicolon(tok)) {
@@ -2353,16 +2330,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     columnName,
                                     tableMetadata
                             );
-                        } else if (isParquetKeyword(tok)) {
-                            alterTableDropParquetEncoding(
-                                    securityContext,
-                                    tableNamePosition,
-                                    tableToken,
-                                    columnName,
-                                    tableMetadata
-                            );
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'index' or 'parquet' expected");
+                            throw SqlException.$(lexer.lastTokenPosition(), "'index' expected");
                         }
                     } else if (isCacheKeyword(tok)) {
                         alterTableColumnCacheFlag(

@@ -852,7 +852,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=status, position=2, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, parquetEncoding=delta_binary_packed, parquetCompression=lz4_raw, writerIndex=2]
                     """);
 
-            execute("ALTER TABLE t ALTER COLUMN temp DROP PARQUET");
+            execute("ALTER TABLE t ALTER COLUMN temp SET PARQUET(default)");
             drainWalQueue();
 
             assertCairoMetadata("""
