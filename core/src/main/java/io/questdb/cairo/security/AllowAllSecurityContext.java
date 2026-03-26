@@ -119,7 +119,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableSetParquetEncoding(TableToken tableToken) {
+    public void authorizeAlterTableSetParquetSettings(TableToken tableToken) {
     }
 
     @Override

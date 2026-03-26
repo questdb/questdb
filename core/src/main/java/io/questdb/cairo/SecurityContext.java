@@ -77,7 +77,7 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableSetParam(TableToken tableToken);
 
-    void authorizeAlterTableSetParquetEncoding(TableToken tableToken);
+    void authorizeAlterTableSetParquetSettings(TableToken tableToken);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 

@@ -1670,7 +1670,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int packedCompression = compression >= 0 ? compression + 1 : 0;
         // Level is also shifted +1 (0=not set, 1=level 0, 2=level 1, etc.)
         int packedLevel = level >= 0 ? level + 1 : 0;
-        int parquetEncodingConfig = (encoding == ParquetEncoding.ENCODING_DEFAULT && packedCompression == 0 && packedLevel == 0)
+        int parquetEncodingConfig = encoding == ParquetEncoding.ENCODING_DEFAULT && packedCompression == 0
                 ? 0
                 : TableUtils.packParquetConfig(encoding, packedCompression, packedLevel);
         alterOperationBuilder.ofSetParquetEncoding(
@@ -1680,7 +1680,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnName,
                 parquetEncodingConfig
         );
-        securityContext.authorizeAlterTableSetParquetEncoding(tableToken);
+        securityContext.authorizeAlterTableSetParquetSettings(tableToken);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 

@@ -137,7 +137,7 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAlterTableSetParquetEncoding(TableToken tableToken) {
+    public void authorizeAlterTableSetParquetSettings(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
 
