@@ -3002,12 +3002,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-            }
+            // Post-commit: the switch is logically complete. Everything below is
+            // best-effort cleanup. Failures must not roll back the committed
+            // transaction (e.g. by deleting the new partition dir the TxReader
+            // already points to).
+            try {
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
 
-            // remove old partition dir
-            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+                // remove old partition dir
+                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+            } catch (Throwable e) {
+                handleHousekeepingException(e);
+            }
 
             return SWITCH_OK;
         } catch (CairoException e) {
