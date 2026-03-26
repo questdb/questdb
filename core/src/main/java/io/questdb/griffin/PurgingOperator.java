@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
@@ -141,6 +142,10 @@ public final class PurgingOperator {
                                     columnPurged &= ff.removeQuiet(path.$());
                                     IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());
+                                    // Remove posting index sidecar files
+                                    if (indexType == IndexType.POSTING) {
+                                        PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, columnVersion);
+                                    }
                                 }
                             } else {
                                 // This is removal of symbol files from the table root directory

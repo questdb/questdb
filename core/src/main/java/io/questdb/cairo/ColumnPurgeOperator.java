@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -162,6 +163,10 @@ public class ColumnPurgeOperator implements Closeable {
             if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
                 return true;
             }
+            // Remove posting index sidecar files (.pci, .pc0, .pc1, ...)
+            if (indexType == IndexType.POSTING) {
+                removeSidecarFiles(columnName, columnVersion, pathTrimToPartition);
+            }
         }
         // Always try legacy .k/.v (may remain after DROP INDEX or index type change)
         path.trimTo(pathTrimToPartition);
@@ -190,6 +195,18 @@ public class ColumnPurgeOperator implements Closeable {
         }
         path.trimTo(pathTrimToPartition);
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
+    }
+
+    private void removeSidecarFiles(CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        PostingIndexUtils.removeSidecarFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
+        // Also try to remove sealed .pv.{valueFileTxn} if it differs from columnVersion
+        path.trimTo(pathTrimToPartition);
+        long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
+        if (valueFileTxn > 0 && valueFileTxn != columnVersion) {
+            path.trimTo(pathTrimToPartition);
+            ff.removeQuiet(PostingIndexUtils.valueFileName(path, columnName, valueFileTxn));
+        }
     }
 
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {

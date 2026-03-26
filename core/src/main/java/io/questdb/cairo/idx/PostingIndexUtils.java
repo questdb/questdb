@@ -1051,6 +1051,33 @@ public final class PostingIndexUtils {
         return path.$();
     }
 
+    public static void removeSidecarFiles(FilesFacade ff, Path path, int pathTrimTo, CharSequence columnName, long columnVersion) {
+        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, columnVersion);
+        if (ff.exists(pciFile)) {
+            int coverCount = readCoverCountFromInfoFile(ff, pciFile);
+            ff.removeQuiet(pciFile);
+            for (int c = 0; c < coverCount; c++) {
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
+            }
+        }
+    }
+
+    public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
+        long fd = ff.openRO(pciFilePath);
+        if (fd < 0) {
+            return 0;
+        }
+        try {
+            int magic = (int) ff.readNonNegativeLong(fd, 0);
+            if (magic != COVER_INFO_MAGIC) {
+                return 0;
+            }
+            return (int) ff.readNonNegativeLong(fd, 4);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
         long fd = ff.openRO(keyFilePath);
         if (fd < 0) {

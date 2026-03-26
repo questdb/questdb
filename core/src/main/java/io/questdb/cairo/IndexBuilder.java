@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -120,6 +121,16 @@ public class IndexBuilder extends RebuildColumnBase {
 
     private void removeIndexFiles(FilesFacade ff, CharSequence columnName, long columnNameTxn) {
         final int plen = path.size();
+        // Remove sealed .pv file if VALUE_FILE_TXN differs from columnNameTxn
+        if (indexType == IndexType.POSTING) {
+            long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                    ff, PostingIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+            if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
+                removeFile(ff, PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn));
+            }
+            // Remove sidecar files
+            PostingIndexUtils.removeSidecarFiles(ff, path, plen, columnName, columnNameTxn);
+        }
         removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
         removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
     }
