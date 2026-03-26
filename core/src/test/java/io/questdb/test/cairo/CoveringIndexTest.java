@@ -582,17 +582,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testAlterTableAddIndexWithIncludeUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE t_varchar (
+                    CREATE TABLE t_binary (
                         ts TIMESTAMP,
                         sym SYMBOL,
-                        name VARCHAR
+                        data BINARY
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             try {
-                execute("ALTER TABLE t_varchar ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (name)");
+                execute("ALTER TABLE t_binary ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (data)");
                 fail("Should have thrown");
             } catch (Exception e) {
-                assertTrue(e.getMessage().contains("INCLUDE column must be a fixed-size numeric type"));
+                assertTrue(e.getMessage().contains("INCLUDE column type is not supported"));
             }
         });
     }
@@ -1973,37 +1973,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncludeWithVarSizeColumnFails() throws Exception {
+    public void testIncludeWithVarcharColumnAccepted() throws Exception {
+        // VARCHAR is now supported in INCLUDE
         assertMemoryLeak(() -> {
-            try {
-                execute("""
-                        CREATE TABLE bad (
-                            ts TIMESTAMP,
-                            sym SYMBOL INDEX TYPE POSTING INCLUDE (s),
-                            s STRING
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """);
-                fail("Should have thrown SqlException");
-            } catch (SqlException e) {
-                assertTrue(e.getMessage().contains("fixed-size"));
+            execute("""
+                    CREATE TABLE t_varchar_include (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try (TableReader r = engine.getReader("t_varchar_include")) {
+                int symIdx = r.getMetadata().getColumnIndex("sym");
+                assertTrue(r.getMetadata().getColumnMetadata(symIdx).isCovering());
             }
         });
     }
 
     @Test
-    public void testIncludeWithVarcharColumnFails() throws Exception {
+    public void testIncludeWithStringColumnAccepted() throws Exception {
+        // STRING is now supported in INCLUDE
         assertMemoryLeak(() -> {
-            try {
-                execute("""
-                        CREATE TABLE bad (
-                            ts TIMESTAMP,
-                            sym SYMBOL INDEX TYPE POSTING INCLUDE (v),
-                            v VARCHAR
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """);
-                fail("Should have thrown SqlException");
-            } catch (SqlException e) {
-                assertTrue(e.getMessage().contains("fixed-size"));
+            execute("""
+                    CREATE TABLE t_string_include (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (s),
+                        s STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            try (TableReader r = engine.getReader("t_string_include")) {
+                int symIdx = r.getMetadata().getColumnIndex("sym");
+                assertTrue(r.getMetadata().getColumnMetadata(symIdx).isCovering());
             }
         });
     }

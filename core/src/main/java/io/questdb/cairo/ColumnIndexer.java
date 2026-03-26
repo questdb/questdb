@@ -41,6 +41,18 @@ public interface ColumnIndexer extends QuietCloseable {
             int[] coveredColumnTypes,
             int coverCount
     ) {
+        configureCovering(coveredColumnMems, null, coveredColumnTops, coveredColumnShifts, coveredColumnIndices, coveredColumnTypes, coverCount);
+    }
+
+    default void configureCovering(
+            MemoryMA[] coveredColumnMems,
+            MemoryMA[] coveredColumnAuxMems,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount
+    ) {
         // no-op by default
     }
 

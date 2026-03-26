@@ -787,9 +787,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
                 int covType = ColumnType.tagOf(metadata.getColumnType(covIdx));
-                if (ColumnType.isVarSize(covType) || covType == ColumnType.LONG256
-                        || covType == ColumnType.UUID || covType == ColumnType.GEOHASH) {
-                    throw CairoException.invalidMetadataRecoverable("INCLUDE column must be a fixed-size numeric type", covName);
+                if (covType == ColumnType.BINARY || covType == ColumnType.LONG256
+                        || covType == ColumnType.UUID || ColumnType.isArray(metadata.getColumnType(covIdx))) {
+                    throw CairoException.invalidMetadataRecoverable("INCLUDE column type is not supported", covName);
                 }
                 coveringColumnIndices[i] = covIdx;
             }
@@ -5751,6 +5751,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         int coverCount = coveringCols.length;
         MemoryMA[] mems = new MemoryMA[coverCount];
+        MemoryMA[] auxMems = null;
         long[] tops = new long[coverCount];
         int[] shifts = new int[coverCount];
         int[] indices = new int[coverCount];
@@ -5763,8 +5764,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             types[i] = covType;
             indices[i] = covCol;
             shifts[i] = ColumnType.pow2SizeOf(covType);
+            if (ColumnType.isVarSize(covType)) {
+                if (auxMems == null) {
+                    auxMems = new MemoryMA[coverCount];
+                }
+                auxMems[i] = getSecondaryColumn(covCol);
+            }
         }
-        indexer.configureCovering(mems, tops, shifts, indices, types, coverCount);
+        indexer.configureCovering(mems, auxMems, tops, shifts, indices, types, coverCount);
     }
 
     private MemoryMA getPrimaryColumn(int column) {

@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Extension of RowCursor that provides access to covered column values
@@ -43,6 +44,22 @@ public interface CoveringRowCursor extends RowCursor {
     long getCoveredLong(int includeIdx);
 
     short getCoveredShort(int includeIdx);
+
+    default CharSequence getCoveredStrA(int includeIdx) {
+        return null;
+    }
+
+    default CharSequence getCoveredStrB(int includeIdx) {
+        return null;
+    }
+
+    default Utf8Sequence getCoveredVarcharA(int includeIdx) {
+        return null;
+    }
+
+    default Utf8Sequence getCoveredVarcharB(int includeIdx) {
+        return null;
+    }
 
     boolean hasCovering();
 

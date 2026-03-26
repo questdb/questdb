@@ -76,15 +76,16 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void configureCovering(
             MemoryMA[] coveredColumnMems,
+            MemoryMA[] coveredColumnAuxMems,
             long[] coveredColumnTops,
             int[] coveredColumnShifts,
             int[] coveredColumnIndices,
             int[] coveredColumnTypes,
             int coverCount
     ) {
-        if (writer instanceof PostingIndexWriter) {
-            ((PostingIndexWriter) writer).configureCovering(
-                    coveredColumnMems, coveredColumnTops, coveredColumnShifts,
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.configureCovering(
+                    coveredColumnMems, coveredColumnAuxMems, coveredColumnTops, coveredColumnShifts,
                     coveredColumnIndices, coveredColumnTypes, coverCount);
         }
     }

@@ -87,6 +87,7 @@ public class PostingIndexWriter implements IndexWriter {
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private int coverCount;
     private long[] coveredColumnAddrs;
+    private MemoryMA[] coveredColumnAuxMems;
     private MemoryMA[] coveredColumnMems;
     private int[] coveredColumnIndices;
     private int[] coveredColumnShifts;
@@ -295,6 +296,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     public void configureCovering(
             MemoryMA[] coveredColumnMems,
+            MemoryMA[] coveredColumnAuxMems,
             long[] coveredColumnTops,
             int[] coveredColumnShifts,
             int[] coveredColumnIndices,
@@ -302,6 +304,7 @@ public class PostingIndexWriter implements IndexWriter {
             int coverCount
     ) {
         this.coveredColumnMems = coveredColumnMems;
+        this.coveredColumnAuxMems = coveredColumnAuxMems;
         this.coveredColumnAddrs = null;
         this.coveredColumnTops = coveredColumnTops;
         this.coveredColumnShifts = coveredColumnShifts;

@@ -840,12 +840,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                                 .put("INCLUDE column doesn't exist [column=").put(coverNames.get(j)).put(']');
                     }
                     CreateTableColumnModel covModel = modelMap.get(coverNames.get(j));
-                    int covType = ColumnType.tagOf(covModel.getColumnType());
-                    if (ColumnType.isVarSize(covType) || covType == ColumnType.LONG256
-                            || covType == ColumnType.UUID || covType == ColumnType.GEOHASH) {
+                    int covType = covModel.getColumnType();
+                    int covTag = ColumnType.tagOf(covType);
+                    if (covTag == ColumnType.BINARY || covTag == ColumnType.LONG256
+                            || covTag == ColumnType.UUID || ColumnType.isArray(covType)) {
                         throw SqlException.position(0)
-                                .put("INCLUDE column must be a fixed-size numeric type [column=")
-                                .put(coverNames.get(j)).put(", type=").put(ColumnType.nameOf(covType)).put(']');
+                                .put("INCLUDE column type is not supported [column=")
+                                .put(coverNames.get(j)).put(", type=").put(ColumnType.nameOf(covTag)).put(']');
                     }
                     indices[j] = idx;
                 }
