@@ -26,12 +26,15 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.std.IntIntHashMap;
 
+import java.util.Arrays;
+
 /**
  * A cache that maps client symbol IDs to table-specific symbol IDs for a single symbol column.
  * <p>
- * This cache is used to avoid repeated string lookups when the same symbols are used
- * across multiple rows. The cache stores mappings from client-side symbol dictionary
- * indices to the table's internal symbol IDs.
+ * Uses a hybrid strategy: a flat int[] array for IDs in [0, ARRAY_THRESHOLD) — the common
+ * case with monotonically increasing client dictionaries — and falls back to an IntIntHashMap
+ * for any IDs at or above the threshold. The array path gives O(1) lookups with no hashing,
+ * no probe chains, and sequential-access-friendly memory layout.
  * <p>
  * Thread safety: This class is NOT thread-safe. It should only be accessed from a single thread.
  * <p>
@@ -47,7 +50,18 @@ public class ClientSymbolCache {
 
     private static final int DEFAULT_INITIAL_CAPACITY = 64;
 
-    private final IntIntHashMap cache;
+    /**
+     * IDs below this use the flat array; IDs at or above fall back to the hash map.
+     */
+    private static final int ARRAY_THRESHOLD = 10_000;
+
+    // Fast path: flat array for small, dense IDs.
+    private int[] values;
+
+    // Slow path: hash map for sparse / large IDs.
+    private IntIntHashMap overflow;
+
+    private int size;
 
     // Tracks the last known watermark for invalidation detection
     private int lastKnownWatermark = -1;
@@ -62,10 +76,12 @@ public class ClientSymbolCache {
     /**
      * Creates a new cache with the specified initial capacity.
      *
-     * @param initialCapacity the initial capacity
+     * @param initialCapacity the initial capacity (for the array portion)
      */
     public ClientSymbolCache(int initialCapacity) {
-        this.cache = new IntIntHashMap(initialCapacity);
+        this.values = new int[Math.max(initialCapacity, 16)];
+        Arrays.fill(this.values, NO_ENTRY);
+        this.size = 0;
     }
 
     /**
@@ -89,7 +105,7 @@ public class ClientSymbolCache {
             // Watermark changed - clear the cache
             // This is conservative but safe - the cache will warm up again
             lastKnownWatermark = currentWatermark;
-            cache.clear();
+            clearEntries();
             return true;
         }
 
@@ -100,7 +116,7 @@ public class ClientSymbolCache {
      * Removes all entries from the cache.
      */
     public void clear() {
-        cache.clear();
+        clearEntries();
         lastKnownWatermark = -1;
     }
 
@@ -111,12 +127,21 @@ public class ClientSymbolCache {
      * @return the table symbol ID, or {@link #NO_ENTRY} if not found
      */
     public int get(int clientSymbolId) {
-        return cache.get(clientSymbolId);
+        if (clientSymbolId >= 0 && clientSymbolId < ARRAY_THRESHOLD) {
+            if (clientSymbolId < values.length) {
+                return values[clientSymbolId];
+            }
+            return NO_ENTRY;
+        }
+        // Overflow path
+        if (overflow != null) {
+            return overflow.get(clientSymbolId);
+        }
+        return NO_ENTRY;
     }
 
     /**
      * Returns the last known watermark value.
-     * Used for testing and debugging.
      *
      * @return the last known watermark
      */
@@ -131,7 +156,24 @@ public class ClientSymbolCache {
      * @param tableSymbolId  the table's internal symbol ID
      */
     public void put(int clientSymbolId, int tableSymbolId) {
-        cache.put(clientSymbolId, tableSymbolId);
+        if (clientSymbolId >= 0 && clientSymbolId < ARRAY_THRESHOLD) {
+            if (clientSymbolId >= values.length) {
+                grow(clientSymbolId + 1);
+            }
+            if (values[clientSymbolId] == NO_ENTRY) {
+                size++;
+            }
+            values[clientSymbolId] = tableSymbolId;
+        } else {
+            if (overflow == null) {
+                overflow = new IntIntHashMap(DEFAULT_INITIAL_CAPACITY);
+            }
+            int idx = overflow.keyIndex(clientSymbolId);
+            if (idx >= 0) {
+                size++;
+            }
+            overflow.putAt(idx, clientSymbolId, tableSymbolId);
+        }
     }
 
     /**
@@ -140,6 +182,25 @@ public class ClientSymbolCache {
      * @return the cache size
      */
     public int size() {
-        return cache.size();
+        return size;
+    }
+
+    private void clearEntries() {
+        Arrays.fill(values, 0, values.length, NO_ENTRY);
+        if (overflow != null) {
+            overflow.clear();
+        }
+        size = 0;
+    }
+
+    private void grow(int minCapacity) {
+        int newLen = Math.max(values.length * 2, minCapacity);
+        if (newLen > ARRAY_THRESHOLD) {
+            newLen = ARRAY_THRESHOLD;
+        }
+        int[] newValues = new int[newLen];
+        System.arraycopy(values, 0, newValues, 0, values.length);
+        Arrays.fill(newValues, values.length, newLen, NO_ENTRY);
+        values = newValues;
     }
 }

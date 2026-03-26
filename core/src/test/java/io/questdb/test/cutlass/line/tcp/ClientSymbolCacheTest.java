@@ -169,7 +169,7 @@ public class ClientSymbolCacheTest {
     public void testLargeClientIds_supported() {
         ClientSymbolCache cache = new ClientSymbolCache();
 
-        // Large client IDs should work
+        // Large client IDs use the overflow hash map
         cache.put(Integer.MAX_VALUE, 10);
         cache.put(Integer.MAX_VALUE - 1, 20);
         cache.put(1_000_000, 30);
@@ -244,5 +244,66 @@ public class ClientSymbolCacheTest {
 
         // Verify it's distinguishable from NO_ENTRY
         assertNotEquals(ClientSymbolCache.NO_ENTRY, cache.get(0));
+    }
+
+    @Test
+    public void testArrayThresholdBoundary() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        // 9999 should use array, 10000 should use overflow map
+        cache.put(9999, 99);
+        cache.put(10_000, 100);
+
+        assertEquals(99, cache.get(9999));
+        assertEquals(100, cache.get(10_000));
+        assertEquals(2, cache.size());
+
+        // Both survive independently
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(9998));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(10_001));
+    }
+
+    @Test
+    public void testCheckAndInvalidate_clearsBothArrayAndOverflow() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        // Populate both array and overflow paths
+        cache.put(5, 50);
+        cache.put(50_000, 500);
+        assertEquals(2, cache.size());
+
+        // Initialize watermark
+        cache.checkAndInvalidate(100);
+
+        // Change watermark to trigger invalidation
+        assertTrue(cache.checkAndInvalidate(200));
+
+        // Both paths should be cleared
+        assertEquals(0, cache.size());
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(5));
+        assertEquals(ClientSymbolCache.NO_ENTRY, cache.get(50_000));
+    }
+
+    @Test
+    public void testOverflowOverwrite_doesNotDoubleCountSize() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        cache.put(50_000, 10);
+        assertEquals(1, cache.size());
+
+        // Overwrite in overflow map
+        cache.put(50_000, 20);
+        assertEquals(1, cache.size());
+        assertEquals(20, cache.get(50_000));
+    }
+
+    @Test
+    public void testNegativeClientId_cachedInOverflow() {
+        ClientSymbolCache cache = new ClientSymbolCache();
+
+        // Negative IDs route to overflow map
+        cache.put(-5, 42);
+        assertEquals(42, cache.get(-5));
+        assertEquals(1, cache.size());
     }
 }

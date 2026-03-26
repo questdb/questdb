@@ -171,11 +171,26 @@ public final class QwpVarint {
      * @throws QwpParseException if the varint is malformed or buffer underflows
      */
     public static void decode(long address, long limit, DecodeResult result) throws QwpParseException {
-        long value = 0;
-        int shift = 0;
-        int bytesRead = 0;
-        byte b;
+        if (address >= limit) {
+            throw QwpParseException.incompleteVarint();
+        }
+        // Fast path: single-byte varint (values 0-127) — the common case for symbol indices
+        byte b = Unsafe.getUnsafe().getByte(address);
+        if ((b & CONTINUATION_BIT) == 0) {
+            result.value = b;
+            result.bytesRead = 1;
+            return;
+        }
+        decodeMultiByte(address, limit, result, b);
+    }
 
+    private static void decodeMultiByte(long address, long limit, DecodeResult result, byte firstByte) throws QwpParseException {
+        long value = firstByte & DATA_MASK;
+        int shift = 7;
+        int bytesRead = 1;
+        address++;
+
+        byte b;
         do {
             if (address >= limit) {
                 throw QwpParseException.incompleteVarint();
