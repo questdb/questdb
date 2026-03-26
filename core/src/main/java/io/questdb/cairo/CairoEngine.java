@@ -196,6 +196,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
+    private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
@@ -223,7 +224,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
-    private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, new QdbrWalLocker());
@@ -1353,13 +1353,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isTableDropped(tableToken);
     }
 
-    public boolean isWalTable(TableToken tableToken) {
-        return tableToken.isWal();
-    }
-
     @TestOnly
     public boolean isWalPurgeJobLocked() {
         return walPurgeJobLock.isLocked();
+    }
+
+    public boolean isWalTable(TableToken tableToken) {
+        return tableToken.isWal();
     }
 
     public boolean isWalTableDropped(CharSequence tableDir) {
@@ -1644,7 +1644,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean renamed = false;
                     try {
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
-                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
+                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
                             LOG.info().$("renaming table [from='").$safe(fromTableName)
                                     .$("', to='").$safe(toTableName)
                                     .$("', wal=").$(walWriter.getWalId())

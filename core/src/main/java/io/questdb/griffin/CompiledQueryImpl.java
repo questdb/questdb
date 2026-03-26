@@ -68,7 +68,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
-                return writerAPI.apply(operation);
+                try {
+                    return writerAPI.apply(operation);
+                } finally {
+                    operation.clearSecurityContext();
+                }
             }
         };
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {

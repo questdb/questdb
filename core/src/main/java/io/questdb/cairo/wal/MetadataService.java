@@ -80,29 +80,6 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    default void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential,
-            boolean isDedupKey
-    ) {
-        addColumn(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                isSequential,
-                isDedupKey,
-                null
-        );
-    }
-
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);

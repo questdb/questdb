@@ -591,7 +591,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            SecurityContext securityContext
     ) {
         addColumn(
                 columnName,
@@ -602,7 +603,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
-                null
+                securityContext
         );
     }
 
@@ -822,11 +823,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        alterOp.authorize();
         return alterOp.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
     public long apply(UpdateOperation operation) {
+        operation.authorize();
         return operation.apply(this, true);
     }
 
@@ -1768,6 +1771,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
+    }
+
+    @Override
+    public void dropColumnParquetEncoding(CharSequence columnName, int dropFlags) {
+        checkDistressed();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex < 0) {
+            LOG.error().$("cannot drop parquet encoding, column does not exist [table=").$(tableToken)
+                    .$(", column=").$safe(columnName).I$();
+            return;
+        }
+        commit();
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        int currentConfig = columnMetadata.getParquetEncodingConfig();
+        boolean dropEncoding = (dropFlags & 1) != 0;
+        boolean dropCompression = (dropFlags & 2) != 0;
+
+        int newConfig;
+        if (dropEncoding && dropCompression) {
+            newConfig = 0;
+        } else {
+            int encoding = dropEncoding ? 0 : TableUtils.getParquetConfigEncoding(currentConfig);
+            int compression = dropCompression ? 0 : TableUtils.getParquetConfigCompression(currentConfig);
+            int level = dropCompression ? 0 : TableUtils.getParquetConfigCompressionLevel(currentConfig);
+            if (encoding == 0 && compression == 0) {
+                newConfig = 0;
+            } else {
+                newConfig = TableUtils.packParquetConfig(encoding, compression, level);
+            }
+        }
+        columnMetadata.setParquetEncodingConfig(newConfig);
+        writeMetadataToDisk();
     }
 
     @Override
@@ -2738,53 +2773,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void dropColumnParquetEncoding(CharSequence columnName, int dropFlags) {
-        checkDistressed();
-        int columnIndex = metadata.getColumnIndexQuiet(columnName);
-        if (columnIndex < 0) {
-            LOG.error().$("cannot drop parquet encoding, column does not exist [table=").$(tableToken)
-                    .$(", column=").$safe(columnName).I$();
-            return;
-        }
-        commit();
-        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        int currentConfig = columnMetadata.getParquetEncodingConfig();
-        boolean dropEncoding = (dropFlags & 1) != 0;
-        boolean dropCompression = (dropFlags & 2) != 0;
-
-        int newConfig;
-        if (dropEncoding && dropCompression) {
-            newConfig = 0;
-        } else {
-            int encoding = dropEncoding ? 0 : TableUtils.getParquetConfigEncoding(currentConfig);
-            int compression = dropCompression ? 0 : TableUtils.getParquetConfigCompression(currentConfig);
-            int level = dropCompression ? 0 : TableUtils.getParquetConfigCompressionLevel(currentConfig);
-            if (encoding == 0 && compression == 0) {
-                newConfig = 0;
-            } else {
-                newConfig = TableUtils.packParquetConfig(encoding, compression, level);
-            }
-        }
-        columnMetadata.setParquetEncodingConfig(newConfig);
-        writeMetadataToDisk();
-    }
-
-    @Override
-    public void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
-        checkDistressed();
-        int columnIndex = metadata.getColumnIndexQuiet(columnName);
-        if (columnIndex < 0) {
-            LOG.error().$("cannot set parquet encoding, column does not exist [table=").$(tableToken)
-                    .$(", column=").$safe(columnName).I$();
-            return;
-        }
-        commit();
-        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        columnMetadata.setParquetEncodingConfig(parquetEncodingConfig);
-        writeMetadataToDisk();
-    }
-
-    @Override
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
@@ -2821,6 +2809,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // and the writer must be closed.
             checkDistressed();
         }
+    }
+
+    @Override
+    public void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
+        checkDistressed();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex < 0) {
+            LOG.error().$("cannot set parquet encoding, column does not exist [table=").$(tableToken)
+                    .$(", column=").$safe(columnName).I$();
+            return;
+        }
+        commit();
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        columnMetadata.setParquetEncodingConfig(parquetEncodingConfig);
+        writeMetadataToDisk();
     }
 
     public void setExtensionListener(ExtensionListener listener) {
