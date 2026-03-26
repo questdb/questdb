@@ -99,6 +99,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
     private class Cursor implements CoveringRowCursor {
         private long blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        private int blockBufferCapacity = PostingIndexUtils.PACKED_BATCH_SIZE;
         private long blockDeltasAddr = Unsafe.malloc((long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long next;
         private int blockBufferPos;
@@ -866,8 +867,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         void close() {
             if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockBufferAddr = 0;
+                blockBufferCapacity = 0;
             }
             if (blockDeltasAddr != 0) {
                 Unsafe.free(blockDeltasAddr, (long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -1195,11 +1197,70 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 }
             }
 
+            // Full-scan fast path: decode all blocks into one large buffer.
+            // Eliminates per-block decodeNextBlock() overhead (157 calls for S4).
+            if (startBlock == 0 && endBlock == blockCount && minValue == 0 && maxValue == Long.MAX_VALUE) {
+                decodeAllBlocksBulk(blockCount, packedDataStart);
+                return;
+            }
+
             this.encodedBlockCount = endBlock;
             this.packedDataAddr = packedDataStart;
             this.currentBlock = startBlock;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+        }
+
+        /**
+         * Decode all blocks into a single contiguous buffer. No per-block
+         * hasNext() overhead — the entire key's values are available at once.
+         */
+        private void decodeAllBlocksBulk(int blockCount, long packedDataStart) {
+            // Grow buffer if needed
+            if (totalValueCount > blockBufferCapacity) {
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferCapacity = Math.max(totalValueCount, blockBufferCapacity * 2);
+                blockBufferAddr = Unsafe.malloc((long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+
+            long packedPos = packedDataStart;
+            int destIdx = 0;
+
+            for (int b = 0; b < blockCount; b++) {
+                int count = Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
+                int bitWidth = Unsafe.getUnsafe().getByte(srcBitWidthsAddr + b) & 0xFF;
+                long firstValue = Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES);
+                long minD = Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES);
+                int numDeltas = count - 1;
+
+                // Write firstValue
+                Unsafe.getUnsafe().putLong(blockBufferAddr + (long) destIdx * Long.BYTES, firstValue);
+                long cumulative = firstValue;
+
+                if (numDeltas > 0) {
+                    if (bitWidth == 0) {
+                        // Constant delta — direct cumsum
+                        for (int i = 0; i < numDeltas; i++) {
+                            cumulative += minD;
+                            Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (destIdx + 1 + i) * Long.BYTES, cumulative);
+                        }
+                    } else {
+                        // Unpack deltas then cumsum
+                        BitpackUtils.unpackAllValues(packedPos, numDeltas, bitWidth, minD, blockDeltasAddr);
+                        for (int i = 0; i < numDeltas; i++) {
+                            cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
+                            Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (destIdx + 1 + i) * Long.BYTES, cumulative);
+                        }
+                        packedPos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
+                    }
+                }
+                destIdx += count;
+            }
+
+            this.blockBufferPos = 0;
+            this.blockBufferEnd = totalValueCount;
+            this.encodedBlockCount = 0; // no more decodeNextBlock calls
+            this.currentBlock = blockCount;
         }
     }
 }
