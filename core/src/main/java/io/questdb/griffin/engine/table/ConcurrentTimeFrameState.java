@@ -311,7 +311,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             addressCache.add(frameCount, frame);
-            framePartitionIndexes.add(frame.partitionIndex());
+            framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameCount++;
         }
@@ -351,7 +351,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             addressCache.add(frameCount, frame);
-            framePartitionIndexes.add(frame.partitionIndex());
+            framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameCount++;
         }

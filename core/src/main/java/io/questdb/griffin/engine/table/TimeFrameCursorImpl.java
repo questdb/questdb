@@ -394,7 +394,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             frameAddressCache.add(frameCount, frame);
-            framePartitionIndexes.add(frame.partitionIndex());
+            framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameCount++;
         }
@@ -506,7 +506,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             frameAddressCache.add(frameCount, frame);
-            framePartitionIndexes.add(frame.partitionIndex());
+            framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameCount++;
         }

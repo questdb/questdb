@@ -316,11 +316,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public byte format() {
-            return baseFrame.format();
-        }
-
-        @Override
         public long getAuxPageAddress(int columnIndex) {
             return columnIndex < columnSplit ? baseFrame.getAuxPageAddress(columnIndex) : 0;
         }
@@ -338,6 +333,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public int getColumnCount() {
             return columnCount;
+        }
+
+        @Override
+        public byte getFormat() {
+            return baseFrame.getFormat();
         }
 
         @Override
@@ -376,6 +376,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public int getPartitionIndex() {
+            return baseFrame.getPartitionIndex();
+        }
+
+        @Override
         public long getPartitionLo() {
             return baseFrame.getPartitionLo();
         }
@@ -383,11 +388,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         public ExtraNullColumnPageFrame of(PageFrame basePageFrame) {
             this.baseFrame = basePageFrame;
             return this;
-        }
-
-        @Override
-        public int partitionIndex() {
-            return baseFrame.partitionIndex();
         }
     }
 
@@ -412,11 +412,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public boolean hasIntervalFilter() {
-            return baseCursor.hasIntervalFilter();
-        }
-
-        @Override
         public IntList getColumnIndexes() {
             return baseCursor.getColumnIndexes();
         }
@@ -434,6 +429,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public TableReader getTableReader() {
             return baseCursor.getTableReader();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return baseCursor.hasIntervalFilter();
         }
 
         @Override
