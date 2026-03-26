@@ -129,7 +129,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int sidecarStrideKeyStart;
         private int sealedGenKeyCount;
         private boolean isCurrentGenDense;
-        private int currentGenSidecarOffset; // offset into .pc* for raw sidecar block
+        private int[] currentGenSidecarOffsets; // per-column offset into .pc* for raw sidecar block
         private int denseVarKeyStartCount; // prefix count for this key in the stride (for var-sized columns)
         private double[][] decodedDoubles;
         private int[][] decodedInts;
@@ -225,37 +225,37 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private double getRawSidecarDouble(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return Double.NaN;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Double.BYTES);
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) (sidecarOrdinal - 1) * Double.BYTES);
             return Unsafe.getUnsafe().getDouble(addr);
         }
 
         private float getRawSidecarFloat(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return Float.NaN;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Float.BYTES);
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) (sidecarOrdinal - 1) * Float.BYTES);
             return Unsafe.getUnsafe().getFloat(addr);
         }
 
         private int getRawSidecarInt(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return Integer.MIN_VALUE;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Integer.BYTES);
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) (sidecarOrdinal - 1) * Integer.BYTES);
             return Unsafe.getUnsafe().getInt(addr);
         }
 
         private long getRawSidecarLong(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return Long.MIN_VALUE;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Long.BYTES);
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) (sidecarOrdinal - 1) * Long.BYTES);
             return Unsafe.getUnsafe().getLong(addr);
         }
 
         private short getRawSidecarShort(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return 0;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Short.BYTES);
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) (sidecarOrdinal - 1) * Short.BYTES);
             return Unsafe.getUnsafe().getShort(addr);
         }
 
         private byte getRawSidecarByte(int includeIdx) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return 0;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffset + 4 + (long) (sidecarOrdinal - 1) * Byte.BYTES);
+            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) (sidecarOrdinal - 1) * Byte.BYTES);
             return Unsafe.getUnsafe().getByte(addr);
         }
 
@@ -298,7 +298,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     : sidecarOrdinal - 1;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffset;
+                    : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
             MemoryMR mem = sidecarMems[includeIdx];
             int count = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
@@ -319,7 +319,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     : sidecarOrdinal - 1;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffset;
+                    : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
             MemoryMR mem = sidecarMems[includeIdx];
             int count = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
@@ -334,6 +334,84 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int len = Unsafe.getUnsafe().getInt(dataAddr);
             if (len < 0) return null;
             return view.of(dataAddr + Integer.BYTES, len);
+        }
+
+        /**
+         * Computes per-column sidecar offsets for the given gen by scanning
+         * through previous gen blocks in each sidecar file. Each gen block
+         * starts with [count:4B]; block size depends on column type.
+         */
+        /**
+         * Computes per-column sidecar offsets for the given sparse gen by
+         * scanning through previous SPARSE gen blocks in each sidecar file.
+         * Dense (sealed) gens use stride-indexed format in the sidecar, which
+         * is not scannable as raw blocks. For gens after a dense gen 0, the
+         * scan starts from the first sparse gen's position.
+         */
+        private void computePerColumnSidecarOffsets(int gen) {
+            if (currentGenSidecarOffsets == null || currentGenSidecarOffsets.length < coverCount) {
+                currentGenSidecarOffsets = new int[Math.max(coverCount, 1)];
+            }
+            if (sidecarMems == null || sidecarColumnTypes == null) {
+                return;
+            }
+
+            // Find the first sparse gen (skip dense gens which have stride-indexed sidecars)
+            int firstSparseGen = 0;
+            while (firstSparseGen < gen && genLookup.getGenKeyCount(firstSparseGen) >= 0) {
+                firstSparseGen++;
+            }
+
+            for (int c = 0; c < coverCount; c++) {
+                if (sidecarMems[c] == null) {
+                    currentGenSidecarOffsets[c] = 0;
+                    continue;
+                }
+
+                long offset;
+                if (firstSparseGen == 0) {
+                    // No dense gens before this one — scan from file start
+                    offset = 0;
+                } else {
+                    // Dense gen(s) precede. The gen dir sidecar offset (from column 0)
+                    // gives the start of the first sparse gen's block. For column 0
+                    // this is exact; for other columns we need to scan from their
+                    // respective first sparse block position. Since we can't determine
+                    // the dense block size per column without parsing stride-indexed
+                    // format, we use the gen dir offset as a best-effort base. This is
+                    // exact for single-column and correct when all columns grow evenly.
+                    // TODO: for multi-column post-seal, read stride index to compute
+                    //  exact per-column dense block sizes.
+                    offset = genLookup.getGenSidecarOffset(firstSparseGen);
+                }
+
+                int colType = sidecarColumnTypes[c];
+                boolean isVar = ColumnType.isVarSize(colType);
+                int elemSize = isVar ? 0 : ColumnType.sizeOf(colType);
+
+                // Scan through sparse gen blocks from firstSparseGen to gen-1
+                for (int g = firstSparseGen; g < gen; g++) {
+                    if (genLookup.getGenKeyCount(g) >= 0) {
+                        continue; // skip dense gens (shouldn't happen after firstSparseGen)
+                    }
+                    if (offset + 4 > sidecarMems[c].size()) {
+                        break;
+                    }
+                    int count = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(offset));
+                    if (isVar) {
+                        if (count == 0) {
+                            offset += 4;
+                        } else {
+                            long sentinelPos = offset + 4 + (long) count * Integer.BYTES;
+                            int dataSize = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(sentinelPos));
+                            offset += 4 + (long) (count + 1) * Integer.BYTES + dataSize;
+                        }
+                    } else {
+                        offset += 4 + (long) count * elemSize;
+                    }
+                }
+                currentGenSidecarOffsets[c] = (int) offset;
+            }
         }
 
         private long findDenseVarBlockBase(int includeIdx) {
@@ -928,7 +1006,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          */
         private void loadSparseGenDirect(int gen, int idx) {
             this.isCurrentGenDense = false;
-            this.currentGenSidecarOffset = genLookup.getGenSidecarOffset(gen);
+            computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
@@ -962,7 +1040,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          */
         private void loadSparseGenWithBinarySearch(int gen) {
             this.isCurrentGenDense = false;
-            this.currentGenSidecarOffset = genLookup.getGenSidecarOffset(gen);
+            computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
             int genKeyCount = genLookup.getGenKeyCount(gen);
