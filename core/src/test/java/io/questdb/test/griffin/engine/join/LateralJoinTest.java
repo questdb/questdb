@@ -4131,6 +4131,69 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T64b: Cascading lateral where first lateral has window function — verifies deepClone
+    // handles WindowExpression correctly. Without deep clone, the shared model between
+    // orders.jm[1] and the second lateral's outer ref subquery causes rewriteSelectClause0
+    // to corrupt the model on the second processing pass.
+    @Test
+    public void testT64bCascadingLateralWithWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE bonuses (min_rank LONG, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 50.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO bonuses VALUES
+                    (1, 100.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200.0, '2024-01-01T00:00:01.000000Z'),
+                    (3, 300.0, '2024-01-01T00:00:02.000000Z')
+                    """);
+
+            // Lateral A: window function (row_number) per order — top trade by qty
+            // Lateral B: references A's rank to find matching bonuses
+            // order 1: top trade qty=30 rank=1 → bonuses with min_rank <= 1: bonus=100
+            // order 2: top trade qty=50 rank=1 → bonuses with min_rank <= 1: bonus=100
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\trank\tbonus
+                            1\t30.0\t1\t100.0
+                            2\t50.0\t1\t100.0
+                            """,
+                    """
+                            SELECT o.id, a.qty, a.rank, b.bonus
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty, rank FROM (
+                                    SELECT qty, row_number() OVER (ORDER BY qty DESC) AS rank
+                                    FROM trades
+                                    WHERE order_id = o.id
+                                ) WHERE rank = 1
+                            ) a
+                            JOIN LATERAL (
+                                SELECT bonus FROM bonuses
+                                WHERE min_rank <= a.rank
+                                ORDER BY bonus DESC
+                                LIMIT 1
+                            ) b
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T65: 3-level nested lateral — t1 → lateral(t2 → lateral(t3 → lateral(t4)))
     @Test
     public void testT65ThreeLevelNestedLateral() throws Exception {

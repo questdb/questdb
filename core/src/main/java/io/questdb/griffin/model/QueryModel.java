@@ -128,8 +128,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
-    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet correlatedDepths = new IntHashSet();
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
@@ -706,6 +706,179 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.updateTableModel = updateTableModel;
         this.tableId = updateTableModel.tableId;
         this.metadataVersion = updateTableModel.metadataVersion;
+    }
+
+    /**
+     * Recursively deep-clones this QueryModel and its entire subtree (nestedModel,
+     * joinModels, unionModel).
+     * <p>
+     * Use with caution: this is an expensive operation. The primary use case is
+     * isolating shared model references during lateral join decorrelation,
+     * where the same model subtree appears in multiple positions in the query tree
+     * and rewriteSelectClause0 modifies models in place.
+     * <p>
+     * Not all fields are cloned — optimizer-internal state (orderedJoinModels,
+     * parsedWhereConstants, context, postJoinWhereClause, etc.) is omitted because
+     * cloning happens before optimization.
+     */
+    public QueryModel deepClone(
+            ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool
+    ) {
+        QueryModel dst = queryModelPool.next();
+
+        if (tableNameExpr != null) {
+            dst.setTableNameExpr(ExpressionNode.deepClone(expressionNodePool, tableNameExpr));
+        }
+        if (nestedModel != null) {
+            dst.setNestedModel(nestedModel.deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
+            dst.setNestedModelIsSubQuery(nestedModelIsSubQuery);
+        }
+
+        if (alias != null) {
+            dst.setAlias(ExpressionNode.deepClone(expressionNodePool, alias));
+        }
+        ExpressionNode dstAlias = dst.getAlias();
+        if (dstAlias == null) {
+            dstAlias = dst.getTableNameExpr();
+        }
+        if (dstAlias != null) {
+            dst.addModelAliasIndex(dstAlias, 0);
+        }
+
+        dst.setJoinType(joinType);
+        if (joinCriteria != null) {
+            dst.setJoinCriteria(ExpressionNode.deepClone(expressionNodePool, joinCriteria));
+        }
+
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            QueryModel dstJm = joinModels.getQuick(i).deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool);
+            dst.joinModels.add(dstJm);
+            ExpressionNode jmAlias = dstJm.getAlias();
+            if (jmAlias != null) {
+                dst.addModelAliasIndex(jmAlias, i);
+            }
+        }
+
+        // Bottom-up columns — handle WindowExpression subclass
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn srcCol = bottomUpColumns.getQuick(i);
+            QueryColumn dstCol;
+            if (srcCol instanceof WindowExpression srcWe) {
+                dstCol = srcWe.deepClone(windowExpressionPool, expressionNodePool);
+            } else {
+                dstCol = queryColumnPool.next().of(
+                        srcCol.getAlias(),
+                        ExpressionNode.deepClone(expressionNodePool, srcCol.getAst()),
+                        srcCol.isIncludeIntoWildcard()
+                );
+            }
+            dst.addBottomUpColumnIfNotExists(dstCol);
+        }
+
+        ObjList<CharSequence> aliasColKeys = aliasToColumnMap.keys();
+        for (int i = 0, n = aliasColKeys.size(); i < n; i++) {
+            CharSequence key = aliasColKeys.getQuick(i);
+            if (key != null && dst.aliasToColumnMap.excludes(key)) {
+                QueryColumn srcCol = aliasToColumnMap.get(key);
+                dst.addField(queryColumnPool.next().of(
+                        srcCol.getAlias(),
+                        ExpressionNode.deepClone(expressionNodePool, srcCol.getAst()),
+                        srcCol.isIncludeIntoWildcard()
+                ));
+            }
+        }
+
+        if (whereClause != null) {
+            dst.setWhereClause(ExpressionNode.deepClone(expressionNodePool, whereClause));
+        }
+
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            dst.addGroupBy(ExpressionNode.deepClone(expressionNodePool, groupBy.getQuick(i)));
+        }
+
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            dst.orderBy.add(ExpressionNode.deepClone(expressionNodePool, orderBy.getQuick(i)));
+            dst.orderByDirection.add(orderByDirection.getQuick(i));
+        }
+
+        if (sampleBy != null) {
+            dst.setSampleBy(ExpressionNode.deepClone(expressionNodePool, sampleBy));
+        }
+        for (int i = 0, n = sampleByFill.size(); i < n; i++) {
+            dst.sampleByFill.add(ExpressionNode.deepClone(expressionNodePool, sampleByFill.getQuick(i)));
+        }
+        if (sampleByOffset != null) {
+            dst.setSampleByOffset(ExpressionNode.deepClone(expressionNodePool, sampleByOffset));
+        }
+        if (sampleByFrom != null || sampleByTo != null) {
+            dst.setSampleByFromTo(
+                    sampleByFrom != null ? ExpressionNode.deepClone(expressionNodePool, sampleByFrom) : null,
+                    sampleByTo != null ? ExpressionNode.deepClone(expressionNodePool, sampleByTo) : null
+            );
+        }
+        if (fillFrom != null) {
+            dst.setFillFrom(ExpressionNode.deepClone(expressionNodePool, fillFrom));
+        }
+        if (fillTo != null) {
+            dst.setFillTo(ExpressionNode.deepClone(expressionNodePool, fillTo));
+        }
+        if (fillStride != null) {
+            dst.setFillStride(ExpressionNode.deepClone(expressionNodePool, fillStride));
+        }
+        if (fillValues != null && fillValues.size() > 0) {
+            ObjList<ExpressionNode> clonedFillValues = new ObjList<>(fillValues.size());
+            for (int i = 0, n = fillValues.size(); i < n; i++) {
+                clonedFillValues.add(ExpressionNode.deepClone(expressionNodePool, fillValues.getQuick(i)));
+            }
+            dst.setFillValues(clonedFillValues);
+        }
+
+        for (int i = 0, n = latestBy.size(); i < n; i++) {
+            dst.latestBy.add(ExpressionNode.deepClone(expressionNodePool, latestBy.getQuick(i)));
+        }
+        dst.setLatestByType(latestByType);
+
+        if (timestamp != null) {
+            dst.setTimestamp(ExpressionNode.deepClone(expressionNodePool, timestamp));
+        }
+        dst.setTimestampOffsetUnit(timestampOffsetUnit);
+        dst.setTimestampOffsetValue(timestampOffsetValue);
+        if (timestampOffsetAlias != null) {
+            dst.setTimestampOffsetAlias(timestampOffsetAlias);
+        }
+        if (timestampSourceColumn != null) {
+            dst.setTimestampSourceColumn(timestampSourceColumn);
+        }
+
+        if (limitLo != null || limitHi != null) {
+            dst.setLimit(
+                    limitLo != null ? ExpressionNode.deepClone(expressionNodePool, limitLo) : null,
+                    limitHi != null ? ExpressionNode.deepClone(expressionNodePool, limitHi) : null
+            );
+        }
+
+        if (unionModel != null) {
+            dst.setUnionModel(unionModel.deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
+        }
+
+        if (viewNameExpr != null) {
+            dst.setViewNameExpr(ExpressionNode.deepClone(expressionNodePool, viewNameExpr));
+        }
+
+        dst.copyHints(hintsMap);
+        for (int i = 0, n = expressionModels.size(); i < n; i++) {
+            dst.addExpressionModel(ExpressionNode.deepClone(expressionNodePool, expressionModels.getQuick(i)));
+        }
+
+        dst.setDistinct(distinct);
+        dst.setSelectModelType(selectModelType);
+        dst.setModelPosition(modelPosition);
+        dst.setExplicitTimestamp(explicitTimestamp);
+        dst.setSetOperationType(setOperationType);
+        return dst;
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {

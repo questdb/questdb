@@ -107,13 +107,9 @@ class LateralJoinRewriter implements Mutable {
 
     public void rewrite(QueryModel model) throws SqlException {
         outerRefId = 0;
-        System.err.println("=== BEFORE ===");
-        dumpModel(model, 0, "PRE");
         analyzeCorrelation(model, 0);
         decorrelate(model);
-        //tryEliminateOuterRefs(model);
-        System.err.println("=== AFTER ===");
-        dumpModel(model, 0, "ROOT");
+        tryEliminateOuterRefs(model);
     }
 
     private static boolean allLiteralsBelongTo(
@@ -1197,7 +1193,11 @@ class LateralJoinRewriter implements Mutable {
                     ExpressionNode.deepClone(expressionNodePool, outerJm.getTableNameExpr())
             );
         } else if (outerJm.getNestedModel() != null) {
-            outerRefBase.setNestedModel(outerJm.getNestedModel());
+            // Deep clone the nested model tree to avoid shared references.
+            // Without cloning, the same model objects are shared between the main tree
+            // and the outer ref subquery. rewriteSelectClause0 modifies models in place,
+            // so processing the shared model twice causes corruption.
+            outerRefBase.setNestedModel(outerJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
         } else {
             throw SqlException.position(outerJm.getModelPosition())
@@ -1348,8 +1348,6 @@ class LateralJoinRewriter implements Mutable {
             int depth,
             QueryModel outerRefJm
     ) throws SqlException {
-
-        // Process each join model subquery that has correlated refs
         for (int i = 1, n = joinLayer.getJoinModels().size(); i < n; i++) {
             QueryModel jm = joinLayer.getJoinModels().getQuick(i);
             if (jm == outerRefJm) {
@@ -1360,7 +1358,6 @@ class LateralJoinRewriter implements Mutable {
                 continue;
             }
 
-            // Clone __outer_ref for this subquery
             QueryModel clonedOuterRef = queryModelPool.next();
             clonedOuterRef.setNestedModel(outerRefJm.getNestedModel());
             clonedOuterRef.setAlias(outerRefJm.getAlias());
@@ -1373,42 +1370,12 @@ class LateralJoinRewriter implements Mutable {
                 dstMap.put(key, srcMap.get(key));
             }
 
-            // Use pushDownOuterRefs to decorrelate the subquery
             subCountColAliases.clear();
             pushDownOuterRefs(
                     null, nested, outerToInnerAlias, false,
                     subCountColAliases, clonedOuterRef, jm, depth
             );
         }
-    }
-
-    private void dumpModel(QueryModel m, int indent, String label) {
-        if (m == null) return;
-        String pad = " ".repeat(indent);
-        System.err.println(pad + label + " @" + System.identityHashCode(m)
-                + " table=" + (m.getTableNameExpr() != null ? m.getTableNameExpr().token : "null")
-                + " alias=" + (m.getAlias() != null ? m.getAlias().token : "null")
-                + " cols=" + m.getBottomUpColumns().size()
-                + " joins=" + m.getJoinModels().size()
-                + " where=" + (m.getWhereClause() != null ? m.getWhereClause() : "null")
-                + (m.getLimitHi() != null ? " LIMIT=" + m.getLimitHi() : "")
-                + " subQ=" + m.isNestedModelIsSubQuery());
-        for (int i = 0, n = m.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn c = m.getBottomUpColumns().getQuick(i);
-            String extra = "";
-            if (c instanceof WindowExpression we) {
-                extra = " WIN(partBy=" + we.getPartitionBy().size() + " orderBy=" + we.getOrderBy().size() + ")";
-            }
-            System.err.println(pad + "  col[" + i + "] alias=" + c.getAlias() + " ast=" + c.getAst().token + extra);
-        }
-        for (int i = 1, n = m.getJoinModels().size(); i < n; i++) {
-            QueryModel jm = m.getJoinModels().getQuick(i);
-            System.err.println(pad + "  jm[" + i + "] type=" + jm.getJoinType() + " alias=" + (jm.getAlias() != null ? jm.getAlias().token : "null")
-                    + " crit=" + (jm.getJoinCriteria() != null ? jm.getJoinCriteria() : "null"));
-            dumpModel(jm.getNestedModel(), indent + 4, "JM");
-        }
-        dumpModel(m.getNestedModel(), indent + 2, "N");
-        dumpModel(m.getUnionModel(), indent + 2, "U");
     }
 
     private CharSequence ensureColumnInSelect(
@@ -1722,7 +1689,8 @@ class LateralJoinRewriter implements Mutable {
                     || m.getLatestBy().size() > 0
                     || m.getUnionModel() != null
                     || hasAggregateFunctions(m)
-                    || hasWindowColumns(m)) {
+                    || hasWindowColumns(m)
+                    || (m != dataSourceLayer && m.getJoinModels().size() > 1)) {
                 return false;
             }
 
@@ -2622,6 +2590,11 @@ class LateralJoinRewriter implements Mutable {
                 outerRefSubquery.setNestedModel(outerRefBase);
                 registerDataSourceAlias(outerRefSubquery, outerRefBase, 0);
             } else {
+                // Add subsequent data sources as join models of the FIRST outerRefBase
+                // (the nested model), not of outerRefSubquery itself. rewriteSelectClause0
+                // resolves columns against baseModel = model.getNestedModel(), so join models
+                // must be registered there for qualified names (e.g., a.total_qty) to resolve.
+                QueryModel nestedBase = outerRefSubquery.getNestedModel();
                 if (outerJm.getJoinCriteria() != null) {
                     outerRefBase.setJoinType(outerJm.getJoinType());
                     outerRefBase.setJoinCriteria(
@@ -2630,9 +2603,9 @@ class LateralJoinRewriter implements Mutable {
                 } else {
                     outerRefBase.setJoinType(QueryModel.JOIN_CROSS);
                 }
-                int jmIndex = outerRefSubquery.getJoinModels().size();
-                outerRefSubquery.getJoinModels().add(outerRefBase);
-                registerDataSourceAlias(outerRefSubquery, outerRefBase, jmIndex);
+                int jmIndex = nestedBase.getJoinModels().size();
+                nestedBase.getJoinModels().add(outerRefBase);
+                registerDataSourceAlias(nestedBase, outerRefBase, jmIndex);
             }
         }
     }

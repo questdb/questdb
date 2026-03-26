@@ -85,6 +85,21 @@ public final class WindowExpression extends QueryColumn {
     private WindowExpression() {
     }
 
+    public WindowExpression deepClone(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) {
+        WindowExpression dst = windowExpressionPool.next();
+        dst.of(getAlias(), ExpressionNode.deepClone(expressionNodePool, getAst()));
+        dst.setIncludeIntoWildcard(isIncludeIntoWildcard());
+        dst.copySpecFrom(this, expressionNodePool);
+        dst.ignoreNulls = this.ignoreNulls;
+        dst.nullsDescPos = this.nullsDescPos;
+        dst.baseWindowName = this.baseWindowName;
+        dst.baseWindowNamePosition = this.baseWindowNamePosition;
+        return dst;
+    }
+
     public void addOrderBy(ExpressionNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);
