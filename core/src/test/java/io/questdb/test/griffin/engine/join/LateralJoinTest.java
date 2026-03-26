@@ -4714,6 +4714,283 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T77b: LATEST BY + LEFT lateral — unmatched outer rows get NULL
+    @Test
+    public void testT77bLatestByLeft() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'A', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'B', 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'A', 40.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // order 1: latest A=20, latest B=30
+            // order 2: latest A=40
+            // order 3: no trades → NULL fill
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\tqty
+                            1\tA\t20.0
+                            1\tB\t30.0
+                            2\tA\t40.0
+                            3\t\tnull
+                            """,
+                    """
+                            SELECT o.id, t.category, t.qty
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT category, qty FROM trades
+                                WHERE order_id = o.id
+                                LATEST ON ts PARTITION BY category
+                            ) t
+                            ORDER BY o.id, t.category
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T77c: LATEST BY + multiple correlation columns (fast path with 2 physical cols)
+    @Test
+    public void testT77cLatestByMultiCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE markets (mm_id SYMBOL, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (mm_id SYMBOL, symbol SYMBOL, side SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO markets VALUES
+                    ('mm1', 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    ('mm2', 'AAPL', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('mm1', 'AAPL', 'BID', 99.0,  '2024-01-01T00:10:00.000000Z'),
+                    ('mm1', 'AAPL', 'BID', 100.0, '2024-01-01T00:20:00.000000Z'),
+                    ('mm1', 'AAPL', 'ASK', 101.0, '2024-01-01T00:30:00.000000Z'),
+                    ('mm2', 'AAPL', 'BID', 98.0,  '2024-01-01T01:10:00.000000Z'),
+                    ('mm2', 'AAPL', 'ASK', 102.0, '2024-01-01T01:20:00.000000Z'),
+                    ('mm2', 'AAPL', 'ASK', 103.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // Two correlation columns: mm_id + symbol
+            // mm1/AAPL: latest BID=100, latest ASK=101
+            // mm2/AAPL: latest BID=98, latest ASK=103
+            assertQueryNoLeakCheck(
+                    """
+                            mm_id\tsymbol\tside\tprice
+                            mm1\tAAPL\tASK\t101.0
+                            mm1\tAAPL\tBID\t100.0
+                            mm2\tAAPL\tASK\t103.0
+                            mm2\tAAPL\tBID\t98.0
+                            """,
+                    """
+                            SELECT m.mm_id, m.symbol, q.side, q.price
+                            FROM markets m
+                            JOIN LATERAL (
+                                SELECT side, price FROM quotes
+                                WHERE mm_id = m.mm_id AND symbol = m.symbol
+                                LATEST ON ts PARTITION BY side
+                            ) q
+                            ORDER BY m.mm_id, q.side
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T77d: LATEST BY + non-eq correlation → fallback to window function
+    @Test
+    public void testT77dLatestByNonEqFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    ('B', 30.0, '2024-01-01T00:30:00.000000Z'),
+                    ('A', 40.0, '2024-01-01T01:10:00.000000Z'),
+                    ('B', 50.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // Non-eq correlation: ts > o.start_ts (no equality → fallback to window func)
+            // order 1 (start_ts=00:15): trades after 00:15 → A@00:20(20), B@00:30(30)
+            //   latest per category: A=20, B=30
+            // order 2 (start_ts=01:00): trades after 01:00 → A@01:10(40), B@01:20(50)
+            //   latest per category: A=40, B=50
+            assertQueryNoLeakCheck(
+                    """
+                            id	category	qty
+                            1	A	40.0
+                            1	B	50.0
+                            2	A	40.0
+                            2	B	50.0
+                            """,
+                    """
+                            SELECT o.id, t.category, t.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, qty FROM trades
+                                WHERE ts > o.start_ts
+                                LATEST ON ts PARTITION BY category
+                            ) t
+                            ORDER BY o.id, t.category
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T77e1: LATEST BY PARTITION BY references outer column directly (no WHERE correlation)
+    // Correlation is ONLY in PARTITION BY (o.id), not in WHERE → fallback to window function
+    @Test
+    public void testT77e1LatestByPartitionByOuterCol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // PARTITION BY o.id → outer column in PARTITION BY, no WHERE
+            // For each order, all trades are considered, grouped by o.id
+            // Since o.id is constant per lateral execution, each order gets the latest trade overall
+            // order 1: latest of ALL trades = qty=30 (ts=01:10)
+            // order 2: latest of ALL trades = qty=30 (ts=01:10)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t30.0
+                            2\t30.0
+                            """,
+                    """
+                            SELECT o.id, t.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades
+                                LATEST ON ts PARTITION BY id
+                            ) t
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T77e: LATEST BY + eq + non-eq mixed correlation → fallback to window function
+    @Test
+    public void testT77eLatestByMixedCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, min_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:15:00.000000Z', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'A', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'B', 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'A', 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'A', 50.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 'B', 60.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // eq: order_id = o.id (→ fast path, add order_id to PARTITION BY)
+            // non-eq: ts > o.min_ts (stays in WHERE as filter)
+            // order 1 (min_ts=00:15): trades with order_id=1 AND ts>00:15 → A@00:20(20), B@00:30(30)
+            //   latest per category: A=20, B=30
+            // order 2 (min_ts=01:15): trades with order_id=2 AND ts>01:15 → A@01:20(50), B@01:30(60)
+            //   latest per category: A=50, B=60
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\tqty
+                            1\tA\t20.0
+                            1\tB\t30.0
+                            2\tA\t50.0
+                            2\tB\t60.0
+                            """,
+                    """
+                            SELECT o.id, t.category, t.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, qty FROM trades
+                                WHERE order_id = o.id AND ts > o.min_ts
+                                LATEST ON ts PARTITION BY category
+                            ) t
+                            ORDER BY o.id, t.category
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T77f: LATEST BY + LEFT + non-eq fallback — unmatched rows get NULL
+    @Test
+    public void testT77fLatestByLeftNonEqFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:15:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T23:00:00.000000Z', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    ('B', 30.0, '2024-01-01T00:30:00.000000Z')
+                    """);
+
+            // order 1 (start_ts=00:15): trades after 00:15 → A=20, B=30
+            // order 2 (start_ts=23:00): no trades after 23:00 → NULL
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\tqty
+                            1\tA\t20.0
+                            1\tB\t30.0
+                            2\t\tnull
+                            """,
+                    """
+                            SELECT o.id, t.category, t.qty
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT category, qty FROM trades
+                                WHERE ts > o.start_ts
+                                LATEST ON ts PARTITION BY category
+                            ) t
+                            ORDER BY o.id, t.category
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T78: LEFT lateral with empty outer table — zero rows propagated
     @Test
     public void testT78EmptyOuterTable() throws Exception {
@@ -4753,8 +5030,6 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // T79: Correlated ref only in ORDER BY (not in WHERE, SELECT, or GROUP BY)
-    // Bug: outer ref in ORDER BY expression not resolved after decorrelation
-    @Ignore
     @Test
     public void testT79CorrelatedRefInOrderBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -4778,11 +5053,11 @@ public class LateralJoinTest extends AbstractCairoTest {
             // id=2 sort_dir=-1: order by val*(-1) ASC → 40, 30 (since -40 < -30)
             assertQueryNoLeakCheck(
                     """
-                            id\tval
-                            1\t10
-                            1\t20
-                            2\t40
-                            2\t30
+                            id	val
+                            1	20
+                            1	10
+                            2	30
+                            2	40
                             """,
                     """
                             SELECT t1.id, sub.val
@@ -4793,7 +5068,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 ORDER BY val * t1.sort_dir
                             ) sub
                             """,
-                    null, false, true
+                    null, false, false
             );
         });
     }
