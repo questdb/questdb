@@ -33,7 +33,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        while (partitionIndex < partitionHi) {
+        while (partitionIndex < partitionScanHi) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi > 0) {
                 counter.add(hi);
