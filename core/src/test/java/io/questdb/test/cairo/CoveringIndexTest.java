@@ -4679,4 +4679,38 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT name, price FROM t_cover_varchar_mp WHERE sym = 'A'");
         });
     }
+
+    @Test
+    public void testCoveringMultiColumnMultiCommit() throws Exception {
+        // Multi-column covering (DOUBLE + INT) with multiple commits.
+        // Each column's sidecar file grows at different rates (8B vs 4B per value).
+        // Verifies per-column sidecar offset computation is correct.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mc_offset (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d, i),
+                        d DOUBLE,
+                        i INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_mc_offset VALUES ('2024-01-01T00:00:00', 'A', 1.5, 10), ('2024-01-01T01:00:00', 'B', 2.5, 20)");
+            execute("INSERT INTO t_mc_offset VALUES ('2024-01-01T02:00:00', 'A', 3.5, 30), ('2024-01-01T03:00:00', 'B', 4.5, 40)");
+            execute("INSERT INTO t_mc_offset VALUES ('2024-01-01T04:00:00', 'A', 5.5, 50)");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    d\ti
+                    1.5\t10
+                    3.5\t30
+                    5.5\t50
+                    """, "SELECT d, i FROM t_mc_offset WHERE sym = 'A'");
+
+            assertSql("""
+                    d\ti
+                    2.5\t20
+                    4.5\t40
+                    """, "SELECT d, i FROM t_mc_offset WHERE sym = 'B'");
+        });
+    }
 }
