@@ -106,10 +106,11 @@ class LateralJoinRewriter implements Mutable {
     }
 
     public void rewrite(QueryModel model) throws SqlException {
-        outerRefId = 0;
-        analyzeCorrelation(model, 0);
-        decorrelate(model);
-        tryEliminateOuterRefs(model, null);
+        if (analyzeCorrelation(model, 0)) {
+            outerRefId = 0;
+            decorrelate(model);
+            tryEliminateOuterRefs(model, null);
+        }
     }
 
     private static boolean allLiteralsBelongTo(
@@ -293,26 +294,30 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
-    private void analyzeCorrelation(QueryModel model, int lateralDepth) {
+    // Returns true if any lateral join was found in the model tree.
+    private boolean analyzeCorrelation(QueryModel model, int lateralDepth) {
+        boolean hasLateral = false;
         if (model.getNestedModel() != null) {
-            analyzeCorrelation(model.getNestedModel(), lateralDepth);
+            hasLateral = analyzeCorrelation(model.getNestedModel(), lateralDepth);
         }
         if (model.getUnionModel() != null) {
-            analyzeCorrelation(model.getUnionModel(), lateralDepth);
+            hasLateral |= analyzeCorrelation(model.getUnionModel(), lateralDepth);
         }
 
         for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
             QueryModel joinModel = model.getJoinModels().getQuick(i);
             if (isLateralJoin(joinModel.getJoinType())) {
+                hasLateral = true;
                 int newDepth = lateralDepth + 1;
                 QueryModel topInner = joinModel.getNestedModel();
                 assert topInner != null;
                 collectCorrelatedRefs(topInner, model, i, newDepth);
                 analyzeCorrelation(topInner, newDepth);
             } else if (joinModel.getNestedModel() != null) {
-                analyzeCorrelation(joinModel.getNestedModel(), lateralDepth);
+                hasLateral |= analyzeCorrelation(joinModel.getNestedModel(), lateralDepth);
             }
         }
+        return hasLateral;
     }
 
     private void buildOuterColsFromCorrelatedColumns(
@@ -1413,6 +1418,30 @@ class LateralJoinRewriter implements Mutable {
         return alias;
     }
 
+    private CharSequence ensureColumnInSelectAtFront(
+            QueryModel model,
+            ExpressionNode colExpr,
+            CharSequence preferredAlias
+    ) {
+        ObjList<QueryColumn> cols = model.getBottomUpColumns();
+        if (cols.size() == 0 || isWildcard(cols)) {
+            return preferredAlias;
+        }
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            QueryColumn col = cols.getQuick(i);
+            if (expressionsEqual(col.getAst(), colExpr)) {
+                return col.getAlias();
+            }
+        }
+        CharSequence alias = createColumnAlias(preferredAlias, model);
+        QueryColumn qc = queryColumnPool.next().of(alias, colExpr);
+        if (model.addField(qc)) {
+            cols.insert(0, 1, null);
+            cols.setQuick(0, qc);
+        }
+        return alias;
+    }
+
     private boolean expressionsEqual(ExpressionNode a, ExpressionNode b) {
         if (a == b) {
             return true;
@@ -1837,7 +1866,7 @@ class LateralJoinRewriter implements Mutable {
             CharSequence columnName,
             QueryModel current,
             QueryModel dataSourceLayer
-    ) throws SqlException {
+    ) {
         if (current == dataSourceLayer || current == null) {
             return columnName;
         }
@@ -1846,7 +1875,7 @@ class LateralJoinRewriter implements Mutable {
         ExpressionNode colNode = expressionNodePool.next().of(
                 ExpressionNode.LITERAL, alias, 0, 0
         );
-        return ensureColumnInSelect(current, colNode, alias);
+        return ensureColumnInSelectAtFront(current, colNode, alias);
     }
 
     private void pushDownOuterRefs(

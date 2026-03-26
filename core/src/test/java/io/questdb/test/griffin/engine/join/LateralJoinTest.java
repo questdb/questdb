@@ -5184,6 +5184,511 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T80: Window function compensation — multiple windows with different ORDER BY
+    @Test
+    public void testT80WindowCompensation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 30.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 50.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 40.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // Two window functions with different ORDER BY inside lateral
+            // rn_ts: rank by timestamp, rn_qty: rank by qty DESC
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\trn_ts\trn_qty
+                            1\t10.0\t1\t3
+                            1\t30.0\t2\t1
+                            1\t20.0\t3\t2
+                            2\t50.0\t1\t1
+                            2\t40.0\t2\t2
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.rn_ts, sub.rn_qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty,
+                                       row_number() OVER (ORDER BY ts) AS rn_ts,
+                                       row_number() OVER (ORDER BY qty DESC) AS rn_qty
+                                FROM trades
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.rn_ts
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T80b: Complex window functions — running sum, lag, rank with PARTITION BY + frame
+    @Test
+    public void testT80bComplexWindowFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, 100.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'A', 20.0, 200.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'A', 30.0, 150.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'B', 40.0, 300.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'B', 50.0, 250.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 'B', 60.0, 350.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // Multiple complex window functions:
+            // running_qty: cumulative sum of qty
+            // prev_price: lag(price, 1) — previous trade's price (null for first)
+            // price_rank: dense_rank by price DESC
+            // avg_qty: running average of qty
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tprice\trunning_qty\tprev_price\tprice_rank\tavg_qty
+                            1\t10.0\t100.0\t10.0\tnull\t3\t10.0
+                            1\t20.0\t200.0\t30.0\t100.0\t1\t15.0
+                            1\t30.0\t150.0\t60.0\t200.0\t2\t20.0
+                            2\t40.0\t300.0\t40.0\tnull\t2\t40.0
+                            2\t50.0\t250.0\t90.0\t300.0\t3\t45.0
+                            2\t60.0\t350.0\t150.0\t250.0\t1\t50.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.price, sub.running_qty,
+                                   sub.prev_price, sub.price_rank, sub.avg_qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty, price,
+                                       sum(qty) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_qty,
+                                       lag(price, 1) OVER (ORDER BY ts) AS prev_price,
+                                       dense_rank() OVER (ORDER BY price DESC) AS price_rank,
+                                       avg(qty) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS avg_qty
+                                FROM trades
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T80c: Window function with explicit PARTITION BY inside lateral
+    @Test
+    public void testT80cWindowWithPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'BUY',  10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'SELL', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'BUY',  30.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'BUY',  40.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'BUY',  50.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // Window with user-specified PARTITION BY side — decorrelation must
+            // add outer ref grouping cols to PARTITION BY alongside the user's column
+            // rn: row_number per side within each order
+            // side_total: running sum per side within each order
+            assertQueryNoLeakCheck(
+                    """
+                            id\tside\tqty\trn\tside_total
+                            1\tBUY\t10.0\t1\t10.0
+                            1\tBUY\t30.0\t2\t40.0
+                            1\tSELL\t20.0\t1\t20.0
+                            2\tBUY\t40.0\t1\t40.0
+                            2\tBUY\t50.0\t2\t90.0
+                            """,
+                    """
+                            SELECT o.id, sub.side, sub.qty, sub.rn, sub.side_total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT side, qty,
+                                       row_number() OVER (PARTITION BY side ORDER BY ts) AS rn,
+                                       sum(qty) OVER (PARTITION BY side ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS side_total
+                                FROM trades
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.side, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T81: JOIN inside UNION inside lateral
+    @Test
+    public void testT81JoinInsideUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE labels (order_id INT, label SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO refunds VALUES
+                    (1, 5.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO labels VALUES
+                    (1, 'trade', '2024-01-01T00:10:00.000000Z'),
+                    (2, 'trade', '2024-01-01T01:10:00.000000Z'),
+                    (1, 'refund', '2024-01-01T00:20:00.000000Z')
+                    """);
+
+            // UNION branch 1: trades JOIN labels (both correlated)
+            // UNION branch 2: refunds JOIN labels (both correlated)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval\tlabel
+                            1\t10.0\ttrade
+                            1\t5.0\trefund
+                            2\t20.0\ttrade
+                            """,
+                    """
+                            SELECT o.id, sub.val, sub.label
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty AS val, l.label
+                                FROM trades t
+                                JOIN labels l ON l.order_id = t.order_id AND l.label = 'trade'
+                                WHERE t.order_id = o.id
+                                UNION ALL
+                                SELECT r.amount AS val, l.label
+                                FROM refunds r
+                                JOIN labels l ON l.order_id = r.order_id AND l.label = 'refund'
+                                WHERE r.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.val DESC
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T82: UNION inside JOIN inside lateral
+    @Test
+    public void testT82UnionInsideJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_a (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades_b (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tags (order_id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("INSERT INTO trades_a VALUES (1, 10.0, '2024-01-01T00:10:00.000000Z')");
+            execute("INSERT INTO trades_b VALUES (1, 20.0, '2024-01-01T00:20:00.000000Z'), (2, 30.0, '2024-01-01T01:10:00.000000Z')");
+            execute("""
+                    INSERT INTO tags VALUES
+                    (1, 'VIP', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'STD', '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // Inner UNION (trades_a + trades_b) cross joined with tags — both correlated to outer
+            assertQueryNoLeakCheck(
+                    """
+                            id\ttotal_qty\ttag
+                            1\t30.0\tVIP
+                            2\t30.0\tSTD
+                            """,
+                    """
+                            SELECT o.id, sub.total_qty, sub.tag
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT u.total_qty, tg.tag
+                                FROM (
+                                    SELECT sum(qty) AS total_qty FROM (
+                                        SELECT qty FROM trades_a WHERE order_id = o.id
+                                        UNION ALL
+                                        SELECT qty FROM trades_b WHERE order_id = o.id
+                                    )
+                                ) u
+                                CROSS JOIN (SELECT tag FROM tags WHERE order_id = o.id) tg
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T83: JOIN with mixed correlation — some branches correlated, some not
+    @Test
+    public void testT83JoinMixedCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, product_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE products (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 100, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 200, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 100, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO products VALUES
+                    (100, 'Apple', '2024-01-01T00:00:00.000000Z'),
+                    (200, 'Banana', '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            // trades: correlated (order_id = o.id)
+            // products: NOT correlated (joined to trades, not to outer)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tname\tqty
+                            1\tApple\t10.0
+                            1\tBanana\t20.0
+                            2\tApple\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.name, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT p.name, t.qty
+                                FROM trades t
+                                JOIN products p ON p.id = t.product_id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.name
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T84: UNION with mixed correlation — one branch correlated, other uncorrelated
+    @Test
+    public void testT84UnionMixedCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // Branch 1: correlated (order_id = o.id)
+            // Branch 2: uncorrelated constant row
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t0.0
+                            1\t10.0
+                            2\t0.0
+                            2\t20.0
+                            """,
+                    """
+                            SELECT o.id, sub.val
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty AS val FROM trades WHERE order_id = o.id
+                                UNION ALL
+                                SELECT 0 AS val FROM long_sequence(1)
+                            ) sub
+                            ORDER BY o.id, sub.val
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T85: ASOF JOIN inside lateral
+    @Test
+    public void testT85AsofJoinInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                    (100.0, '2024-01-01T00:05:00.000000Z'),
+                    (101.0, '2024-01-01T00:15:00.000000Z'),
+                    (102.0, '2024-01-01T01:05:00.000000Z')
+                    """);
+
+            // ASOF JOIN inside lateral: each trade gets the most recent price at trade time
+            // trade(qty=10,ts=00:10) asof prices → price=100 (at 00:05)
+            // trade(qty=20,ts=00:30) asof prices → price=101 (at 00:15)
+            // trade(qty=30,ts=01:10) asof prices → price=102 (at 01:05)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tprice
+                            1\t10.0\t100.0
+                            1\t20.0\t101.0
+                            2\t30.0\t102.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.price
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, p.price
+                                FROM trades t
+                                ASOF JOIN prices p
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T86: Correlated JOIN ON with uncorrelated branches
+    @Test
+    public void testT86CorrelatedJoinOnUncorrelatedBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE limits (category SYMBOL, max_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    ('B', 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO limits VALUES
+                    ('A', 15.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 50.0, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            // JOIN ON has correlation (o.category) but both branches (trades, limits) are uncorrelated
+            // Only the JOIN condition references the outer table
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tmax_qty
+                            1\t10.0\t15.0
+                            1\t20.0\t15.0
+                            2\t30.0\t50.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.max_qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, l.max_qty
+                                FROM trades t
+                                JOIN limits l ON l.category = t.category
+                                WHERE t.category = o.category
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T87: Correlated JOIN ON + correlated branch — both criteria and branch have correlation
+    @Test
+    public void testT87CorrelatedJoinOnAndBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE factors (trade_order_id INT, factor DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 15.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 5.0,  '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO factors VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // trades: correlated WHERE (order_id = o.id AND qty > o.min_qty)
+            // factors: joined to trades via non-correlated ON
+            // WHERE has both eq correlation (order_id) and non-eq correlation (qty > min_qty)
+            // order 1 (min_qty=15): only qty=20 passes ON condition, factor=1.5, result=30
+            // order 2 (min_qty=5): only qty=30 passes ON condition, factor=2.0, result=60
+            assertQueryNoLeakCheck(
+                    """
+                            id\tadjusted_qty
+                            1\t30.0
+                            2\t60.0
+                            """,
+                    """
+                            SELECT o.id, sub.adjusted_qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty * f.factor AS adjusted_qty
+                                FROM trades t
+                                JOIN factors f ON f.trade_order_id = t.order_id
+                                WHERE t.order_id = o.id AND t.qty > o.min_qty
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
