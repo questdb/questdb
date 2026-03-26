@@ -225,10 +225,17 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void close() {
         try {
-            // Flush buffered data but do NOT seal. Per-gen sidecars make
-            // covering work without seal. Seal is an optional compaction
-            // triggered explicitly from TableWriter.syncColumns().
-            if (keyMem.isOpen()) {
+            // Flush + compact. Per-gen sidecars make covering work without
+            // seal, but sealing during close compacts multi-gen data into a
+            // single dense gen for optimal read performance. This is safe
+            // because rollback writes in-place (no txn bump).
+            if (keyMem.isOpen() && partitionPath != null) {
+                if (coveredColumnMems != null && coveredColumnMems.length > 0
+                        && !coveredColumnMems[0].isOpen()) {
+                    coveredColumnMems = null;
+                }
+                seal();
+            } else if (keyMem.isOpen()) {
                 flushAllPending();
             }
         } finally {

@@ -2434,7 +2434,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         }
                         writer.setMaxValue(keyCount - 1);
                         writer.commit();
-                    } // seal creates gen0 dense + sidecar
+                        writer.seal(); // explicit seal: gen0 dense + sidecar
+                    }
 
                     // Second writer: touch only key 260 (stride 1) → stride 0 stays clean
                     PostingIndexWriter writer2 = new PostingIndexWriter(configuration);
@@ -2450,7 +2451,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     writer2.add(260, keyCount); // new row for key 260
                     writer2.setMaxValue(keyCount);
                     writer2.commit();
-                    writer2.close(); // incremental seal: stride 0 clean, stride 1 dirty
+                    writer2.seal(); // incremental seal: stride 0 clean, stride 1 dirty
+                    writer2.close();
 
                     // Read: verify covering values for clean stride keys
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
