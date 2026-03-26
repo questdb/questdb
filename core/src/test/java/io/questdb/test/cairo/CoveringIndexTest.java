@@ -4096,4 +4096,146 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT count(), avg(val) FROM t_split_frame WHERE sym = 'B'");
         });
     }
+
+    @Test
+    public void testCoveringMultiGenMultiKey() throws Exception {
+        // Per-gen sidecar reads with multiple keys, verifying the sidecarBase
+        // offset computation is correct (key > 0 must skip earlier keys' values).
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_multigen_mk";
+                int plen = path.size();
+                int rowCount = 20;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                    }
+                    PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                    writer.configureCovering(
+                            new long[]{colAddr}, new long[]{0}, new int[]{3},
+                            new int[]{1}, new int[]{ColumnType.DOUBLE}, 1
+                    );
+                    // Gen 0: key 0 = rows 0,2,4,6,8; key 1 = rows 1,3,5,7,9
+                    for (int i = 0; i < 10; i++) {
+                        writer.add(i % 2, i);
+                    }
+                    writer.setMaxValue(9);
+                    writer.commit();
+                    // Gen 1: key 0 = rows 10,12,14,16,18; key 1 = rows 11,13,15,17,19
+                    for (int i = 10; i < 20; i++) {
+                        writer.add(i % 2, i);
+                    }
+                    writer.setMaxValue(19);
+                    writer.commit();
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // Key 1: rows 1,3,5,7,9,11,13,15,17,19
+                        RowCursor cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasCovering());
+                        int count = 0;
+                        while (cc.hasNext()) {
+                            long rowId = cc.next();
+                            assertEquals(count * 2 + 1, rowId);
+                            assertEquals(100.0 + count * 2 + 1, cc.getCoveredDouble(0), 0.001);
+                            count++;
+                        }
+                        assertEquals(10, count);
+                    }
+                    writer.close();
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringMultiGenKeyAbsentInOneGen() throws Exception {
+        // Key 0 has data only in gen 0, key 1 in both gens.
+        // Verifies per-gen sidecar reads skip empty key ranges correctly.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cover_absent_gen";
+                int plen = path.size();
+                int rowCount = 10;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 10.0 * (i + 1));
+                    }
+                    PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE);
+                    writer.configureCovering(
+                            new long[]{colAddr}, new long[]{0}, new int[]{3},
+                            new int[]{1}, new int[]{ColumnType.DOUBLE}, 1
+                    );
+                    // Gen 0: key 0 = rows 0,2; key 1 = rows 1,3
+                    writer.add(0, 0);
+                    writer.add(0, 2);
+                    writer.add(1, 1);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit();
+                    // Gen 1: ONLY key 1 = rows 4,5
+                    writer.add(1, 4);
+                    writer.add(1, 5);
+                    writer.setMaxValue(5);
+                    writer.commit();
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        // Key 0: only gen 0 data (rows 0,2)
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.hasNext()); assertEquals(0, cc.next()); assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
+                        assertTrue(cc.hasNext()); assertEquals(2, cc.next()); assertEquals(30.0, cc.getCoveredDouble(0), 0.001);
+                        assertFalse(cc.hasNext());
+
+                        // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
+                        cc = (CoveringRowCursor) reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                        assertTrue(cc.hasCovering());
+                        assertTrue(cc.hasNext()); assertEquals(1, cc.next()); assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
+                        assertTrue(cc.hasNext()); assertEquals(3, cc.next()); assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
+                        assertTrue(cc.hasNext()); assertEquals(4, cc.next()); assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
+                        assertTrue(cc.hasNext()); assertEquals(5, cc.next()); assertEquals(60.0, cc.getCoveredDouble(0), 0.001);
+                        assertFalse(cc.hasNext());
+                    }
+                    writer.close();
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringMultiCommitMixedTypes() throws Exception {
+        // Multiple commits with LONG, INT, SHORT covered columns.
+        // Tests per-gen raw sidecar reading for non-DOUBLE types.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mc_mixed (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (l, i, s),
+                        l LONG,
+                        i INT,
+                        s SHORT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_mc_mixed VALUES ('2024-01-01T00:00:00', 'A', 100_000, 10, 1), ('2024-01-01T01:00:00', 'B', 200_000, 20, 2)");
+            execute("INSERT INTO t_mc_mixed VALUES ('2024-01-01T02:00:00', 'A', 300_000, 30, 3), ('2024-01-01T03:00:00', 'B', 400_000, 40, 4)");
+            execute("INSERT INTO t_mc_mixed VALUES ('2024-01-01T04:00:00', 'A', 500_000, 50, 5)");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    l\ti\ts
+                    100000\t10\t1
+                    300000\t30\t3
+                    500000\t50\t5
+                    """, "SELECT l, i, s FROM t_mc_mixed WHERE sym = 'A'");
+        });
+    }
+
 }

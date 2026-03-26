@@ -154,7 +154,11 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
         if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
-            // Non-legacy index type: remove its specific files
+            // Remove sidecar files and sealed .pv BEFORE deleting .pk,
+            // since removeSidecarFiles reads VALUE_FILE_TXN from the .pk file.
+            if (indexType == IndexType.POSTING) {
+                removeSidecarFiles(columnName, columnVersion, pathTrimToPartition);
+            }
             path.trimTo(pathTrimToPartition);
             if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
                 return true;
@@ -162,10 +166,6 @@ public class ColumnPurgeOperator implements Closeable {
             path.trimTo(pathTrimToPartition);
             if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
                 return true;
-            }
-            // Remove posting index sidecar files (.pci, .pc0, .pc1, ...)
-            if (indexType == IndexType.POSTING) {
-                removeSidecarFiles(columnName, columnVersion, pathTrimToPartition);
             }
         }
         // Always try legacy .k/.v (may remain after DROP INDEX or index type change)

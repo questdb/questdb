@@ -1679,6 +1679,11 @@ public class PostingIndexWriter implements IndexWriter {
                         if (coverCount > 0 && sidecarMems != null) {
                             sidecarStrideIndexBufs = new long[coverCount];
                             for (int c = 0; c < coverCount; c++) {
+                                // Truncate sidecar to 0 before writing stride data.
+                                // Without this, in-place rollback appends after old
+                                // per-gen raw data, producing corrupt stride offsets.
+                                sidecarMems[c].jumpTo(0);
+                                sidecarMems[c].truncate();
                                 sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
                                 // Reserve stride index space in sidecar file
                                 for (int i = 0; i < siSize; i += Integer.BYTES) {

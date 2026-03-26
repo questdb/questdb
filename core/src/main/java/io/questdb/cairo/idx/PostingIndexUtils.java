@@ -1068,11 +1068,11 @@ public final class PostingIndexUtils {
             return 0;
         }
         try {
-            int magic = (int) ff.readNonNegativeLong(fd, 0);
+            int magic = ff.readNonNegativeInt(fd, 0);
             if (magic != COVER_INFO_MAGIC) {
                 return 0;
             }
-            return (int) ff.readNonNegativeLong(fd, 4);
+            return ff.readNonNegativeInt(fd, 4);
         } finally {
             ff.close(fd);
         }

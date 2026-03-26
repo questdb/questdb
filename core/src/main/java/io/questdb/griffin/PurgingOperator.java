@@ -138,14 +138,20 @@ public final class PurgingOperator {
                                 }
 
                                 if (indexType != IndexType.NONE) {
+                                    // Remove sidecar files and sealed .pv BEFORE .pk deletion,
+                                    // since removeSidecarAndSealedFiles reads VALUE_FILE_TXN from .pk.
+                                    if (indexType == IndexType.POSTING) {
+                                        long sealTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                                                ff, PostingIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion));
+                                        PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, columnVersion);
+                                        if (sealTxn > 0 && sealTxn != columnVersion) {
+                                            ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, sealTxn));
+                                        }
+                                    }
                                     IndexFactory.valueFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());
                                     IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());
-                                    // Remove posting index sidecar files
-                                    if (indexType == IndexType.POSTING) {
-                                        PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, columnVersion);
-                                    }
                                 }
                             } else {
                                 // This is removal of symbol files from the table root directory
