@@ -379,7 +379,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                     // Process all page frames
                     PageFrame frame;
                     while ((frame = pageFrameCursor.next()) != null) {
-                        if (frame.format() == PartitionFormat.NATIVE) {
+                        if (frame.getFormat() == PartitionFormat.NATIVE) {
                             columnData.clear();
                             long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 

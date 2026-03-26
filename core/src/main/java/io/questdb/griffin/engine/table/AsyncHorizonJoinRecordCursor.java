@@ -61,7 +61,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final ObjList<Function> recordFunctions;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private final RecordCursorFactory slaveFactory;
-    private final ConcurrentTimeFrameState slaveTimeFrameState = new ConcurrentTimeFrameState();
+    private final ConcurrentTimeFrameState slaveTimeFrameState;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
@@ -79,6 +79,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     ) {
         try {
             this.isOpen = true;
+            this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.messageBus = messageBus;
             this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;

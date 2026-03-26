@@ -478,11 +478,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupLo;
 
         @Override
-        public byte format() {
-            return format;
-        }
-
-        @Override
         public long getAuxPageAddress(int columnIndex) {
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
@@ -500,6 +495,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getColumnCount() {
             return columnCount;
+        }
+
+        @Override
+        public byte getFormat() {
+            return format;
         }
 
         @Override
@@ -539,13 +539,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getPartitionLo() {
-            return partitionLo;
+        public int getPartitionIndex() {
+            return partitionIndex;
         }
 
         @Override
-        public int partitionIndex() {
-            return partitionIndex;
+        public long getPartitionLo() {
+            return partitionLo;
         }
     }
 }

@@ -330,7 +330,7 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
                 PageFrame frame;
 
                 while ((frame = pageFrameCursor.next()) != null) {
-                    int currentPartitionIndex = frame.partitionIndex();
+                    int currentPartitionIndex = frame.getPartitionIndex();
                     if (currentPartitionIndex != lastPartitionIndex) {
                         visitedPartitions++;
                         lastPartitionIndex = currentPartitionIndex;

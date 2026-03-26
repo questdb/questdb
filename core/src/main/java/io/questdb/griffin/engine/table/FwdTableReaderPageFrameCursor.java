@@ -59,7 +59,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
-    private int sharedQueryWorkerCount;
     private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
     private long filterBufEnd = -1;
@@ -77,6 +76,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
     private long remainingRowsInInterval;
+    private int sharedQueryWorkerCount;
 
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
@@ -129,11 +129,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public boolean hasIntervalFilter() {
-        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
-    }
-
-    @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
@@ -141,6 +136,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
 
     @Override
@@ -456,11 +456,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupLo;
 
         @Override
-        public byte format() {
-            return format;
-        }
-
-        @Override
         public long getAuxPageAddress(int columnIndex) {
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
@@ -478,6 +473,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getColumnCount() {
             return columnCount;
+        }
+
+        @Override
+        public byte getFormat() {
+            return format;
         }
 
         @Override
@@ -517,13 +517,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public long getPartitionLo() {
-            return partitionLo;
+        public int getPartitionIndex() {
+            return partitionIndex;
         }
 
         @Override
-        public int partitionIndex() {
-            return partitionIndex;
+        public long getPartitionLo() {
+            return partitionLo;
         }
     }
 }

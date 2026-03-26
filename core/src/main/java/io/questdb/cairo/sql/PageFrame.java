@@ -38,13 +38,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 public interface PageFrame {
 
     /**
-     * Returns page frame format.
-     * <p>
-     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
-     */
-    byte format();
-
-    /**
      * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
      * <p>
      * Can be called only for frames in native format.
@@ -73,6 +66,13 @@ public interface PageFrame {
      * @return column count
      */
     int getColumnCount();
+
+    /**
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    byte getFormat();
 
     /**
      * Return the address of the start of the page frame or if this page represents
@@ -121,12 +121,12 @@ public interface PageFrame {
     long getPartitionHi();
 
     /**
+     * Return index of the partition the frame belongs to.
+     */
+    int getPartitionIndex();
+
+    /**
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
-
-    /**
-     * Return index of the partition the frame belongs to.
-     */
-    int partitionIndex();
 }

@@ -82,7 +82,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             return; // The page frame is already cached
         }
 
-        if (frame.format() == PartitionFormat.NATIVE) {
+        if (frame.getFormat() == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
@@ -106,14 +106,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
-        frameFormats.add(frame.format());
+        frameFormats.add(frame.getFormat());
         PartitionDecoder decoder = frame.getParquetPartitionDecoder();
         parquetPartitionDecoders.add(decoder);
-        assert (decoder != null && (decoder.getFileSize() > 0)) || frame.format() != PartitionFormat.PARQUET;
+        assert (decoder != null && (decoder.getFileSize() > 0)) || frame.getFormat() != PartitionFormat.PARQUET;
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
-        rowIdOffsets.add(Rows.toRowID(frame.partitionIndex(), frame.getPartitionLo()));
+        rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
     @Override
@@ -258,7 +258,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      */
     public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
         final int offset = frameIndex * columnCount;
-        if (frame.format() == PartitionFormat.NATIVE) {
+        if (frame.getFormat() == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.set(offset + columnIndex, frame.getPageAddress(columnIndex));
                 pageSizes.set(offset + columnIndex, frame.getPageSize(columnIndex));

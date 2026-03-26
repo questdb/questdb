@@ -67,6 +67,10 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     private final TimeFrame timeFrame = new TimeFrame();
     // Cursor's lifecycle is managed externally
     private TablePageFrameCursor frameCursor;
+    // Cached partition index confirmed open by this cursor instance, avoids
+    // redundant volatile reads in ensurePartitionOpened() for consecutive
+    // records from the same partition.
+    private int lastOpenedPartitionIndex = -1;
     private ConcurrentTimeFrameState sharedState;
     // Timestamp column index in the address cache; may differ from the original metadata index
     // when the cache is populated with logically-remapped page frames (e.g. SelectedPageFrame).
@@ -185,7 +189,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         }
         // Ensure the partition is opened (column addresses patched)
         final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
-        sharedState.ensurePartitionOpened(partitionIndex);
+        ensurePartitionOpened(partitionIndex);
 
         final long rowCount = sharedState.getFrameRowCounts().get(frameIndex);
         if (rowCount > 0) {
@@ -193,10 +197,10 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
             long timestampLo = frameTimestampCache.get(cacheOffset);
             long timestampHi;
             if (timestampLo != Numbers.LONG_NULL) {
-                // Cache hit — use cached timestamps
+                // Cache hit - use cached timestamps
                 timestampHi = frameTimestampCache.get(cacheOffset + 1);
             } else {
-                // Cache miss — read timestamps directly from frame memory
+                // Cache miss - read timestamps directly from frame memory
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 final long timestampAddress = frameMemory.getPageAddress(timestampIndex);
                 timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
@@ -241,9 +245,8 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public void recordAt(Record record, long rowId) {
         final int frameIndex = Rows.toPartitionIndex(rowId);
-        // Ensure the partition is opened before navigating
         final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
-        sharedState.ensurePartitionOpened(partitionIndex);
+        ensurePartitionOpened(partitionIndex);
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
@@ -251,9 +254,8 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
     @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
-        // Ensure the partition is opened before navigating
         final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
-        sharedState.ensurePartitionOpened(partitionIndex);
+        ensurePartitionOpened(partitionIndex);
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(rowIndex);
@@ -280,5 +282,13 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public void toTop() {
         timeFrame.clear();
+        lastOpenedPartitionIndex = -1;
+    }
+
+    private void ensurePartitionOpened(int partitionIndex) {
+        if (partitionIndex != lastOpenedPartitionIndex) {
+            sharedState.ensurePartitionOpened(partitionIndex);
+            lastOpenedPartitionIndex = partitionIndex;
+        }
     }
 }
