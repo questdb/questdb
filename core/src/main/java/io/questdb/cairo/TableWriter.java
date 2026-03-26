@@ -1456,8 +1456,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("converting native partition to parquet [path=").$substr(pathRootSize, path).I$();
         long parquetFileLength = produceParquetFromNative(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, getTxn(), bloomFilterColumns, bloomFilterFpp);
 
-        LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
-        copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+        LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
+        linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
         try {
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
@@ -1535,8 +1535,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
             long parquetRowCount = produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex);
 
-            LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
-            copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+            LOG.info().$("linking index files to native [path=").$substr(pathRootSize, path).I$();
+            linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
             try {
                 // used to update txn and bump recordStructureVersion
@@ -2982,9 +2982,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
 
             LOG.info().$("switching native partition to parquet [path=").$substr(pathRootSize, path).I$();
-            if (ff.copy(path.$(), other.$()) < 0) {
+            if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
                 throw CairoException.critical(ff.errno())
-                        .put("could not copy parquet file [table=")
+                        .put("could not hard link parquet file [table=")
                         .put(tableToken.getTableName())
                         .put(", from=").put(path)
                         .put(", to=").put(other)
@@ -2992,8 +2992,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final long parquetFileLength = ff.length(other.$());
 
-            LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
-            copyPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+            LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
+            linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
@@ -4292,7 +4292,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return res;
     }
 
-    private void copyPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+    private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -4309,9 +4309,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
                     BitmapIndexUtils.keyFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.copy(path.$(), other.$()) < 0) {
+                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno())
-                                .put("could not copy index key file [table=")
+                                .put("could not hard link index key file [table=")
                                 .put(tableToken.getTableName())
                                 .put(", column=")
                                 .put(columnName)
@@ -4320,9 +4320,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
                     BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.copy(path.$(), other.$()) < 0) {
+                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno())
-                                .put("could not copy index value file [table=")
+                                .put("could not hard link index value file [table=")
                                 .put(tableToken.getTableName())
                                 .put(", column=")
                                 .put(columnName)
@@ -4331,7 +4331,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } catch (CairoException e) {
-            LOG.error().$("could not copy index files [table=").$(tableToken)
+            LOG.error().$("could not link index files [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .$(", error=").$safe(e.getMessage()).I$();
 
