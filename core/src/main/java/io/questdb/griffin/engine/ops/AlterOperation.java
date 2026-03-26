@@ -270,13 +270,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
-            // TODO: need to add new permissions for CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE,
-            //  SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING
-            //  and also need new authorize...() methods on SecurityContext.
-            //case CONVERT_PARTITION_TO_PARQUET, CONVERT_PARTITION_TO_NATIVE ->
-            //        securityContext.authorizeAlterTableSetType(tableToken);
-            //case SET_PARQUET_ENCODING, DROP_PARQUET_ENCODING ->
-            //        securityContext.authorizeAlterTableSetParam(tableToken);
+            case CONVERT_PARTITION_TO_PARQUET ->
+                    securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
+            case CONVERT_PARTITION_TO_NATIVE ->
+                    securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
+            case SET_PARQUET_ENCODING -> securityContext.authorizeAlterTableSetParquetSettings(tableToken);
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
                     securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
