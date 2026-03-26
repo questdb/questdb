@@ -29,10 +29,14 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 
 /**
- * A mutable, reusable PageFrame with correct structure but zero column addresses.
- * Used to populate the uninitialized address cache during the upfront phase.
- * A single instance is kept per cursor and reconfigured via {@link #of(int, long, long, byte)}
- * to avoid per-frame allocation.
+ * A stub for an actual <code>PageFrame</code> object, used only to satisfy the
+ * contract of {@link io.questdb.cairo.sql.PageFrameAddressCache#add}, which takes a
+ * <code>PageFrame</code> as a transient parameter, copying several pieces of data
+ * from it.
+ * <p>
+ * Since the only purpose of this class is to live through one method call, it's
+ * implemented as a mutable, reusable object, and contains only the pieces of
+ * data that method wants from a <code>PageFrame</code>.
  */
 class UninitializedPageFrame implements PageFrame {
     private byte format;
