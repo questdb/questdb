@@ -1639,21 +1639,25 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void applyLateralCountCoalesce(QueryModel outputModel, ObjList<CharSequence> countCols) {
+    private void applyLateralCountCoalesce(
+            QueryModel outputModel,
+            ObjList<CharSequence> countCols,
+            QueryModel translatingModel
+    ) {
         ObjList<QueryColumn> cols = outputModel.getBottomUpColumns();
-        for (int i = 0, n = cols.size(); i < n; i++) {
-            QueryColumn pc = cols.getQuick(i);
-            ExpressionNode ast = pc.getAst();
-            if (ast == null || ast.type != ExpressionNode.LITERAL) {
-                continue;
+        for (int j = 0, m = countCols.size(); j < m; j++) {
+            CharSequence countCol = countCols.getQuick(j);
+            CharSequence resolvedAlias = translatingModel.getColumnNameToAliasMap().get(countCol);
+            if (resolvedAlias == null) {
+                resolvedAlias = countCol;
             }
-            CharSequence colRef = ast.token;
-            int dotPos = Chars.indexOf(colRef, '.');
-            CharSequence colName = dotPos > 0
-                    ? colRef.subSequence(dotPos + 1, colRef.length())
-                    : colRef;
-            for (int j = 0, m = countCols.size(); j < m; j++) {
-                if (Chars.equalsIgnoreCase(colName, countCols.getQuick(j))) {
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                QueryColumn pc = cols.getQuick(i);
+                ExpressionNode ast = pc.getAst();
+                if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                    continue;
+                }
+                if (Chars.equalsIgnoreCase(ast.token, resolvedAlias)) {
                     ExpressionNode coalesce = expressionNodePool.next().of(
                             ExpressionNode.FUNCTION, "coalesce", 0, ast.position
                     );
@@ -9344,7 +9348,7 @@ public class SqlOptimiser implements Mutable {
 
         ObjList<CharSequence> lateralCountCols = model.getLateralCountColumns();
         if (lateralCountCols.size() > 0) {
-            applyLateralCountCoalesce(outerVirtualModel, lateralCountCols);
+            applyLateralCountCoalesce(outerVirtualModel, lateralCountCols, translatingModel);
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             lateralCountCols.clear();
         }

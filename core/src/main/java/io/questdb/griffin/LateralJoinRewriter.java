@@ -2947,7 +2947,13 @@ class LateralJoinRewriter implements Mutable {
         if (isWildcard(parentCols)) {
             ObjList<CharSequence> deferred = parentModel.getLateralCountColumns();
             for (int i = 0, n = countColAliases.size(); i < n; i++) {
-                deferred.add(countColAliases.getQuick(i));
+                if (joinAlias != null) {
+                    characterStore.newEntry();
+                    characterStore.put(joinAlias).put('.').put(countColAliases.getQuick(i));
+                    deferred.add(characterStore.toImmutable());
+                } else {
+                    deferred.add(countColAliases.getQuick(i));
+                }
             }
             return;
         }
