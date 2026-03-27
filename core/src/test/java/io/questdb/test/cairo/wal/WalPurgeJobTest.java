@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
@@ -1234,7 +1235,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     static void addColumn(WalWriter writer, String columnName) {
-        writer.addColumn(columnName, ColumnType.INT);
+        writer.addColumn(columnName, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
     }
 
     private static class DeletionEvent {
