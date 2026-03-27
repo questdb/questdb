@@ -268,6 +268,30 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
+    private boolean allLiteralsAreCorrelated(ExpressionNode node, int depth) {
+        sqlNodeStack.clear();
+        ExpressionNode current = node;
+        while (current != null) {
+            if (current.type == ExpressionNode.LITERAL) {
+                if (current.lateralDepth != depth) {
+                    return false;
+                }
+            } else {
+                if (current.rhs != null) {
+                    sqlNodeStack.push(current.rhs);
+                }
+                for (int i = 0, n = current.args.size(); i < n; i++) {
+                    sqlNodeStack.push(current.args.getQuick(i));
+                }
+                if (current.lhs != null) {
+                    sqlNodeStack.push(current.lhs);
+                }
+            }
+            current = sqlNodeStack.isEmpty() ? null : sqlNodeStack.pop();
+        }
+        return true;
+    }
+
     private boolean allLiteralsBelongTo(
             ExpressionNode node,
             CharSequence alias,
@@ -1495,6 +1519,7 @@ class LateralJoinRewriter implements Mutable {
     private void extractCorrelatedFromInnerJoins(
             QueryModel inner,
             ObjList<ExpressionNode> correlated,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) {
         for (int i = 1, n = inner.getJoinModels().size(); i < n; i++) {
@@ -1508,7 +1533,15 @@ class LateralJoinRewriter implements Mutable {
                 extractCorrelatedPredicates(joinCriteria, innerJoinCorrelated, innerJoinNonCorrelated, depth);
 
                 if (innerJoinCorrelated.size() > 0) {
-                    correlated.addAll(innerJoinCorrelated);
+                    for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
+                        ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
+                        if (allLiteralsAreCorrelated(pred, depth)) {
+                            correlated.add(pred);
+                        } else {
+                            ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias, depth);
+                            innerJoinNonCorrelated.add(rewritten);
+                        }
+                    }
                     jm.setJoinCriteria(innerJoinNonCorrelated.size() > 0
                             ? conjoin(innerJoinNonCorrelated) : null);
                 }
@@ -2811,7 +2844,7 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         correlatedPreds.clear();
-        extractCorrelatedFromInnerJoins(current, correlatedPreds, depth);
+        extractCorrelatedFromInnerJoins(current, correlatedPreds, outerToInnerAlias, depth);
         ExpressionNode joinCrit = null;
         for (int j = 0, m = correlatedPreds.size(); j < m; j++) {
             ExpressionNode rewritten = rewriteOuterRefs(

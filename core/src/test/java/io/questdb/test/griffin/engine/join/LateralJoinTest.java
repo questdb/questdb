@@ -913,6 +913,161 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T100: RIGHT JOIN branch inside lateral subquery with correlated ON
+    @Test
+    public void testT100RightJoinBranchInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            // Adjustments exist for both orders, but trades only for order 1
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // RIGHT JOIN: adjustments is the preserved side
+            // For order 1: adj(1,1.5) matches trades(1,10),(1,20) → (10,1.5),(20,1.5)
+            // For order 2: adj(2,2.0) has no matching trades → (null,2.0)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            1\t20.0\t1.5
+                            2\tnull\t2.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM trades t
+                                RIGHT JOIN adjustments a ON a.order_id = t.order_id
+                                WHERE a.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T100b: FULL OUTER JOIN branch inside lateral subquery
+    @Test
+    public void testT100bFullOuterJoinBranchInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            // Refund only for order 2
+            execute("""
+                    INSERT INTO refunds VALUES
+                    (2, 5.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // FULL OUTER JOIN: both sides preserved
+            // For order 1: trades match, no refunds → (10, null), (20, null)
+            // For order 2: no trades, refund matches → (null, 5.0)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tamount
+                            1\t10.0\tnull
+                            1\t20.0\tnull
+                            2\tnull\t5.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.amount
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, r.amount
+                                FROM trades t
+                                FULL OUTER JOIN refunds r ON r.order_id = t.order_id
+                                WHERE t.order_id = o.id OR r.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T100c: mixed LEFT + RIGHT join branches inside lateral subquery
+    @Test
+    public void testT100cMixedLeftRightJoinBranchesInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            // Adjustments only for order 1
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z')
+                    """);
+            // Discounts only for order 2
+            execute("""
+                    INSERT INTO discounts VALUES
+                    (2, 0.8, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // LEFT JOIN adjustments: order 2 has no adj → null
+            // RIGHT JOIN discounts: order 1 has no disc → trade(1,10) is dropped
+            //   by RIGHT JOIN (only right side is preserved)
+            // For order 1: no matching discount → RIGHT JOIN drops all rows → empty
+            // For order 2: trade(30) matches disc(0.8), no adj → (30, null, 0.8)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj\tdisc
+                            2\t30.0\tnull\t0.8
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj, sub.disc
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj, d.disc
+                                FROM trades t
+                                LEFT JOIN adjustments a ON a.order_id = t.order_id
+                                RIGHT JOIN discounts d ON d.order_id = t.order_id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
     // T10: INTERSECT, INNER, equality correlation — per-group intersection
     @Test
     public void testT10Intersect() throws Exception {
@@ -6716,7 +6871,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub
                             ORDER BY o.id, sub.qty
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
