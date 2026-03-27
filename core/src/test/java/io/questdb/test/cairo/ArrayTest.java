@@ -171,6 +171,72 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessConstantIndexMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tango VALUES
+                    ('2025-01-01', ARRAY[10.0, 20, 30], ARRAY[[1.0, 2], [3.0, 4]]),
+                    ('2025-01-01', null, null),
+                    ('2025-01-02', ARRAY[40.0, 50, 60], ARRAY[[5.0, 6], [7.0, 8]]),
+                    ('2025-01-02', ARRAY[70.0], ARRAY[[9.0]]),
+                    ('2025-01-03', ARRAY[], ARRAY[]),
+                    ('2025-01-03', ARRAY[80.0, 90], ARRAY[[10.0, 11], [12.0, 13]])
+                    """);
+            // 1D constant index across partitions
+            assertSql(
+                    """
+                            x
+                            10.0
+                            null
+                            40.0
+                            70.0
+                            null
+                            80.0
+                            """,
+                    "SELECT arr1d[1] x FROM tango"
+            );
+            assertSql(
+                    """
+                            x
+                            20.0
+                            null
+                            50.0
+                            null
+                            null
+                            90.0
+                            """,
+                    "SELECT arr1d[2] x FROM tango"
+            );
+            // 2D constant index across partitions
+            assertSql(
+                    """
+                            x
+                            2.0
+                            null
+                            6.0
+                            null
+                            null
+                            11.0
+                            """,
+                    "SELECT arr2d[1, 2] x FROM tango"
+            );
+            assertSql(
+                    """
+                            x
+                            3.0
+                            null
+                            7.0
+                            null
+                            null
+                            12.0
+                            """,
+                    "SELECT arr2d[2, 1] x FROM tango"
+            );
+        });
+    }
+
+    @Test
     public void testAccessFirstElement1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[])");
