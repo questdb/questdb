@@ -70,11 +70,16 @@ public interface Record {
 
     /**
      * Reads a single {@code double} from a 1D or 2D array column at the given
-     * 0-based indices, bypassing full {@link ArrayView} construction. Returns
-     * {@link Double#NaN} when the array is null or an index is out of bounds.
+     * 0-based indices. Returns {@link Double#NaN} when the array is null or an
+     * index is out of bounds.
      * <p>
-     * For 1D arrays, {@code idx1} is ignored. Callers must not use this
-     * method for arrays with more than 2 dimensions.
+     * The default implementation is just for convenience, it does not implement the
+     * main optimization. That lives in {@link PageFrameMemoryRecord#getArrayDouble1d2d0},
+     * which completely bypasses the expensive {@link ArrayView} setup.
+     * <p>
+     * For 1D arrays, ignores {@code idx1}.
+     * <p>
+     * <strong>Do not call for 3D+ arrays!</strong>
      *
      * @param col        column index
      * @param columnType encoded array column type (must be 1D or 2D)

@@ -290,9 +290,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Optimized function for accessing the first element of an array (all indices are 1).
-     * When the array argument is a column, bypasses full ArrayView construction and
-     * reads directly from the AUX/data pages via {@link Record#getArrayDouble1d2d}.
+     * Optimized function to access the first element of an array (all indices are 1).
+     * When the array argument is a column and the array is 1D or 2D, bypasses full
+     * <code>ArrayView</code> construction and reads directly from the AUX/data pages
+     * via {@link Record#getArrayDouble1d2d}.
      */
     private static class AccessDoubleArrayFirstElementFunction extends DoubleFunction implements UnaryFunction {
         private final Function arrayArg;
