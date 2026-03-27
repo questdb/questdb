@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.pt;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -31,6 +32,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Files;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -39,6 +41,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.FileWriter;
+import java.io.PrintWriter;
 
 import static io.questdb.test.tools.TestUtils.unchecked;
 
@@ -485,6 +490,108 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIngestInvalidUtf8Body() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM utf8_test
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            payload()::STRING AS sensor,
+                            0.0 AS value
+                        """);
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=utf8_test");
+                        // Invalid UTF-8: 0xFF is never valid in UTF-8
+                        request.withContent().putAscii("valid start").put((byte) 0xFF).putAscii("end");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("400", Utf8s.toString(rsp.getStatusCode()));
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "invalid UTF-8 in request body");
+                    }
+                });
+            }
+        });
+    }
+
+    @Test
+    public void testIngestRowsInsertedCount() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM count_test
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=count_test");
+                        request.withContent().put("{\"sensor\":\"temp_1\",\"value\":42.0}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("200", Utf8s.toString(rsp.getStatusCode()));
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "\"rows_inserted\":1");
+                    }
+                });
+            }
+        });
+    }
+
+    @Test
+    public void testIngestUnicodePayload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM unicode_test
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=unicode_test",
+                        "{\"sensor\":\"\u6e29\u5ea6\u30bb\u30f3\u30b5\u30fc\",\"value\":36.6}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "\u6e29\u5ea6\u30bb\u30f3\u30b5\u30fc\t36.6\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testIngestFewerColumnsThanTable() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
@@ -537,6 +644,52 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                         "sensor\tvalue\n" +
                                 "temp_1\t23.5\n"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestMaxRequestSize() throws Exception {
+        assertMemoryLeak(() -> {
+            // Append a small max request size to the config file
+            String confFile = root + Files.SEPARATOR + "conf" + Files.SEPARATOR + "server.conf";
+            try (PrintWriter pw = new PrintWriter(new FileWriter(confFile, true))) {
+                pw.println(PropertyKey.HTTP_INGEST_MAX_REQUEST_SIZE.getPropertyPath() + "=64");
+            }
+
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM size_test
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            json_extract(payload(), '$.sensor')::STRING AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Build a body larger than 64 bytes
+                String largeBody = "{\"sensor\":\"this_sensor_name_is_long_enough_to_exceed_the_limit\",\"value\":1.0}";
+                Assert.assertTrue("body must exceed limit", largeBody.length() > 64);
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=size_test");
+                        request.withContent().put(largeBody);
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("413", Utf8s.toString(rsp.getStatusCode()));
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "request body exceeds maximum size");
+                    }
+                });
             }
         });
     }

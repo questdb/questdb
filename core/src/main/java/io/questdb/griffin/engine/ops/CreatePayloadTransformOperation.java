@@ -37,6 +37,7 @@ import org.jetbrains.annotations.Nullable;
 public class CreatePayloadTransformOperation implements Operation {
     private final int dlqPartitionBy;
     private final String dlqTable;
+    private final int dlqTablePosition;
     private final String dlqTtlUnit;
     private final long dlqTtlValue;
     private final boolean ignoreIfExists;
@@ -58,6 +59,7 @@ public class CreatePayloadTransformOperation implements Operation {
             @NotNull String selectSql,
             int selectSqlPosition,
             @Nullable String dlqTable,
+            int dlqTablePosition,
             int dlqPartitionBy,
             long dlqTtlValue,
             @Nullable String dlqTtlUnit,
@@ -72,6 +74,7 @@ public class CreatePayloadTransformOperation implements Operation {
         this.selectSql = selectSql;
         this.selectSqlPosition = selectSqlPosition;
         this.dlqTable = dlqTable;
+        this.dlqTablePosition = dlqTablePosition;
         this.dlqPartitionBy = dlqPartitionBy;
         this.dlqTtlValue = dlqTtlValue;
         this.dlqTtlUnit = dlqTtlUnit;
@@ -98,6 +101,10 @@ public class CreatePayloadTransformOperation implements Operation {
 
     public String getDlqTable() {
         return dlqTable;
+    }
+
+    public int getDlqTablePosition() {
+        return dlqTablePosition;
     }
 
     public String getDlqTtlUnit() {

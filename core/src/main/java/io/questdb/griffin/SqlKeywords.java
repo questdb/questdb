@@ -2331,20 +2331,6 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'm';
     }
 
-    public static boolean isTransformsKeyword(CharSequence tok) {
-        return tok.length() == 10
-                && (tok.charAt(0) | 32) == 't'
-                && (tok.charAt(1) | 32) == 'r'
-                && (tok.charAt(2) | 32) == 'a'
-                && (tok.charAt(3) | 32) == 'n'
-                && (tok.charAt(4) | 32) == 's'
-                && (tok.charAt(5) | 32) == 'f'
-                && (tok.charAt(6) | 32) == 'o'
-                && (tok.charAt(7) | 32) == 'r'
-                && (tok.charAt(8) | 32) == 'm'
-                && (tok.charAt(9) | 32) == 's';
-    }
-
     public static boolean isTrueKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 't'

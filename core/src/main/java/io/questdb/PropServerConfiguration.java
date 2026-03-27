@@ -624,6 +624,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpNetConnectionQueueTimeout;
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
+    private long httpIngestMaxRequestSize;
     private long httpNetConnectionTimeout;
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
@@ -1295,6 +1296,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
+            this.httpIngestMaxRequestSize = getLongSize(properties, env, PropertyKey.HTTP_INGEST_MAX_REQUEST_SIZE, 5 * Numbers.SIZE_1MB);
             this.httpRecvMaxBufferSize = getLongSize(properties, env, PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
@@ -5190,6 +5192,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public HttpContextConfiguration getHttpContextConfiguration() {
             return httpContextConfiguration;
+        }
+
+        @Override
+        public long getIngestMaxRequestSize() {
+            return httpIngestMaxRequestSize;
         }
 
         @Override

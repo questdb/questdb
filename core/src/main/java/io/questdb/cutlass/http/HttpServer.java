@@ -231,6 +231,7 @@ public class HttpServer implements Closeable {
                 return new IngestProcessor(
                         cairoEngine,
                         httpServerConfiguration.getRecvBufferSize(),
+                        httpServerConfiguration.getIngestMaxRequestSize(),
                         sharedQueryWorkerCount
                 );
             }

@@ -40,7 +40,14 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
+// Concurrent DDL note: CREATE, DROP, and OR REPLACE are separate read-check-write
+// operations with no name-level serialization. If two sessions operate on the same
+// transform name concurrently, the outcome is last-writer-wins based on how
+// LATEST ON resolves timestamp ties. nextTimestamp() ensures OR REPLACE (drop + create)
+// produces distinct timestamps within the same process, but does not prevent races
+// across concurrent sessions.
 public class PayloadTransformStore implements Closeable {
     public static final char STATUS_ACTIVE = 'A';
     public static final char STATUS_REMOVED = 'R';
@@ -63,11 +70,14 @@ public class PayloadTransformStore implements Closeable {
     private static final int QRY_SELECT_SQL = 2;
     private static final int QRY_STATUS = 7;
     private static final int QRY_TARGET_TABLE = 1;
+    private static final String STATUS_ACTIVE_STR = String.valueOf(STATUS_ACTIVE);
+    private static final String STATUS_REMOVED_STR = String.valueOf(STATUS_REMOVED);
     private static final String TABLE_NAME_SUFFIX = "payload_transforms";
     // Thread-safe cache: transform name -> definition.
     // Null values are not stored; a missing key means cache miss.
     private final ConcurrentHashMap<PayloadTransformDefinition> cache = new ConcurrentHashMap<>();
     private final CairoEngine engine;
+    private final AtomicLong lastWriteTimestamp = new AtomicLong(Long.MIN_VALUE);
     private final String tableName;
     private volatile boolean isInitialized;
 
@@ -77,8 +87,9 @@ public class PayloadTransformStore implements Closeable {
     }
 
     public void clear() {
-        cache.clear();
         isInitialized = false;
+        cache.clear();
+        lastWriteTimestamp.set(Long.MIN_VALUE);
     }
 
     @Override
@@ -98,7 +109,7 @@ public class PayloadTransformStore implements Closeable {
     ) throws SqlException {
         ensureInitialized(executionContext);
         final TableToken tableToken = engine.verifyTableName(tableName);
-        final long timestamp = engine.getConfiguration().getMicrosecondClock().getTicks();
+        final long timestamp = nextTimestamp();
         try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "payload_transform_create")) {
             TableWriter.Row row = writer.newRow(timestamp);
             row.putSym(COL_NAME, name);
@@ -112,7 +123,7 @@ public class PayloadTransformStore implements Closeable {
             if (dlqTtlUnit != null) {
                 row.putStr(COL_DLQ_TTL_UNIT, dlqTtlUnit);
             }
-            row.putSym(COL_STATUS, String.valueOf(STATUS_ACTIVE));
+            row.putSym(COL_STATUS, STATUS_ACTIVE_STR);
             row.append();
             writer.commit();
         }
@@ -131,12 +142,12 @@ public class PayloadTransformStore implements Closeable {
     public void dropTransform(SqlExecutionContext executionContext, CharSequence name) throws SqlException {
         ensureInitialized(executionContext);
         final TableToken tableToken = engine.verifyTableName(tableName);
-        final long timestamp = engine.getConfiguration().getMicrosecondClock().getTicks();
+        final long timestamp = nextTimestamp();
         // Soft-delete: write a new row with status 'R'
         try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "payload_transform_drop")) {
             TableWriter.Row row = writer.newRow(timestamp);
             row.putSym(COL_NAME, name);
-            row.putSym(COL_STATUS, String.valueOf(STATUS_REMOVED));
+            row.putSym(COL_STATUS, STATUS_REMOVED_STR);
             row.append();
             writer.commit();
         }
@@ -169,8 +180,14 @@ public class PayloadTransformStore implements Closeable {
         LOG.info().$("payload transform system table initialized [table=").$(tableName).$(']').$();
     }
 
-    public boolean isTransformExists(SqlExecutionContext executionContext, CharSequence name) throws SqlException {
-        ensureInitialized(executionContext);
+    public boolean hasTransform(SqlExecutionContext executionContext, CharSequence name) throws SqlException {
+        if (engine.getTableTokenIfExists(tableName) == null) {
+            return false;
+        }
+        // Single-quote escaping is safe here: name is a SYMBOL column and the query
+        // uses QuestDB's own SQL parser, which does not support multi-statement or
+        // escape sequences beyond ''. Parameterized queries are not available for
+        // internal system-table lookups.
         final String escapedName = Chars.toString(name).replace("'", "''");
         final String sql = "SELECT status FROM \"" + tableName + "\" WHERE name = '" + escapedName + "' LATEST ON ts PARTITION BY name";
         try (
@@ -191,16 +208,22 @@ public class PayloadTransformStore implements Closeable {
             CharSequence name,
             PayloadTransformDefinition def
     ) throws SqlException {
-        // Check cache first - zero-allocation lookup
-        final String nameStr = Chars.toString(name);
-        final PayloadTransformDefinition cached = cache.get(nameStr);
+        // Check cache first - zero-allocation CharSequence lookup
+        final PayloadTransformDefinition cached = cache.get(name);
         if (cached != null) {
             def.copyFrom(cached);
             return def;
         }
 
-        // Cache miss - query system table
-        ensureInitialized(executionContext);
+        // Cache miss - query system table only if it exists
+        if (engine.getTableTokenIfExists(tableName) == null) {
+            return null;
+        }
+        final String nameStr = Chars.toString(name);
+        // Single-quote escaping is safe here: name is a SYMBOL column and the query
+        // uses QuestDB's own SQL parser, which does not support multi-statement or
+        // escape sequences beyond ''. Parameterized queries are not available for
+        // internal system-table lookups.
         final String escapedName = nameStr.replace("'", "''");
         final String sql = "SELECT name, target_table, select_sql, dlq_table, dlq_partition_by, dlq_ttl_value, dlq_ttl_unit, status "
                 + "FROM \"" + tableName + "\" WHERE name = '" + escapedName + "' LATEST ON ts PARTITION BY name";
@@ -234,11 +257,22 @@ public class PayloadTransformStore implements Closeable {
                 // Populate cache for subsequent lookups
                 final PayloadTransformDefinition cacheEntry = new PayloadTransformDefinition();
                 cacheEntry.copyFrom(def);
-                cache.put(nameStr, cacheEntry);
+                cache.putIfAbsent(nameStr, cacheEntry);
                 return def;
             }
         }
         return null;
+    }
+
+    private long nextTimestamp() {
+        final long now = engine.getConfiguration().getMicrosecondClock().getTicks();
+        long last;
+        long next;
+        do {
+            last = lastWriteTimestamp.get();
+            next = Math.max(now, last + 1);
+        } while (!lastWriteTimestamp.compareAndSet(last, next));
+        return next;
     }
 
     private void ensureInitialized(SqlExecutionContext executionContext) throws SqlException {

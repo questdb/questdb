@@ -1286,6 +1286,7 @@ public class SqlParser {
         if (isDlqKeyword(tok)) {
             tok = tok(lexer, "DLQ table name");
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            builder.setDlqTablePosition(lexer.lastTokenPosition());
             builder.setDlqTable(GenericLexer.unquote(tok));
 
             tok = tok(lexer, "'partition' or 'ttl' or 'as'");

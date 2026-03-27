@@ -166,6 +166,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public long getIngestMaxRequestSize() {
+        return getDelegate().getIngestMaxRequestSize();
+    }
+
+    @Override
     public int getIOQueueCapacity() {
         return getDelegate().getIOQueueCapacity();
     }

@@ -187,6 +187,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ViewCompilerExecutionContext compileViewContext;
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls = new LowerCaseCharSequenceObjHashMap<>();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
@@ -196,8 +197,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
-    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls = new LowerCaseCharSequenceObjHashMap<>();
-    private boolean overrideDeclare;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final Path renamePath;
@@ -214,6 +213,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
+    private boolean overrideDeclare;
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -2886,13 +2886,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS transform-name");
                     }
                     hasIfExists = true;
-                    namePosition = lexer.getPosition();
                 } else {
                     lexer.unparseLast();
                 }
 
                 tok = expectToken(lexer, "transform name");
-                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                namePosition = lexer.lastTokenPosition();
+                assertNameIsQuotedOrNotAKeyword(tok, namePosition);
 
                 final CharSequence transformName = unquote(tok);
                 dropOperationBuilder.clear();
@@ -4483,11 +4483,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
         try {
+            executionContext.getSecurityContext().authorizePayloadTransformCreate();
             final PayloadTransformStore store = engine.getPayloadTransformStore();
             store.init(executionContext);
 
             // Check if transform already exists
-            if (store.isTransformExists(executionContext, op.getName())) {
+            if (store.hasTransform(executionContext, op.getName())) {
                 if (op.isReplace()) {
                     // Drop existing transform first
                     store.dropTransform(executionContext, op.getName());
@@ -4516,7 +4517,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     createDlqTable(executionContext, op);
                     dlqToken = executionContext.getTableTokenIfExists(op.getDlqTable());
                 }
-                assert dlqToken != null;
+                if (dlqToken == null) {
+                    throw SqlException.$(op.getDlqTablePosition(), "failed to create DLQ table [name=").put(op.getDlqTable()).put(']');
+                }
                 validateDlqSchema(executionContext, dlqToken, op);
                 executionContext.getSecurityContext().authorizeInsert(dlqToken);
             }
@@ -4550,7 +4553,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final QueryBuilder query = compiler.query();
             query.$("CREATE TABLE IF NOT EXISTS \"")
-                    .$(op.getDlqTable())
+                    .$(op.getDlqTable().toString().replace("\"", "\"\""))
                     .$("\" (" +
                             "ts TIMESTAMP, " +
                             "transform_name SYMBOL, " +
@@ -4578,10 +4581,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
         try {
+            executionContext.getSecurityContext().authorizePayloadTransformDrop();
             final PayloadTransformStore store = engine.getPayloadTransformStore();
             store.init(executionContext);
 
-            if (!store.isTransformExists(executionContext, op.getEntityName())) {
+            if (!store.hasTransform(executionContext, op.getEntityName())) {
                 if (op.ifExists()) {
                     return false;
                 }
@@ -5194,22 +5198,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     ColumnType.VARCHAR, ColumnType.SYMBOL, ColumnType.VARCHAR
             };
             if (meta.getColumnCount() < expectedNames.length) {
-                throw SqlException.$(op.getNamePosition(), "DLQ table has incompatible schema, expected at least ")
+                throw SqlException.$(op.getDlqTablePosition(), "DLQ table has incompatible schema, expected at least ")
                         .put(expectedNames.length).put(" columns [table=").put(dlqToken.getTableName()).put(']');
             }
             for (int i = 0; i < expectedNames.length; i++) {
                 int idx = meta.getColumnIndexQuiet(expectedNames[i]);
                 if (idx == -1) {
-                    throw SqlException.$(op.getNamePosition(), "DLQ table missing column [column=")
+                    throw SqlException.$(op.getDlqTablePosition(), "DLQ table missing column [column=")
                             .put(expectedNames[i]).put(", table=").put(dlqToken.getTableName()).put(']');
                 }
                 if (idx != i) {
-                    throw SqlException.$(op.getNamePosition(), "DLQ table column in wrong position [column=")
+                    throw SqlException.$(op.getDlqTablePosition(), "DLQ table column in wrong position [column=")
                             .put(expectedNames[i]).put(", expected=").put(i).put(", actual=").put(idx)
                             .put(", table=").put(dlqToken.getTableName()).put(']');
                 }
                 if (meta.getColumnType(i) != expectedTypes[i]) {
-                    throw SqlException.$(op.getNamePosition(), "DLQ table column type mismatch [column=")
+                    throw SqlException.$(op.getDlqTablePosition(), "DLQ table column type mismatch [column=")
                             .put(expectedNames[i]).put(", expected=").put(ColumnType.nameOf(expectedTypes[i]))
                             .put(", actual=").put(ColumnType.nameOf(meta.getColumnType(i)))
                             .put(", table=").put(dlqToken.getTableName()).put(']');

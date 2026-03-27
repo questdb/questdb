@@ -43,23 +43,37 @@ class IngestProcessorState implements Mutable, Closeable {
     private final BytecodeAssembler bytecodeAssembler = new BytecodeAssembler();
     private final ListColumnFilter columnFilter = new ListColumnFilter();
     private final Utf8StringSink dlqSink = new Utf8StringSink();
+    private final int initialBufferSize;
     private final LowerCaseCharSequenceObjHashMap<CharSequence> overrides = new LowerCaseCharSequenceObjHashMap<>();
-    private final StringSink payloadSink = new StringSink();
     private final DirectUtf8Sink responseSink;
     private final PayloadTransformDefinition transformDef = new PayloadTransformDefinition();
+    private final StringSink transformNameSink = new StringSink();
+    private String chunkError;
+    private StringSink payloadSink = new StringSink();
     private int statusCode = -1;
 
     IngestProcessorState(int initialBufferSize) {
+        this.initialBufferSize = initialBufferSize;
         bodySink = new DirectUtf8Sink(initialBufferSize);
         responseSink = new DirectUtf8Sink(256);
     }
 
     @Override
     public void clear() {
+        chunkError = null;
         statusCode = -1;
-        bodySink.clear();
+        final long shrinkThreshold = (long) initialBufferSize * 4;
+        if (bodySink.size() > shrinkThreshold) {
+            bodySink.resetCapacity();
+        } else {
+            bodySink.clear();
+        }
+        if (payloadSink.length() > shrinkThreshold) {
+            payloadSink = new StringSink(initialBufferSize);
+        } else {
+            payloadSink.clear();
+        }
         overrides.clear();
-        payloadSink.clear();
         responseSink.clear();
     }
 
@@ -75,6 +89,10 @@ class IngestProcessorState implements Mutable, Closeable {
 
     BytecodeAssembler getBytecodeAssembler() {
         return bytecodeAssembler;
+    }
+
+    String getChunkError() {
+        return chunkError;
     }
 
     ListColumnFilter getColumnFilter() {
@@ -101,6 +119,10 @@ class IngestProcessorState implements Mutable, Closeable {
         return transformDef;
     }
 
+    StringSink getTransformNameSink() {
+        return transformNameSink;
+    }
+
     void send(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException {
         assert statusCode > 0;
         if (responseSink.size() > 0) {
@@ -108,6 +130,10 @@ class IngestProcessorState implements Mutable, Closeable {
         } else {
             context.simpleResponse().sendStatusJsonContent(statusCode);
         }
+    }
+
+    void setChunkError(String chunkError) {
+        this.chunkError = chunkError;
     }
 
     void setStatusCode(int statusCode) {

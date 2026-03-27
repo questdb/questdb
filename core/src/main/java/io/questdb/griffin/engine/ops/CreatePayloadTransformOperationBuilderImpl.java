@@ -30,6 +30,7 @@ import io.questdb.std.Mutable;
 public class CreatePayloadTransformOperationBuilderImpl implements CreatePayloadTransformOperationBuilder, Mutable {
     private int dlqPartitionBy = -1;
     private CharSequence dlqTable;
+    private int dlqTablePosition;
     private CharSequence dlqTtlUnit;
     private long dlqTtlValue;
     private boolean ignoreIfExists;
@@ -52,6 +53,7 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
                 Chars.toString(selectSql),
                 selectSqlPosition,
                 dlqTable != null ? Chars.toString(dlqTable) : null,
+                dlqTablePosition,
                 dlqPartitionBy,
                 dlqTtlValue,
                 dlqTtlUnit != null ? Chars.toString(dlqTtlUnit) : null,
@@ -69,6 +71,7 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
         selectSql = null;
         selectSqlPosition = 0;
         dlqTable = null;
+        dlqTablePosition = 0;
         dlqPartitionBy = -1;
         dlqTtlValue = 0;
         dlqTtlUnit = null;
@@ -82,6 +85,10 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
 
     public void setDlqTable(CharSequence dlqTable) {
         this.dlqTable = dlqTable;
+    }
+
+    public void setDlqTablePosition(int dlqTablePosition) {
+        this.dlqTablePosition = dlqTablePosition;
     }
 
     public void setDlqTtlUnit(CharSequence dlqTtlUnit) {

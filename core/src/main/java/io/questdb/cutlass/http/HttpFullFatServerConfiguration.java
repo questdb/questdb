@@ -116,6 +116,8 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return "";
     }
 
+    long getIngestMaxRequestSize();
+
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
     LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();

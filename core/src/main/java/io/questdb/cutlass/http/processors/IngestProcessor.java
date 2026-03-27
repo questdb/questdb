@@ -66,6 +66,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
+import static java.net.HttpURLConnection.HTTP_ENTITY_TOO_LARGE;
 import static java.net.HttpURLConnection.HTTP_INTERNAL_ERROR;
 import static java.net.HttpURLConnection.HTTP_OK;
 
@@ -79,13 +80,17 @@ public class IngestProcessor implements HttpRequestHandler {
     private static final LocalValue<IngestProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_TRANSFORM = new Utf8String("transform");
     private final CairoEngine engine;
+    private final long maxRequestSize;
+    private final String maxRequestSizeError;
     private final PostProcessor postProcessor = new PostProcessor();
     private final int recvBufferSize;
     private final int sharedWorkerCount;
 
-    public IngestProcessor(CairoEngine engine, int recvBufferSize, int sharedWorkerCount) {
+    public IngestProcessor(CairoEngine engine, int recvBufferSize, long maxRequestSize, int sharedWorkerCount) {
         this.engine = engine;
         this.recvBufferSize = recvBufferSize;
+        this.maxRequestSize = maxRequestSize;
+        this.maxRequestSizeError = "request body exceeds maximum size of " + maxRequestSize + " bytes";
         this.sharedWorkerCount = sharedWorkerCount;
     }
 
@@ -99,8 +104,13 @@ public class IngestProcessor implements HttpRequestHandler {
 
         @Override
         public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            if (hi > lo) {
-                transientState.getBodySink().putNonAscii(lo, hi);
+            if (hi > lo && transientState.getChunkError() == null) {
+                final DirectUtf8Sink bodySink = transientState.getBodySink();
+                if (bodySink.size() + (hi - lo) > maxRequestSize) {
+                    transientState.setChunkError(maxRequestSizeError);
+                    return;
+                }
+                bodySink.putNonAscii(lo, hi);
             }
         }
 
@@ -116,6 +126,11 @@ public class IngestProcessor implements HttpRequestHandler {
 
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            final String chunkError = transientState.getChunkError();
+            if (chunkError != null) {
+                sendError(context, HTTP_ENTITY_TOO_LARGE, chunkError);
+                return;
+            }
             try {
                 final HttpRequestHeader header = context.getRequestHeader();
                 final DirectUtf8Sequence transformNameUtf8 = header.getUrlParam(URL_PARAM_TRANSFORM);
@@ -123,7 +138,13 @@ public class IngestProcessor implements HttpRequestHandler {
                     sendError(context, HTTP_BAD_REQUEST, "missing 'transform' query parameter");
                     return;
                 }
-                final String transformName = transformNameUtf8.toString();
+                final StringSink transformNameSink = transientState.getTransformNameSink();
+                transformNameSink.clear();
+                if (!Utf8s.utf8ToUtf16(transformNameUtf8, transformNameSink)) {
+                    sendError(context, HTTP_BAD_REQUEST, "invalid UTF-8 in 'transform' parameter");
+                    return;
+                }
+                final CharSequence transformName = transformNameSink;
 
                 final SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
                 sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), context.getOrCreateCircuitBreaker(engine).of(context.getFd()));
@@ -132,7 +153,7 @@ public class IngestProcessor implements HttpRequestHandler {
                 final PayloadTransformStore store = engine.getPayloadTransformStore();
                 final PayloadTransformDefinition def = store.lookupTransform(sqlExecutionContext, transformName, transientState.getTransformDef());
                 if (def == null) {
-                    sendError(context, HTTP_BAD_REQUEST, "transform not found: " + transformName);
+                    sendError(context, HTTP_BAD_REQUEST, "transform not found: " + transformName.toString());
                     return;
                 }
 
@@ -152,17 +173,18 @@ public class IngestProcessor implements HttpRequestHandler {
                     final long rowCount = executeTransform(sqlExecutionContext, def, overrides);
                     sendSuccess(context, rowCount);
                 } catch (SqlException | CairoException e) {
-                    writeToDlq(sqlExecutionContext, def, payloadSink, "transform", ((FlyweightMessageContainer) e).getFlyweightMessage());
+                    writeToDlq(sqlExecutionContext, def, payloadSink, "transform",
+                            ((FlyweightMessageContainer) e).getFlyweightMessage().toString());
                     throw e;
                 } finally {
                     sqlExecutionContext.setPayload(null);
                 }
             } catch (SqlException e) {
                 LOG.error().$("ingest SQL error [msg=").$safe(e.getFlyweightMessage()).$(']').$();
-                sendError(context, HTTP_BAD_REQUEST, e.getFlyweightMessage().toString());
+                sendError(context, HTTP_BAD_REQUEST, e.getFlyweightMessage());
             } catch (CairoException e) {
                 LOG.error().$("ingest error [msg=").$safe(e.getFlyweightMessage()).$(']').$();
-                sendError(context, HTTP_INTERNAL_ERROR, e.getFlyweightMessage().toString());
+                sendError(context, HTTP_INTERNAL_ERROR, e.getFlyweightMessage());
             } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
                 throw e;
             } catch (Throwable e) {
@@ -224,6 +246,9 @@ public class IngestProcessor implements HttpRequestHandler {
                             : compiler.compile(selectSql, sqlExecutionContext)
                     ).getRecordCursorFactory()
             ) {
+                if (factory == null) {
+                    throw SqlException.$(0, "payload transform query must be a SELECT");
+                }
                 final RecordMetadata cursorMetadata = factory.getMetadata();
 
                 try (TableRecordMetadata writerMetadata = sqlExecutionContext.getMetadataForWrite(targetToken)) {
@@ -338,6 +363,8 @@ public class IngestProcessor implements HttpRequestHandler {
                     writer.commit();
                 }
             } catch (Throwable dlqError) {
+                // Intentionally catching all exceptions: DLQ write is best-effort and
+                // must not mask the original transform error propagated to the caller.
                 LOG.critical().$("failed to write to DLQ [table=").$(dlqTable)
                         .$(",error=").$(dlqError).$(']').$();
             }

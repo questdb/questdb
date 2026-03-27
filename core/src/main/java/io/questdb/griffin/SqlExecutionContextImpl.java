@@ -96,13 +96,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private boolean parallelFilterEnabled;
-    private CharSequence payload;
     private boolean parallelGroupByEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
+    private CharSequence payload;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private long requestFd = -1;

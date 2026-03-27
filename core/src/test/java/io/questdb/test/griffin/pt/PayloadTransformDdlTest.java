@@ -29,9 +29,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pt.PayloadTransformDefinition;
 import io.questdb.cairo.pt.PayloadTransformStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -45,6 +47,8 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE PAYLOAD TRANSFORM cte_transform INTO target AS WITH cte AS (SELECT now() AS ts, 'x' AS sym, 1.0 AS price) SELECT * FROM cte");
+            drainWalQueue();
+            Assert.assertTrue(engine.getPayloadTransformStore().hasTransform(sqlExecutionContext, "cte_transform"));
         });
     }
 
@@ -53,6 +57,8 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE PAYLOAD TRANSFORM seq_transform INTO target AS SELECT now() AS ts, 'sym' AS sym, x::DOUBLE AS price FROM long_sequence(1)");
+            drainWalQueue();
+            Assert.assertTrue(engine.getPayloadTransformStore().hasTransform(sqlExecutionContext, "seq_transform"));
         });
     }
 
@@ -61,6 +67,8 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE PAYLOAD TRANSFORM expr_transform INTO target AS " + VALID_SELECT);
+            drainWalQueue();
+            Assert.assertTrue(engine.getPayloadTransformStore().hasTransform(sqlExecutionContext, "expr_transform"));
         });
     }
 
@@ -90,7 +98,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             drainWalQueue();
 
             PayloadTransformStore store = engine.getPayloadTransformStore();
-            Assert.assertTrue(store.isTransformExists(sqlExecutionContext, "my_transform"));
+            Assert.assertTrue(store.hasTransform(sqlExecutionContext, "my_transform"));
         });
     }
 
@@ -105,7 +113,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM my_transform INTO target AS " + VALID_SELECT);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform already exists"));
+                TestUtils.assertContains(e.getMessage(), "payload transform already exists");
             }
         });
     }
@@ -128,7 +136,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM my_transform INTO nonexistent AS SELECT 1");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("target table does not exist"));
+                TestUtils.assertContains(e.getMessage(), "target table does not exist");
             }
         });
     }
@@ -145,6 +153,8 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             def = store.lookupTransform(sqlExecutionContext, "my_transform", def);
             Assert.assertNotNull(def);
             Assert.assertEquals("my_dlq", def.getDlqTable());
+            Assert.assertEquals(7, def.getDlqTtlValue());
+            Assert.assertEquals("DAYS", def.getDlqTtlUnit());
         });
     }
 
@@ -159,13 +169,13 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             execute("DROP PAYLOAD TRANSFORM t1");
             drainWalQueue();
             PayloadTransformStore store = engine.getPayloadTransformStore();
-            Assert.assertFalse(store.isTransformExists(sqlExecutionContext, "t1"));
-            Assert.assertTrue(store.isTransformExists(sqlExecutionContext, "t2"));
+            Assert.assertFalse(store.hasTransform(sqlExecutionContext, "t1"));
+            Assert.assertTrue(store.hasTransform(sqlExecutionContext, "t2"));
 
             execute("DROP PAYLOAD TRANSFORM t2");
             drainWalQueue();
-            Assert.assertFalse(store.isTransformExists(sqlExecutionContext, "t1"));
-            Assert.assertFalse(store.isTransformExists(sqlExecutionContext, "t2"));
+            Assert.assertFalse(store.hasTransform(sqlExecutionContext, "t1"));
+            Assert.assertFalse(store.hasTransform(sqlExecutionContext, "t2"));
         });
     }
 
@@ -177,11 +187,11 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             drainWalQueue();
 
             PayloadTransformStore store = engine.getPayloadTransformStore();
-            Assert.assertTrue(store.isTransformExists(sqlExecutionContext, "my_transform"));
+            Assert.assertTrue(store.hasTransform(sqlExecutionContext, "my_transform"));
 
             execute("DROP PAYLOAD TRANSFORM my_transform");
             drainWalQueue();
-            Assert.assertFalse(store.isTransformExists(sqlExecutionContext, "my_transform"));
+            Assert.assertFalse(store.hasTransform(sqlExecutionContext, "my_transform"));
         });
     }
 
@@ -192,7 +202,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("DROP PAYLOAD TRANSFORM nonexistent");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform does not exist"));
+                TestUtils.assertContains(e.getMessage(), "payload transform does not exist");
             }
         });
     }
@@ -241,7 +251,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS price, 'extra' AS extra");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("column not found in target table [column=extra"));
+                TestUtils.assertContains(e.getMessage(), "column not found in target table [column=extra");
                 // Position must point within the SELECT SQL, not at 0
                 Assert.assertTrue("error position should be > 0", e.getPosition() > 0);
             }
@@ -249,14 +259,45 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectColumnNotInTargetTable() throws Exception {
+    public void testCacheInvalidationAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM my_transform INTO target AS " + VALID_SELECT);
+            drainWalQueue();
+
+            PayloadTransformStore store = engine.getPayloadTransformStore();
+            PayloadTransformDefinition def = new PayloadTransformDefinition();
+
+            // Populate cache via lookup
+            def = store.lookupTransform(sqlExecutionContext, "my_transform", def);
+            Assert.assertNotNull(def);
+            Assert.assertEquals(VALID_SELECT, def.getSelectSql());
+
+            // Drop and recreate with different SQL
+            execute("DROP PAYLOAD TRANSFORM my_transform");
+            drainWalQueue();
+            execute("CREATE PAYLOAD TRANSFORM my_transform INTO target AS " + VALID_SELECT_2);
+            drainWalQueue();
+
+            // Lookup must return the new SQL, not the stale cached value
+            def = store.lookupTransform(sqlExecutionContext, "my_transform", def);
+            Assert.assertNotNull(def);
+            Assert.assertEquals(VALID_SELECT_2, def.getSelectSql());
+        });
+    }
+
+    @Test
+    public void testRejectCreateWithReadOnlyContext() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            SqlExecutionContextImpl readOnlyCtx = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, bindVariableService, null, -1, null);
             try {
-                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS price, 'extra' AS extra");
-                Assert.fail("expected SqlException");
-            } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("column not found in target table [column=extra"));
+                execute("CREATE PAYLOAD TRANSFORM denied INTO target AS " + VALID_SELECT, readOnlyCtx);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "Write permission denied");
             }
         });
     }
@@ -279,7 +320,8 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("DLQ table missing column [column=transform_name"));
+                TestUtils.assertContains(e.getMessage(), "DLQ table missing column [column=transform_name");
+                Assert.assertEquals("error should point at DLQ table name", 45, e.getPosition());
             }
         });
     }
@@ -303,7 +345,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("DLQ table column in wrong position [column=transform_name"));
+                TestUtils.assertContains(e.getMessage(), "DLQ table column in wrong position [column=transform_name");
             }
         });
     }
@@ -327,7 +369,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("DLQ table column type mismatch [column=transform_name"));
+                TestUtils.assertContains(e.getMessage(), "DLQ table column type mismatch [column=transform_name");
             }
         });
     }
@@ -341,7 +383,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("DLQ table has incompatible schema"));
+                TestUtils.assertContains(e.getMessage(), "DLQ table has incompatible schema");
             }
         });
     }
@@ -378,7 +420,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM denied INTO target DLQ my_dlq PARTITION BY DAY AS " + VALID_SELECT, restrictedCtx);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
-                Assert.assertTrue(e.getMessage().contains("Write permission denied"));
+                TestUtils.assertContains(e.getMessage(), "Write permission denied");
             }
         });
     }
@@ -403,6 +445,24 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectDropWithReadOnlyContext() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM my_transform INTO target AS " + VALID_SELECT);
+            drainWalQueue();
+
+            SqlExecutionContextImpl readOnlyCtx = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, bindVariableService, null, -1, null);
+            try {
+                execute("DROP PAYLOAD TRANSFORM my_transform", readOnlyCtx);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "Write permission denied");
+            }
+        });
+    }
+
+    @Test
     public void testRejectIncompatibleColumnType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, value UUID) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -410,7 +470,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS value");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("inconvertible types"));
+                TestUtils.assertContains(e.getMessage(), "inconvertible types");
                 Assert.assertTrue("error position should be > 0", e.getPosition() > 0);
             }
         });
@@ -424,7 +484,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target AS INSERT INTO target VALUES (now(), 'x', 1.0)");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform requires a SELECT query"));
+                TestUtils.assertContains(e.getMessage(), "payload transform requires a SELECT query");
             }
         });
     }
@@ -443,7 +503,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                         """);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform must not reference tables"));
+                TestUtils.assertContains(e.getMessage(), "payload transform must not reference tables");
             }
         });
     }
@@ -456,7 +516,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT * FROM (SELECT * FROM target)");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform must not reference tables"));
+                TestUtils.assertContains(e.getMessage(), "payload transform must not reference tables");
             }
         });
     }
@@ -469,7 +529,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS price UNION ALL SELECT * FROM target");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform must not reference tables"));
+                TestUtils.assertContains(e.getMessage(), "payload transform must not reference tables");
             }
         });
     }
@@ -482,7 +542,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                 execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT * FROM target");
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage().contains("payload transform must not reference tables"));
+                TestUtils.assertContains(e.getMessage(), "payload transform must not reference tables");
             }
         });
     }
