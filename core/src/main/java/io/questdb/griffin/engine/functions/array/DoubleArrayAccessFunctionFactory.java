@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -136,6 +137,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 index = arg.getLong(null);
             }
             if (index == Numbers.LONG_NULL) {
+                for (int j = i + 1; j < n; j++) {
+                    Misc.free(argsCopy.getQuick(j));
+                }
                 return DoubleConstant.NULL;
             }
             indexArgs.add((int) index);
