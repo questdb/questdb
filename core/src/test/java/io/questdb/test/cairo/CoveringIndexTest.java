@@ -4713,4 +4713,104 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT d, i FROM t_mc_offset WHERE sym = 'B'");
         });
     }
+
+    @Test
+    public void testLatestOnAllSymbolsNoWhere() throws Exception {
+        // LATEST ON without WHERE clause — scans all symbols.
+        // Reproduces issue where posting index caused empty results.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_all (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (exchange, price),
+                        exchange SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_all VALUES
+                    ('2024-01-01T00:00:00', 'GOLD', 'CME', 2050.5),
+                    ('2024-01-01T00:01:00', 'SILVER', 'CME', 24.3),
+                    ('2024-01-01T00:02:00', 'GOLD', 'LME', 2051.0),
+                    ('2024-01-01T00:03:00', 'OIL', 'NYMEX', 78.2),
+                    ('2024-01-01T00:04:00', 'SILVER', 'LME', 24.5),
+                    ('2024-01-01T00:05:00', 'GOLD', 'CME', 2052.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // LATEST ON without WHERE — should return one row per symbol
+            assertSql("""
+                    ts\tsym\texchange
+                    2024-01-01T00:03:00.000000Z\tOIL\tNYMEX
+                    2024-01-01T00:04:00.000000Z\tSILVER\tLME
+                    2024-01-01T00:05:00.000000Z\tGOLD\tCME
+                    """, "SELECT ts, sym, exchange FROM t_latest_all LATEST ON ts PARTITION BY sym");
+
+            // Also verify with covered columns in SELECT
+            assertSql("""
+                    sym\tprice
+                    OIL\t78.2
+                    SILVER\t24.5
+                    GOLD\t2052.0
+                    """, "SELECT sym, price FROM t_latest_all LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testLatestOnAllSymbolsMultiPartition() throws Exception {
+        // LATEST ON without WHERE across multiple partitions
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_all_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_all_mp VALUES
+                    ('2024-01-01T10:00:00', 'A', 1.0),
+                    ('2024-01-01T11:00:00', 'B', 2.0),
+                    ('2024-01-02T10:00:00', 'A', 3.0),
+                    ('2024-01-02T11:00:00', 'C', 4.0),
+                    ('2024-01-03T10:00:00', 'B', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // A latest in day 2, B latest in day 3, C latest in day 2
+            assertSql("""
+                    sym\tval
+                    A\t3.0
+                    C\t4.0
+                    B\t5.0
+                    """, "SELECT sym, val FROM t_latest_all_mp LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testLatestOnAllSymbolsWal() throws Exception {
+        // LATEST ON without WHERE via WAL
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_all_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_all_wal VALUES
+                    ('2024-01-01T00:00:00', 'X', 10.0),
+                    ('2024-01-01T01:00:00', 'Y', 20.0),
+                    ('2024-01-01T02:00:00', 'X', 30.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    sym\tprice
+                    Y\t20.0
+                    X\t30.0
+                    """, "SELECT sym, price FROM t_latest_all_wal LATEST ON ts PARTITION BY sym");
+        });
+    }
 }

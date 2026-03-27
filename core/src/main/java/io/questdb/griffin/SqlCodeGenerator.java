@@ -5651,7 +5651,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert intrinsicModel.keyValueFuncs.size() == 0;
             // get the latest rows for all values of "latest by" column
 
-            if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
+            if (indexed && filter == null && configuration.useWithinLatestByOptimisation()
+                    && metadata.getColumnIndexType(latestByIndex) == IndexType.BITMAP) {
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -8643,8 +8644,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final int columnIndex = queryMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
                         assert columnIndex > -1;
 
-                        // this is our kind of column
-                        if (queryMeta.isColumnIndexed(columnIndex)) {
+                        // this is our kind of column — bitmap only (native scanner)
+                        if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = BitmapIndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
@@ -8735,7 +8736,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // listColumnFilterA = latest by column indexes
         if (latestByColumnCount == 1) {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-            if (queryMeta.isColumnIndexed(latestByColumnIndex)) {
+            if (queryMeta.getColumnIndexType(latestByColumnIndex) == IndexType.BITMAP) {
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
