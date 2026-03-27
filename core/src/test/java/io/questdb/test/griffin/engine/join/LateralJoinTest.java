@@ -6241,6 +6241,541 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T98: outer WHERE filter + non-equality lateral correlation.
+    @Test
+    public void testT98OuterWhereFilterWithNonEqLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'CLOSED', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z'),
+                    (4, 'ACTIVE', '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z'),
+                    (3, 40.0, '2024-01-01T02:10:00.000000Z')
+                    """);
+
+            // Non-equality correlation (order_id > o.id) prevents elimination
+            // Only ACTIVE orders are included
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcnt
+                            1\t2
+                            3\t1
+                            4\t0
+                            """,
+                    """
+                            SELECT o.id, sub.cnt
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id >= o.id AND order_id < o.id + 1
+                            ) sub ON true
+                            WHERE o.status = 'ACTIVE'
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T98b: single source + unqualified WHERE column name
+    // Regression test: canResolveColumnForOuter must resolve unqualified columns
+    @Test
+    public void testT98bOuterWhereUnqualifiedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'CLOSED', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // Unqualified 'status' (no alias prefix) — must still be pushed down
+            assertQueryAndPlan(
+                    """
+                            id\tcnt
+                            1\t2
+                            3\t0
+                            """,
+                    """
+                            Encode sort
+                              keys: [id]
+                                VirtualRecord
+                                  functions: [id,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_id=o.id
+                                          filter: true
+                                            Async JIT Filter workers: 1
+                                              filter: status='ACTIVE'
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Cross Join
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Async JIT Group By workers: 1
+                                                              keys: [__qdb_outer_ref__0_id]
+                                                              filter: status='ACTIVE'
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: orders
+                            """,
+                    """
+                            SELECT o.id, sub.cnt
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id >= o.id AND order_id < o.id + 1
+                            ) sub ON true
+                            WHERE status = 'ACTIVE'
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T98c: WHERE with function expression — push down abs(o.id) > 1
+    @Test
+    public void testT98cOuterWhereWithFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z'),
+                    (3, 40.0, '2024-01-01T02:10:00.000000Z')
+                    """);
+
+            // Function expression: abs(o.id) > 1 filters orders 2 and 3
+            assertQueryAndPlan(
+                    """
+                            id\tcnt
+                            2\t1
+                            3\t1
+                            """,
+                    """
+                            Encode sort
+                              keys: [id]
+                                VirtualRecord
+                                  functions: [id,coalesce(cnt,0)]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: sub.__qdb_outer_ref__0_id=o.id
+                                          filter: true
+                                            Async Filter workers: 1
+                                              filter: 1<abs(id)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: orders
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__0_id]
+                                                  values: [count(*)]
+                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                        Cross Join
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                                                            Async Group By workers: 1
+                                                              keys: [__qdb_outer_ref__0_id]
+                                                              filter: 1<abs(id)
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: orders
+                            """,
+                    """
+                            SELECT o.id, sub.cnt
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id >= o.id AND order_id < o.id + 1
+                            ) sub ON true
+                            WHERE abs(o.id) > 1
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T98d: multi-source lateral + qualified WHERE on one source
+    @Test
+    public void testT98dMultiSourceOuterWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (a INT, b SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'CLOSED', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 'X', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'Y', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'X', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (1, 'X', 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'X', 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 'Y', 30, '2024-01-01T01:10:00.000000Z'),
+                    (3, 'X', 40, '2024-01-01T02:10:00.000000Z')
+                    """);
+
+            // Correlates with both t1 and t2; WHERE filters only t1
+            assertQueryAndPlan(
+                    """
+                            id\tcategory\tcnt
+                            1\tX\t2
+                            3\tX\t1
+                            """,
+                    """
+                            Encode sort
+                              keys: [id]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                        Hash Join Light
+                                          condition: t2.t1_id=t1.id
+                                            Async JIT Filter workers: 1
+                                              filter: status='ACTIVE'
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                        Hash
+                                            GroupBy vectorized: false
+                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                              values: [count(*)]
+                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Hash Join Light
+                                                      condition: __qdb_outer_ref__0_category=t3.b
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t3
+                                                        Hash
+                                                            GroupBy vectorized: false
+                                                              keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                                SelectedRecord
+                                                                    Hash Join Light
+                                                                      condition: t2.t1_id=t1.id
+                                                                        Async JIT Filter workers: 1
+                                                                          filter: status='ACTIVE'
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t1
+                                                                        Hash
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t2
+                            """,
+                    """
+                            SELECT t1.id, t2.category, sub.cnt
+                            FROM t1
+                            JOIN t2 ON t1.id = t2.t1_id
+                            JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM t3
+                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
+                                  AND t3.b = t2.category
+                            ) sub ON true
+                            WHERE t1.status = 'ACTIVE'
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T98e: WHERE predicate references both outer sources — must NOT be pushed
+    // to any single base (predicate stays only in outer WHERE)
+    @Test
+    public void testT98eWhereAcrossMultipleSources() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 10, '2024-01-01T00:00:00.000000Z'),
+                    (2, 20, '2024-01-01T01:00:00.000000Z'),
+                    (3, 30, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 25, '2024-01-01T01:00:00.000000Z'),
+                    (3, 15, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (1, 5, '2024-01-01T00:10:00.000000Z'),
+                    (2, 25, '2024-01-01T01:10:00.000000Z'),
+                    (3, 15, '2024-01-01T02:10:00.000000Z')
+                    """);
+
+            // WHERE t1.val > t2.val spans both sources — cannot be pushed to either base
+            assertQueryAndPlan(
+                    """
+                            id\tt2_val\tcnt
+                            1\t5\t1
+                            3\t15\t1
+                            """,
+                    """
+                            Encode sort
+                              keys: [id]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
+                                        Filter filter: t2.val<t1.val
+                                            Hash Join Light
+                                              condition: t2.t1_id=t1.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                                        Hash
+                                            GroupBy vectorized: false
+                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                              values: [count(*)]
+                                                Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Hash Join Light
+                                                      condition: __qdb_outer_ref__0_val=t3.b
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t3
+                                                        Hash
+                                                            GroupBy vectorized: false
+                                                              keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                                SelectedRecord
+                                                                    Hash Join Light
+                                                                      condition: t2.t1_id=t1.id
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: t1
+                                                                        Hash
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t2
+                            """,
+                    """
+                            SELECT t1.id, t2.val AS t2_val, sub.cnt
+                            FROM t1
+                            JOIN t2 ON t1.id = t2.t1_id
+                            JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM t3
+                                WHERE t3.a >= t1.id AND t3.a < t1.id + 1
+                                  AND t3.b = t2.val
+                            ) sub ON true
+                            WHERE t1.val > t2.val
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T99: correlated ON on join branch (ji > 0, INNER JOIN)
+    // The join branch (t3) has correlated ON: t3.order_id = o.id
+    // pushDownOuterRefsForJoinBranch moves it to t3's WHERE
+    @Test
+    public void testT99CorrelatedOnJoinBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // Main chain (trades): correlated WHERE order_id = o.id
+            // Join branch (adjustments): correlated ON order_id = o.id
+            // Both branches get independent __qdb_outer_ref__ clones
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            1\t20.0\t1.5
+                            2\t30.0\t2.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM trades t
+                                JOIN adjustments a ON a.order_id = o.id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T99b: LEFT JOIN branch with correlated ON inside lateral
+    // The LEFT JOIN semantics must be preserved: unmatched trades rows should
+    // produce NULL for the adjustment columns
+    @Test
+    public void testT99bLeftJoinBranchCorrelatedOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            // Only order 1 has an adjustment
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            // LEFT JOIN: order 2 trades should still appear with NULL adj
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            1\t20.0\t1.5
+                            2\t30.0\tnull
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM trades t
+                                LEFT JOIN adjustments a ON a.order_id = o.id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T99c: multiple correlated join branches inside lateral
+    // Both join branches (adjustments and discounts) have correlated ON criteria
+    @Test
+    public void testT99cMultipleCorrelatedJoinBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO discounts VALUES
+                    (1, 0.9, '2024-01-01T00:00:00.000000Z'),
+                    (2, 0.8, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // Three branches: trades (WHERE), adjustments (ON), discounts (ON)
+            // Each correlated branch gets its own cloned __qdb_outer_ref__
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj\tdisc
+                            1\t10.0\t1.5\t0.9
+                            2\t30.0\t2.0\t0.8
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj, sub.disc
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj, d.disc
+                                FROM trades t
+                                JOIN adjustments a ON a.order_id = o.id
+                                JOIN discounts d ON d.order_id = o.id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
