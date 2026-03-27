@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -476,18 +476,13 @@ public final class Chars {
     }
 
     /**
-     * Strictly greater than (&gt;) comparison of two UTF16 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &gt; r will produce "false", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &gt; r will produce "true", because b &gt; a.
+     * Strictly greater than (&gt;) comparison of two CharSequences in Unicode code point order.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return false if either argument is null, otherwise true if l is lexicographically greater than r
      */
     public static boolean greaterThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -495,15 +490,18 @@ public final class Chars {
         }
         final int ll = l.length();
         final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k > 0;
+        int i = 0;
+        int j = 0;
+        while (i < ll && j < rl) {
+            final int cpL = Character.codePointAt(l, i);
+            final int cpR = Character.codePointAt(r, j);
+            if (cpL != cpR) {
+                return cpL > cpR;
             }
+            i += Character.charCount(cpL);
+            j += Character.charCount(cpR);
         }
-        return ll > rl;
+        return i < ll;
     }
 
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
@@ -1082,18 +1080,13 @@ public final class Chars {
     }
 
     /**
-     * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &gt; r will produce "false", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &lt; r will produce "true", because b &lt; a.
+     * Strictly less than (&lt;) comparison of two CharSequences in Unicode code point order.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return false if either argument is null, otherwise true if l is lexicographically less than r
      */
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -1101,15 +1094,18 @@ public final class Chars {
         }
         final int ll = l.length();
         final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k < 0;
+        int i = 0;
+        int j = 0;
+        while (i < ll && j < rl) {
+            final int cpL = Character.codePointAt(l, i);
+            final int cpR = Character.codePointAt(r, j);
+            if (cpL != cpR) {
+                return cpL < cpR;
             }
+            i += Character.charCount(cpL);
+            j += Character.charCount(cpR);
         }
-        return ll < rl;
+        return j < rl;
     }
 
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r, boolean negated) {

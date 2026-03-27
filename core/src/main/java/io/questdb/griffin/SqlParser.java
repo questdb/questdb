@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -650,6 +651,23 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
+    private double expectDouble(GenericLexer lexer) throws SqlException {
+        CharSequence tok = GenericLexer.unquote(expectStringLiteral(lexer).token);
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "number");
+        } else {
+            negative = false;
+        }
+        try {
+            double result = Numbers.parseDouble(tok);
+            return negative ? -result : result;
+        } catch (NumericException e) {
+            throw err(lexer, tok, "bad number");
+        }
+    }
+
     private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
         if (n != null) {
@@ -759,6 +777,13 @@ public class SqlParser {
             return;
         }
         throw SqlException.$(pos, "one letter sample by period unit expected");
+    }
+
+    private ExpressionNode expectStringLiteral(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "literal");
+        int pos = lexer.lastTokenPosition();
+        assertNameIsQuotedOrNotAKeyword(tok, pos);
+        return nextLiteral(GenericLexer.immutableOf(tok), pos);
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
@@ -1172,6 +1197,17 @@ public class SqlParser {
                         }
                         model.setParquetVersion(parquetVersion);
                         break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_COLUMNS:
+                        ExpressionNode bloomFilterColumnsExpr = expectStringLiteral(lexer);
+                        model.setBloomFilterColumns(GenericLexer.unquote(bloomFilterColumnsExpr.token), Chars.isQuoted(bloomFilterColumnsExpr.token) ? bloomFilterColumnsExpr.position + 1 : bloomFilterColumnsExpr.position);
+                        break;
+                    case ExportModel.COPY_OPTION_BLOOM_FILTER_FPP:
+                        double fpp = expectDouble(lexer);
+                        if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_fpp must be between 0 and 1 (exclusive)");
+                        }
+                        model.setBloomFilterFpp(fpp);
+                        break;
                     case ExportModel.COPY_OPTION_UNKNOWN:
                         throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
                                 .put(tok).put(']');
@@ -1428,7 +1464,8 @@ public class SqlParser {
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!tableNames.contains(baseTableNameStr)) {
-                if (cairoEngine.getTableTokenIfExists(baseTableNameStr).isView()) {
+                final TableToken baseTableToken = cairoEngine.getTableTokenIfExists(baseTableNameStr);
+                if (baseTableToken != null && baseTableToken.isView()) {
                     throw SqlException.position(baseTableNamePos)
                             .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
                 }
@@ -1917,16 +1954,19 @@ public class SqlParser {
                 tok = null;
             }
 
-            // check for dodgy array syntax
-            CharSequence tempTok = optTok(lexer);
-            if (tempTok != null && Chars.equals(tempTok, ']')) {
-                throw SqlException.position(columnPosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
-            } else {
-                lexer.unparseLast();
+            if (tok == null) {
+                // check for dodgy array syntax
+                CharSequence tempTok = optTok(lexer);
+                if (tempTok != null && Chars.equals(tempTok, ']')) {
+                    throw SqlException.position(columnPosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+                } else {
+                    lexer.unparseLast();
+                }
+                tok = tok(lexer, "',' or ')'");
             }
 
-            if (tok == null) {
-                tok = tok(lexer, "',' or ')'");
+            if (isParquetKeyword(tok)) {
+                tok = parseCreateTableParquetProperties(lexer, model);
             }
 
             // ignore `PRECISION`
@@ -1990,9 +2030,9 @@ public class SqlParser {
     }
 
     private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
-        CharSequence tok = tok(lexer, "')', or 'index'");
+        CharSequence tok = tok(lexer, "')', 'index' or 'parquet'");
 
-        if (isFieldTerm(tok)) {
+        if (isFieldTerm(tok) || isParquetKeyword(tok)) {
             model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
             return tok;
         }
@@ -2000,7 +2040,7 @@ public class SqlParser {
         expectTok(lexer, tok, "index");
         int indexColumnPosition = lexer.lastTokenPosition();
 
-        if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
+        if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
             model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
@@ -2031,6 +2071,56 @@ public class SqlParser {
         if (!Chars.equals(tok, ')')) {
             throw errUnexpected(lexer, tok);
         }
+    }
+
+    private CharSequence parseCreateTableParquetProperties(GenericLexer lexer, CreateTableColumnModel model) throws SqlException {
+        // Syntax: PARQUET(encoding [, compression[(level)]])
+        expectTok(lexer, '(');
+
+        CharSequence tok = tok(lexer, "encoding name");
+        int encodingPos = lexer.lastTokenPosition();
+        int encoding = ParquetEncoding.getEncoding(tok);
+        if (encoding < 0) {
+            SqlException e = SqlException.$(encodingPos, "invalid parquet encoding '").put(tok).put("', supported values: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, model.getColumnType());
+            throw e;
+        }
+        if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, model.getColumnType())) {
+            SqlException e = SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(model.getColumnType()))
+                    .put(", supported encodings for this type: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, model.getColumnType());
+            throw e;
+        }
+        model.setParquetEncoding(encoding);
+
+        tok = tok(lexer, "',' or ')'");
+        if (Chars.equals(tok, ',')) {
+            tok = tok(lexer, "compression codec name");
+            int codecPos = lexer.lastTokenPosition();
+            int codec = ParquetCompression.getCompressionCodec(tok);
+            if (codec < 0) {
+                throw SqlException.$(codecPos, "invalid parquet compression codec: ").put(tok);
+            }
+            model.setParquetCompression(codec);
+
+            tok = tok(lexer, "'(' or ')'");
+            if (Chars.equals(tok, '(')) {
+                tok = tok(lexer, "compression level");
+                int levelPos = lexer.lastTokenPosition();
+                try {
+                    int level = Numbers.parseInt(tok);
+                    ParquetCompression.validateCompressionLevel(codec, level, levelPos);
+                    model.setParquetCompressionLevel(level);
+                } catch (NumericException e) {
+                    throw SqlException.$(levelPos, "compression level must be a number");
+                }
+                expectTok(lexer, ')');
+                tok = tok(lexer, "',' or ')'");
+            }
+        }
+
+        expectTok(lexer, tok, ")");
+        return tok(lexer, "',' or ')'");
     }
 
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
@@ -3425,9 +3515,9 @@ public class SqlParser {
             tok = optTok(lexer);
             if (tok != null) {
                 if (isIncludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(true, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(true);
                 } else if (isExcludePrevailing(lexer, tok)) {
-                    context.setIncludePrevailing(false, lexer.lastTokenPosition());
+                    context.setIncludePrevailing(false);
                 } else {
                     lexer.unparseLast();
                 }

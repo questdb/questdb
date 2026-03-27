@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,6 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -99,7 +100,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (TableWriter writer = getWriter(tableName)) {
                     start.await();
                     for (int i = 0; i < totalColAddCount; i++) {
-                        writer.addColumn("col" + i, ColumnType.SYMBOL);
+                        writer.addColumn("col" + i, ColumnType.SYMBOL, AllowAllSecurityContext.INSTANCE);
                         int colCount = writer.getMetadata().getColumnCount();
                         columnsAdded.incrementAndGet();
 
@@ -190,7 +191,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
             if (!exceptions.isEmpty()) {
                 for (Throwable ex : exceptions) {
-                    ex.printStackTrace();
+                    ex.printStackTrace(System.out);
                 }
                 Assert.fail();
             }
@@ -353,7 +354,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             }
                         } catch (Throwable e) {
                             cacheInError.set(true);
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                         } finally {
                             Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                             haltLatch.countDown();
@@ -849,7 +850,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
 
         @Override
-        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
         }
 
         @Override

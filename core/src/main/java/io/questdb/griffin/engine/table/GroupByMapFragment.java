@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -73,7 +73,7 @@ public class GroupByMapFragment implements QuietCloseable {
         this.ownerStats = ownerStats;
         this.shardStats = shardStats;
         this.workerCount = workerCount;
-        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
         this.shards = new ObjList<>(NUM_SHARDS);
         this.slotId = slotId;
     }
@@ -189,7 +189,7 @@ public class GroupByMapFragment implements QuietCloseable {
         int size = shards.size();
         if (size == 0) {
             for (int i = 0; i < NUM_SHARDS; i++) {
-                shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
+                shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true));
             }
         } else {
             for (int i = 0; i < NUM_SHARDS; i++) {

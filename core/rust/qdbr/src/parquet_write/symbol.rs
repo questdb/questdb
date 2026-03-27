@@ -2,7 +2,10 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
-use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
+use crate::parquet_write::util::{
+    build_plain_page, encode_all_ones_def_levels, encode_primitive_def_levels, ExactSizedIter,
+};
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DictPage, Page};
@@ -10,6 +13,7 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 use std::char::DecodeUtf16Error;
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 pub struct SymbolGlobalInfo {
     pub used_keys: HashSet<u32>,
@@ -72,6 +76,7 @@ fn encode_symbols_dict<'a>(
     offsets: &[u64],
     chars: &[u8],
     stats: &mut BinaryMaxMinStats,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<(Vec<u8>, impl Iterator<Item = u32> + 'a, u32)> {
     let mut values_set = HashSet::with_capacity(offsets.len());
     for &v in column_vals {
@@ -81,7 +86,14 @@ fn encode_symbols_dict<'a>(
     }
 
     let max_key = values_set.iter().copied().max().unwrap_or(0);
-    let dict_buffer = build_dict_buffer(&values_set, max_key, offsets, chars, Some(stats))?;
+    let dict_buffer = build_dict_buffer(
+        &values_set,
+        max_key,
+        offsets,
+        chars,
+        Some(stats),
+        bloom_hashes,
+    )?;
 
     let local_keys = column_vals
         .iter()
@@ -127,6 +139,7 @@ pub fn build_symbol_dict_page(
     global_info: &SymbolGlobalInfo,
     offsets: &[u64],
     chars: &[u8],
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DictPage> {
     let dict_buffer = build_dict_buffer(
         &global_info.used_keys,
@@ -134,6 +147,7 @@ pub fn build_symbol_dict_page(
         offsets,
         chars,
         None,
+        bloom_hashes,
     )?;
 
     let uniq_vals = if global_info.used_keys.is_empty() {
@@ -155,6 +169,7 @@ pub fn symbol_to_data_page_only(
     offsets: &[u64],
     chars: &[u8],
     required: bool,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + column_values.len();
     let mut data_buffer = vec![];
@@ -169,13 +184,26 @@ pub fn symbol_to_data_page_only(
         "local key exceeds global_max_key, encoding would be invalid"
     );
 
+    // Always encode def levels so the file-level schema stays OPTIONAL
+    // across O3 merges.  When there are no nulls (required=true), a
+    // single RLE run of 1s is ~3 bytes regardless of row count.
     let definition_levels_byte_length = if required {
-        debug_assert!(column_top == 0);
-        debug_assert!(
-            data_null_count == 0,
-            "required column should not have nulls"
-        );
-        0
+        if column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_data_page_only: required column has column_top {}",
+                column_top
+            ));
+        }
+        if data_null_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_data_page_only: required column has {} nulls",
+                data_null_count
+            ));
+        }
+        encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
+        data_buffer.len()
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
@@ -189,10 +217,14 @@ pub fn symbol_to_data_page_only(
         data_buffer.len()
     };
 
-    let page_stats = if options.write_statistics {
-        let mut stats = BinaryMaxMinStats::new(&primitive_type);
-        update_stats_for_partition(column_values, offsets, chars, &mut stats)?;
-        Some(stats.into_parquet_stats(total_null_count))
+    let page_stats = if options.write_statistics || bloom_hashes.is_some() {
+        let mut stats = if options.write_statistics {
+            Some(BinaryMaxMinStats::new(&primitive_type))
+        } else {
+            None
+        };
+        collect_symbol_metadata(column_values, offsets, chars, stats.as_mut(), bloom_hashes)?;
+        stats.map(|s| s.into_parquet_stats(total_null_count))
     } else {
         None
     };
@@ -215,24 +247,30 @@ pub fn symbol_to_data_page_only(
         primitive_type,
         options,
         Encoding::RleDictionary,
-        required,
+        false, // always OPTIONAL: def levels are always encoded
     )?;
 
     Ok(Page::Data(data_page))
 }
 
-fn update_stats_for_partition(
+fn collect_symbol_metadata(
     column_values: &[i32],
     offsets: &[u64],
     chars: &[u8],
-    stats: &mut BinaryMaxMinStats,
+    mut stats: Option<&mut BinaryMaxMinStats>,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<()> {
     for &key in column_values {
         if key >= 0 {
             let k = key as usize;
             if let Some(&offset) = offsets.get(k) {
                 if let Some(utf8_buf) = read_symbol_as_utf8(chars, offset as usize)? {
-                    stats.update(&utf8_buf);
+                    if let Some(ref mut s) = stats {
+                        s.update(&utf8_buf);
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_byte(&utf8_buf));
+                    }
                 }
             }
         }
@@ -301,6 +339,7 @@ fn build_dict_buffer(
     offsets: &[u64],
     chars: &[u8],
     mut stats: Option<&mut BinaryMaxMinStats>,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Vec<u8>> {
     let end_value = if used_keys.is_empty() { 0 } else { max_key + 1 };
 
@@ -325,6 +364,9 @@ fn build_dict_buffer(
             if let Some(ref mut s) = stats {
                 s.update(utf8_buf);
             }
+            if let Some(ref mut h) = bloom_hashes {
+                h.insert(hash_byte(utf8_buf));
+            }
 
             let utf8_len_bytes = (utf8_len as u32).to_le_bytes();
             dict_buffer[key_index..(key_index + 4)].copy_from_slice(&utf8_len_bytes);
@@ -334,6 +376,7 @@ fn build_dict_buffer(
     Ok(dict_buffer)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn symbol_to_pages(
     column_values: &[i32],
     offsets: &[u64],
@@ -342,6 +385,7 @@ pub fn symbol_to_pages(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     required: bool,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + column_values.len();
     let mut data_buffer = vec![];
@@ -351,13 +395,26 @@ pub fn symbol_to_pages(
     // Total nulls includes column_top (all null) + nulls in data
     let total_null_count = column_top + data_null_count;
 
+    // Always encode def levels so the file-level schema stays OPTIONAL
+    // across O3 merges.  When there are no nulls (required=true), a
+    // single RLE run of 1s is ~3 bytes regardless of row count.
     let definition_levels_byte_length = if required {
-        debug_assert!(column_top == 0);
-        debug_assert!(
-            data_null_count == 0,
-            "required column should not have nulls"
-        );
-        0
+        if column_top != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_pages: required column has column_top {}",
+                column_top
+            ));
+        }
+        if data_null_count != 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "symbol_to_pages: required column has {} nulls",
+                data_null_count
+            ));
+        }
+        encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
+        data_buffer.len()
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
@@ -370,11 +427,25 @@ pub fn symbol_to_pages(
         encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
         data_buffer.len()
     };
-
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
-    let (dict_buffer, keys, max_key) =
-        encode_symbols_dict(column_values, offsets, chars, &mut stats)
-            .context("could not write symbols dict map page")?;
+    let (dict_buffer, keys, max_key) = {
+        let mut bloom_guard = bloom_set
+            .as_ref()
+            .map(|arc| {
+                arc.lock()
+                    .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+            })
+            .transpose()?;
+        encode_symbols_dict(
+            column_values,
+            offsets,
+            chars,
+            &mut stats,
+            bloom_guard.as_deref_mut(),
+        )
+        .context("could not write symbols dict map page")?
+    };
+
     let bits_per_key = util::bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - data_null_count;
@@ -395,7 +466,7 @@ pub fn symbol_to_pages(
         primitive_type,
         options,
         Encoding::RleDictionary,
-        required,
+        false, // always OPTIONAL: def levels are always encoded
     )?;
 
     let uniq_vals = if !dict_buffer.is_empty() {

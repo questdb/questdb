@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -231,36 +231,41 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            SecurityContext securityContext
     ) {
-        addColumn(
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableToken,
+                0,
                 columnName,
+                0,
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey,
-                null
+                isDedupKey
         );
+        alterOp.withSecurityContext(securityContext);
+        apply(alterOp, true);
     }
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        try {
-            if (alterOp.isStructural()) {
-                return applyStructural(alterOp);
-            } else {
-                return applyNonStructural(alterOp, false);
-            }
-        } finally {
-            alterOp.clearSecurityContext();
+        alterOp.authorize();
+        if (alterOp.isStructural()) {
+            return applyStructural(alterOp);
+        } else {
+            return applyNonStructural(alterOp, false);
         }
     }
 
     // Returns table transaction number
     @Override
     public long apply(UpdateOperation operation) {
+        operation.authorize();
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -455,12 +460,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    public long renameTable(@NotNull CharSequence oldName, String newTableName) {
+    public long renameTable(@NotNull CharSequence oldName, String newTableName, SecurityContext securityContext) {
         if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
             throw CairoException.tableDoesNotExist(oldName);
         }
         alterOp.clear();
         alterOp.ofRenameTable(tableToken, newTableName);
+        alterOp.withSecurityContext(securityContext);
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
@@ -661,34 +667,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private static int getDataColumnOffset(int columnIndex) {
         return columnIndex * 2;
-    }
-
-    private void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isDedupKey,
-            SecurityContext securityContext
-    ) {
-        alterOp.clear();
-        alterOp.ofAddColumn(
-                getMetadata().getTableId(),
-                tableToken,
-                0,
-                columnName,
-                0,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                isDedupKey
-        );
-        alterOp.withSecurityContext(securityContext);
-        apply(alterOp, true);
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {
@@ -1958,7 +1936,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
+        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
@@ -2203,7 +2181,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
                 String columnName = metadata.getColumnName(columnIndex);
@@ -2231,7 +2209,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         markColumnRemoved(index, type);
-                        path.trimTo(pathSize);
+
+                        try {
+                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
+                        } finally {
+                            path.trimTo(pathSize);
+                        }
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName).I$();
                     } else {
@@ -2282,11 +2265,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        if (securityContext != null) {
-                            ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
+                        try {
+                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
+                        } finally {
+                            path.trimTo(pathSize);
                         }
-
-                        path.trimTo(pathSize);
                         LOG.info().$("renamed column in WAL [path=")
                                 .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName)

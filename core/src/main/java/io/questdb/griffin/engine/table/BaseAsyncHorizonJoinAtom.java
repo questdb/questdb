@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -76,6 +76,9 @@ import java.io.Closeable;
  * 4. Filter resources (compiled and Java filters)
  */
 public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    protected final long bwdScanAbsoluteThreshold;
+    protected final long bwdScanMinGap;
+    protected final long bwdScanSwitchFactor;
     protected final AsyncFilterContext filterCtx;
     protected final int masterTimestampColumnIndex;
     protected final long masterTimestampScale;
@@ -148,6 +151,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
+        this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
+        this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
+        this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
         this.offsetCount = offsets.size();
@@ -381,6 +387,18 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerAsOfJoinMap;
         }
         return perWorkerAsOfJoinMaps != null ? perWorkerAsOfJoinMaps.getQuick(slotId) : null;
+    }
+
+    public long getBwdScanAbsoluteThreshold() {
+        return bwdScanAbsoluteThreshold;
+    }
+
+    public long getBwdScanMinGap() {
+        return bwdScanMinGap;
+    }
+
+    public long getBwdScanSwitchFactor() {
+        return bwdScanSwitchFactor;
     }
 
     public AsyncFilterContext getFilterContext() {

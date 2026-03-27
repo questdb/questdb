@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -52,18 +53,25 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
-        RecordTreeChain chain = new RecordTreeChain(
-                metadata,
-                recordSink,
-                comparator,
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration.getSqlSortValuePageSize(),
-                configuration.getSqlSortValueMaxPages()
-        );
         this.base = base;
-        this.cursor = new SortedRecordCursor(chain);
         this.sortColumnFilter = sortColumnFilter;
+        RecordTreeChain chain = null;
+        try {
+            chain = new RecordTreeChain(
+                    metadata,
+                    recordSink,
+                    comparator,
+                    configuration.getSqlSortKeyPageSize(),
+                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortValuePageSize(),
+                    configuration.getSqlSortValueMaxPages()
+            );
+            this.cursor = new SortedRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
+        } catch (Throwable th) {
+            Misc.free(chain);
+            close();
+            throw th;
+        }
     }
 
     public static int getScanDirection(ListColumnFilter sortColumnFilter) {
@@ -125,7 +133,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 }

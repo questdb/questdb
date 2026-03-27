@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -131,10 +132,9 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
-import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.createTimestamp;
 import static org.junit.Assert.*;
-import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3602,8 +3602,8 @@ if __name__ == "__main__":
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
-                {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop all table if exists;", "ERROR: unexpected token [table]"},
+                {"drop all tables if exists;", "ERROR: unexpected token [if]"},
                 {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -7244,7 +7244,7 @@ nodejs code:
                     final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
                     final ResultSet ignore = copy.executeQuery()
             ) {
-                assertEventually(() -> {
+                TestUtils.assertEventually(() -> {
                     try (
                             final PreparedStatement select = connection.prepareStatement("select * from x");
                             final ResultSet rs = select.executeQuery()
@@ -11489,7 +11489,7 @@ create table tab as (
                             // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
                             // thrown from UpdateOperator as this changes table structure
                             // recompile should be successful so the UPDATE completes
-                            writer.addColumn("newCol", ColumnType.INT);
+                            writer.addColumn("newCol", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                             first = false;
                         }
                     }
@@ -13299,7 +13299,7 @@ create table tab as (
                         stmt.executeQuery();
                         Assert.fail("Exception is not thrown");
                     } catch (PSQLException ex) {
-                        ex.printStackTrace();
+                        ex.printStackTrace(System.out);
                         // expected
                         Assert.assertNotNull(ex);
                     }

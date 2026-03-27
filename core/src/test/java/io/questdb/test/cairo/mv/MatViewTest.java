@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -299,6 +299,37 @@ public class MatViewTest extends AbstractCairoTest {
                                     """),
                     "price_1h order by sym, ts"
             );
+        });
+    }
+
+    @Test
+    public void testAlterQuotedColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  \"MY_SYM\" symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select \"MY_SYM\", last(price) as price, ts from base_price sample by 1h");
+
+            execute("INSERT INTO base_price VALUES ('gbpusd', 1.310, '2024-09-10T12:05')");
+            drainQueues();
+
+            execute("ALTER MATERIALIZED VIEW price_1h ALTER COLUMN \"MY_SYM\" ADD INDEX");
+            drainQueues();
+
+            try (TableReader reader = getReader("price_1h")) {
+                int colIndex = reader.getMetadata().getColumnIndex("MY_SYM");
+                Assert.assertTrue(reader.getMetadata().isColumnIndexed(colIndex));
+            }
+
+            execute("ALTER MATERIALIZED VIEW price_1h ALTER COLUMN \"MY_SYM\" DROP INDEX");
+            drainQueues();
+
+            try (TableReader reader = getReader("price_1h")) {
+                int colIndex = reader.getMetadata().getColumnIndex("MY_SYM");
+                Assert.assertFalse(reader.getMetadata().isColumnIndexed(colIndex));
+            }
         });
     }
 
@@ -4776,6 +4807,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testQueryError() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "true");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -5388,6 +5420,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRecursiveInvalidationOnFailedRefresh() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "true");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +

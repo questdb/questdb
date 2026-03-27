@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,12 +27,19 @@ package io.questdb.cairo;
 public class DefaultDdlListener implements DdlListener {
     public static final DdlListener INSTANCE = new DefaultDdlListener();
 
+    protected DefaultDdlListener() {
+    }
+
     @Override
     public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
     }
 
     @Override
-    public void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+    public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
+    }
+
+    @Override
+    public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
     }
 
     @Override
@@ -40,6 +47,10 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken) {
+    public void onTableOrViewOrMatViewDropped(String tableName) {
+    }
+
+    @Override
+    public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
     }
 }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -519,6 +519,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public int getVarcharSize(int columnIndex) {
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
+            if (frameFormat == PartitionFormat.PARQUET) {
+                return VarcharTypeDriver.getSliceValueSize(auxPageAddress, rowIndex);
+            }
             return VarcharTypeDriver.getValueSize(auxPageAddress, rowIndex);
         }
         return TableUtils.NULL_LEN; // Column top.
@@ -719,6 +722,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
+            if (frameFormat == PartitionFormat.PARQUET) {
+                return VarcharTypeDriver.getSliceValue(auxPageAddress, rowIndex, utf8View);
+            }
             final long auxPageLim = auxPageAddress + auxPageSizes.get(columnOffset + columnIndex);
             final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
             final long dataPageLim = dataPageAddress + pageSizes.get(columnOffset + columnIndex);

@@ -7,7 +7,7 @@ fn add_benchmark(c: &mut Criterion) {
         let size = 2usize.pow(log2_size);
 
         let mut bytes = vec![];
-        encode_u32(&mut bytes, (0..size as u32).map(|x| x % 128), 8).unwrap();
+        encode_u32(&mut bytes, (0..size as u32).map(|x| x % 128), size, 8).unwrap();
 
         c.bench_function(&format!("rle decode 2^{}", log2_size), |b| {
             b.iter(|| Decoder::new(&bytes, 1).count())

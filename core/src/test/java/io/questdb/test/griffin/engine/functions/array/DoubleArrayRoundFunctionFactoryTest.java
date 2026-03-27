@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -224,7 +224,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
                                 sink,
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [sym]
                                             VirtualRecord
                                               functions: [sym,round(sum,2)]

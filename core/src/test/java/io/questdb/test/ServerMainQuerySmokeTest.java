@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -355,7 +355,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "SELECT key, min(quantity), max(quantity) FROM tab ORDER BY key DESC",
                 """
                         QUERY PLAN[VARCHAR]
-                        Sort light
+                        Encode sort light
                           keys: [key desc]
                             GroupBy vectorized: true workers: 4
                               keys: [key]

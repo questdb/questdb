@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,11 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -52,6 +52,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -171,9 +172,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             // After draining, it's all deleted.
             drainWalQueue();
-            assertSql("x\tts\ts1\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\tx\n", tableName);
+            assertSql("""
+                    x\tts\ts1
+                    1\t2022-02-24T00:00:00.000000Z\t
+                    2\t2022-02-24T00:00:01.000000Z\tx
+                    """, tableName);
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
@@ -274,11 +277,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                     drainWalQueue();
 
-                    assertSql("x\tts\ti1\ti2\n" +
-                            "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                            "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
-                            "3\t2022-02-26T00:00:00.000000Z\t3\tnull\n" +
-                            "4\t2022-02-27T00:00:00.000000Z\t4\t4\n", tableName);
+                    assertSql("""
+                            x\tts\ti1\ti2
+                            1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                            2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                            3\t2022-02-26T00:00:00.000000Z\t3\tnull
+                            4\t2022-02-27T00:00:00.000000Z\t4\t4
+                            """, tableName);
 
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(true, tableName, 1, 0);
@@ -508,12 +513,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
+            assertSql("""
+                    x\tts
+                    1\t2022-02-24T00:00:00.000000Z
+                    2\t2022-02-24T00:00:01.000000Z
+                    3\t2022-02-24T00:00:02.000000Z
+                    4\t2022-02-24T00:00:03.000000Z
+                    5\t2022-02-24T00:00:04.000000Z
+                    """, tableName);
 
             drainPurgeJob();
 
@@ -751,8 +758,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         drainWalQueue();
         engine.releaseInactive();
         drainPurgeJob();
-        assertSql("x\tts\ti1\n" +
-                "1\t2022-02-24T00:00:00.000000Z\tnull\n", tableName);
+        assertSql("""
+                x\tts\ti1
+                1\t2022-02-24T00:00:00.000000Z\tnull
+                """, tableName);
         assertWalExistence(false, tableName, 1);
     }
 
@@ -861,10 +870,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                assertSql("x\tts\ti1\n" +
-                        "1\t2022-02-24T00:00:00.000000Z\tnull\n" +
-                        "11\t2022-02-24T00:00:00.000000Z\tnull\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\n", tableName);
+                assertSql("""
+                        x\tts\ti1
+                        1\t2022-02-24T00:00:00.000000Z\tnull
+                        11\t2022-02-24T00:00:00.000000Z\tnull
+                        2\t2022-02-25T00:00:00.000000Z\t2
+                        """, tableName);
 
 
                 // All applied, all segments can be deleted.
@@ -934,10 +945,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                assertSql("x\tts\ti1\ti2\n" +
-                        "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n", tableName);
+                assertSql("""
+                        x\tts\ti1\ti2
+                        1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                        """, tableName);
 
 
                 // All applied, all segments can be deleted.
@@ -988,13 +1001,15 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             // After draining the wal queue, all the WAL data is still there.
             drainWalQueue();
-            assertSql("x\tts\tsss\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\t\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\t\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\t\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\t\n" +
-                    "6\t2022-02-24T00:00:05.000000Z\tx\n", tableName);
+            assertSql("""
+                    x\tts\tsss
+                    1\t2022-02-24T00:00:00.000000Z\t
+                    2\t2022-02-24T00:00:01.000000Z\t
+                    3\t2022-02-24T00:00:02.000000Z\t
+                    4\t2022-02-24T00:00:03.000000Z\t
+                    5\t2022-02-24T00:00:04.000000Z\t
+                    6\t2022-02-24T00:00:05.000000Z\tx
+                    """, tableName);
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -1099,24 +1114,25 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
+            assertSql("""
+                    x\tts
+                    1\t2022-02-24T00:00:00.000000Z
+                    2\t2022-02-24T00:00:01.000000Z
+                    3\t2022-02-24T00:00:02.000000Z
+                    4\t2022-02-24T00:00:03.000000Z
+                    5\t2022-02-24T00:00:04.000000Z
+                    """, tableName);
 
             engine.releaseInactive();
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
             setCurrentMicros(interval + 1);  // Set to some point in time that's not 0.
             try (WalPurgeJob job = new WalPurgeJob(engine)) {
-                final SimpleWaitingLock lock = job.getRunLock();
                 try {
-                    lock.lock();
+                    Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS));
                     job.drain(0);
                 } finally {
-                    lock.unlock();
+                    engine.unlockWalPurgeJob();
                     assertSegmentExistence(true, tableName, 1, 0);
                     assertWalExistence(true, tableName, 1);
                 }
@@ -1146,12 +1162,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
+            assertSql("""
+                    x\tts
+                    1\t2022-02-24T00:00:00.000000Z
+                    2\t2022-02-24T00:00:01.000000Z
+                    3\t2022-02-24T00:00:02.000000Z
+                    4\t2022-02-24T00:00:03.000000Z
+                    5\t2022-02-24T00:00:04.000000Z
+                    """, tableName);
 
             engine.releaseInactive();
 
@@ -1217,7 +1235,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     static void addColumn(WalWriter writer, String columnName) {
-        writer.addColumn(columnName, ColumnType.INT);
+        writer.addColumn(columnName, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
     }
 
     private static class DeletionEvent {
@@ -1262,8 +1280,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
-        public void deleteSequencerPart(int seqPart) {
-            assert false;
+        public void deleteSequencerPart(long seqPart) {
+            Assert.fail();
         }
 
         @Override

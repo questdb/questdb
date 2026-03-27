@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -215,7 +215,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table~' [reason='busyReader']]"
+                        "Failures while dropping tables, views and materialized views ['public table': [-1] could not lock 'public table~' [reason='busyReader']]"
                 );
             }
             tableBucket.clear();
@@ -240,7 +240,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table~' [reason='test']]"
+                        "Failures while dropping tables, views and materialized views ['public table': [-1] could not lock 'public table~' [reason='test']]"
                 );
             }
             tableBucket.clear();

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -444,6 +444,8 @@ public interface CairoConfiguration {
 
     long getParquetExportBatchSize();
 
+    double getParquetExportBloomFilterFpp();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
@@ -458,11 +460,19 @@ public interface CairoConfiguration {
 
     int getParquetExportVersion();
 
+    double getPartitionEncoderParquetBloomFilterFpp();
+
+    double getPartitionEncoderParquetMinCompressionRatio();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
 
     int getPartitionEncoderParquetDataPageSize();
+
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+    double getPartitionEncoderParquetO3RewriteUnusedRatio();
 
     int getPartitionEncoderParquetRowGroupSize();
 
@@ -578,6 +588,12 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    long getSqlHorizonJoinBwdScanAbsoluteThreshold();
+
+    long getSqlHorizonJoinBwdScanMinGap();
+
+    long getSqlHorizonJoinBwdScanSwitchFactor();
+
     int getSqlHorizonJoinMaxOffsets();
 
     /**
@@ -632,8 +648,6 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlOrderByRadixSortThreshold();
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -657,6 +671,8 @@ public interface CairoConfiguration {
     int getSqlSmallPageFrameMaxRows();
 
     int getSqlSmallPageFrameMinRows();
+
+    long getSqlSortEncodedParallelThreshold();
 
     int getSqlSortKeyMaterializationThreshold();
 
@@ -863,6 +879,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();
 
