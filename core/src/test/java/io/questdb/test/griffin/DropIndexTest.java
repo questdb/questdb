@@ -505,7 +505,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "ALTER TABLE sensors ALTER COLUMN sensor_id DROP",
                 CREATE_TABLE_STMT,
                 47,
-                "'index' or 'parquet' expected"
+                "'index' expected"
         );
     }
 
