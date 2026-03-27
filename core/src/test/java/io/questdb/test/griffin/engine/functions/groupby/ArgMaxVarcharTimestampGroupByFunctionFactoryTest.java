@@ -43,6 +43,26 @@ public class ArgMaxVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
     }
 
     @Test
+    public void testArgMaxEmptyStringValue() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key timestamp)");
+        execute("INSERT INTO tab VALUES ('', '2023-01-05T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z')");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxEmptyTable() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key timestamp)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key timestamp)");
+        execute("INSERT INTO tab VALUES (null, '2023-01-05T00:00:00.000000Z'), ('beta', null)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
     public void testArgMaxParallel() throws Exception {
         execute("CREATE TABLE tab AS (" +
                 "SELECT rnd_symbol('A','B','C') sym, " +
@@ -126,6 +146,13 @@ public class ArgMaxVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
         execute("CREATE TABLE tab (value varchar, key timestamp)");
         execute("INSERT INTO tab VALUES ('alpha', '2023-01-01T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z'), ('gamma', '2023-01-02T00:00:00.000000Z')");
         assertSql("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxTieBreaking() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key timestamp)");
+        execute("INSERT INTO tab VALUES ('alpha', '2023-01-03T00:00:00.000000Z'), ('beta', '2023-01-03T00:00:00.000000Z'), ('gamma', '2023-01-01T00:00:00.000000Z')");
+        assertSql("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab");
     }
 
     @Test

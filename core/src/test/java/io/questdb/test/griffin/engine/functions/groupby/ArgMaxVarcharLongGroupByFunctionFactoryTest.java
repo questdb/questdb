@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,6 +39,26 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testArgMaxAllNull() throws SqlException {
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES (null, null), (null, null)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxEmptyStringValue() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key long)");
+        execute("INSERT INTO tab VALUES ('', 5), ('beta', 3)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxEmptyTable() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key long)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key long)");
+        execute("INSERT INTO tab VALUES (null, 5), ('beta', null)");
         assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
     }
 
@@ -126,6 +146,13 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
         execute("CREATE TABLE tab (value varchar, key long)");
         execute("INSERT INTO tab VALUES ('alpha', 1), ('beta', 3), ('gamma', 2)");
         assertSql("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxTieBreaking() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key long)");
+        execute("INSERT INTO tab VALUES ('alpha', 3), ('beta', 3), ('gamma', 1)");
+        assertSql("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab");
     }
 
     @Test

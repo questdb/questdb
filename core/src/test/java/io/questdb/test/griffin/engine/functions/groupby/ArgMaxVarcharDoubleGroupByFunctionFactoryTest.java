@@ -43,6 +43,26 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testArgMaxEmptyStringValue() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key double)");
+        execute("INSERT INTO tab VALUES ('', 5.0), ('beta', 3.0)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxEmptyTable() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key double)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key double)");
+        execute("INSERT INTO tab VALUES (null, 5.0), ('beta', null)");
+        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
     public void testArgMaxParallel() throws Exception {
         execute("CREATE TABLE tab AS (" +
                 "SELECT rnd_symbol('A','B','C') sym, " +
@@ -126,6 +146,13 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', 1.0), ('beta', 3.0), ('gamma', 2.0)");
         assertSql("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab");
+    }
+
+    @Test
+    public void testArgMaxTieBreaking() throws SqlException {
+        execute("CREATE TABLE tab (value varchar, key double)");
+        execute("INSERT INTO tab VALUES ('alpha', 3.0), ('beta', 3.0), ('gamma', 1.0)");
+        assertSql("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab");
     }
 
     @Test
