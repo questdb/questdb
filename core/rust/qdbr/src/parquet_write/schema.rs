@@ -680,7 +680,7 @@ pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
         ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::String => Encoding::DeltaLengthByteArray,
+        ColumnTypeTag::String => Encoding::RleDictionary,
         ColumnTypeTag::Varchar => Encoding::RleDictionary,
         _ => Encoding::Plain,
     }
@@ -1037,7 +1037,7 @@ mod tests {
         );
         assert_eq!(
             validate_encoding(col_type(ColumnTypeTag::String), Encoding::DeltaBinaryPacked),
-            Encoding::DeltaLengthByteArray
+            Encoding::RleDictionary
         );
     }
 
