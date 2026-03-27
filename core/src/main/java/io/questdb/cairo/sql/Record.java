@@ -69,6 +69,36 @@ public interface Record {
     }
 
     /**
+     * Reads a single {@code double} from a 1D or 2D array column at the given
+     * 0-based indices, bypassing full {@link ArrayView} construction. Returns
+     * {@link Double#NaN} when the array is null or an index is out of bounds.
+     * <p>
+     * For 1D arrays, {@code idx1} is ignored. Callers must not use this
+     * method for arrays with more than 2 dimensions.
+     *
+     * @param col        column index
+     * @param columnType encoded array column type (must be 1D or 2D)
+     * @param idx0       0-based index for dimension 0
+     * @param idx1       0-based index for dimension 1 (ignored for 1D)
+     */
+    default double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        ArrayView array = getArray(col, columnType);
+        if (array.isNull()) {
+            return Double.NaN;
+        }
+        if (idx0 >= array.getDimLen(0)) {
+            return Double.NaN;
+        }
+        if (array.getDimCount() == 1) {
+            return array.getDouble(idx0);
+        }
+        if (idx1 >= array.getDimLen(1)) {
+            return Double.NaN;
+        }
+        return array.getDouble(idx0 * array.getStride(0) + idx1);
+    }
+
+    /**
      * Gets the value of a binary column by index
      *
      * @param col numeric index of the column

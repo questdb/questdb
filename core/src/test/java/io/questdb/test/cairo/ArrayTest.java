@@ -140,6 +140,105 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessConstantIndex1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[10.0, 20, 30])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant positive indices on 1D column hit the fast path
+            assertSql("x\n10.0\nnull\n", "SELECT arr[1] x FROM tango");
+            assertSql("x\n20.0\nnull\n", "SELECT arr[2] x FROM tango");
+            assertSql("x\n30.0\nnull\n", "SELECT arr[3] x FROM tango");
+            // out of bounds
+            assertSql("x\nnull\nnull\n", "SELECT arr[4] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testAccessConstantIndex2d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2, 3], [4.0, 5, 6]])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant positive indices on 2D column hit the fast path
+            assertSql("x\n2.0\nnull\n", "SELECT arr[1, 2] x FROM tango");
+            assertSql("x\n4.0\nnull\n", "SELECT arr[2, 1] x FROM tango");
+            assertSql("x\n6.0\nnull\n", "SELECT arr[2, 3] x FROM tango");
+            // out of bounds
+            assertSql("x\nnull\nnull\n", "SELECT arr[3, 1] x FROM tango");
+            assertSql("x\nnull\nnull\n", "SELECT arr[1, 4] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testAccessFirstElement1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[10.0, 20, 30])");
+            execute("INSERT INTO tango VALUES (ARRAY[42.0])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant index 1 on 1D array hits the first-element fast path
+            assertSql("x\n10.0\n42.0\nnull\n", "SELECT arr[1] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr[1] x FROM tango",
+                    """
+                            VirtualRecord
+                              functions: [arr[1]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAccessFirstElement2d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2], [3.0, 4]])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant indices (1,1) on 2D array hits the first-element fast path
+            assertSql("x\n1.0\nnull\n", "SELECT arr[1, 1] x FROM tango");
+            assertSql("x\n1.0\nnull\n", "SELECT arr[1][1] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr[1][1] x FROM tango",
+                    """
+                            VirtualRecord
+                              functions: [arr[1,1]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAccessFirstElement3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[ [[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]] ] arr FROM long_sequence(1))");
+            // constant indices (1,1,1) on 3D array hits the first-element fast path
+            assertSql("x\n1.0\n", "SELECT arr[1, 1, 1] x FROM tango");
+            assertSql("x\n1.0\n", "SELECT arr[1][1][1] x FROM tango");
+            assertSql("x\n1.0\n", "SELECT arr[1][1, 1] x FROM tango");
+            assertSql("x\n1.0\n", "SELECT arr[1, 1][1] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testAccessFirstElementEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[], ARRAY[])");
+            // first-element access on empty arrays returns null
+            assertSql("x\nnull\n", "SELECT arr[1] x FROM tango");
+            assertSql("x\nnull\n", "SELECT arr2[1, 1] x FROM tango");
+        });
+    }
+
+    @Test
     public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT " +
