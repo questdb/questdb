@@ -367,6 +367,18 @@ class LateralJoinRewriter implements Mutable {
         return hasLateral;
     }
 
+    private ExpressionNode assembleCoalesce(ExpressionNode node) {
+        ExpressionNode coalesce = expressionNodePool.next().of(
+                ExpressionNode.FUNCTION, "coalesce", 0, node.position
+        );
+        coalesce.paramCount = 2;
+        coalesce.rhs = expressionNodePool.next().of(
+                ExpressionNode.CONSTANT, "0", 0, node.position
+        );
+        coalesce.lhs = node;
+        return coalesce;
+    }
+
     private void buildOuterColsFromCorrelatedColumns(
             QueryModel lateralJoinModel,
             QueryModel outerModel,
@@ -1701,6 +1713,31 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    private boolean isCountLiteralMatch(
+            ExpressionNode node,
+            CharSequence joinAlias,
+            ObjList<CharSequence> countColAliases
+    ) {
+        if (node == null || node.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        for (int j = 0, m = countColAliases.size(); j < m; j++) {
+            CharSequence countAlias = countColAliases.getQuick(j);
+            if (joinAlias != null) {
+                int dotPos = Chars.indexOf(node.token, '.');
+                if (dotPos > 0
+                        && Chars.equalsIgnoreCase(joinAlias, node.token, 0, dotPos)
+                        && Chars.equalsIgnoreCase(countAlias, node.token, dotPos + 1, node.token.length())) {
+                    return true;
+                }
+            }
+            if (Chars.equalsIgnoreCase(node.token, countAlias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isLocalSelectAlias(CharSequence columnName, QueryModel jm) {
         ObjList<QueryColumn> cols = jm.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
@@ -2358,6 +2395,18 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    // Collects aliases of columns whose top-level expression is count().
+    // These columns are later wrapped with coalesce(x, 0) so that LEFT
+    // LATERAL no-match rows produce 0 instead of NULL.
+    //
+    // Limitation: only bare count() are detected. Expressions
+    // that embed count (e.g., count(*) + 2) are NOT detected — after decorrelation
+    // the GROUP BY eliminates empty groups entirely, so the outer LEFT JOIN
+    // NULL-fills the whole row. Wrapping the outer reference with coalesce(x, 0)
+    // would produce 0, not the correct value (2). Fixing this requires extracting
+    // count into a separate projected column inside the lateral body and rebuilding
+    // the expression at the parent level with coalesce applied only to the count
+    // part.
     private void rewriteCountForLeftJoin(
             QueryModel inner,
             ObjList<CharSequence> countColAliases
@@ -3118,38 +3167,56 @@ class LateralJoinRewriter implements Mutable {
         for (int i = 0, n = parentCols.size(); i < n; i++) {
             QueryColumn pc = parentCols.getQuick(i);
             ExpressionNode ast = pc.getAst();
-            if (ast == null || ast.type != ExpressionNode.LITERAL) {
+            if (ast == null) {
                 continue;
             }
-            CharSequence colRef = ast.token;
-            for (int j = 0, m = countColAliases.size(); j < m; j++) {
-                CharSequence countAlias = countColAliases.getQuick(j);
-                boolean isMatch = false;
-                if (joinAlias != null) {
-                    int dotPos = Chars.indexOf(colRef, '.');
-                    if (dotPos > 0) {
-                        if (Chars.equalsIgnoreCase(joinAlias, colRef, 0, dotPos)
-                                && Chars.equalsIgnoreCase(countAlias, colRef, dotPos + 1, colRef.length())) {
-                            isMatch = true;
-                        }
+            ExpressionNode rewritten = wrapCountRefsWithCoalesce(ast, joinAlias, countColAliases);
+            if (rewritten != ast) {
+                pc.of(pc.getAlias(), rewritten, pc.isIncludeIntoWildcard());
+            }
+        }
+    }
+
+    private ExpressionNode wrapCountRefsWithCoalesce(
+            ExpressionNode node,
+            CharSequence joinAlias,
+            ObjList<CharSequence> countColAliases
+    ) {
+        if (node == null) {
+            return null;
+        }
+        if (isCountLiteralMatch(node, joinAlias, countColAliases)) {
+            return assembleCoalesce(node);
+        }
+        sqlNodeStack.clear();
+        sqlNodeStack.push(node);
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode current = sqlNodeStack.poll();
+            if (current.lhs != null) {
+                if (isCountLiteralMatch(current.lhs, joinAlias, countColAliases)) {
+                    current.lhs = assembleCoalesce(current.lhs);
+                } else {
+                    sqlNodeStack.push(current.lhs);
+                }
+            }
+            if (current.rhs != null) {
+                if (isCountLiteralMatch(current.rhs, joinAlias, countColAliases)) {
+                    current.rhs = assembleCoalesce(current.rhs);
+                } else {
+                    sqlNodeStack.push(current.rhs);
+                }
+            }
+            for (int i = 0, n = current.args.size(); i < n; i++) {
+                ExpressionNode arg = current.args.getQuick(i);
+                if (arg != null) {
+                    if (isCountLiteralMatch(arg, joinAlias, countColAliases)) {
+                        current.args.setQuick(i, assembleCoalesce(arg));
+                    } else {
+                        sqlNodeStack.push(arg);
                     }
-                }
-                if (!isMatch && Chars.equalsIgnoreCase(colRef, countAlias)) {
-                    isMatch = true;
-                }
-                if (isMatch) {
-                    ExpressionNode coalesce = expressionNodePool.next().of(
-                            ExpressionNode.FUNCTION, "coalesce", 0, ast.position
-                    );
-                    coalesce.paramCount = 2;
-                    coalesce.rhs = expressionNodePool.next().of(
-                            ExpressionNode.CONSTANT, "0", 0, ast.position
-                    );
-                    coalesce.lhs = ast;
-                    pc.of(pc.getAlias(), coalesce);
-                    break;
                 }
             }
         }
+        return node;
     }
 }
