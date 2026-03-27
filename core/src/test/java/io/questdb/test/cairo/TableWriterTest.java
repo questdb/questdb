@@ -3403,11 +3403,11 @@ public class TableWriterTest extends AbstractCairoTest {
             final long pTs = partitionTimestamp;
             FilesFacade failCopyFf = new TestFilesFacadeImpl() {
                 @Override
-                public int copy(LPSZ from, LPSZ to) {
+                public int hardLink(LPSZ from, LPSZ to) {
                     if (Utf8s.containsAscii(from, PARQUET_PARTITION_NAME)) {
                         return -1;
                     }
-                    return super.copy(from, to);
+                    return super.hardLink(from, to);
                 }
             };
 
@@ -3421,9 +3421,9 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(failCopyConfig, PRODUCT)) {
                 try {
                     writer.switchNativePartitionWithParquet(pTs);
-                    Assert.fail("expected CairoException from copy failure");
+                    Assert.fail("expected CairoException from hard link failure");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not copy parquet file");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not hard link parquet file");
                 }
 
                 // Verify rollback: partition should still be native with parquetGenerated set
