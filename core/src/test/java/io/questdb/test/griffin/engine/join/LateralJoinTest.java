@@ -6396,6 +6396,82 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T97: LIMIT 0 inside lateral — should return no rows per group
+    @Test
+    public void testT97LimitZero() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 20.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // LIMIT 0 should produce zero rows → INNER join produces empty result
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            """,
+                    """
+                            SELECT o.id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades
+                                WHERE order_id = o.id
+                                ORDER BY qty
+                                LIMIT 0
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T98: NULL in non-equality correlation predicate
+    @Test
+    public void testT98NullInNonEqualityCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, threshold DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 15.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, NULL, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // NULL threshold: qty > NULL is false, so order 2 matches no trades
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t20.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades
+                                WHERE order_id = o.id AND qty > o.threshold
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T98: outer WHERE filter + non-equality lateral correlation.
     @Test
     public void testT98OuterWhereFilterWithNonEqLateral() throws Exception {
@@ -6774,6 +6850,46 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T99: BETWEEN with outer refs — common time-range lateral pattern
+    @Test
+    public void testT99BetweenWithOuterRefs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE windows (id INT, start_ts TIMESTAMP, end_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE events (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO windows VALUES
+                    (1, '2024-01-01T00:00:00.000000Z', '2024-01-01T01:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:00:00.000000Z', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO events VALUES
+                    (10, '2024-01-01T00:30:00.000000Z'),
+                    (20, '2024-01-01T00:45:00.000000Z'),
+                    (30, '2024-01-01T01:30:00.000000Z'),
+                    (40, '2024-01-01T02:30:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t20
+                            2\t40
+                            """,
+                    """
+                            SELECT w.id, sub.val
+                            FROM windows w
+                            JOIN LATERAL (
+                                SELECT val FROM events
+                                WHERE ts >= w.start_ts AND ts < w.end_ts
+                            ) sub
+                            ORDER BY w.id, sub.val
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
     // T99: correlated ON on join branch (ji > 0, INNER JOIN)
     // The join branch (t3) has correlated ON: t3.order_id = o.id
     // pushDownOuterRefsForJoinBranch moves it to t3's WHERE
@@ -6927,6 +7043,115 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ORDER BY o.id
                             """,
                     null, true, true
+            );
+        });
+    }
+
+    // T102a: HORIZON JOIN inside lateral subquery
+    @Test
+    public void testT102aHorizonJoinInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'GOOG', '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('AAPL', 100.0, '2024-01-01T00:01:00.000000Z'),
+                    ('GOOG', 200.0, '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('AAPL', 99.0, 101.0, '2024-01-01T00:00:30.000000Z'),
+                    ('AAPL', 100.0, 102.0, '2024-01-01T00:01:30.000000Z'),
+                    ('GOOG', 198.0, 202.0, '2024-01-01T00:00:30.000000Z'),
+                    ('GOOG', 199.0, 201.0, '2024-01-01T00:02:00.000000Z')
+                    """);
+
+            // HORIZON JOIN inside lateral: for each instrument, compute
+            // mid-price markout at different time horizons
+            assertQueryNoLeakCheck(
+                    """
+                            id\thorizon_sec\tmid
+                            1\t0\t100.0
+                            1\t1\t100.0
+                            2\t0\t200.0
+                            2\t1\t200.0
+                            """,
+                    """
+                            SELECT i.id, sub.horizon_sec, sub.mid
+                            FROM instruments i
+                            JOIN LATERAL (
+                                SELECT h.offset / 1000000 AS horizon_sec,
+                                       (q.bid + q.ask) / 2 AS mid
+                                FROM trades t
+                                HORIZON JOIN quotes q ON (symbol)
+                                    LIST (0, 1s) AS h
+                                WHERE t.symbol = i.symbol
+                            ) sub
+                            ORDER BY i.id, sub.horizon_sec
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T102: WINDOW JOIN inside lateral subquery
+    // TODO: WINDOW JOIN aggregates are computed by the WINDOW JOIN engine, not by
+    //  GROUP BY. compensateAggregate incorrectly adds GROUP BY for the detected
+    //  sum() function, conflicting with WINDOW JOIN semantics. Needs dedicated
+    //  compensation logic that skips aggregate compensation for WINDOW JOIN models.
+    @Ignore
+    @Test
+    public void testT102WindowJoinInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 11.0, 'A', '2024-01-01T00:02:00.000000Z'),
+                    (2, 20.0, 'B', '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z'),
+                    (10.5, 'A', '2024-01-01T00:01:30.000000Z'),
+                    (19.0, 'B', '2024-01-01T00:00:30.000000Z')
+                    """);
+
+            // WINDOW JOIN inside lateral: for each instrument, compute
+            // sum of (trade_price + quote_price) over a time window
+            assertQueryNoLeakCheck(
+                    """
+                            id\tsum
+                            1\t19.5
+                            1\t21.5
+                            2\t39.0
+                            """,
+                    """
+                            SELECT i.id, sub.sum
+                            FROM instruments i
+                            JOIN LATERAL (
+                                SELECT sum(t.price + q.price) AS sum
+                                FROM trades t
+                                WINDOW JOIN quotes q ON tag
+                                    RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                                WHERE t.instrument_id = i.id
+                            ) sub
+                            ORDER BY i.id, sub.sum
+                            """,
+                    null, true, false
             );
         });
     }

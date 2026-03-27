@@ -749,6 +749,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         dst.setJoinType(joinType);
+        dst.setTimestampColumnIndex(timestampColumnIndex);
         if (joinCriteria != null) {
             dst.setJoinCriteria(ExpressionNode.deepClone(expressionNodePool, joinCriteria));
         }
@@ -760,6 +761,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             QueryModel dstJm = joinModels.getQuick(i).deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool);
             dst.joinModels.add(dstJm);
             ExpressionNode jmAlias = dstJm.getAlias();
+            if (jmAlias == null) {
+                jmAlias = dstJm.getTableNameExpr();
+            }
             if (jmAlias != null) {
                 dst.addModelAliasIndex(jmAlias, i);
             }

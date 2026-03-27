@@ -294,7 +294,7 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
-    public static boolean checkForChildWindowFunctions(ArrayDeque<ExpressionNode> sqlNodeStack, ExpressionNode node) {
+    static boolean checkForChildWindowFunctions(ArrayDeque<ExpressionNode> sqlNodeStack, ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.windowExpression != null) {
