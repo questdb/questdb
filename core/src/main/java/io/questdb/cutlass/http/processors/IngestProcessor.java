@@ -169,14 +169,18 @@ public class IngestProcessor implements HttpRequestHandler {
                 }
                 sqlExecutionContext.setPayload(payloadSink);
 
+                // Compile outside DLQ scope - compilation errors are config
+                // problems (schema drift), not payload problems
+                final RecordCursorFactory factory = compileTransform(sqlExecutionContext, def, overrides);
                 try {
-                    final long rowCount = executeTransform(sqlExecutionContext, def, overrides);
+                    final long rowCount = executeTransform(sqlExecutionContext, def, factory);
                     sendSuccess(context, rowCount);
                 } catch (SqlException | CairoException e) {
                     writeToDlq(sqlExecutionContext, def, payloadSink, "transform",
                             ((FlyweightMessageContainer) e).getFlyweightMessage().toString());
                     throw e;
                 } finally {
+                    factory.close();
                     sqlExecutionContext.setPayload(null);
                 }
             } catch (SqlException e) {
@@ -229,89 +233,95 @@ public class IngestProcessor implements HttpRequestHandler {
             return hasOverrides ? overrides : null;
         }
 
-        private long executeTransform(
+        private RecordCursorFactory compileTransform(
                 SqlExecutionContextImpl sqlExecutionContext,
                 PayloadTransformDefinition def,
                 LowerCaseCharSequenceObjHashMap<CharSequence> overrides
         ) throws SqlException {
-            final String targetTableName = def.getTargetTable();
             final String selectSql = def.getSelectSql();
-            final TableToken targetToken = engine.verifyTableName(targetTableName);
-            sqlExecutionContext.getSecurityContext().authorizeInsert(targetToken);
-
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    RecordCursorFactory factory = (overrides != null
-                            ? compiler.compileWithOverrides(selectSql, sqlExecutionContext, overrides)
-                            : compiler.compile(selectSql, sqlExecutionContext)
-                    ).getRecordCursorFactory()
-            ) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                RecordCursorFactory factory = (overrides != null
+                        ? compiler.compileWithOverrides(selectSql, sqlExecutionContext, overrides)
+                        : compiler.compile(selectSql, sqlExecutionContext)
+                ).getRecordCursorFactory();
                 if (factory == null) {
                     throw SqlException.$(0, "payload transform query must be a SELECT");
                 }
-                final RecordMetadata cursorMetadata = factory.getMetadata();
+                return factory;
+            }
+        }
 
-                try (TableRecordMetadata writerMetadata = sqlExecutionContext.getMetadataForWrite(targetToken)) {
-                    final int cursorColCount = cursorMetadata.getColumnCount();
-                    final ListColumnFilter columnFilter = transientState.getColumnFilter();
-                    columnFilter.clear();
-                    for (int i = 0; i < cursorColCount; i++) {
-                        CharSequence colName = cursorMetadata.getColumnName(i);
-                        int writerIndex = writerMetadata.getColumnIndexQuiet(colName);
-                        if (writerIndex == -1) {
-                            throw SqlException.$(0, "column not found in target table [column=").put(colName).put(']');
+        private long executeTransform(
+                SqlExecutionContextImpl sqlExecutionContext,
+                PayloadTransformDefinition def,
+                RecordCursorFactory factory
+        ) throws SqlException {
+            final String targetTableName = def.getTargetTable();
+            final TableToken targetToken = engine.verifyTableName(targetTableName);
+            sqlExecutionContext.getSecurityContext().authorizeInsert(targetToken);
+
+            final RecordMetadata cursorMetadata = factory.getMetadata();
+
+            try (TableRecordMetadata writerMetadata = sqlExecutionContext.getMetadataForWrite(targetToken)) {
+                final int cursorColCount = cursorMetadata.getColumnCount();
+                final ListColumnFilter columnFilter = transientState.getColumnFilter();
+                columnFilter.clear();
+                for (int i = 0; i < cursorColCount; i++) {
+                    CharSequence colName = cursorMetadata.getColumnName(i);
+                    int writerIndex = writerMetadata.getColumnIndexQuiet(colName);
+                    if (writerIndex == -1) {
+                        throw SqlException.$(0, "column not found in target table [column=").put(colName).put(']');
+                    }
+                    // ListColumnFilter stores writerIndex + 1; getColumnIndexFactored subtracts 1
+                    columnFilter.add(writerIndex + 1);
+                }
+                final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                        transientState.getBytecodeAssembler(),
+                        cursorMetadata,
+                        writerMetadata,
+                        columnFilter,
+                        engine.getConfiguration()
+                );
+
+                final int writerTimestampIndex = writerMetadata.getTimestampIndex();
+
+                // Find the cursor column index for the designated timestamp by name
+                int cursorTimestampIndex = -1;
+                if (writerTimestampIndex >= 0) {
+                    CharSequence tsColName = writerMetadata.getColumnName(writerTimestampIndex);
+                    cursorTimestampIndex = cursorMetadata.getColumnIndexQuiet(tsColName);
+                }
+
+                try (
+                        TableWriterAPI writer = engine.getTableWriterAPI(targetToken, "ingest");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    long rowCount;
+                    try {
+                        if (writerTimestampIndex == -1 || cursorTimestampIndex < 0) {
+                            rowCount = SqlCompilerImpl.copyUnordered(sqlExecutionContext, cursor, writer, copier);
+                        } else {
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(
+                                    sqlExecutionContext,
+                                    writer,
+                                    cursorMetadata,
+                                    cursor,
+                                    copier,
+                                    cursorTimestampIndex,
+                                    Long.MAX_VALUE,
+                                    0
+                            );
                         }
-                        // ListColumnFilter stores writerIndex + 1; getColumnIndexFactored subtracts 1
-                        columnFilter.add(writerIndex + 1);
-                    }
-                    final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                            transientState.getBytecodeAssembler(),
-                            cursorMetadata,
-                            writerMetadata,
-                            columnFilter,
-                            engine.getConfiguration()
-                    );
-
-                    final int writerTimestampIndex = writerMetadata.getTimestampIndex();
-
-                    // Find the cursor column index for the designated timestamp by name
-                    int cursorTimestampIndex = -1;
-                    if (writerTimestampIndex >= 0) {
-                        CharSequence tsColName = writerMetadata.getColumnName(writerTimestampIndex);
-                        cursorTimestampIndex = cursorMetadata.getColumnIndexQuiet(tsColName);
-                    }
-
-                    try (
-                            TableWriterAPI writer = engine.getTableWriterAPI(targetToken, "ingest");
-                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                    ) {
-                        long rowCount;
+                    } catch (Throwable e) {
                         try {
-                            if (writerTimestampIndex == -1 || cursorTimestampIndex < 0) {
-                                rowCount = SqlCompilerImpl.copyUnordered(sqlExecutionContext, cursor, writer, copier);
-                            } else {
-                                rowCount = SqlCompilerImpl.copyOrderedBatched(
-                                        sqlExecutionContext,
-                                        writer,
-                                        cursorMetadata,
-                                        cursor,
-                                        copier,
-                                        cursorTimestampIndex,
-                                        Long.MAX_VALUE,
-                                        0
-                                );
-                            }
-                        } catch (Throwable e) {
-                            try {
-                                writer.rollback();
-                            } catch (Throwable e2) {
-                                LOG.error().$("could not rollback, writer must be distressed [table=").$(targetToken).$(']').$();
-                            }
-                            throw e;
+                            writer.rollback();
+                        } catch (Throwable e2) {
+                            LOG.error().$("could not rollback, writer must be distressed [table=").$(targetToken).$(']').$();
                         }
-                        writer.commit();
-                        return rowCount;
+                        throw e;
                     }
+                    writer.commit();
+                    return rowCount;
                 }
             }
         }

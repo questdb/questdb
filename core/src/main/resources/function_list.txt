@@ -775,8 +775,10 @@ io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosVarcharFunctionFactory
 
-# position()
+# payload()
 io.questdb.griffin.engine.functions.str.PayloadFunctionFactory
+
+# position()
 io.questdb.griffin.engine.functions.str.PositionFunctionFactory
 io.questdb.griffin.engine.functions.str.PositionVarcharFunctionFactory
 

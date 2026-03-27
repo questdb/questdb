@@ -39,7 +39,9 @@ public class CreatePayloadTransformOperation implements Operation {
     private final String dlqTable;
     private final int dlqTablePosition;
     private final String dlqTtlUnit;
+    private final int dlqTtlUnitPosition;
     private final long dlqTtlValue;
+    private final int dlqTtlValuePosition;
     private final boolean ignoreIfExists;
     private final boolean isReplace;
     private final String name;
@@ -62,7 +64,9 @@ public class CreatePayloadTransformOperation implements Operation {
             int dlqTablePosition,
             int dlqPartitionBy,
             long dlqTtlValue,
+            int dlqTtlValuePosition,
             @Nullable String dlqTtlUnit,
+            int dlqTtlUnitPosition,
             boolean ignoreIfExists,
             boolean isReplace
     ) {
@@ -77,7 +81,9 @@ public class CreatePayloadTransformOperation implements Operation {
         this.dlqTablePosition = dlqTablePosition;
         this.dlqPartitionBy = dlqPartitionBy;
         this.dlqTtlValue = dlqTtlValue;
+        this.dlqTtlValuePosition = dlqTtlValuePosition;
         this.dlqTtlUnit = dlqTtlUnit;
+        this.dlqTtlUnitPosition = dlqTtlUnitPosition;
         this.ignoreIfExists = ignoreIfExists;
         this.isReplace = isReplace;
     }
@@ -111,8 +117,16 @@ public class CreatePayloadTransformOperation implements Operation {
         return dlqTtlUnit;
     }
 
+    public int getDlqTtlUnitPosition() {
+        return dlqTtlUnitPosition;
+    }
+
     public long getDlqTtlValue() {
         return dlqTtlValue;
+    }
+
+    public int getDlqTtlValuePosition() {
+        return dlqTtlValuePosition;
     }
 
     public String getName() {

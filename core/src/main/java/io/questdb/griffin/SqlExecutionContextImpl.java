@@ -440,6 +440,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
+        this.payload = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
@@ -492,14 +493,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.clockUseNow = true;
     }
 
-    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
-        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
-    }
-
-    public void setPayload(CharSequence payload) {
-        this.payload = payload;
-    }
-
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;
@@ -533,6 +526,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
         this.parallelWindowJoinEnabled = parallelWindowJoinEnabled;
+    }
+
+    public void setPayload(CharSequence payload) {
+        this.payload = payload;
+    }
+
+    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
+        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
     }
 
     @Override

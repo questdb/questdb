@@ -124,8 +124,15 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE PAYLOAD TRANSFORM my_transform INTO target AS " + VALID_SELECT);
             drainWalQueue();
-            // Should not throw
-            execute("CREATE PAYLOAD TRANSFORM IF NOT EXISTS my_transform INTO target AS " + VALID_SELECT);
+            // Should not throw; use different SQL to verify the original is preserved
+            execute("CREATE PAYLOAD TRANSFORM IF NOT EXISTS my_transform INTO target AS " + VALID_SELECT_2);
+            drainWalQueue();
+
+            PayloadTransformStore store = engine.getPayloadTransformStore();
+            PayloadTransformDefinition def = new PayloadTransformDefinition();
+            def = store.lookupTransform(sqlExecutionContext, "my_transform", def);
+            Assert.assertNotNull(def);
+            Assert.assertEquals(VALID_SELECT, def.getSelectSql());
         });
     }
 
@@ -594,6 +601,57 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                             + "t2\ttarget\t" + VALID_SELECT_2 + "\t\n",
                     "SHOW PAYLOAD TRANSFORMS"
             );
+        });
+    }
+
+    @Test
+    public void testRejectDlqTableWithWrongDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // DLQ with correct columns but 'error' as designated timestamp instead of 'ts'
+            execute("""
+                    CREATE TABLE bad_dlq (
+                        ts TIMESTAMP,
+                        transform_name SYMBOL,
+                        payload VARCHAR,
+                        query VARCHAR,
+                        stage SYMBOL,
+                        error VARCHAR,
+                        other_ts TIMESTAMP
+                    ) TIMESTAMP(other_ts) PARTITION BY DAY WAL
+                    """);
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "DLQ table must have 'ts' as designated timestamp");
+            }
+        });
+    }
+
+    @Test
+    public void testRejectNonWalTargetTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS " + VALID_SELECT);
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "target table must be WAL-enabled");
+            }
+        });
+    }
+
+    @Test
+    public void testRejectTrailingTokensAfterSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS (SELECT now() AS ts, 'x' AS sym, 1.0 AS price) JUNK");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "unexpected token");
+            }
         });
     }
 }

@@ -454,6 +454,55 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIngestDlqSkippedOnCompilationError() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Transform with DLQ and a non-overridable variable
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM compile_err
+                        INTO readings
+                        DLQ dlq_compile PARTITION BY DAY
+                        AS DECLARE @sensor_name := 'fixed'
+                        SELECT
+                            now() AS ts,
+                            @sensor_name AS sensor,
+                            json_extract(payload(), '$.value')::DOUBLE AS value
+                        """);
+
+                // Ensure the transform is usable first
+                assertIngestSuccess(engine, "/ingest?transform=compile_err", "{\"value\":1.0}");
+
+                // Override a non-overridable variable - triggers compilation error, not runtime
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=compile_err&sensor_name=hacked");
+                        request.withContent().put("{\"value\":2.0}");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "variable is not overridable");
+                    }
+                });
+
+                // DLQ must be empty - compilation errors are config problems, not payload problems
+                assertSqlEventually(engine,
+                        "SELECT count() AS cnt FROM dlq_compile",
+                        "cnt\n" +
+                                "0\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testIngestExcessivelyLargePayload() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
@@ -556,6 +605,33 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                             rsp.getResponse().copyTextTo(sink);
                         }
                         TestUtils.assertContains(sink.toString(), "\"rows_inserted\":1");
+                    }
+                });
+
+                // Multi-row: transform that produces 3 rows per request
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM count_multi
+                        INTO readings
+                        AS SELECT
+                            now() AS ts,
+                            'sensor_' || x::STRING AS sensor,
+                            x::DOUBLE AS value
+                        FROM long_sequence(3)
+                        """);
+
+                TestUtils.assertEventually(() -> {
+                    try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                        request.POST().url("/ingest?transform=count_multi");
+                        request.withContent().put("ignored");
+
+                        Utf8StringSink sink = new Utf8StringSink();
+                        try (HttpClient.ResponseHeaders rsp = request.send()) {
+                            rsp.await();
+                            TestUtils.assertEquals("200", Utf8s.toString(rsp.getStatusCode()));
+                            rsp.getResponse().copyTextTo(sink);
+                        }
+                        TestUtils.assertContains(sink.toString(), "\"rows_inserted\":3");
                     }
                 });
             }
@@ -713,34 +789,6 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                     }
                     TestUtils.assertContains(sink.toString(), "missing 'transform' query parameter");
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testIngestNoDesignatedTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
-                serverMain.start();
-                final CairoEngine engine = serverMain.getEngine();
-
-                // Table without designated timestamp - uses copyUnordered path
-                engine.execute("CREATE TABLE logs (level STRING, message STRING)");
-                engine.execute("""
-                        CREATE PAYLOAD TRANSFORM log_entry
-                        INTO logs
-                        AS SELECT
-                            json_extract(payload(), '$.level')::STRING AS level,
-                            json_extract(payload(), '$.msg')::STRING AS message
-                        """);
-
-                assertIngestSuccess(engine, "/ingest?transform=log_entry", "{\"level\":\"INFO\",\"msg\":\"hello\"}");
-
-                assertSqlEventually(engine,
-                        "SELECT level, message FROM logs",
-                        "level\tmessage\n" +
-                                "INFO\thello\n"
-                );
             }
         });
     }

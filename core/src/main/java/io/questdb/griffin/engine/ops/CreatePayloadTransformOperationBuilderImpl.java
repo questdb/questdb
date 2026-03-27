@@ -32,7 +32,9 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
     private CharSequence dlqTable;
     private int dlqTablePosition;
     private CharSequence dlqTtlUnit;
+    private int dlqTtlUnitPosition;
     private long dlqTtlValue;
+    private int dlqTtlValuePosition;
     private boolean ignoreIfExists;
     private boolean isReplace;
     private CharSequence name;
@@ -56,7 +58,9 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
                 dlqTablePosition,
                 dlqPartitionBy,
                 dlqTtlValue,
+                dlqTtlValuePosition,
                 dlqTtlUnit != null ? Chars.toString(dlqTtlUnit) : null,
+                dlqTtlUnitPosition,
                 ignoreIfExists,
                 isReplace
         );
@@ -74,7 +78,9 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
         dlqTablePosition = 0;
         dlqPartitionBy = -1;
         dlqTtlValue = 0;
+        dlqTtlValuePosition = 0;
         dlqTtlUnit = null;
+        dlqTtlUnitPosition = 0;
         ignoreIfExists = false;
         isReplace = false;
     }
@@ -95,8 +101,16 @@ public class CreatePayloadTransformOperationBuilderImpl implements CreatePayload
         this.dlqTtlUnit = dlqTtlUnit;
     }
 
+    public void setDlqTtlUnitPosition(int dlqTtlUnitPosition) {
+        this.dlqTtlUnitPosition = dlqTtlUnitPosition;
+    }
+
     public void setDlqTtlValue(long dlqTtlValue) {
         this.dlqTtlValue = dlqTtlValue;
+    }
+
+    public void setDlqTtlValuePosition(int dlqTtlValuePosition) {
+        this.dlqTtlValuePosition = dlqTtlValuePosition;
     }
 
     public void setIgnoreIfExists(boolean ignoreIfExists) {

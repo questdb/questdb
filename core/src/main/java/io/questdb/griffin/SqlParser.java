@@ -1302,12 +1302,14 @@ public class SqlParser {
             }
             if (isTtlKeyword(tok)) {
                 tok = tok(lexer, "TTL value");
+                builder.setDlqTtlValuePosition(lexer.lastTokenPosition());
                 try {
                     builder.setDlqTtlValue(Numbers.parseLong(tok));
                 } catch (NumericException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), "invalid TTL value");
                 }
                 tok = tok(lexer, "TTL unit");
+                builder.setDlqTtlUnitPosition(lexer.lastTokenPosition());
                 builder.setDlqTtlUnit(GenericLexer.immutableOf(tok));
                 tok = tok(lexer, "'as'");
             }
@@ -1337,6 +1339,10 @@ public class SqlParser {
                 }
             }
             endOfQuery = lexer.getPosition() - 1;
+            tok = optTok(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw errUnexpected(lexer, tok);
+            }
         } else {
             // Consume all remaining tokens
             while ((tok = optTok(lexer)) != null) {

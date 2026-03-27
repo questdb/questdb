@@ -1297,6 +1297,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
             this.httpIngestMaxRequestSize = getLongSize(properties, env, PropertyKey.HTTP_INGEST_MAX_REQUEST_SIZE, 5 * Numbers.SIZE_1MB);
+            if (this.httpIngestMaxRequestSize <= 0) {
+                this.httpIngestMaxRequestSize = 5 * Numbers.SIZE_1MB;
+                log.advisory().$("invalid http.ingest.max.request.size, using default").$();
+            }
             this.httpRecvMaxBufferSize = getLongSize(properties, env, PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);

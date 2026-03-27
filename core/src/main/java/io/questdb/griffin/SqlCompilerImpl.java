@@ -4490,7 +4490,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Check if transform already exists
             if (store.hasTransform(executionContext, op.getName())) {
                 if (op.isReplace()) {
-                    // Drop existing transform first
+                    // OR REPLACE uses a non-atomic drop-then-create pattern. A concurrent
+                    // reader may briefly observe the transform as absent. This is a
+                    // documented v1 limitation consistent with PayloadTransformStore's
+                    // class-level concurrency comment.
                     store.dropTransform(executionContext, op.getName());
                 } else if (op.ignoreIfExists()) {
                     QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
@@ -4500,10 +4503,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
 
-            // Validate target table exists
+            // Validate target table exists and is WAL-enabled
             final TableToken targetToken = executionContext.getTableTokenIfExists(op.getTargetTable());
             if (targetToken == null) {
                 throw SqlException.$(op.getTargetTablePosition(), "target table does not exist [name=").put(op.getTargetTable()).put(']');
+            }
+            if (!targetToken.isWal()) {
+                throw SqlException.$(op.getTargetTablePosition(), "target table must be WAL-enabled [name=").put(op.getTargetTable()).put(']');
             }
 
             // Validate the SELECT SQL: must be a SELECT with no real table references,
@@ -4512,6 +4518,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             // If DLQ specified: create if missing, validate schema, authorize insert
             if (op.getDlqTable() != null) {
+                // Validate TTL unit if specified
+                if (op.getDlqTtlUnit() != null) {
+                    int unit = PartitionBy.ttlUnitFromString(op.getDlqTtlUnit(), 0, op.getDlqTtlUnit().length());
+                    if (unit < 0) {
+                        throw SqlException.$(op.getDlqTtlUnitPosition(), "invalid TTL unit [unit=").put(op.getDlqTtlUnit()).put(']');
+                    }
+                    if (op.getDlqTtlValue() <= 0) {
+                        throw SqlException.$(op.getDlqTtlValuePosition(), "TTL value must be positive");
+                    }
+                }
                 TableToken dlqToken = executionContext.getTableTokenIfExists(op.getDlqTable());
                 if (dlqToken == null) {
                     createDlqTable(executionContext, op);
@@ -5192,6 +5208,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CreatePayloadTransformOperation op
     ) throws SqlException {
         try (TableRecordMetadata meta = executionContext.getMetadataForWrite(dlqToken)) {
+            if (meta.getTimestampIndex() != 0) {
+                throw SqlException.$(op.getDlqTablePosition(), "DLQ table must have 'ts' as designated timestamp [table=")
+                        .put(dlqToken.getTableName()).put(']');
+            }
             final String[] expectedNames = {"ts", "transform_name", "payload", "query", "stage", "error"};
             final int[] expectedTypes = {
                     ColumnType.TIMESTAMP, ColumnType.SYMBOL, ColumnType.VARCHAR,
