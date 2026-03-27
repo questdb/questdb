@@ -134,7 +134,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             nameBuf.put(':').put(name);
             Function f = source.getFunction(nameBuf);
             if (f != null) {
-                snapshotNamedFunction(f, name, copy);
+                dec = snapshotNamedFunction(f, name, copy, dec);
             }
         }
 
@@ -214,10 +214,11 @@ public class BindVariableServiceImpl implements BindVariableService {
         return dec;
     }
 
-    private static void snapshotNamedFunction(
+    private static Decimal256 snapshotNamedFunction(
             Function f,
             CharSequence name,
-            BindVariableServiceImpl copy
+            BindVariableServiceImpl copy,
+            Decimal256 dec
     ) throws SqlException {
         int type = f.getType();
         switch (ColumnType.tagOf(type)) {
@@ -244,7 +245,9 @@ public class BindVariableServiceImpl implements BindVariableService {
                     copy.setGeoHash(name, f.getGeoLong(null), type);
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
                  ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
-                Decimal256 dec = new Decimal256();
+                if (dec == null) {
+                    dec = new Decimal256();
+                }
                 f.getDecimal256(null, dec);
                 copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
             }
@@ -252,6 +255,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 // UNDEFINED, ARRAY, or unknown — skip
             }
         }
+        return dec;
     }
 
     @Override
