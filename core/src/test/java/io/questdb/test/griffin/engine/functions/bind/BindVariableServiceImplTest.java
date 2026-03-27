@@ -38,6 +38,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
@@ -1109,6 +1110,135 @@ public class BindVariableServiceImplTest {
             );
 
             Assert.assertNull(copy.getFunction(0).getBin(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotCoversAllBindableTypes() throws Exception {
+        // Discovers bindable types automatically by trying define() on
+        // every ColumnType tag. For each type that define() accepts,
+        // sets a non-null value, snapshots, and verifies both type and
+        // value are preserved. If a new bindable type is added but not
+        // handled below, the default branch fails with a clear message.
+        assertMemoryLeak(() -> {
+            for (int tag = ColumnType.UNDEFINED + 1; tag < ColumnType.NULL; tag++) {
+                bindVariableService.clear();
+                int type;
+                switch (tag) {
+                    case ColumnType.GEOBYTE -> type = ColumnType.getGeoHashTypeWithBits(5);
+                    case ColumnType.GEOSHORT -> type = ColumnType.getGeoHashTypeWithBits(10);
+                    case ColumnType.GEOINT -> type = ColumnType.getGeoHashTypeWithBits(20);
+                    case ColumnType.GEOLONG -> type = ColumnType.getGeoHashTypeWithBits(40);
+                    case ColumnType.DECIMAL8 -> type = ColumnType.getDecimalType(tag, 3, 0);
+                    case ColumnType.DECIMAL16 -> type = ColumnType.getDecimalType(tag, 5, 0);
+                    case ColumnType.DECIMAL32 -> type = ColumnType.getDecimalType(tag, 9, 2);
+                    case ColumnType.DECIMAL64 -> type = ColumnType.getDecimalType(tag, 18, 3);
+                    case ColumnType.DECIMAL128 -> type = ColumnType.getDecimalType(tag, 38, 10);
+                    case ColumnType.DECIMAL256 -> type = ColumnType.getDecimalType(tag, 76, 38);
+                    default -> type = tag;
+                }
+
+                // Try to define — if it throws, this tag is not bindable
+                try {
+                    bindVariableService.define(0, type, 0);
+                } catch (SqlException e) {
+                    continue;
+                }
+
+                // Set a distinguishable non-null value. The default
+                // branch fails so new bindable types cannot slip
+                // through without snapshot coverage.
+                switch (tag) {
+                    case ColumnType.BOOLEAN -> bindVariableService.setBoolean(0, true);
+                    case ColumnType.BYTE -> bindVariableService.setByte(0, (byte) 42);
+                    case ColumnType.SHORT -> bindVariableService.setShort(0, (short) 1234);
+                    case ColumnType.CHAR -> bindVariableService.setChar(0, 'Q');
+                    case ColumnType.INT -> bindVariableService.setInt(0, 100_000);
+                    case ColumnType.IPv4 -> bindVariableService.setIPv4(0, 0x7F000001);
+                    case ColumnType.LONG -> bindVariableService.setLong(0, 987_654_321L);
+                    case ColumnType.DATE -> bindVariableService.setDate(0, 1_704_067_200_000L);
+                    case ColumnType.TIMESTAMP -> bindVariableService.setTimestamp(0, 1_704_067_200_000_000L);
+                    case ColumnType.FLOAT -> bindVariableService.setFloat(0, 3.14f);
+                    case ColumnType.DOUBLE -> bindVariableService.setDouble(0, 2.71828);
+                    case ColumnType.STRING, ColumnType.SYMBOL -> bindVariableService.setStr(0, "hello");
+                    case ColumnType.LONG256 -> bindVariableService.setLong256(0, 1, 2, 3, 4);
+                    case ColumnType.BINARY ->
+                            bindVariableService.setBin(0, new TestBinarySequence().of(new byte[]{1, 2, 3}));
+                    case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                            bindVariableService.setGeoHash(0, 12345L, type);
+                    case ColumnType.UUID -> bindVariableService.setUuid(0, 100L, 200L);
+                    case ColumnType.VARCHAR -> bindVariableService.setVarchar(0, new Utf8String("test"));
+                    case ColumnType.ARRAY -> {} // snapshot does not deep-copy array values
+                    case ColumnType.DECIMAL, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
+                         ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
+                         ColumnType.DECIMAL256 ->
+                            bindVariableService.setDecimal(0, 0, 0, 0, 42, type);
+                    default -> Assert.fail("add snapshot coverage for " + ColumnType.nameOf(tag) + " (tag=" + tag + ")");
+                }
+
+                Function original = bindVariableService.getFunction(0);
+                Assert.assertNotNull("define() produced null for " + ColumnType.nameOf(tag), original);
+
+                BindVariableService copy = BindVariableServiceImpl.snapshot(
+                        bindVariableService, new DefaultTestCairoConfiguration(null)
+                );
+                Assert.assertNotNull(copy);
+                Function copied = copy.getFunction(0);
+                Assert.assertNotNull("snapshot() lost " + ColumnType.nameOf(tag), copied);
+                Assert.assertEquals(
+                        "snapshot() type mismatch for " + ColumnType.nameOf(tag),
+                        original.getType(), copied.getType()
+                );
+
+                // Verify the value was deep-copied, not just the type
+                String label = ColumnType.nameOf(tag);
+                switch (tag) {
+                    case ColumnType.BOOLEAN -> Assert.assertEquals(label, original.getBool(null), copied.getBool(null));
+                    case ColumnType.BYTE -> Assert.assertEquals(label, original.getByte(null), copied.getByte(null));
+                    case ColumnType.SHORT -> Assert.assertEquals(label, original.getShort(null), copied.getShort(null));
+                    case ColumnType.CHAR -> Assert.assertEquals(label, original.getChar(null), copied.getChar(null));
+                    case ColumnType.INT -> Assert.assertEquals(label, original.getInt(null), copied.getInt(null));
+                    case ColumnType.IPv4 -> Assert.assertEquals(label, original.getIPv4(null), copied.getIPv4(null));
+                    case ColumnType.LONG -> Assert.assertEquals(label, original.getLong(null), copied.getLong(null));
+                    case ColumnType.DATE -> Assert.assertEquals(label, original.getDate(null), copied.getDate(null));
+                    case ColumnType.TIMESTAMP ->
+                            Assert.assertEquals(label, original.getTimestamp(null), copied.getTimestamp(null));
+                    case ColumnType.FLOAT ->
+                            Assert.assertEquals(label, original.getFloat(null), copied.getFloat(null), 0);
+                    case ColumnType.DOUBLE ->
+                            Assert.assertEquals(label, original.getDouble(null), copied.getDouble(null), 0);
+                    case ColumnType.STRING, ColumnType.SYMBOL ->
+                            TestUtils.assertEquals(label, original.getStrA(null), copied.getStrA(null));
+                    case ColumnType.LONG256 -> {
+                        Assert.assertEquals(label, original.getLong256A(null).getLong0(), copied.getLong256A(null).getLong0());
+                        Assert.assertEquals(label, original.getLong256A(null).getLong1(), copied.getLong256A(null).getLong1());
+                        Assert.assertEquals(label, original.getLong256A(null).getLong2(), copied.getLong256A(null).getLong2());
+                        Assert.assertEquals(label, original.getLong256A(null).getLong3(), copied.getLong256A(null).getLong3());
+                    }
+                    case ColumnType.BINARY ->
+                            Assert.assertEquals(label, original.getBin(null).length(), copied.getBin(null).length());
+                    case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                            Assert.assertEquals(label, original.getGeoLong(null), copied.getGeoLong(null));
+                    case ColumnType.UUID -> {
+                        Assert.assertEquals(label, original.getLong128Lo(null), copied.getLong128Lo(null));
+                        Assert.assertEquals(label, original.getLong128Hi(null), copied.getLong128Hi(null));
+                    }
+                    case ColumnType.VARCHAR ->
+                            Assert.assertTrue(label, Utf8s.equals(original.getVarcharA(null), copied.getVarcharA(null)));
+                    case ColumnType.DECIMAL, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
+                         ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
+                         ColumnType.DECIMAL256 -> {
+                        Decimal256 origDec = new Decimal256();
+                        Decimal256 copyDec = new Decimal256();
+                        original.getDecimal256(null, origDec);
+                        copied.getDecimal256(null, copyDec);
+                        Assert.assertEquals(label, origDec.getLl(), copyDec.getLl());
+                        Assert.assertEquals(label, origDec.getLh(), copyDec.getLh());
+                        Assert.assertEquals(label, origDec.getHl(), copyDec.getHl());
+                        Assert.assertEquals(label, origDec.getHh(), copyDec.getHh());
+                    }
+                }
+            }
         });
     }
 
