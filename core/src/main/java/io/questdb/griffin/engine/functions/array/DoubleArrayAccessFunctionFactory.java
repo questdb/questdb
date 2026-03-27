@@ -43,7 +43,6 @@ import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -110,43 +109,45 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     .put(']');
         }
         int resultNDims = nDims;
+        boolean indexArgsAreConstant = true;
         for (int i = 1, n = argsCopy.size(); i < n; i++) {
-            final int argType = argsCopy.getQuick(i).getType();
+            Function arg = argsCopy.getQuick(i);
+            final int argType = arg.getType();
             if (isIndexArg(argType)) {
                 resultNDims--;
+                if (!arg.isConstant()) {
+                    indexArgsAreConstant = false;
+                }
             }
         }
-        if (resultNDims == 0) {
-            boolean indexArgsAreConstant = true;
-            for (int i = 1, n = argsCopy.size(); i < n; i++) {
-                if (!argsCopy.getQuick(i).isConstant()) {
-                    indexArgsAreConstant = false;
-                    break;
-                }
-            }
-            if (indexArgsAreConstant) {
-                IntList indexArgs = new IntList(argsCopy.size() - 1);
-                boolean isFirstElement = true;
-                for (int i = 1, n = argsCopy.size(); i < n; i++) {
-                    long index = argsCopy.getQuick(i).getLong(null);
-                    if (index == Numbers.LONG_NULL) {
-                        return DoubleConstant.NULL;
-                    }
-                    indexArgs.add((int) index);
-                    if (index != 1) {
-                        isFirstElement = false;
-                    }
-                    Misc.free(argsCopy.getQuick(i));
-                }
-                if (isFirstElement) {
-                    return new AccessDoubleArrayFirstElementFunction(arrayArg, indexArgs.size());
-                }
-                argPositionsCopy.removeIndex(0); // remove arrayArg's position
-                return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositionsCopy);
-            }
+        if (resultNDims != 0) {
+            return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+        }
+        if (!indexArgsAreConstant) {
             return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
         }
-        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+
+        // result is scalar, all args are constant index args
+        final IntList indexArgs = new IntList(argsCopy.size() - 1);
+        boolean isFirstElement = true;
+        for (int i = 1, n = argsCopy.size(); i < n; i++) {
+            long index;
+            try (Function arg = argsCopy.getQuick(i)) {
+                index = arg.getLong(null);
+            }
+            if (index == Numbers.LONG_NULL) {
+                return DoubleConstant.NULL;
+            }
+            indexArgs.add((int) index);
+            if (index != 1) {
+                isFirstElement = false;
+            }
+        }
+        if (isFirstElement) {
+            return new AccessDoubleArrayFirstElementFunction(arrayArg, indexArgs.size());
+        }
+        argPositionsCopy.removeIndex(0); // remove arrayArg's position
+        return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositionsCopy);
     }
 
     private static boolean allPositive(IntList indices) {

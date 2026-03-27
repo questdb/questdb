@@ -83,10 +83,7 @@ public interface Record {
      */
     default double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
         ArrayView array = getArray(col, columnType);
-        if (array.isNull()) {
-            return Double.NaN;
-        }
-        if (idx0 >= array.getDimLen(0)) {
+        if (array.isNull() || idx0 >= array.getDimLen(0)) {
             return Double.NaN;
         }
         if (array.getDimCount() == 1) {
