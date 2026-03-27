@@ -198,7 +198,8 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.BINARY -> copy.setBin(index, copyBinarySequence(f.getBin(null)));
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     copy.setGeoHash(index, f.getGeoLong(null), type);
-            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
                 if (dec == null) {
                     dec = new Decimal256();
                 }
@@ -241,7 +242,8 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.BINARY -> copy.setBin(name, copyBinarySequence(f.getBin(null)));
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     copy.setGeoHash(name, f.getGeoLong(null), type);
-            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> {
                 Decimal256 dec = new Decimal256();
                 f.getDecimal256(null, dec);
                 copy.setDecimal(name, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);

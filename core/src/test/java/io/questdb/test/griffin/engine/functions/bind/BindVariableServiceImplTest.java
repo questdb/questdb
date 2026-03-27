@@ -1665,4 +1665,62 @@ public class BindVariableServiceImplTest {
             TestUtils.assertEquals("test", copy.getFunction(":name").getStrA(null));
         });
     }
+
+    @Test
+    public void testSnapshotPreservesIndexedSmallerDecimalSubtypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final int decimal8Type = ColumnType.getDecimalType(3, 0);
+            final int decimal16Type = ColumnType.getDecimalType(5, 0);
+            final int decimal32Type = ColumnType.getDecimalType(10, 0);
+            final int decimal64Type = ColumnType.getDecimalType(18, 0);
+
+            bindVariableService.setDecimal(0, 0, 0, 0, 111, decimal8Type);
+            bindVariableService.setDecimal(1, 0, 0, 0, 12_345, decimal16Type);
+            bindVariableService.setDecimal(2, 0, 0, 0, 123_456_789, decimal32Type);
+            bindVariableService.setDecimal(3, 0, 0, 0, 123_456_789_012_345_678L, decimal64Type);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals((byte) 111, copy.getFunction(0).getDecimal8(null));
+            Assert.assertEquals((short) 12_345, copy.getFunction(1).getDecimal16(null));
+            Assert.assertEquals(123_456_789, copy.getFunction(2).getDecimal32(null));
+            Assert.assertEquals(123_456_789_012_345_678L, copy.getFunction(3).getDecimal64(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotPreservesNamedSmallerDecimalSubtypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final int decimal8Type = ColumnType.getDecimalType(3, 0);
+            final int decimal16Type = ColumnType.getDecimalType(5, 0);
+            final int decimal32Type = ColumnType.getDecimalType(10, 0);
+            final int decimal64Type = ColumnType.getDecimalType(18, 0);
+
+            bindVariableService.setDecimal("d8", 0, 0, 0, 112, decimal8Type);
+            bindVariableService.setDecimal("d16", 0, 0, 0, 12_346, decimal16Type);
+            bindVariableService.setDecimal("d32", 0, 0, 0, 123_456_780, decimal32Type);
+            bindVariableService.setDecimal("d64", 0, 0, 0, 123_456_789_012_345_679L, decimal64Type);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Function decimal8 = copy.getFunction(":d8");
+            Function decimal16 = copy.getFunction(":d16");
+            Function decimal32 = copy.getFunction(":d32");
+            Function decimal64 = copy.getFunction(":d64");
+
+            Assert.assertNotNull(decimal8);
+            Assert.assertNotNull(decimal16);
+            Assert.assertNotNull(decimal32);
+            Assert.assertNotNull(decimal64);
+
+            Assert.assertEquals((byte) 112, decimal8.getDecimal8(null));
+            Assert.assertEquals((short) 12_346, decimal16.getDecimal16(null));
+            Assert.assertEquals(123_456_780, decimal32.getDecimal32(null));
+            Assert.assertEquals(123_456_789_012_345_679L, decimal64.getDecimal64(null));
+        });
+    }
 }
