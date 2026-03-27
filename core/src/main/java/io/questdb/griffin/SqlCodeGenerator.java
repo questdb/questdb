@@ -4360,9 +4360,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else { // i == 0
                     // This is first model in the sequence of joins
                     // TS requirement is symmetrical on both right and left sides
-                    // check if next join requires a timestamp
-                    int nextJointType = joinModels.getQuick(ordered.getQuick(1)).getJoinType();
-                    executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[nextJointType]);
+                    // check if any right-side join requires a timestamp
+                    boolean isTimestampRequired = false;
+                    for (int k = 1; k < n; k++) {
+                        if (joinsRequiringTimestamp[joinModels.getQuick(ordered.getQuick(k)).getJoinType()]) {
+                            isTimestampRequired = true;
+                            break;
+                        }
+                    }
+                    executionContext.pushTimestampRequiredFlag(isTimestampRequired);
                     // For successive JOIN operations, if the left table requires timestamp,
                     // it must be the timestamp from the first table in the JOIN chain
                     executionContext.pushHasInterval(0);

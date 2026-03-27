@@ -5586,6 +5586,27 @@ public class LateralJoinTest extends AbstractCairoTest {
                             """,
                     null, true, true
             );
+
+            assertQueryNoLeakCheck(
+                    """
+                            id	qty	price	rn
+                            1	10.0	100.0	2
+                            1	20.0	101.0	1
+                            2	30.0	102.0	1
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.price, sub.rn
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, p.price, row_number() OVER (ORDER BY p.ts DESC) AS rn
+                                FROM trades t
+                                ASOF JOIN prices p
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, false
+            );
         });
     }
 

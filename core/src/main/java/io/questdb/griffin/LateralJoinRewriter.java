@@ -2676,7 +2676,7 @@ class LateralJoinRewriter implements Mutable {
             int depth
     ) throws SqlException {
         ObjList<QueryModel> joinModels = current.getJoinModels();
-        int insertPos = 1;
+        final int insertPos = 1;
         joinModels.add(outerRefJoinModel);
         for (int si = joinModels.size() - 1; si > insertPos; si--) {
             joinModels.setQuick(si, joinModels.getQuick(si - 1));
