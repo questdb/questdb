@@ -286,6 +286,51 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    public static boolean checkForChildWindowFunctions(ArrayDeque<ExpressionNode> sqlNodeStack, ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowExpression != null) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowExpression != null) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowExpression != null) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
+    }
+
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -1799,51 +1844,6 @@ public class SqlOptimiser implements Mutable {
                         // Skip window functions - they have windowContext set even if function name is also aggregate
                         if (arg.type == FUNCTION && arg.windowExpression == null
                                 && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
-                            return true;
-                        }
-                        sqlNodeStack.push(arg);
-                    }
-                }
-                if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean checkForChildWindowFunctions(ExpressionNode node) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.windowExpression != null) {
-                return true;
-            }
-            if (node.paramCount < 3) {
-                if (node.rhs != null) {
-                    if (node.rhs.windowExpression != null) {
-                        return true;
-                    }
-                    sqlNodeStack.push(node.rhs);
-                }
-
-                if (node.lhs != null) {
-                    if (node.lhs.windowExpression != null) {
-                        return true;
-                    }
-                    node = node.lhs;
-                } else if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            } else {
-                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
-                for (int i = 0, k = node.paramCount; i < k; i++) {
-                    ExpressionNode arg = node.args.getQuick(i);
-                    if (arg != null) {
-                        if (arg.windowExpression != null) {
                             return true;
                         }
                         sqlNodeStack.push(arg);
@@ -3660,10 +3660,10 @@ public class SqlOptimiser implements Mutable {
         // Check if arguments contain nested window functions
         boolean hasNestedWindows = false;
         if (ast.paramCount < 3) {
-            hasNestedWindows = checkForChildWindowFunctions(ast.lhs) || checkForChildWindowFunctions(ast.rhs);
+            hasNestedWindows = checkForChildWindowFunctions(sqlNodeStack, ast.lhs) || checkForChildWindowFunctions(sqlNodeStack, ast.rhs);
         } else {
             for (int i = 0, k = ast.paramCount; i < k && !hasNestedWindows; i++) {
-                hasNestedWindows = checkForChildWindowFunctions(ast.args.getQuick(i));
+                hasNestedWindows = checkForChildWindowFunctions(sqlNodeStack, ast.args.getQuick(i));
             }
         }
 
@@ -8537,7 +8537,7 @@ public class SqlOptimiser implements Mutable {
         // Window functions need to be extracted to windowModel before processing aggregates.
         // However, if the expression ALSO contains aggregate functions (like sum() OVER (...)),
         // let the aggregate handling take precedence - it may optimize to GROUP BY.
-        if (checkForChildWindowFunctions(qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
+        if (checkForChildWindowFunctions(sqlNodeStack, qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
             emitWindowFunctions(
                     qc.getAst(),
                     windowModel,
@@ -10462,7 +10462,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> partitionBy = windowExpr.getPartitionBy();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             ExpressionNode node = partitionBy.getQuick(i);
-            if (checkForChildWindowFunctions(node)) {
+            if (checkForChildWindowFunctions(sqlNodeStack, node)) {
                 throw SqlException.$(node.position, "window function is not allowed in PARTITION BY clause");
             }
         }
@@ -10471,7 +10471,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> orderBy = windowExpr.getOrderBy();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             ExpressionNode node = orderBy.getQuick(i);
-            if (checkForChildWindowFunctions(node)) {
+            if (checkForChildWindowFunctions(sqlNodeStack, node)) {
                 throw SqlException.$(node.position, "window function is not allowed in ORDER BY clause of window specification");
             }
         }

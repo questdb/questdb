@@ -3847,6 +3847,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableParquetByteStreamSplitRejected() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT PARQUET(BYTE_STREAM_SPLIT), " +
+                        "t TIMESTAMP) " +
+                        "timestamp(t) " +
+                        "partition by DAY",
+                30,
+                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
+        );
+    }
+
+    @Test
     public void testCreateTableParquetCompression() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
@@ -4006,6 +4019,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableParquetDeltaLengthByteArrayRejectedForInt() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
+                        "t TIMESTAMP) " +
+                        "timestamp(t) " +
+                        "partition by DAY",
+                30,
+                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
+        );
+    }
+
+    @Test
     public void testCreateTableParquetEncoding() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
@@ -4113,45 +4139,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableParquetByteStreamSplitRejected() throws Exception {
-        assertSyntaxError(
-                "create table x (" +
-                        "a INT PARQUET(BYTE_STREAM_SPLIT), " +
-                        "t TIMESTAMP) " +
-                        "timestamp(t) " +
-                        "partition by DAY",
-                30,
-                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testCreateTableParquetPlainRejectedForVarchar() throws Exception {
-        assertSyntaxError(
-                "create table x (" +
-                        "a VARCHAR PARQUET(PLAIN), " +
-                        "t TIMESTAMP) " +
-                        "timestamp(t) " +
-                        "partition by DAY",
-                34,
-                "encoding 'PLAIN' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testCreateTableParquetDeltaLengthByteArrayRejectedForInt() throws Exception {
-        assertSyntaxError(
-                "create table x (" +
-                        "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
-                        "t TIMESTAMP) " +
-                        "timestamp(t) " +
-                        "partition by DAY",
-                30,
-                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
-        );
-    }
-
-    @Test
     public void testCreateTableParquetMultipleColumns() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
@@ -4168,6 +4155,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
+        );
+    }
+
+    @Test
+    public void testCreateTableParquetPlainRejectedForVarchar() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a VARCHAR PARQUET(PLAIN), " +
+                        "t TIMESTAMP) " +
+                        "timestamp(t) " +
+                        "partition by DAY",
+                34,
+                "encoding 'PLAIN' is not valid for column type"
         );
     }
 
@@ -10004,7 +10004,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testProjectionCanReferenceOwnFunctionsWindowFunction() throws SqlException {
         assertQuery(
-                "select-window c, lag(c1) lag over () from (select-virtual [f(a) c, c c1] f(a) c, c c1 from (select [a] from tab timestamp (ts))) order by c",
+                "select-window c, lag(c1) lag over () from (select-virtual [f(a) c, c c1] f(a) c, c c1 from (select-choose [a] a, c c1 from (select [a] from tab timestamp (ts)))) order by c",
                 "select f(a) c, lag(c) over() from tab order by c",
                 modelOf("tab")
                         .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
@@ -13935,7 +13935,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
         assertQuery(
-                "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, b1 b11, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
@@ -14108,7 +14108,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowLiteralAfterFunction() throws Exception {
         assertQuery(
-                "select-window a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts, b] a, concat(b, 'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-window a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts, b] a, concat(b, 'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, b1 b11, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)

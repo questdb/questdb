@@ -38,6 +38,7 @@ import io.questdb.std.ObjectPool;
 
 import java.util.ArrayDeque;
 
+import static io.questdb.griffin.SqlOptimiser.checkForChildWindowFunctions;
 import static io.questdb.griffin.model.QueryModel.isLateralJoin;
 
 class LateralJoinRewriter implements Mutable {
@@ -156,42 +157,6 @@ class LateralJoinRewriter implements Mutable {
         return set;
     }
 
-    private static boolean hasOuterRefLiteral(ExpressionNode node, CharSequence outerRefAlias) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            return Chars.startsWith(node.token, outerRefAlias);
-        }
-        if (hasOuterRefLiteral(node.lhs, outerRefAlias) || hasOuterRefLiteral(node.rhs, outerRefAlias)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasOuterRefLiteral(node.args.getQuick(i), outerRefAlias)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasWindowExpression(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.windowExpression != null) {
-            return true;
-        }
-        if (hasWindowExpression(node.lhs) || hasWindowExpression(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasWindowExpression(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean isCountAggregate(ExpressionNode node) {
         return node != null
                 && node.type == ExpressionNode.FUNCTION
@@ -276,7 +241,7 @@ class LateralJoinRewriter implements Mutable {
             ExpressionNode gcol = groupingCols.getQuick(j);
             boolean isFound = false;
             for (int k = 0, p = partitionBy.size(); k < p; k++) {
-                if (expressionsEqual(partitionBy.getQuick(k), gcol)) {
+                if (ExpressionNode.compareNodesExact(partitionBy.getQuick(k), gcol)) {
                     isFound = true;
                     break;
                 }
@@ -627,7 +592,7 @@ class LateralJoinRewriter implements Mutable {
                 ExpressionNode col = groupingCols.getQuick(i);
                 boolean isFound = false;
                 for (int j = 0, m = groupBy.size(); j < m; j++) {
-                    if (expressionsEqual(groupBy.getQuick(j), col)) {
+                    if (ExpressionNode.compareNodesExact(groupBy.getQuick(j), col)) {
                         isFound = true;
                         break;
                     }
@@ -760,11 +725,11 @@ class LateralJoinRewriter implements Mutable {
             return current;
         }
 
-        if (hasCorrelatedExprAtDepth(limitHi, depth)) {
+        if (limitHi != null && hasCorrelatedExprAtDepth(limitHi, depth)) {
             throw SqlException.position(limitHi.position)
                     .put("non-constant LIMIT in LATERAL join is not supported");
         }
-        if (hasCorrelatedExprAtDepth(limitLo, depth)) {
+        if (limitLo != null && hasCorrelatedExprAtDepth(limitLo, depth)) {
             throw SqlException.position(limitLo.position)
                     .put("non-constant LIMIT in LATERAL join is not supported");
         }
@@ -969,7 +934,7 @@ class LateralJoinRewriter implements Mutable {
                 if (branchGroupBy.size() > 0) {
                     boolean isFound = false;
                     for (int k = 0, kn = branchGroupBy.size(); k < kn; k++) {
-                        if (expressionsEqual(branchGroupBy.getQuick(k), col)) {
+                        if (ExpressionNode.compareNodesExact(branchGroupBy.getQuick(k), col)) {
                             isFound = true;
                             break;
                         }
@@ -1389,7 +1354,7 @@ class LateralJoinRewriter implements Mutable {
         }
         for (int i = 0, n = cols.size(); i < n; i++) {
             QueryColumn existing = cols.getQuick(i);
-            if (expressionsEqual(existing.getAst(), colExpr)) {
+            if (ExpressionNode.compareNodesExact(existing.getAst(), colExpr)) {
                 return existing.getAlias();
             }
         }
@@ -1424,7 +1389,7 @@ class LateralJoinRewriter implements Mutable {
         }
         for (int i = 0, n = cols.size(); i < n; i++) {
             QueryColumn col = cols.getQuick(i);
-            if (expressionsEqual(col.getAst(), colExpr)) {
+            if (ExpressionNode.compareNodesExact(col.getAst(), colExpr)) {
                 return col.getAlias();
             }
         }
@@ -1435,39 +1400,6 @@ class LateralJoinRewriter implements Mutable {
             cols.setQuick(0, qc);
         }
         return alias;
-    }
-
-    private boolean expressionsEqual(ExpressionNode a, ExpressionNode b) {
-        if (a == b) {
-            return true;
-        }
-        if (a == null || b == null) {
-            return false;
-        }
-        if (a.type != b.type) {
-            return false;
-        }
-        if (!Chars.equalsIgnoreCase(a.token, b.token)) {
-            return false;
-        }
-        if (a.type == ExpressionNode.LITERAL) {
-            return true;
-        }
-        if (!expressionsEqual(a.lhs, b.lhs)) {
-            return false;
-        }
-        if (!expressionsEqual(a.rhs, b.rhs)) {
-            return false;
-        }
-        if (a.args.size() != b.args.size()) {
-            return false;
-        }
-        for (int i = 0, n = a.args.size(); i < n; i++) {
-            if (!expressionsEqual(a.args.getQuick(i), b.args.getQuick(i))) {
-                return false;
-            }
-        }
-        return ExpressionNode.compareWindowExpressions(a.windowExpression, b.windowExpression);
     }
 
     private void extractCorrelatedFromInnerJoins(
@@ -1595,54 +1527,51 @@ class LateralJoinRewriter implements Mutable {
     }
 
     private boolean hasCorrelatedExprAtDepth(ExpressionNode node, int depth) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            return node.lateralDepth == depth;
-        }
-        if (node.type == ExpressionNode.QUERY) {
-            return false;
-        }
-        if (hasCorrelatedExprAtDepth(node.lhs, depth) || hasCorrelatedExprAtDepth(node.rhs, depth)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasCorrelatedExprAtDepth(node.args.getQuick(i), depth)) {
-                return true;
-            }
-        }
-        if (node.windowExpression != null) {
-            ObjList<ExpressionNode> partitionBy = node.windowExpression.getPartitionBy();
-            for (int i = 0, n = partitionBy.size(); i < n; i++) {
-                if (hasCorrelatedExprAtDepth(partitionBy.getQuick(i), depth)) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == ExpressionNode.LITERAL) {
+                if (node.lateralDepth == depth) {
                     return true;
                 }
-            }
-            ObjList<ExpressionNode> winOrderBy = node.windowExpression.getOrderBy();
-            for (int i = 0, n = winOrderBy.size(); i < n; i++) {
-                if (hasCorrelatedExprAtDepth(winOrderBy.getQuick(i), depth)) {
-                    return true;
+            } else if (node.type != ExpressionNode.QUERY) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                if (node.windowExpression != null) {
+                    ObjList<ExpressionNode> partitionBy = node.windowExpression.getPartitionBy();
+                    for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                        sqlNodeStack.push(partitionBy.getQuick(i));
+                    }
+                    ObjList<ExpressionNode> winOrderBy = node.windowExpression.getOrderBy();
+                    for (int i = 0, n = winOrderBy.size(); i < n; i++) {
+                        sqlNodeStack.push(winOrderBy.getQuick(i));
+                    }
                 }
             }
+            node = node.lhs != null ? node.lhs : (sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll());
         }
         return false;
     }
 
     private boolean hasCorrelatedLiteral(ExpressionNode node, int depth) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL && node.lateralDepth == depth) {
-            return true;
-        }
-        if (hasCorrelatedLiteral(node.lhs, depth) || hasCorrelatedLiteral(node.rhs, depth)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasCorrelatedLiteral(node.args.getQuick(i), depth)) {
-                return true;
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == ExpressionNode.LITERAL) {
+                if (node.lateralDepth == depth) {
+                    return true;
+                }
+            } else {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
             }
+            node = node.lhs != null ? node.lhs : (sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll());
         }
         return false;
     }
@@ -1661,25 +1590,47 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
+    private boolean hasOuterRefLiteral(ExpressionNode node, CharSequence outerRefAlias) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == ExpressionNode.LITERAL) {
+                if (Chars.startsWith(node.token, outerRefAlias)) {
+                    return true;
+                }
+            } else {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+            }
+            node = node.lhs != null ? node.lhs : (sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll());
+        }
+        return false;
+    }
+
     private boolean hasUnmappedOuterRefLiteral(
             ExpressionNode node,
             CharSequence outerRefAlias,
             LowerCaseCharSequenceObjHashMap<CharSequence> aliasMap
     ) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL && Chars.startsWith(node.token, outerRefAlias)) {
-            return lookupOuterRefAlias(node.token, outerRefAlias, aliasMap) == null;
-        }
-        if (hasUnmappedOuterRefLiteral(node.lhs, outerRefAlias, aliasMap)
-                || hasUnmappedOuterRefLiteral(node.rhs, outerRefAlias, aliasMap)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasUnmappedOuterRefLiteral(node.args.getQuick(i), outerRefAlias, aliasMap)) {
-                return true;
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == ExpressionNode.LITERAL) {
+                if (Chars.startsWith(node.token, outerRefAlias)
+                        && lookupOuterRefAlias(node.token, outerRefAlias, aliasMap) == null) {
+                    return true;
+                }
+            } else {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
             }
+            node = node.lhs != null ? node.lhs : (sqlNodeStack.isEmpty() ? null : sqlNodeStack.poll());
         }
         return false;
     }
@@ -1691,7 +1642,7 @@ class LateralJoinRewriter implements Mutable {
             if (col instanceof WindowExpression) {
                 return true;
             }
-            if (hasWindowExpression(col.getAst())) {
+            if (checkForChildWindowFunctions(sqlNodeStack, col.getAst())) {
                 return true;
             }
         }
