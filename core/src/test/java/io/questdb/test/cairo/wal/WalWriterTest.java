@@ -50,6 +50,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalDataRecord;
@@ -60,7 +61,6 @@ import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -68,6 +68,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -374,7 +375,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putVarchar(0, longVarchar);
                     row.append();
                 }
-                writer.addColumn("newColumn", ColumnType.DOUBLE);
+                writer.addColumn("newColumn", ColumnType.DOUBLE, AllowAllSecurityContext.INSTANCE);
                 writer.commit();
             } finally {
                 Path.clearThreadLocals();
@@ -454,9 +455,11 @@ public class WalWriterTest extends AbstractCairoTest {
                             if (rnd.nextInt(20) == 0) {
                                 String columnName = rnd.nextBoolean() ? "d" : "D" + (1 + rnd.nextInt(columnNum));
                                 try {
-                                    AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
-                                    removeColumnOperation.ofDropColumn(columnName);
-                                    writer.apply(removeColumnOperation.build(), true);
+                                    AlterOperationBuilder removeColumnBuilder = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
+                                    removeColumnBuilder.ofDropColumn(columnName);
+                                    AlterOperation alterOp = removeColumnBuilder.build();
+                                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                                    writer.apply(alterOp, true);
                                 } catch (CairoException ex) {
                                     if (ex.getMessage().contains("column does not exist")) {
                                         // all good, someone removed the column concurrently
@@ -1851,6 +1854,46 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsDroppedV1() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("v1_drop");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                v1.create(path.of(root).concat("v1_drop"), 65_897);
+                v1.open(path);
+
+                assertIsDropped(v1, path, "v1_drop");
+
+                v1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testIsDroppedV2() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("v2_drop");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
+                v2.create(path.of(root).concat("v2_drop"), 65_897);
+                v2.open(path);
+
+                assertIsDropped(v2, path, "v2_drop");
+
+                v2.close();
+            }
+        });
+    }
+
+    @Test
     public void testLargeSegmentRollover() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -1921,46 +1964,6 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 // Segment 0 was purged since writer moved to segment 1
                 assertSegmentExistence(false, tableName, 1, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testIsDroppedV1() throws Exception {
-        FilesFacade ff = new TestFilesFacadeImpl();
-
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(root).concat("v1_drop");
-                ff.mkdir(path.$(), configuration.getMkDirMode());
-
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
-                v1.create(path.of(root).concat("v1_drop"), 65_897);
-                v1.open(path);
-
-                assertIsDropped(v1, path, "v1_drop");
-
-                v1.close();
-            }
-        });
-    }
-
-    @Test
-    public void testIsDroppedV2() throws Exception {
-        FilesFacade ff = new TestFilesFacadeImpl();
-
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(root).concat("v2_drop");
-                ff.mkdir(path.$(), configuration.getMkDirMode());
-
-                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
-                v2.create(path.of(root).concat("v2_drop"), 65_897);
-                v2.open(path);
-
-                assertIsDropped(v2, path, "v2_drop");
-
-                v2.close();
             }
         });
     }
@@ -2071,6 +2074,92 @@ public class WalWriterTest extends AbstractCairoTest {
                             """,
                     tableToken.getTableName()
             );
+        });
+    }
+
+    @Test
+    public void testMultipleSymbolColumnsOnRollover() throws Exception {
+        // Test that multiple symbol columns with different states are handled correctly:
+        // - Column 1: Has symbols, needs count update
+        // - Column 2: Empty initially, but symbols added externally, needs upgrade from EmptySymbolMapReader
+        // - Column 3: Empty and stays empty
+        assertMemoryLeak(() -> {
+            final String tableName = "testMultiSym";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s1", ColumnType.SYMBOL)
+                    .col("s2", ColumnType.SYMBOL)
+                    .col("s3", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            // Add symbols only to s1 via first WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "s1_" + i);  // s1 gets values
+                    // s2 and s3 get nulls
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Verify initial state - s1 has symbols, s2 and s3 are empty
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals(3, reader.getSymbolMapReader(0).getSymbolCount());
+                Assert.assertEquals(0, reader.getSymbolMapReader(1).getSymbolCount());
+                Assert.assertEquals(0, reader.getSymbolMapReader(2).getSymbolCount());
+            }
+
+            // Add more symbols to s1 and add symbols to s2 via another WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 2; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "s1_extra_" + i);  // More s1 values
+                    row.putSym(1, "s2_" + i);        // s2 gets values now
+                    // s3 still gets nulls
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Now open a new WAL writer - it will have stale state for all columns
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Check initial state (stale)
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));  // Stale for s1
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(1));  // Stale for s2
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));  // Correct for s3 (still 0)
+
+                // s1 has EmptySymbolMapReader (opens empty, needs upgrade)
+                Assert.assertTrue("s1 should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                // s2 has EmptySymbolMapReader (opens empty, needs upgrade)
+                Assert.assertTrue("s2 should start empty", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
+                // s3 has EmptySymbolMapReader (stays empty)
+                Assert.assertTrue("s3 should start empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
+
+                // Trigger rollover - should refresh all symbol watermarks
+                walWriter.rollSegment();
+
+                // After rollover:
+                // - s1 should be upgraded to real reader with 5 symbols (3 + 2 extra)
+                Assert.assertEquals(5, walWriter.getSymbolCountWatermark(0));
+                Assert.assertFalse("s1 should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_0"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_extra_0"));
+
+                // - s2 should be upgraded to real reader with 2 symbols
+                Assert.assertEquals(2, walWriter.getSymbolCountWatermark(1));
+                Assert.assertFalse("s2 should be upgraded", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(1).keyOf("s2_0"));
+
+                // - s3 should stay empty
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));
+                Assert.assertTrue("s3 should stay empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
+            }
         });
     }
 
@@ -3713,43 +3802,63 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolWatermarkOnRollover() throws Exception {
+    public void testSymbolCapacityRebuildOnRollover() throws Exception {
+        // Test that WAL writer correctly reopens symbol files when symbolTableNameTxn changes
+        // due to a capacity rebuild on the main table. The key verification is that after
+        // capacity rebuild, symbols can still be resolved (files were re-hardlinked correctly).
         assertMemoryLeak(() -> {
-            final String tableName = "testSymTable";
+            final String tableName = "testSymCapRebuild";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("s", ColumnType.SYMBOL)
+                    .col("s", ColumnType.SYMBOL).symbolCapacity(4)  // Small initial capacity
                     .timestamp("ts")
                     .wal();
-            createTable(model);
+            TableToken tableToken = createTable(model);
 
-            int symbolCount = 5;
-            try (WalWriter tableWriter = getWalWriter(tableName)) {
-                for (int i = 0; i < symbolCount; i++) {
-                    TableWriter.Row row = tableWriter.newRow(0);
-                    row.putSym(0, "s" + i);
+            // Add symbols via first WAL writer to populate the table
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "sym" + i);
                     row.append();
                 }
-                tableWriter.commit();
+                walWriter.commit();
             }
 
             drainWalQueue();
 
-            // Test that symbol watermarks are refreshed on segment rollover
+            // Open WAL writer - it starts with EmptySymbolMapReader (stale state)
             try (WalWriter walWriter = getWalWriter(tableName)) {
-                // Before rollover, watermark is stale (pool reuse case)
-                int watermarkBeforeRollover = walWriter.getSymbolCountWatermark(0);
-                Assert.assertEquals(0, watermarkBeforeRollover);
+                // WAL writers always open with EmptySymbolMapReader, watermark is stale
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
 
-                // Trigger segment rollover - this should refresh symbol watermarks
+                // First rollover - upgrades to real reader
                 walWriter.rollSegment();
 
-                // After rollover, watermark should be updated
-                int watermarkAfterRollover = walWriter.getSymbolCountWatermark(0);
-                SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(0);
+                Assert.assertFalse("Should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
 
-                Assert.assertEquals(symbolCount, watermarkAfterRollover);
-                Assert.assertFalse(symbolMapReader instanceof EmptySymbolMapReader);
-                Assert.assertNotEquals(VALUE_NOT_FOUND, symbolMapReader.keyOf("s0"));
+                // Verify symbols work before capacity change
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("sym0"));
+
+                // Now change capacity on the main table (while WAL writer is open with real reader)
+                // This creates new symbol files with different txn in _cv
+                try (TableWriter tableWriter = getWriter(tableToken)) {
+                    tableWriter.changeSymbolCapacity("s", 64, AllowAllSecurityContext.INSTANCE);
+                }
+
+                // Second rollover - should detect new symbolTableNameTxn and re-hardlink files
+                walWriter.rollSegment();
+
+                // After second rollover, the reader should still be valid (re-hardlinked with new files)
+                SymbolMapReader readerAfter = walWriter.getSymbolMapReader(0);
+                Assert.assertFalse("Should still have real reader", readerAfter instanceof EmptySymbolMapReader);
+                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
+
+                // Verify symbols can still be resolved - this confirms files were re-hardlinked correctly
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym0"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym1"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym2"));
             }
         });
     }
@@ -3828,154 +3937,6 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolCapacityRebuildOnRollover() throws Exception {
-        // Test that WAL writer correctly reopens symbol files when symbolTableNameTxn changes
-        // due to a capacity rebuild on the main table. The key verification is that after
-        // capacity rebuild, symbols can still be resolved (files were re-hardlinked correctly).
-        assertMemoryLeak(() -> {
-            final String tableName = "testSymCapRebuild";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("s", ColumnType.SYMBOL).symbolCapacity(4)  // Small initial capacity
-                    .timestamp("ts")
-                    .wal();
-            TableToken tableToken = createTable(model);
-
-            // Add symbols via first WAL writer to populate the table
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                for (int i = 0; i < 3; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putSym(0, "sym" + i);
-                    row.append();
-                }
-                walWriter.commit();
-            }
-
-            drainWalQueue();
-
-            // Open WAL writer - it starts with EmptySymbolMapReader (stale state)
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                // WAL writers always open with EmptySymbolMapReader, watermark is stale
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
-                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
-
-                // First rollover - upgrades to real reader
-                walWriter.rollSegment();
-
-                Assert.assertFalse("Should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
-                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
-
-                // Verify symbols work before capacity change
-                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("sym0"));
-
-                // Now change capacity on the main table (while WAL writer is open with real reader)
-                // This creates new symbol files with different txn in _cv
-                try (TableWriter tableWriter = getWriter(tableToken)) {
-                    tableWriter.changeSymbolCapacity("s", 64, AllowAllSecurityContext.INSTANCE);
-                }
-
-                // Second rollover - should detect new symbolTableNameTxn and re-hardlink files
-                walWriter.rollSegment();
-
-                // After second rollover, the reader should still be valid (re-hardlinked with new files)
-                SymbolMapReader readerAfter = walWriter.getSymbolMapReader(0);
-                Assert.assertFalse("Should still have real reader", readerAfter instanceof EmptySymbolMapReader);
-                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
-
-                // Verify symbols can still be resolved - this confirms files were re-hardlinked correctly
-                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym0"));
-                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym1"));
-                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym2"));
-            }
-        });
-    }
-
-    @Test
-    public void testMultipleSymbolColumnsOnRollover() throws Exception {
-        // Test that multiple symbol columns with different states are handled correctly:
-        // - Column 1: Has symbols, needs count update
-        // - Column 2: Empty initially, but symbols added externally, needs upgrade from EmptySymbolMapReader
-        // - Column 3: Empty and stays empty
-        assertMemoryLeak(() -> {
-            final String tableName = "testMultiSym";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("s1", ColumnType.SYMBOL)
-                    .col("s2", ColumnType.SYMBOL)
-                    .col("s3", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal();
-            TableToken tableToken = createTable(model);
-
-            // Add symbols only to s1 via first WAL writer
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                for (int i = 0; i < 3; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putSym(0, "s1_" + i);  // s1 gets values
-                    // s2 and s3 get nulls
-                    row.append();
-                }
-                walWriter.commit();
-            }
-
-            drainWalQueue();
-
-            // Verify initial state - s1 has symbols, s2 and s3 are empty
-            try (TableReader reader = engine.getReader(tableToken)) {
-                Assert.assertEquals(3, reader.getSymbolMapReader(0).getSymbolCount());
-                Assert.assertEquals(0, reader.getSymbolMapReader(1).getSymbolCount());
-                Assert.assertEquals(0, reader.getSymbolMapReader(2).getSymbolCount());
-            }
-
-            // Add more symbols to s1 and add symbols to s2 via another WAL writer
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                for (int i = 0; i < 2; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putSym(0, "s1_extra_" + i);  // More s1 values
-                    row.putSym(1, "s2_" + i);        // s2 gets values now
-                    // s3 still gets nulls
-                    row.append();
-                }
-                walWriter.commit();
-            }
-
-            drainWalQueue();
-
-            // Now open a new WAL writer - it will have stale state for all columns
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                // Check initial state (stale)
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));  // Stale for s1
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(1));  // Stale for s2
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));  // Correct for s3 (still 0)
-
-                // s1 has EmptySymbolMapReader (opens empty, needs upgrade)
-                Assert.assertTrue("s1 should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
-                // s2 has EmptySymbolMapReader (opens empty, needs upgrade)
-                Assert.assertTrue("s2 should start empty", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
-                // s3 has EmptySymbolMapReader (stays empty)
-                Assert.assertTrue("s3 should start empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
-
-                // Trigger rollover - should refresh all symbol watermarks
-                walWriter.rollSegment();
-
-                // After rollover:
-                // - s1 should be upgraded to real reader with 5 symbols (3 + 2 extra)
-                Assert.assertEquals(5, walWriter.getSymbolCountWatermark(0));
-                Assert.assertFalse("s1 should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
-                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_0"));
-                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_extra_0"));
-
-                // - s2 should be upgraded to real reader with 2 symbols
-                Assert.assertEquals(2, walWriter.getSymbolCountWatermark(1));
-                Assert.assertFalse("s2 should be upgraded", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
-                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(1).keyOf("s2_0"));
-
-                // - s3 should stay empty
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));
-                Assert.assertTrue("s3 should stay empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
-            }
-        });
-    }
-
-    @Test
     public void testSymbolNullValueOnRollover() throws Exception {
         // Test that null value flag is correctly refreshed on rollover
         // When symbols including null are added to the main table, the WAL writer should
@@ -4023,44 +3984,178 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Tests symbol table behavior when same symbol is reused after cancel.
+     * <p>
+     * Current behavior: the symbol is cached in symbolMaps, so reusing it
+     * returns the same key. Only one symbol entry is created.
+     */
     @Test
-    public void testSymbolWatermarkFallbackOnStructureVersionMismatch() throws Exception {
-        // Test that on structure version mismatch we fall back to stale reader counts.
+    public void testSymbolReusedAfterCancel() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testSymFallback";
+            final String tableName = "testSymbolReuse";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
                     .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
                     .timestamp("ts")
                     .wal();
-            createTable(model);
+            TableToken tableToken = createTable(model);
 
             try (WalWriter walWriter = getWalWriter(tableName)) {
-                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+                // Row 1: Add symbol, then CANCEL
+                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
+                row1.putSym(0, "reused_symbol");
+                row1.putInt(1, 100);
+                row1.cancel();
 
-                // Add symbols via another WAL writer and apply to table.
-                try (WalWriter writer2 = getWalWriter(tableName)) {
-                    TableWriter.Row row = writer2.newRow(0);
-                    row.putSym(0, "sym1");
-                    row.append();
-                    writer2.commit();
+                // Row 2: Use SAME symbol, then COMMIT
+                // This should find it in symbolMaps cache and reuse the key
+                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
+                row2.putSym(0, "reused_symbol");  // Should get same key from cache
+                row2.putInt(1, 200);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify data
+            assertSql(
+                    "s\tvalue\tts\n" +
+                            "reused_symbol\t200\t1970-01-01T00:00:02.000000Z\n",
+                    "select * from " + tableName
+            );
+
+            // Check symbol table - only one symbol should exist (reused from cache)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                // Current behavior: symbol is cached, so reuse doesn't create duplicates
+                assertEquals("Reused symbol should only appear once", 1, symbolMapReader.getSymbolCount());
+                assertEquals("reused_symbol", symbolMapReader.valueOf(0).toString());
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior with multiple cancelled rows.
+     * <p>
+     * Current behavior: all symbols (cancelled + committed) remain in the symbol table.
+     * This is consistent with append-only symbol table design.
+     */
+    @Test
+    public void testSymbolTableBehaviorMultipleCancels() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolMultiCancel";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Cancel 10 rows with unique symbols
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = walWriter.newRow((i + 1) * 1_000_000L);
+                    row.putSym(0, "cancelled_" + i);  // Each increments localSymbolIds
+                    row.putInt(1, i);
+                    row.cancel();  // localSymbolIds keeps incrementing!
                 }
-                drainWalQueue();
 
-                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
-                    Assert.assertEquals(1, reader.getSymbolMapReader(0).getSymbolCount());
-                }
+                // Now add one real row
+                TableWriter.Row realRow = walWriter.newRow(100_000_000L);
+                realRow.putSym(0, "real_symbol");  // Gets key 10 (keys 0-9 "wasted")
+                realRow.putInt(1, 999);
+                realRow.append();
 
-                // Create structure version mismatch: add a column but do not apply WAL.
-                walWriter.addColumn("x", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
-                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
-                    Assert.assertTrue("WAL metadata should be ahead of table", walWriter.getMetadataVersion() > reader.getMetadataVersion());
-                }
+                walWriter.commit();
+            }
 
-                // Rollover should skip refresh and keep stale reader/watermark.
-                walWriter.rollSegment();
-                Assert.assertTrue("Fallback should keep empty reader", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
-                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify data
+            assertSql(
+                    "s\tvalue\tts\n" +
+                            "real_symbol\t999\t1970-01-01T00:01:40.000000Z\n",
+                    "select * from " + tableName
+            );
+
+            // Check symbol table - all 11 symbols should exist (10 cancelled + 1 committed)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                int symbolCount = symbolMapReader.getSymbolCount();
+
+                // Current behavior: all symbols remain in the table
+                // This is consistent with append-only symbol table design
+                assertEquals("All symbols (cancelled + committed) should exist", 11, symbolCount);
+
+                // The committed symbol should be at key 10
+                assertEquals("real_symbol", symbolMapReader.valueOf(10).toString());
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior when a row is cancelled after adding a new symbol.
+     * <p>
+     * Current behavior: cancelled symbols remain in the symbol table. This is consistent
+     * with how QuestDB handles symbols in other scenarios (e.g., dropping partitions).
+     * <p>
+     * Scenario:
+     * 1. Start row, add new symbol "sym_cancelled"
+     * 2. Cancel row
+     * 3. Start new row, add new symbol "sym_committed"
+     * 4. Commit and apply WAL
+     * 5. Verify both symbols exist in symbol table (even though only one has data)
+     */
+    @Test
+    public void testSymbolTableBehaviorOnRowCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolCancel";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Row 1: Add symbol, then CANCEL
+                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
+                row1.putSym(0, "sym_cancelled");  // This increments localSymbolIds
+                row1.putInt(1, 100);
+                row1.cancel();  // Data rolled back, but localSymbolIds NOT reset!
+
+                // Row 2: Add different symbol, then COMMIT
+                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
+                row2.putSym(0, "sym_committed");  // Gets key 1 (key 0 was "used" by cancelled row)
+                row2.putInt(1, 200);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL to main table
+            drainWalQueue();
+
+            // Query the data - what do we get?
+            assertSql(
+                    "s\tvalue\tts\n" +
+                            "sym_committed\t200\t1970-01-01T00:00:02.000000Z\n",
+                    "select * from " + tableName
+            );
+
+            // Check symbol table - both symbols should exist (cancelled + committed)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                int symbolCount = symbolMapReader.getSymbolCount();
+
+                // Current behavior: both symbols are in the table
+                // This is consistent with partition drop behavior
+                assertEquals("Both symbols should exist in symbol table", 2, symbolCount);
             }
         });
     }
@@ -4218,6 +4313,90 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertWalFileExist(path, tableToken, walName, "d.k");
                 assertWalFileExist(path, tableToken, walName, "d.o");
                 assertWalFileExist(path, tableToken, walName, "d.v");
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolWatermarkFallbackOnStructureVersionMismatch() throws Exception {
+        // Test that on structure version mismatch we fall back to stale reader counts.
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymFallback";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+
+                // Add symbols via another WAL writer and apply to table.
+                try (WalWriter writer2 = getWalWriter(tableName)) {
+                    TableWriter.Row row = writer2.newRow(0);
+                    row.putSym(0, "sym1");
+                    row.append();
+                    writer2.commit();
+                }
+                drainWalQueue();
+
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(1, reader.getSymbolMapReader(0).getSymbolCount());
+                }
+
+                // Create structure version mismatch: add a column but do not apply WAL.
+                walWriter.addColumn("x", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertTrue("WAL metadata should be ahead of table", walWriter.getMetadataVersion() > reader.getMetadataVersion());
+                }
+
+                // Rollover should skip refresh and keep stale reader/watermark.
+                walWriter.rollSegment();
+                Assert.assertTrue("Fallback should keep empty reader", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolWatermarkOnRollover() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymTable";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            int symbolCount = 5;
+            try (WalWriter tableWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < symbolCount; i++) {
+                    TableWriter.Row row = tableWriter.newRow(0);
+                    row.putSym(0, "s" + i);
+                    row.append();
+                }
+                tableWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Test that symbol watermarks are refreshed on segment rollover
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Before rollover, watermark is stale (pool reuse case)
+                int watermarkBeforeRollover = walWriter.getSymbolCountWatermark(0);
+                Assert.assertEquals(0, watermarkBeforeRollover);
+
+                // Trigger segment rollover - this should refresh symbol watermarks
+                walWriter.rollSegment();
+
+                // After rollover, watermark should be updated
+                int watermarkAfterRollover = walWriter.getSymbolCountWatermark(0);
+                SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(0);
+
+                Assert.assertEquals(symbolCount, watermarkAfterRollover);
+                Assert.assertFalse(symbolMapReader instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, symbolMapReader.keyOf("s0"));
             }
         });
     }
@@ -4784,9 +4963,20 @@ public class WalWriterTest extends AbstractCairoTest {
         assertNull(symbolMapDiff.nextEntry());
     }
 
-    @SuppressWarnings("SameParameterValue")
-    private void assertWalFileExist(Path path, TableToken tableName, String walName, String fileName) {
-        assertWalFileExist(path, tableName, walName, -1, fileName);
+    private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
+        log.addEntry(0, 1, 1, 1, 100, 0, 0, 0);
+        assertFalse("should not be dropped after normal entry", log.isDropped());
+
+        log.addEntry(0, DROP_TABLE_WAL_ID, 0, 0, 200, 0, 0, 0);
+        assertTrue("should be dropped after drop entry", log.isDropped());
+
+        try (TransactionLogCursor cursor = log.getCursor(0, path.of(root).concat(dir))) {
+            assertTrue(cursor.hasNext());
+            assertEquals(1, cursor.getWalId());
+
+            assertTrue(cursor.hasNext());
+            assertEquals(DROP_TABLE_WAL_ID, cursor.getWalId());
+        }
     }
 
     private void assertWalFileExist(Path path, TableToken tableName, String walName, int segment, String fileName) {
@@ -4799,6 +4989,11 @@ public class WalWriterTest extends AbstractCairoTest {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private void assertWalFileExist(Path path, TableToken tableName, String walName, String fileName) {
+        assertWalFileExist(path, tableName, walName, -1, fileName);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -5010,23 +5205,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     static void addColumn(WalWriter writer, String columnName, int columnType) {
-        writer.addColumn(columnName, columnType);
-    }
-
-    private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
-        log.addEntry(0, 1, 1, 1, 100, 0, 0, 0);
-        assertFalse("should not be dropped after normal entry", log.isDropped());
-
-        log.addEntry(0, DROP_TABLE_WAL_ID, 0, 0, 200, 0, 0, 0);
-        assertTrue("should be dropped after drop entry", log.isDropped());
-
-        try (TransactionLogCursor cursor = log.getCursor(0, path.of(root).concat(dir))) {
-            assertTrue(cursor.hasNext());
-            assertEquals(1, cursor.getWalId());
-
-            assertTrue(cursor.hasNext());
-            assertEquals(DROP_TABLE_WAL_ID, cursor.getWalId());
-        }
+        writer.addColumn(columnName, columnType, AllowAllSecurityContext.INSTANCE);
     }
 
     static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
@@ -5058,25 +5237,6 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    static void removeColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
-        removeColumnOperation.ofDropColumn(columnName);
-        writer.apply(removeColumnOperation.build(), true);
-    }
-
-    static void renameColumn(TableWriterAPI writer) {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken(), 0);
-        renameColumnC.ofRenameColumn("b", "c");
-        writer.apply(renameColumnC.build(), true);
-    }
-
-
-    interface RowInserter {
-        long getCount();
-
-        void insertRow();
-    }
-
     // ==================== Symbol Table Behavior on Row Cancel ====================
     //
     // NOTE: These tests validate CURRENT behavior, not prescribe it. They document how
@@ -5087,179 +5247,25 @@ public class WalWriterTest extends AbstractCairoTest {
     // Symbol tables are append-only by design and never shrink. This is not a bug.
     // These tests can be removed or modified if the behavior changes in the future.
 
-    /**
-     * Tests symbol table behavior when a row is cancelled after adding a new symbol.
-     * <p>
-     * Current behavior: cancelled symbols remain in the symbol table. This is consistent
-     * with how QuestDB handles symbols in other scenarios (e.g., dropping partitions).
-     * <p>
-     * Scenario:
-     * 1. Start row, add new symbol "sym_cancelled"
-     * 2. Cancel row
-     * 3. Start new row, add new symbol "sym_committed"
-     * 4. Commit and apply WAL
-     * 5. Verify both symbols exist in symbol table (even though only one has data)
-     */
-    @Test
-    public void testSymbolTableBehaviorOnRowCancel() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testSymbolCancel";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("s", ColumnType.SYMBOL)
-                    .col("value", ColumnType.INT)
-                    .timestamp("ts")
-                    .wal();
-            TableToken tableToken = createTable(model);
-
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                // Row 1: Add symbol, then CANCEL
-                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
-                row1.putSym(0, "sym_cancelled");  // This increments localSymbolIds
-                row1.putInt(1, 100);
-                row1.cancel();  // Data rolled back, but localSymbolIds NOT reset!
-
-                // Row 2: Add different symbol, then COMMIT
-                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
-                row2.putSym(0, "sym_committed");  // Gets key 1 (key 0 was "used" by cancelled row)
-                row2.putInt(1, 200);
-                row2.append();
-
-                walWriter.commit();
-            }
-
-            // Apply WAL to main table
-            drainWalQueue();
-
-            // Query the data - what do we get?
-            assertSql(
-                    "s\tvalue\tts\n" +
-                            "sym_committed\t200\t1970-01-01T00:00:02.000000Z\n",
-                    "select * from " + tableName
-            );
-
-            // Check symbol table - both symbols should exist (cancelled + committed)
-            try (TableReader reader = getReader(tableName)) {
-                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
-                int symbolCount = symbolMapReader.getSymbolCount();
-
-                // Current behavior: both symbols are in the table
-                // This is consistent with partition drop behavior
-                assertEquals("Both symbols should exist in symbol table", 2, symbolCount);
-            }
-        });
+    static void removeColumn(TableWriterAPI writer, String columnName) {
+        AlterOperationBuilder removeColumnBuilder = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
+        removeColumnBuilder.ofDropColumn(columnName);
+        AlterOperation alterOp = removeColumnBuilder.build();
+        alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+        writer.apply(alterOp, true);
     }
 
-    /**
-     * Tests symbol table behavior with multiple cancelled rows.
-     * <p>
-     * Current behavior: all symbols (cancelled + committed) remain in the symbol table.
-     * This is consistent with append-only symbol table design.
-     */
-    @Test
-    public void testSymbolTableBehaviorMultipleCancels() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testSymbolMultiCancel";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("s", ColumnType.SYMBOL)
-                    .col("value", ColumnType.INT)
-                    .timestamp("ts")
-                    .wal();
-            TableToken tableToken = createTable(model);
-
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                // Cancel 10 rows with unique symbols
-                for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = walWriter.newRow((i + 1) * 1_000_000L);
-                    row.putSym(0, "cancelled_" + i);  // Each increments localSymbolIds
-                    row.putInt(1, i);
-                    row.cancel();  // localSymbolIds keeps incrementing!
-                }
-
-                // Now add one real row
-                TableWriter.Row realRow = walWriter.newRow(100_000_000L);
-                realRow.putSym(0, "real_symbol");  // Gets key 10 (keys 0-9 "wasted")
-                realRow.putInt(1, 999);
-                realRow.append();
-
-                walWriter.commit();
-            }
-
-            // Apply WAL
-            drainWalQueue();
-
-            // Verify data
-            assertSql(
-                    "s\tvalue\tts\n" +
-                            "real_symbol\t999\t1970-01-01T00:01:40.000000Z\n",
-                    "select * from " + tableName
-            );
-
-            // Check symbol table - all 11 symbols should exist (10 cancelled + 1 committed)
-            try (TableReader reader = getReader(tableName)) {
-                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
-                int symbolCount = symbolMapReader.getSymbolCount();
-
-                // Current behavior: all symbols remain in the table
-                // This is consistent with append-only symbol table design
-                assertEquals("All symbols (cancelled + committed) should exist", 11, symbolCount);
-
-                // The committed symbol should be at key 10
-                assertEquals("real_symbol", symbolMapReader.valueOf(10).toString());
-            }
-        });
+    static void renameColumn(TableWriterAPI writer) {
+        AlterOperationBuilder renameColumnBuilder = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken(), 0);
+        renameColumnBuilder.ofRenameColumn("b", "c");
+        AlterOperation alterOp = renameColumnBuilder.build();
+        alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+        writer.apply(alterOp, true);
     }
 
-    /**
-     * Tests symbol table behavior when same symbol is reused after cancel.
-     * <p>
-     * Current behavior: the symbol is cached in symbolMaps, so reusing it
-     * returns the same key. Only one symbol entry is created.
-     */
-    @Test
-    public void testSymbolReusedAfterCancel() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testSymbolReuse";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("s", ColumnType.SYMBOL)
-                    .col("value", ColumnType.INT)
-                    .timestamp("ts")
-                    .wal();
-            TableToken tableToken = createTable(model);
+    interface RowInserter {
+        long getCount();
 
-            try (WalWriter walWriter = getWalWriter(tableName)) {
-                // Row 1: Add symbol, then CANCEL
-                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
-                row1.putSym(0, "reused_symbol");
-                row1.putInt(1, 100);
-                row1.cancel();
-
-                // Row 2: Use SAME symbol, then COMMIT
-                // This should find it in symbolMaps cache and reuse the key
-                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
-                row2.putSym(0, "reused_symbol");  // Should get same key from cache
-                row2.putInt(1, 200);
-                row2.append();
-
-                walWriter.commit();
-            }
-
-            // Apply WAL
-            drainWalQueue();
-
-            // Verify data
-            assertSql(
-                    "s\tvalue\tts\n" +
-                            "reused_symbol\t200\t1970-01-01T00:00:02.000000Z\n",
-                    "select * from " + tableName
-            );
-
-            // Check symbol table - only one symbol should exist (reused from cache)
-            try (TableReader reader = getReader(tableName)) {
-                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
-                // Current behavior: symbol is cached, so reuse doesn't create duplicates
-                assertEquals("Reused symbol should only appear once", 1, symbolMapReader.getSymbolCount());
-                assertEquals("reused_symbol", symbolMapReader.valueOf(0).toString());
-            }
-        });
+        void insertRow();
     }
 }

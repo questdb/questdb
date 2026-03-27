@@ -80,29 +80,6 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    default void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential,
-            boolean isDedupKey
-    ) {
-        addColumn(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                isSequential,
-                isDedupKey,
-                null
-        );
-    }
-
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
@@ -133,18 +110,6 @@ public interface MetadataService {
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void disableDeduplication();
-
-    /**
-     * Resets per-column Parquet encoding and/or compression settings to defaults.
-     * {@code dropFlags} is a bitmask: bit 0 resets the encoding, bit 1 resets
-     * the compression. When both components are reset, the packed config becomes 0
-     * (fully default). This method commits any pending transaction before modifying
-     * the column metadata.
-     *
-     * @param columnName name of the column whose Parquet settings to reset
-     * @param dropFlags  bitmask — 1 = drop encoding, 2 = drop compression, 3 = drop both
-     */
-    void dropColumnParquetEncoding(CharSequence columnName, int dropFlags);
 
     void dropIndex(@NotNull CharSequence columnName);
 
