@@ -1674,7 +1674,7 @@ public final class TableUtils {
         final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
         final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
 
-        if (expectedPartitionNameTxn >= 0 && partitionChangeDetector != null) {
+        if (expectedPartitionNameTxn != Long.MIN_VALUE && partitionChangeDetector != null) {
             partitionChangeDetector.of(reader, partitionTimestamp, expectedPartitionNameTxn, metadata, metadataVersion);
         }
 
@@ -1686,7 +1686,7 @@ public final class TableUtils {
                 symbolTableProvider,
                 configuration,
                 null, Double.NaN, null,
-                expectedPartitionNameTxn >= 0 ? partitionChangeDetector : null
+                expectedPartitionNameTxn != Long.MIN_VALUE ? partitionChangeDetector : null
         );
     }
 
@@ -2692,6 +2692,8 @@ public final class TableUtils {
 
     public static class PartitionChangeDetector {
         private long expectedPartitionNameTxn;
+        private long expectedRowCount;
+        private int expectedSquashCount;
         private TableMetadata metadata;
         private long metadataVersion;
         private long partitionTimestamp;
@@ -2708,7 +2710,13 @@ public final class TableUtils {
                 return true;
             }
             final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
-            return index < 0 || reader.getTxFile().getPartitionNameTxn(index) != expectedPartitionNameTxn;
+            if (index < 0) {
+                return true;
+            }
+            final TxReader txFile = reader.getTxFile();
+            return txFile.getPartitionNameTxn(index) != expectedPartitionNameTxn
+                    || txFile.getPartitionSquashCount(index) != expectedSquashCount
+                    || txFile.getPartitionSize(index) != expectedRowCount;
         }
 
         public PartitionChangeDetector of(
@@ -2723,6 +2731,12 @@ public final class TableUtils {
             this.expectedPartitionNameTxn = expectedPartitionNameTxn;
             this.metadata = metadata;
             this.metadataVersion = metadataVersion;
+            final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+            if (index >= 0) {
+                final TxReader txFile = reader.getTxFile();
+                this.expectedSquashCount = txFile.getPartitionSquashCount(index);
+                this.expectedRowCount = txFile.getPartitionSize(index);
+            }
             return this;
         }
     }

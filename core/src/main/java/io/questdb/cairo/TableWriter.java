@@ -2129,6 +2129,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -1L);
     }
 
+    public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
+        return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+    }
+
+    public int getPartitionSquashCountByPartitionTimestamp(long partitionTimestamp) {
+        final int index = txWriter.getPartitionIndex(partitionTimestamp);
+        return index >= 0 ? txWriter.getPartitionSquashCount(index) : -1;
+    }
+
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes /
@@ -2465,6 +2474,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         squashPartitionForce(partitionIndex);
+
+        // Remove any stale parquet file from a prior conversion that may not
+        // reflect the current native data (e.g. after an in-place squash or O3
+        // append that added rows without bumping the nameTxn).
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        ff.removeQuiet(path.$());
+        path.trimTo(pathSize);
 
         return partitionTimestamp;
     }
