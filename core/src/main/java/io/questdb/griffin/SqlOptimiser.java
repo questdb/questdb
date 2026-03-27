@@ -254,7 +254,15 @@ public class SqlOptimiser implements Mutable {
                 queryModelPool,
                 windowExpressionPool,
                 sqlNodeStack,
-                functionParser
+                functionParser,
+                tempExprs,
+                groupByNodes,
+                orderByAdvice,
+                tempIntList,
+                tempAliasRewriteMap,
+                groupByAliases,
+                literalCollectorBNames,
+                trivialExpressionCandidates
         );
         initialiseOperatorExpressions();
     }

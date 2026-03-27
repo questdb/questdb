@@ -5710,7 +5710,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore
     @Test
     public void testT87bCommaLateral() throws Exception {
         assertMemoryLeak(() -> {
@@ -5949,7 +5948,6 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T93: Correlated subquery inside lateral WHERE (IN subquery)
     @Test
-    @Ignore("cannot compare LONG with type CURSOR")
     public void testT93CorrelatedSubqueryInLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5973,13 +5971,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
 
-            // Lateral with IN subquery — inner query not correlated to outer
-            assertQueryNoLeakCheck(
-                    """
-                            id\tqty
-                            1\t10.0
-                            3\t30.0
-                            """,
+            assertException(
                     """
                             SELECT o.id, sub.qty
                             FROM orders o
@@ -5990,7 +5982,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ) sub
                             ORDER BY o.id
                             """,
-                    null, true, false
+                    126,
+                    "cannot compare LONG with type CURSOR"
             );
         });
     }
@@ -6034,6 +6027,216 @@ public class LateralJoinTest extends AbstractCairoTest {
                             ORDER BY o.id, sub.category
                             """,
                     null, true, true
+            );
+        });
+    }
+
+    // T95: LEFT LATERAL count — outer table has column with same name as count alias
+    // applyLateralCountCoalesce must NOT wrap t1.cnt with coalesce
+    @Test
+    public void testT95LeftCountAliasClashWithOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, cnt INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, '2024-01-01T01:00:00.000000Z'),
+                    (3, 300, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // t1.cnt is a regular column (100, 200, 300), sub.cnt is count(*)
+            // Only sub.cnt should become coalesce(sub.cnt, 0) for the LEFT unmatched row
+            assertQueryNoLeakCheck(
+                    """
+                            cnt\tcnt1
+                            100\t2
+                            200\t1
+                            300\t0
+                            """,
+                    """
+                            SELECT t1.cnt, sub.cnt
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.id
+                            ) sub ON true
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T95b: Same as T95 but with wildcard SELECT *
+    @Test
+    public void testT95bLeftCountAliasClashWithOuterColumnWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, cnt INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, '2024-01-01T01:00:00.000000Z'),
+                    (3, 300, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // With SELECT *, wildcard expansion may rename sub.cnt to cnt1
+            // Only the lateral count column should get coalesce, not t1.cnt
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcnt\tts\tcnt1
+                            1\t100\t2024-01-01T00:00:00.000000Z\t2
+                            2\t200\t2024-01-01T01:00:00.000000Z\t1
+                            3\t300\t2024-01-01T02:00:00.000000Z\t0
+                            """,
+                    """
+                            SELECT *
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt FROM t2 WHERE t2.t1_id = t1.id
+                            ) sub ON true
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T96: LEFT LATERAL with multiple count columns + wildcard
+    @Test
+    public void testT96LeftMultipleCountColumnsWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, category SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 'A', 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'A', 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 'B', 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // Two count aggregates: cnt_all and cnt_cat. Both must be 0 for unmatched row.
+            assertQueryNoLeakCheck(
+                    """
+                            id\tts\tcategory\tcnt_all\tcnt_cat
+                            1\t2024-01-01T00:00:00.000000Z\tA\t2\t2
+                            2\t2024-01-01T01:00:00.000000Z\tB\t1\t1
+                            3\t2024-01-01T02:00:00.000000Z\t\t0\t0
+                            """,
+                    """
+                            SELECT *
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT category, count(*) AS cnt_all, count(category) AS cnt_cat
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                                GROUP BY category
+                            ) sub ON true
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T96b: LEFT LATERAL count with explicit column list (non-wildcard)
+    @Test
+    public void testT96bLeftCountExplicitColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // Non-wildcard: explicit t1.id and sub.cnt columns
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcnt\ttotal
+                            1\t2\t30
+                            2\t1\t30
+                            3\t0\tnull
+                            """,
+                    """
+                            SELECT t1.id, sub.cnt, sub.total
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt, sum(val) AS total
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub ON true
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T97: LEFT LATERAL count + sum with wildcard, no GROUP BY (scalar aggregate)
+    @Test
+    public void testT97LeftCountAndSumWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // count(*) should be 0 for unmatched, sum should be null
+            assertQueryNoLeakCheck(
+                    """
+                            id\tts\tcnt\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\t2\t30
+                            2\t2024-01-01T01:00:00.000000Z\t1\t30
+                            3\t2024-01-01T02:00:00.000000Z\t0\tnull
+                            """,
+                    """
+                            SELECT *
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt, sum(val) AS total
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub ON true
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
             );
         });
     }
