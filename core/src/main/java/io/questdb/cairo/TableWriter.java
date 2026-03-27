@@ -3018,23 +3018,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
-
-            // Post-commit: the switch is logically complete. Everything below is
-            // best-effort cleanup. Failures must not roll back the committed
-            // transaction (e.g. by deleting the new partition dir the TxReader
-            // already points to).
-            try {
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-                }
-
-                // remove old partition dir
-                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-            } catch (Throwable e) {
-                handleHousekeepingException(e);
-            }
-
-            return SWITCH_OK;
         } catch (CairoException e) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir [path=").$(other).I$();
@@ -3044,6 +3027,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
+
+        // Post-commit: the switch is logically complete. Everything below is
+        // best-effort cleanup. Failures must not roll back the committed
+        // transaction (e.g. by deleting the new partition dir the TxReader
+        // already points to).
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+
+            // remove old partition dir
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+
+        return SWITCH_OK;
     }
 
     /**
