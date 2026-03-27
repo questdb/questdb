@@ -74,7 +74,7 @@ public interface Record {
      * index is out of bounds.
      * <p>
      * The default implementation is just for convenience, it does not implement the
-     * main optimization. That lives in {@link PageFrameMemoryRecord#getArrayDouble1d2d0},
+     * main optimization. That lives in {@link PageFrameMemoryRecord#getArrayDouble1d2d},
      * which completely bypasses the expensive {@link ArrayView} setup.
      * <p>
      * For 1D arrays, ignores {@code idx1}.
