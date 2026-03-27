@@ -3647,7 +3647,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     sym
                     A
                     B
-                    """, "SELECT DISTINCT sym FROM t_distinct_bmp");
+                    """, "SELECT DISTINCT sym FROM t_distinct_bmp ORDER BY sym");
 
             // Plan should NOT show PostingIndexDistinct
             assertPlanNoLeakCheck(

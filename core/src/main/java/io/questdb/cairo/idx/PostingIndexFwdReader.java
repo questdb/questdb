@@ -112,11 +112,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long minValue;
         private int requestedKey;
         private int totalValueCount;
-        private int metadataCapacity = 256;
-        private long valueCountsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        private long firstValuesAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        private long minDeltasAddr = Unsafe.malloc(256L * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        private long bitWidthsAddr = Unsafe.malloc(256L * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
         private long packedDataAddr;
         private boolean flatMode;
         private int flatBitWidth;
@@ -124,6 +119,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long flatDataBase;
         private int flatStartIdx;
         private int flatRemaining;
+        // Streaming constant-delta mode: compute values on-the-fly as
+        // currentValue += step, eliminating buffer writes entirely.
+        // Active when all blocks in a full-scan have bitWidth=0.
+        private boolean constantDeltaMode;
+        private long constantDeltaValue;   // current value (additive tracking)
+        private long constantDeltaStep;    // constant delta per value
+        private int constantDeltaRemaining; // values left in current block
+        private int constantDeltaBlock;    // current block index
+        private int constantDeltaBlockCount; // total blocks
         private int lookupPos;
         private int lookupEnd;
         private int sidecarOrdinal;
@@ -337,11 +341,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return view.of(dataAddr + Integer.BYTES, len);
         }
 
-        /**
-         * Computes per-column sidecar offsets for the given gen by scanning
-         * through previous gen blocks in each sidecar file. Each gen block
-         * starts with [count:4B]; block size depends on column type.
-         */
         /**
          * Computes per-column sidecar offsets for the given sparse gen by
          * scanning through previous SPARSE gen blocks in each sidecar file.
@@ -581,8 +580,44 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public boolean hasNext() {
+            // Fast path: streaming constant-delta (full scan, all bitWidth=0).
+            // Tiny method body for JIT inlining — no min/max checks needed
+            // because streaming mode is only active when minValue=0 and
+            // maxValue=Long.MAX_VALUE (set by decodeAllBlocksBulk).
+            if (constantDeltaRemaining > 0) {
+                next = constantDeltaValue;
+                constantDeltaValue += constantDeltaStep;
+                constantDeltaRemaining--;
+                sidecarOrdinal++;
+                return true;
+            }
+            return hasNextComplex();
+        }
+
+        /**
+         * Slow path for hasNext(): handles block transitions, buffer reads,
+         * flat mode, and generation advancement. Called ~1.6% of the time
+         * for constant-delta data (only at block boundaries).
+         */
+        private boolean hasNextComplex() {
             while (true) {
-                // Serve from block buffer first
+                // Streaming mode: advance to next block
+                if (constantDeltaMode) {
+                    if (constantDeltaBlock < constantDeltaBlockCount) {
+                        advanceConstantDeltaBlock();
+                        if (constantDeltaRemaining > 0) {
+                            next = constantDeltaValue;
+                            constantDeltaValue += constantDeltaStep;
+                            constantDeltaRemaining--;
+                            sidecarOrdinal++;
+                            return true;
+                        }
+                        continue;
+                    }
+                    constantDeltaMode = false;
+                }
+
+                // Serve from block buffer
                 while (blockBufferPos < blockBufferEnd) {
                     long value = Unsafe.getUnsafe().getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                     blockBufferPos++;
@@ -614,6 +649,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 if (!advanceToNextRelevantGen()) {
                     return false;
                 }
+
+                // New gen may have set up streaming mode — serve first value
+                if (constantDeltaRemaining > 0) {
+                    next = constantDeltaValue;
+                    constantDeltaValue += constantDeltaStep;
+                    constantDeltaRemaining--;
+                    sidecarOrdinal++;
+                    return true;
+                }
             }
         }
 
@@ -630,6 +674,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 currentBlock = 0;
                 blockBufferPos = 0;
                 blockBufferEnd = 0;
+                constantDeltaMode = false;
+                constantDeltaRemaining = 0;
+                flatMode = false;
                 return;
             }
 
@@ -654,6 +701,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.currentBlock = 0;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+            this.constantDeltaMode = false;
+            this.constantDeltaRemaining = 0;
+            this.flatMode = false;
             this.sidecarOrdinal = 0;
             this.sidecarStrideKeyStart = 0;
             this.decodedStride = -1;
@@ -776,11 +826,24 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return false;
         }
 
+        private void advanceConstantDeltaBlock() {
+            int b = constantDeltaBlock;
+            int count = Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
+            long firstValue = Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES);
+            long minD = Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES);
+            constantDeltaValue = firstValue;
+            constantDeltaStep = minD;
+            constantDeltaRemaining = count;
+            constantDeltaBlock++;
+        }
+
         private void clearBlockState() {
             this.encodedBlockCount = 0;
             this.currentBlock = 0;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+            this.constantDeltaMode = false;
+            this.constantDeltaRemaining = 0;
         }
 
         private void decodeNextBlock() {
@@ -826,35 +889,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             blockBufferEnd = batch;
         }
 
-        private void ensureMetadataCapacity(int needed) {
-            if (needed > metadataCapacity) {
-                int newCapacity = Math.max(needed, metadataCapacity * 2);
-                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                Unsafe.free(firstValuesAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                firstValuesAddr = newFirstAddr;
-                minDeltasAddr = newMinAddr;
-                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newBitWidthsAddr;
-                try {
-                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                } catch (Throwable e) {
-                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    throw e;
-                }
-                if (valueCountsAddr != 0) {
-                    Unsafe.free(valueCountsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                if (bitWidthsAddr != 0) {
-                    Unsafe.free(bitWidthsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                valueCountsAddr = newValueCountsAddr;
-                bitWidthsAddr = newBitWidthsAddr;
-                metadataCapacity = newCapacity;
-            }
-        }
-
         private void ensureDecodeWorkspaceCapacity(int count) {
             if (count > decodeWorkspaceCapacity) {
                 if (decodeWorkspaceAddr != 0) {
@@ -874,22 +908,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (blockDeltasAddr != 0) {
                 Unsafe.free(blockDeltasAddr, (long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockDeltasAddr = 0;
-            }
-            if (firstValuesAddr != 0) {
-                Unsafe.free(firstValuesAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                firstValuesAddr = 0;
-            }
-            if (minDeltasAddr != 0) {
-                Unsafe.free(minDeltasAddr, (long) metadataCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                minDeltasAddr = 0;
-            }
-            if (valueCountsAddr != 0) {
-                Unsafe.free(valueCountsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                valueCountsAddr = 0;
-            }
-            if (bitWidthsAddr != 0) {
-                Unsafe.free(bitWidthsAddr, (long) metadataCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                bitWidthsAddr = 0;
             }
             if (decodeWorkspaceAddr != 0) {
                 Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -1184,6 +1202,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 skippedValueCount += vc;
             }
             this.sidecarStrideKeyStart += skippedValueCount;
+            // For sparse gens, the raw sidecar readers use sidecarOrdinal directly
+            // (not sidecarStrideKeyStart). Advance it past skipped blocks' values.
+            if (!isCurrentGenDense && coverCount > 0) {
+                this.sidecarOrdinal += skippedValueCount;
+            }
 
             // Trim trailing blocks that are entirely above maxValue
             int endBlock = blockCount;
@@ -1212,11 +1235,37 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         /**
-         * Decode all blocks into a single contiguous buffer. No per-block
-         * hasNext() overhead — the entire key's values are available at once.
+         * Decode all blocks for a full-scan query. When all blocks have constant
+         * delta (bitWidth=0), uses streaming mode: values are computed on-the-fly
+         * in hasNext() as firstValue + i * delta, eliminating buffer writes.
+         * Falls back to bulk buffer decode for variable-delta blocks.
          */
         private void decodeAllBlocksBulk(int blockCount, long packedDataStart) {
-            // Grow buffer if needed
+            // Check if all blocks have constant delta (bitWidth=0).
+            // This is the common case for sequential inserts (S4 scenario).
+            boolean allConstantDelta = true;
+            for (int b = 0; b < blockCount; b++) {
+                if ((Unsafe.getUnsafe().getByte(srcBitWidthsAddr + b) & 0xFF) != 0) {
+                    allConstantDelta = false;
+                    break;
+                }
+            }
+
+            if (allConstantDelta) {
+                // Streaming mode: no buffer writes, compute values in hasNext().
+                this.constantDeltaMode = true;
+                this.constantDeltaBlockCount = blockCount;
+                this.constantDeltaBlock = 0;
+                this.encodedBlockCount = 0;
+                this.currentBlock = blockCount;
+                this.blockBufferPos = 0;
+                this.blockBufferEnd = 0;
+                // Load first block
+                advanceConstantDeltaBlock();
+                return;
+            }
+
+            // Variable-delta fallback: decode into buffer
             if (totalValueCount > blockBufferCapacity) {
                 Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockBufferCapacity = Math.max(totalValueCount, blockBufferCapacity * 2);
@@ -1233,19 +1282,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 long minD = Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES);
                 int numDeltas = count - 1;
 
-                // Write firstValue
                 Unsafe.getUnsafe().putLong(blockBufferAddr + (long) destIdx * Long.BYTES, firstValue);
                 long cumulative = firstValue;
 
                 if (numDeltas > 0) {
                     if (bitWidth == 0) {
-                        // Constant delta — direct cumsum
                         for (int i = 0; i < numDeltas; i++) {
                             cumulative += minD;
                             Unsafe.getUnsafe().putLong(blockBufferAddr + (long) (destIdx + 1 + i) * Long.BYTES, cumulative);
                         }
                     } else {
-                        // Unpack deltas then cumsum
                         BitpackUtils.unpackAllValues(packedPos, numDeltas, bitWidth, minD, blockDeltasAddr);
                         for (int i = 0; i < numDeltas; i++) {
                             cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
@@ -1259,7 +1305,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             this.blockBufferPos = 0;
             this.blockBufferEnd = totalValueCount;
-            this.encodedBlockCount = 0; // no more decodeNextBlock calls
+            this.encodedBlockCount = 0;
             this.currentBlock = blockCount;
         }
     }
