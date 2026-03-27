@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -38,6 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1076,6 +1078,290 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testSnapshotBinaryDeepCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            TestBinarySequence binSeq = new TestBinarySequence().of(new byte[]{1, 2, 3, 4, 5});
+            bindVariableService.setBin(0, binSeq);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            BinarySequence copiedBin = copy.getFunction(0).getBin(null);
+            Assert.assertNotNull(copiedBin);
+            Assert.assertEquals(5, copiedBin.length());
+            for (int i = 0; i < 5; i++) {
+                Assert.assertEquals(i + 1, copiedBin.byteAt(i));
+            }
+            // mutate original — copy must be unaffected
+            binSeq.of(new byte[]{99, 98, 97, 96, 95});
+            Assert.assertEquals(1, copiedBin.byteAt(0));
+        });
+    }
+
+    @Test
+    public void testSnapshotBinaryNull() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setBin(0, null);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertNull(copy.getFunction(0).getBin(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+            Assert.assertNotNull(copy);
+            Assert.assertEquals(0, copy.getIndexedVariableCount());
+        });
+    }
+
+    @Test
+    public void testSnapshotGeoHash() throws Exception {
+        assertMemoryLeak(() -> {
+            int geoByteType = ColumnType.getGeoHashTypeWithBits(5);
+            int geoIntType = ColumnType.getGeoHashTypeWithBits(20);
+            bindVariableService.setGeoHash(0, 17L, geoByteType);
+            bindVariableService.setGeoHash(1, 54_321L, geoIntType);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals(17L, copy.getFunction(0).getGeoLong(null));
+            Assert.assertEquals(geoByteType, copy.getFunction(0).getType());
+            Assert.assertEquals(54_321L, copy.getFunction(1).getGeoLong(null));
+            Assert.assertEquals(geoIntType, copy.getFunction(1).getType());
+        });
+    }
+
+    @Test
+    public void testSnapshotIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setIPv4(0, Numbers.parseIPv4("192.168.1.1"));
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals(Numbers.parseIPv4("192.168.1.1"), copy.getFunction(0).getIPv4(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotIsIndependentOfSource() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setTimestamp(0, 1_000_000L);
+            bindVariableService.setInt(1, 42);
+            bindVariableService.setStr(2, "hello");
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            // verify values were copied
+            Assert.assertEquals(1_000_000L, copy.getFunction(0).getTimestamp(null));
+            Assert.assertEquals(42, copy.getFunction(1).getInt(null));
+            TestUtils.assertEquals("hello", copy.getFunction(2).getStrA(null));
+
+            // clear source and verify copy is unaffected
+            bindVariableService.clear();
+            Assert.assertEquals(1_000_000L, copy.getFunction(0).getTimestamp(null));
+            Assert.assertEquals(42, copy.getFunction(1).getInt(null));
+            TestUtils.assertEquals("hello", copy.getFunction(2).getStrA(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setLong256(0, 111, 222, 333, 444);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals(111, copy.getFunction(0).getLong256A(null).getLong0());
+            Assert.assertEquals(222, copy.getFunction(0).getLong256A(null).getLong1());
+            Assert.assertEquals(333, copy.getFunction(0).getLong256A(null).getLong2());
+            Assert.assertEquals(444, copy.getFunction(0).getLong256A(null).getLong3());
+
+            // mutate source — copy must be unaffected
+            bindVariableService.setLong256(0, 999, 888, 777, 666);
+            Assert.assertEquals(111, copy.getFunction(0).getLong256A(null).getLong0());
+        });
+    }
+
+    @Test
+    public void testSnapshotNamedVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setLong("id", 123L);
+            bindVariableService.setStr("name", "test");
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals(123L, copy.getFunction(":id").getLong(null));
+            TestUtils.assertEquals("test", copy.getFunction(":name").getStrA(null));
+
+            // verify independence
+            bindVariableService.clear();
+            Assert.assertEquals(123L, copy.getFunction(":id").getLong(null));
+            TestUtils.assertEquals("test", copy.getFunction(":name").getStrA(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertNull(BindVariableServiceImpl.snapshot(null, new DefaultTestCairoConfiguration(null)));
+        });
+    }
+
+    @Test
+    public void testSnapshotPreservesIndexedSmallerDecimalSubtypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final int decimal8Type = ColumnType.getDecimalType(3, 0);
+            final int decimal16Type = ColumnType.getDecimalType(5, 0);
+            final int decimal32Type = ColumnType.getDecimalType(10, 0);
+            final int decimal64Type = ColumnType.getDecimalType(18, 0);
+
+            bindVariableService.setDecimal(0, 0, 0, 0, 111, decimal8Type);
+            bindVariableService.setDecimal(1, 0, 0, 0, 12_345, decimal16Type);
+            bindVariableService.setDecimal(2, 0, 0, 0, 123_456_789, decimal32Type);
+            bindVariableService.setDecimal(3, 0, 0, 0, 123_456_789_012_345_678L, decimal64Type);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals((byte) 111, copy.getFunction(0).getDecimal8(null));
+            Assert.assertEquals((short) 12_345, copy.getFunction(1).getDecimal16(null));
+            Assert.assertEquals(123_456_789, copy.getFunction(2).getDecimal32(null));
+            Assert.assertEquals(123_456_789_012_345_678L, copy.getFunction(3).getDecimal64(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotPreservesNamedSmallerDecimalSubtypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final int decimal8Type = ColumnType.getDecimalType(3, 0);
+            final int decimal16Type = ColumnType.getDecimalType(5, 0);
+            final int decimal32Type = ColumnType.getDecimalType(10, 0);
+            final int decimal64Type = ColumnType.getDecimalType(18, 0);
+
+            bindVariableService.setDecimal("d8", 0, 0, 0, 112, decimal8Type);
+            bindVariableService.setDecimal("d16", 0, 0, 0, 12_346, decimal16Type);
+            bindVariableService.setDecimal("d32", 0, 0, 0, 123_456_780, decimal32Type);
+            bindVariableService.setDecimal("d64", 0, 0, 0, 123_456_789_012_345_679L, decimal64Type);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Function decimal8 = copy.getFunction(":d8");
+            Function decimal16 = copy.getFunction(":d16");
+            Function decimal32 = copy.getFunction(":d32");
+            Function decimal64 = copy.getFunction(":d64");
+
+            Assert.assertNotNull(decimal8);
+            Assert.assertNotNull(decimal16);
+            Assert.assertNotNull(decimal32);
+            Assert.assertNotNull(decimal64);
+
+            Assert.assertEquals((byte) 112, decimal8.getDecimal8(null));
+            Assert.assertEquals((short) 12_346, decimal16.getDecimal16(null));
+            Assert.assertEquals(123_456_780, decimal32.getDecimal32(null));
+            Assert.assertEquals(123_456_789_012_345_679L, decimal64.getDecimal64(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotScalarTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setBoolean(0, true);
+            bindVariableService.setByte(1, (byte) 7);
+            bindVariableService.setShort(2, (short) 300);
+            bindVariableService.setChar(3, 'Z');
+            bindVariableService.setInt(4, 100_000);
+            bindVariableService.setLong(5, 9_000_000_000L);
+            bindVariableService.setFloat(6, 3.14f);
+            bindVariableService.setDouble(7, 2.718);
+            bindVariableService.setDate(8, 1_704_067_200_000L);
+            bindVariableService.setTimestamp(9, 1_704_067_200_000_000L);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertTrue(copy.getFunction(0).getBool(null));
+            Assert.assertEquals((byte) 7, copy.getFunction(1).getByte(null));
+            Assert.assertEquals((short) 300, copy.getFunction(2).getShort(null));
+            Assert.assertEquals('Z', copy.getFunction(3).getChar(null));
+            Assert.assertEquals(100_000, copy.getFunction(4).getInt(null));
+            Assert.assertEquals(9_000_000_000L, copy.getFunction(5).getLong(null));
+            Assert.assertEquals(3.14f, copy.getFunction(6).getFloat(null), 0.0001f);
+            Assert.assertEquals(2.718, copy.getFunction(7).getDouble(null), 0.0001);
+            Assert.assertEquals(1_704_067_200_000L, copy.getFunction(8).getDate(null));
+            Assert.assertEquals(1_704_067_200_000_000L, copy.getFunction(9).getTimestamp(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotTimestampNano() throws Exception {
+        assertMemoryLeak(() -> {
+            long nanoTs = 1_704_067_200_000_000_123L;
+            bindVariableService.setTimestampNano(0, nanoTs);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals(nanoTs, copy.getFunction(0).getTimestamp(null));
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, copy.getFunction(0).getType());
+        });
+    }
+
+    @Test
+    public void testSnapshotUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setUuid(0, 0x550e8400e29b41d4L, 0xa716_4d67_e84b_00bcL);
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            Assert.assertEquals(0x550e8400e29b41d4L, copy.getFunction(0).getLong128Lo(null));
+            Assert.assertEquals(0xa716_4d67_e84b_00bcL, copy.getFunction(0).getLong128Hi(null));
+        });
+    }
+
+    @Test
+    public void testSnapshotVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.setVarchar(0, new Utf8String("varchar_value"));
+
+            BindVariableService copy = BindVariableServiceImpl.snapshot(
+                    bindVariableService, new DefaultTestCairoConfiguration(null)
+            );
+
+            TestUtils.assertEquals("varchar_value", copy.getFunction(0).getVarcharA(null));
+
+            // mutate source — copy must be unaffected
+            bindVariableService.setVarchar(0, new Utf8String("changed"));
+            TestUtils.assertEquals("varchar_value", copy.getFunction(0).getVarcharA(null));
+        });
+    }
+
+    @Test
     public void testStrIndexedOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setLong(0, 10);
@@ -1570,157 +1856,6 @@ public class BindVariableServiceImplTest {
             bindVariableService.setUuid(0, Numbers.LONG_NULL, Numbers.LONG_NULL);
             Assert.assertNull(bindVariableService.getFunction(0).getVarcharA(null));
             Assert.assertEquals(-1, bindVariableService.getFunction(0).getVarcharSize(null));
-        });
-    }
-
-    @Test
-    public void testSnapshotNull() throws Exception {
-        assertMemoryLeak(() -> {
-            Assert.assertNull(BindVariableServiceImpl.snapshot(null, new DefaultTestCairoConfiguration(null)));
-        });
-    }
-
-    @Test
-    public void testSnapshotEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            BindVariableService copy = BindVariableServiceImpl.snapshot(
-                    bindVariableService, new DefaultTestCairoConfiguration(null)
-            );
-            Assert.assertNotNull(copy);
-            Assert.assertEquals(0, copy.getIndexedVariableCount());
-        });
-    }
-
-    @Test
-    public void testSnapshotIsIndependentOfSource() throws Exception {
-        assertMemoryLeak(() -> {
-            bindVariableService.setTimestamp(0, 1_000_000L);
-            bindVariableService.setInt(1, 42);
-            bindVariableService.setStr(2, "hello");
-
-            BindVariableService copy = BindVariableServiceImpl.snapshot(
-                    bindVariableService, new DefaultTestCairoConfiguration(null)
-            );
-
-            // verify values were copied
-            Assert.assertEquals(1_000_000L, copy.getFunction(0).getTimestamp(null));
-            Assert.assertEquals(42, copy.getFunction(1).getInt(null));
-            TestUtils.assertEquals("hello", copy.getFunction(2).getStrA(null));
-
-            // clear source and verify copy is unaffected
-            bindVariableService.clear();
-            Assert.assertEquals(1_000_000L, copy.getFunction(0).getTimestamp(null));
-            Assert.assertEquals(42, copy.getFunction(1).getInt(null));
-            TestUtils.assertEquals("hello", copy.getFunction(2).getStrA(null));
-        });
-    }
-
-    @Test
-    public void testSnapshotScalarTypes() throws Exception {
-        assertMemoryLeak(() -> {
-            bindVariableService.setBoolean(0, true);
-            bindVariableService.setByte(1, (byte) 7);
-            bindVariableService.setShort(2, (short) 300);
-            bindVariableService.setChar(3, 'Z');
-            bindVariableService.setInt(4, 100_000);
-            bindVariableService.setLong(5, 9_000_000_000L);
-            bindVariableService.setFloat(6, 3.14f);
-            bindVariableService.setDouble(7, 2.718);
-            bindVariableService.setDate(8, 1_704_067_200_000L);
-            bindVariableService.setTimestamp(9, 1_704_067_200_000_000L);
-
-            BindVariableService copy = BindVariableServiceImpl.snapshot(
-                    bindVariableService, new DefaultTestCairoConfiguration(null)
-            );
-
-            Assert.assertTrue(copy.getFunction(0).getBool(null));
-            Assert.assertEquals((byte) 7, copy.getFunction(1).getByte(null));
-            Assert.assertEquals((short) 300, copy.getFunction(2).getShort(null));
-            Assert.assertEquals('Z', copy.getFunction(3).getChar(null));
-            Assert.assertEquals(100_000, copy.getFunction(4).getInt(null));
-            Assert.assertEquals(9_000_000_000L, copy.getFunction(5).getLong(null));
-            Assert.assertEquals(3.14f, copy.getFunction(6).getFloat(null), 0.0001f);
-            Assert.assertEquals(2.718, copy.getFunction(7).getDouble(null), 0.0001);
-            Assert.assertEquals(1_704_067_200_000L, copy.getFunction(8).getDate(null));
-            Assert.assertEquals(1_704_067_200_000_000L, copy.getFunction(9).getTimestamp(null));
-        });
-    }
-
-    @Test
-    public void testSnapshotNamedVariables() throws Exception {
-        assertMemoryLeak(() -> {
-            bindVariableService.setLong("id", 123L);
-            bindVariableService.setStr("name", "test");
-
-            BindVariableService copy = BindVariableServiceImpl.snapshot(
-                    bindVariableService, new DefaultTestCairoConfiguration(null)
-            );
-
-            Assert.assertEquals(123L, copy.getFunction(":id").getLong(null));
-            TestUtils.assertEquals("test", copy.getFunction(":name").getStrA(null));
-
-            // verify independence
-            bindVariableService.clear();
-            Assert.assertEquals(123L, copy.getFunction(":id").getLong(null));
-            TestUtils.assertEquals("test", copy.getFunction(":name").getStrA(null));
-        });
-    }
-
-    @Test
-    public void testSnapshotPreservesIndexedSmallerDecimalSubtypes() throws Exception {
-        assertMemoryLeak(() -> {
-            final int decimal8Type = ColumnType.getDecimalType(3, 0);
-            final int decimal16Type = ColumnType.getDecimalType(5, 0);
-            final int decimal32Type = ColumnType.getDecimalType(10, 0);
-            final int decimal64Type = ColumnType.getDecimalType(18, 0);
-
-            bindVariableService.setDecimal(0, 0, 0, 0, 111, decimal8Type);
-            bindVariableService.setDecimal(1, 0, 0, 0, 12_345, decimal16Type);
-            bindVariableService.setDecimal(2, 0, 0, 0, 123_456_789, decimal32Type);
-            bindVariableService.setDecimal(3, 0, 0, 0, 123_456_789_012_345_678L, decimal64Type);
-
-            BindVariableService copy = BindVariableServiceImpl.snapshot(
-                    bindVariableService, new DefaultTestCairoConfiguration(null)
-            );
-
-            Assert.assertEquals((byte) 111, copy.getFunction(0).getDecimal8(null));
-            Assert.assertEquals((short) 12_345, copy.getFunction(1).getDecimal16(null));
-            Assert.assertEquals(123_456_789, copy.getFunction(2).getDecimal32(null));
-            Assert.assertEquals(123_456_789_012_345_678L, copy.getFunction(3).getDecimal64(null));
-        });
-    }
-
-    @Test
-    public void testSnapshotPreservesNamedSmallerDecimalSubtypes() throws Exception {
-        assertMemoryLeak(() -> {
-            final int decimal8Type = ColumnType.getDecimalType(3, 0);
-            final int decimal16Type = ColumnType.getDecimalType(5, 0);
-            final int decimal32Type = ColumnType.getDecimalType(10, 0);
-            final int decimal64Type = ColumnType.getDecimalType(18, 0);
-
-            bindVariableService.setDecimal("d8", 0, 0, 0, 112, decimal8Type);
-            bindVariableService.setDecimal("d16", 0, 0, 0, 12_346, decimal16Type);
-            bindVariableService.setDecimal("d32", 0, 0, 0, 123_456_780, decimal32Type);
-            bindVariableService.setDecimal("d64", 0, 0, 0, 123_456_789_012_345_679L, decimal64Type);
-
-            BindVariableService copy = BindVariableServiceImpl.snapshot(
-                    bindVariableService, new DefaultTestCairoConfiguration(null)
-            );
-
-            Function decimal8 = copy.getFunction(":d8");
-            Function decimal16 = copy.getFunction(":d16");
-            Function decimal32 = copy.getFunction(":d32");
-            Function decimal64 = copy.getFunction(":d64");
-
-            Assert.assertNotNull(decimal8);
-            Assert.assertNotNull(decimal16);
-            Assert.assertNotNull(decimal32);
-            Assert.assertNotNull(decimal64);
-
-            Assert.assertEquals((byte) 112, decimal8.getDecimal8(null));
-            Assert.assertEquals((short) 12_346, decimal16.getDecimal16(null));
-            Assert.assertEquals(123_456_780, decimal32.getDecimal32(null));
-            Assert.assertEquals(123_456_789_012_345_679L, decimal64.getDecimal64(null));
         });
     }
 }
