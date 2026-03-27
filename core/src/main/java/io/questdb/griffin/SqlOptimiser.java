@@ -3086,8 +3086,10 @@ public class SqlOptimiser implements Mutable {
                 // Column not yet referenced by inner model - validate and add it
                 validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
                 CharSequence alias = createColumnAlias(n.token, innerVirtualModel);
-                innerVirtualModel.addBottomUpColumn(queryColumnPool.next().of(alias, n));
+                QueryColumn column = queryColumnPool.next().of(alias, n);
+                innerVirtualModel.addBottomUpColumn(column);
                 if (alias != n.token) {
+                    translatingModel.addBottomUpColumnIfNotExists(column);
                     return nextLiteral(alias);
                 } else {
                     return n;
@@ -9187,6 +9189,7 @@ public class SqlOptimiser implements Mutable {
 
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
+                    rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                     int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
                     forceTranslatingModel |= innerColumnsPre != innerColumnsPost;
                 }
