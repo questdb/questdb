@@ -1607,83 +1607,60 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     rowLo,
                     rowHi - 1
             );
-            if (!(rowCursor instanceof CoveringRowCursor crc) || !crc.hasCovering()) {
-                return null;
+
+            // Fast path: covering sidecar data available — read directly from sidecar.
+            // Fallback: read matching rows from column files (unsealed partitions, etc.)
+            CoveringRowCursor coveringCursor = null;
+            if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                coveringCursor = crc;
             }
 
-            // Single-pass: iterate cursor writing covered values to fresh native
-            // buffers.  Each frame gets its own buffers so that PageFrameAddressCache
-            // can hold addresses from all frames simultaneously.
+            // Allocate fresh buffers for this frame. Last slot holds the sym buffer.
             int capacity = INITIAL_CAPACITY;
-            long[] colAddrs = new long[queryColCount];
-            long[] colCapacities = new long[queryColCount];
+            long[] addrs = new long[queryColCount + 1];
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
-                    long bytes = (long) capacity * columnSizeBytes[q];
-                    colAddrs[q] = allocBuffer(bytes);
-                    colCapacities[q] = bytes;
+                    addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
                 }
             }
-            long symBytes = (long) capacity * Integer.BYTES;
-            long symAddr = allocBuffer(symBytes);
-            long symCapacity = symBytes;
+            addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
 
             int count = 0;
-            while (crc.hasNext()) {
-                crc.next();
-                if (count >= capacity) {
-                    capacity = capacity * 2;
-                    for (int q = 0; q < queryColCount; q++) {
-                        if (queryColToIncludeIdx[q] >= 0) {
-                            long newBytes = (long) capacity * columnSizeBytes[q];
-                            long newAddr = allocBuffer(newBytes);
-                            long copyBytes = (long) count * columnSizeBytes[q];
-                            Unsafe.getUnsafe().copyMemory(colAddrs[q], newAddr, copyBytes);
-                            // Old buffer stays in allocatedBuffers — freed on close/toTop
-                            colAddrs[q] = newAddr;
-                            colCapacities[q] = newBytes;
-                        }
+            if (coveringCursor != null) {
+                // Read covered values from sidecar files
+                while (coveringCursor.hasNext()) {
+                    coveringCursor.next();
+                    if (count >= capacity) {
+                        capacity = growFrameBuffers(addrs, count, capacity);
                     }
-                    long newSymBytes = (long) capacity * Integer.BYTES;
-                    long newSymAddr = allocBuffer(newSymBytes);
-                    // no need to copy sym fill — it's written after the loop
-                    symAddr = newSymAddr;
-                    symCapacity = newSymBytes;
+                    writeCoveredRow(addrs, count, coveringCursor);
+                    count++;
                 }
-                for (int q = 0; q < queryColCount; q++) {
-                    int includeIdx = queryColToIncludeIdx[q];
-                    if (includeIdx < 0) continue;
-                    long addr = colAddrs[q];
-                    switch (columnTypeTags[q]) {
-                        case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(
-                                addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
-                        case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(
-                                addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
-                        case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
-                                Unsafe.getUnsafe().putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
-                        case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
-                                Unsafe.getUnsafe().putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
-                        case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
-                                Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
-                        case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
-                                Unsafe.getUnsafe().putByte(addr + count, crc.getCoveredByte(includeIdx));
-                        default -> {}
+            } else {
+                // Fallback: read from column files (unsealed partitions, index rebuilding)
+                int colBase = tableReader.getColumnBase(partitionIndex);
+                while (rowCursor.hasNext()) {
+                    long rowId = rowCursor.next();
+                    if (count >= capacity) {
+                        capacity = growFrameBuffers(addrs, count, capacity);
                     }
+                    writeColumnRow(addrs, count, rowId, colBase);
+                    count++;
                 }
-                count++;
             }
             if (count == 0) {
                 return null;
             }
 
-            // Fill symbol column buffer with constant key using long-word writes
+            // Fill symbol column buffer with constant key
+            long symAddr = addrs[queryColCount];
             fillSymbolKey(symAddr, rawSymbolKey, count);
 
             // Set up frame — addresses are now unique per frame
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx >= 0) {
-                    frame.pageAddresses[q] = colAddrs[q];
+                    frame.pageAddresses[q] = addrs[q];
                     frame.pageSizes[q] = (long) count * columnSizeBytes[q];
                 } else if (includeIdx == -1) {
                     frame.pageAddresses[q] = symAddr;
@@ -1696,6 +1673,72 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             frame.partitionHi = count;
             frame.partitionIndex = partitionIndex;
             return frame;
+        }
+
+        private void writeCoveredRow(long[] addrs, int count, CoveringRowCursor crc) {
+            for (int q = 0; q < queryColCount; q++) {
+                int includeIdx = queryColToIncludeIdx[q];
+                if (includeIdx < 0) continue;
+                long addr = addrs[q];
+                switch (columnTypeTags[q]) {
+                    case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(
+                            addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
+                    case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(
+                            addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                            Unsafe.getUnsafe().putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                            Unsafe.getUnsafe().putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
+                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
+                            Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
+                            Unsafe.getUnsafe().putByte(addr + count, crc.getCoveredByte(includeIdx));
+                    default -> {}
+                }
+            }
+        }
+
+        private void writeColumnRow(long[] addrs, int count, long rowId, int colBase) {
+            for (int q = 0; q < queryColCount; q++) {
+                if (queryColToIncludeIdx[q] < 0) continue;
+                long addr = addrs[q];
+                int readerCol = columnIndexes.getQuick(q);
+                MemoryCR mem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
+                switch (columnTypeTags[q]) {
+                    case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(
+                            addr + (long) count * Double.BYTES, mem.getDouble(rowId * Double.BYTES));
+                    case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(
+                            addr + (long) count * Float.BYTES, mem.getFloat(rowId * Float.BYTES));
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                            Unsafe.getUnsafe().putLong(addr + (long) count * Long.BYTES, mem.getLong(rowId * Long.BYTES));
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                            Unsafe.getUnsafe().putInt(addr + (long) count * Integer.BYTES, mem.getInt(rowId * Integer.BYTES));
+                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
+                            Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, mem.getShort(rowId * Short.BYTES));
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
+                            Unsafe.getUnsafe().putByte(addr + count, mem.getByte(rowId));
+                    default -> {}
+                }
+            }
+        }
+
+        /**
+         * Grow all column and symbol buffers. addrs[0..queryColCount-1] are column
+         * buffers; addrs[queryColCount] is the symbol buffer. Returns new capacity.
+         */
+        private int growFrameBuffers(long[] addrs, int count, int capacity) {
+            int newCapacity = capacity * 2;
+            for (int q = 0; q < queryColCount; q++) {
+                if (queryColToIncludeIdx[q] >= 0) {
+                    long newBytes = (long) newCapacity * columnSizeBytes[q];
+                    long newAddr = allocBuffer(newBytes);
+                    Unsafe.getUnsafe().copyMemory(addrs[q], newAddr, (long) count * columnSizeBytes[q]);
+                    addrs[q] = newAddr;
+                }
+            }
+            // Symbol fill is written after the loop, no need to copy
+            addrs[queryColCount] = allocBuffer((long) newCapacity * Integer.BYTES);
+            return newCapacity;
         }
 
         private static void fillSymbolKey(long addr, int rawSymbolKey, int count) {

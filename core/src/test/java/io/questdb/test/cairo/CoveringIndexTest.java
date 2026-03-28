@@ -5659,12 +5659,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // Plan: Filter wrapping CoveringIndex
+            // Plan: Async Filter wrapping CoveringIndex (parallel filter enabled in tests)
             assertPlanNoLeakCheck(
                     "SELECT price FROM t_resid WHERE sym = 'A' AND price > 15",
                     """
                             SelectedRecord
-                                Filter filter: 15<price
+                                Async Filter workers: 1
+                                  filter: 15<price
                                     CoveringIndex on: sym with: price
                                       filter: sym='A'
                             """
@@ -5783,6 +5784,146 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price FROM t_resid_mp WHERE sym = 'A' AND price >= 30");
             assertSql(expected,
                     "SELECT /*+ no_covering */ price FROM t_resid_mp WHERE sym = 'A' AND price >= 30");
+        });
+    }
+
+    @Test
+    public void testAsyncFilterWithAlterTableIndex() throws Exception {
+        // ALTER TABLE ADD INDEX path: index is rebuilt for existing data.
+        // The async filter wraps CoveringIndex and must produce correct results
+        // whether hasCovering() is true (sealed sidecar) or false (fallback to columns).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_async (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_async VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0, 1),
+                    ('2024-01-01T01:00:00', 'B', 20.0, 2),
+                    ('2024-01-01T02:00:00', 'A', 30.0, 3),
+                    ('2024-01-01T03:00:00', 'B', 40.0, 4),
+                    ('2024-01-01T04:00:00', 'A', 70.0, 5),
+                    ('2024-01-01T05:00:00', 'C', 80.0, 6)
+                    """);
+            engine.releaseAllWriters();
+
+            // Add covering index after data exists
+            execute("ALTER TABLE t_alter_async ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            // Row cursor path (no filter)
+            assertSqlCursors(
+                    "SELECT price, qty FROM t_alter_async WHERE sym = 'A'",
+                    "SELECT /*+ no_covering */ price, qty FROM t_alter_async WHERE sym = 'A'"
+            );
+
+            // Async filter over covering index
+            assertSqlCursors(
+                    "SELECT price, qty FROM t_alter_async WHERE sym = 'A' AND price > 25",
+                    "SELECT /*+ no_covering */ price, qty FROM t_alter_async WHERE sym = 'A' AND price > 25"
+            );
+
+            // GROUP BY with filter
+            assertSqlCursors(
+                    "SELECT sym, count() FROM t_alter_async WHERE sym = 'A' AND price > 25 GROUP BY sym",
+                    "SELECT /*+ no_covering */ sym, count() FROM t_alter_async WHERE sym = 'A' AND price > 25 GROUP BY sym"
+            );
+
+            // IN-list with filter (ORDER BY for deterministic comparison —
+            // covering returns A-then-B, non-covering returns timestamp order)
+            assertSqlCursors(
+                    "SELECT price FROM t_alter_async WHERE sym IN ('A', 'B') AND price > 25 ORDER BY price",
+                    "SELECT /*+ no_covering */ price FROM t_alter_async WHERE sym IN ('A', 'B') AND price > 25 ORDER BY price"
+            );
+        });
+    }
+
+    @Test
+    public void testAsyncFilterPageFrameFallback() throws Exception {
+        // Test that the page frame cursor fallback (column file reads) works
+        // when covering data may not be in sidecar form. Uses WAL table where
+        // the active partition is not yet sealed.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_fallback (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_fallback VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0),
+                    ('2024-01-01T03:00:00', 'A', 70.0),
+                    ('2024-01-01T04:00:00', 'B', 80.0)
+                    """);
+            drainWalQueue();
+
+            // Async filter with residual — must work via fallback or covering path
+            assertSqlCursors(
+                    "SELECT price FROM t_pf_fallback WHERE sym = 'A' AND price > 25",
+                    "SELECT /*+ no_covering */ price FROM t_pf_fallback WHERE sym = 'A' AND price > 25"
+            );
+
+            // Aggregation with filter
+            assertSqlCursors(
+                    "SELECT sym, sum(price) FROM t_pf_fallback WHERE sym = 'A' AND price > 25 GROUP BY sym",
+                    "SELECT /*+ no_covering */ sym, sum(price) FROM t_pf_fallback WHERE sym = 'A' AND price > 25 GROUP BY sym"
+            );
+        });
+    }
+
+    @Test
+    public void testBulkInsertSelectWithPostingIndex() throws Exception {
+        // INSERT...SELECT into table with POSTING INCLUDE — must handle multi-partition
+        // data at scale. Tests 1M rows across ~12 partitions with 200 symbols.
+        assertMemoryLeak(() -> {
+            StringBuilder symArgs = new StringBuilder();
+            for (int k = 0; k < 200; k++) {
+                if (k > 0) symArgs.append(',');
+                symArgs.append("'K").append(k).append("'");
+            }
+            execute("""
+                    CREATE TABLE t_bulk (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute(
+                    "INSERT INTO t_bulk"
+                            + " SELECT dateadd('s', x::INT, '2024-01-01'),"
+                            + "   rnd_symbol(" + symArgs + "),"
+                            + "   rnd_double() * 100,"
+                            + "   rnd_int(1, 1000, 0)"
+                            + " FROM long_sequence(1_000_000)");
+            engine.releaseAllWriters();
+
+            // Verify all rows committed
+            assertSql("""
+                    count
+                    1000000
+                    """, "SELECT count() FROM t_bulk");
+
+            // Verify index is usable — covering and non-covering must agree
+            assertSqlCursors(
+                    "SELECT count() FROM t_bulk WHERE sym = 'K0'",
+                    "SELECT /*+ no_covering */ count() FROM t_bulk WHERE sym = 'K0'"
+            );
+
+            // Verify covered data with filter
+            assertSqlCursors(
+                    "SELECT price, qty FROM t_bulk WHERE sym = 'K0' AND price > 50 LIMIT 10",
+                    "SELECT /*+ no_covering */ price, qty FROM t_bulk WHERE sym = 'K0' AND price > 50 LIMIT 10"
+            );
         });
     }
 

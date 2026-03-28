@@ -1453,6 +1453,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return mapping;
     }
 
+    private RecordCursorFactory wrapCoveringWithFilter(
+            RecordCursorFactory coveringFactory,
+            Function filter,
+            ExpressionNode filterExpr,
+            RecordMetadata queryMeta,
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+            collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+            Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+            int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+            return new AsyncFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    coveringFactory,
+                    filter,
+                    filterUsedColumnIndexes,
+                    reduceTaskFactory,
+                    compileWorkerFiltersConditionally(
+                            executionContext,
+                            filter,
+                            executionContext.getSharedQueryWorkerCount(),
+                            filterExpr,
+                            queryMeta
+                    ),
+                    deepClone(expressionNodePool, filterExpr),
+                    limitLoFunction,
+                    limitLoPos,
+                    executionContext.getSharedQueryWorkerCount(),
+                    SqlHints.hasEnablePreTouchHint(model, model.getName())
+            );
+        }
+        return new FilteredRecordCursorFactory(coveringFactory, filter);
+    }
+
     @Nullable
     private Function compileFilter(
             IntrinsicModel intrinsicModel,
@@ -8500,7 +8538,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             coveringMapping
                                     );
                                     if (filter != null) {
-                                        return new FilteredRecordCursorFactory(coveringFactory, filter);
+                                        return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
                                     }
                                     return coveringFactory;
                                 }
@@ -8557,7 +8595,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         reader
                                 );
                                 if (filter != null) {
-                                    return new FilteredRecordCursorFactory(coveringFactory, filter);
+                                    return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
                                 }
                                 return coveringFactory;
                             }

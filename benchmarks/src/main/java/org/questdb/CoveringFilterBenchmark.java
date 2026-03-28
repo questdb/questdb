@@ -78,31 +78,26 @@ public class CoveringFilterBenchmark {
                     symArgs.append("'K").append(k).append("'");
                 }
 
-                // Create table with posting index and INCLUDE columns
+                // Create table with covering index, then insert data so sidecar
+                // files are written during insertion (needed for page frame path).
                 engine.execute(
-                        "CREATE TABLE filtbench AS ("
-                                + " SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP ts,"
-                                + "   rnd_symbol(" + symArgs + ") sym,"
-                                + "   rnd_double() * 100 price,"
-                                + "   rnd_int(1, 1000, 0) qty"
-                                + " FROM long_sequence(" + TOTAL_ROWS + ")"
+                        "CREATE TABLE filtbench ("
+                                + " ts TIMESTAMP,"
+                                + " sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),"
+                                + " price DOUBLE,"
+                                + " qty INT"
                                 + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
-
                 engine.execute(
-                        "ALTER TABLE filtbench ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)", ctx);
+                        "INSERT INTO filtbench"
+                                + " SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,"
+                                + "   rnd_symbol(" + symArgs + "),"
+                                + "   rnd_double() * 100,"
+                                + "   rnd_int(1, 1000, 0)"
+                                + " FROM long_sequence(" + TOTAL_ROWS + ")", ctx);
                 engine.releaseAllWriters();
 
                 System.out.printf("Data: %d keys, %,d total rows, ~%d rows/key%n",
                         KEY_COUNT, TOTAL_ROWS, ROWS_PER_KEY);
-
-                // Basic row count verification (without filter — filter
-                // correctness is verified in unit tests)
-                try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                    long total = countRows(compiler, ctx,
-                            "SELECT count() FROM filtbench WHERE sym = 'K0'");
-                    System.out.printf("Rows for K0: %,d (expected ~%,d)%n",
-                            total, TOTAL_ROWS / KEY_COUNT);
-                }
             } catch (SqlException e) {
                 e.printStackTrace();
             }
@@ -170,13 +165,14 @@ public class CoveringFilterBenchmark {
 
     @Benchmark
     public long query() throws SqlException {
-        long count = 0;
+        long sum = 0;
         try (RecordCursor cursor = factory.getCursor(ctx)) {
+            io.questdb.cairo.sql.Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                count++;
+                sum += Double.doubleToRawLongBits(record.getDouble(0));
             }
         }
-        return count;
+        return sum;
     }
 
     private static long countRows(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String sql) throws SqlException {
