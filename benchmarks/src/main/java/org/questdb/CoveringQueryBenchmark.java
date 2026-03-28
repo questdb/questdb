@@ -54,46 +54,50 @@ public class CoveringQueryBenchmark {
             String inList = sampleInList;
             int rpk = TOTAL_ROWS / KEY_COUNT;
 
+            // Queries: [label, covering, fallback (index but no covering), no-index]
             String[][] queries = {
                     {"LIMIT 1",
                             "SELECT price, qty FROM bench WHERE sym = '" + k + "' LIMIT 1",
-                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "' LIMIT 1"},
+                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "' LIMIT 1",
+                            "SELECT price, qty FROM bench_noidx WHERE sym = '" + k + "' LIMIT 1"},
                     {"LIMIT 10",
                             "SELECT price, qty FROM bench WHERE sym = '" + k + "' LIMIT 10",
-                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "' LIMIT 10"},
+                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "' LIMIT 10",
+                            "SELECT price, qty FROM bench_noidx WHERE sym = '" + k + "' LIMIT 10"},
                     {"Full key scan (~" + rpk + ")",
                             "SELECT price, qty FROM bench WHERE sym = '" + k + "'",
-                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "'"},
+                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "'",
+                            "SELECT price, qty FROM bench_noidx WHERE sym = '" + k + "'"},
                     {"3-col scan (~" + rpk + ")",
                             "SELECT sym, price, qty FROM bench WHERE sym = '" + k + "'",
-                            "SELECT /*+ no_covering */ sym, price, qty FROM bench WHERE sym = '" + k + "'"},
+                            "SELECT /*+ no_covering */ sym, price, qty FROM bench WHERE sym = '" + k + "'",
+                            "SELECT sym, price, qty FROM bench_noidx WHERE sym = '" + k + "'"},
                     {"IN-list 5 keys",
                             "SELECT price, qty FROM bench WHERE sym IN (" + inList + ")",
-                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym IN (" + inList + ")"},
-                    {"LATEST BY single",
-                            "SELECT price, qty FROM bench WHERE sym = '" + k + "' LATEST ON ts PARTITION BY sym",
-                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym = '" + k + "' LATEST ON ts PARTITION BY sym"},
-                    {"LATEST BY IN-list (5)",
-                            "SELECT price, qty FROM bench WHERE sym IN (" + inList + ") LATEST ON ts PARTITION BY sym",
-                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym IN (" + inList + ") LATEST ON ts PARTITION BY sym"},
+                            "SELECT /*+ no_covering */ price, qty FROM bench WHERE sym IN (" + inList + ")",
+                            "SELECT price, qty FROM bench_noidx WHERE sym IN (" + inList + ")"},
                     {"count()",
                             "SELECT count() FROM bench WHERE sym = '" + k + "'",
-                            "SELECT /*+ no_covering */ count() FROM bench WHERE sym = '" + k + "'"},
+                            "SELECT /*+ no_covering */ count() FROM bench WHERE sym = '" + k + "'",
+                            "SELECT count() FROM bench_noidx WHERE sym = '" + k + "'"},
                     {"sum(price)",
                             "SELECT sum(price) FROM bench WHERE sym = '" + k + "'",
-                            "SELECT /*+ no_covering */ sum(price) FROM bench WHERE sym = '" + k + "'"},
+                            "SELECT /*+ no_covering */ sum(price) FROM bench WHERE sym = '" + k + "'",
+                            "SELECT sum(price) FROM bench_noidx WHERE sym = '" + k + "'"},
             };
 
-            System.out.printf("  %-25s %12s %12s %10s%n", "Query", "Covering", "Fallback", "Speedup");
-            System.out.println("  " + "-".repeat(63));
+            System.out.printf("  %-25s %12s %12s %12s %10s %10s%n",
+                    "Query", "Covering", "Idx (no cov)", "No index", "Cov/Idx", "Cov/NoIdx");
+            System.out.println("  " + "-".repeat(91));
 
             for (String[] q : queries) {
                 String label = q[0];
                 double coveringMs = benchQuery(engine, ctx, q[1]);
                 double fallbackMs = benchQuery(engine, ctx, q[2]);
-                double speedup = fallbackMs / coveringMs;
-                System.out.printf("  %-25s %10.3f ms %10.3f ms %9.2fx%n",
-                        label, coveringMs, fallbackMs, speedup);
+                double noIdxMs = benchQuery(engine, ctx, q[3]);
+                System.out.printf("  %-25s %10.3f ms %10.3f ms %10.3f ms %9.2fx %9.2fx%n",
+                        label, coveringMs, fallbackMs, noIdxMs,
+                        fallbackMs / coveringMs, noIdxMs / coveringMs);
             }
             System.out.println();
         }
@@ -129,6 +133,17 @@ public class CoveringQueryBenchmark {
                     ctx
             );
         }
+
+        // Create a no-index copy for comparison
+        engine.execute("""
+                CREATE TABLE bench_noidx (
+                    ts TIMESTAMP,
+                    sym SYMBOL,
+                    price DOUBLE,
+                    qty INT
+                ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                """, ctx);
+        engine.execute("INSERT INTO bench_noidx SELECT * FROM bench", ctx);
 
         // Force writers closed so readers see all data
         engine.releaseAllWriters();
