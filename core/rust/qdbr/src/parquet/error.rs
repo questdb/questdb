@@ -43,6 +43,7 @@ pub enum ParquetErrorReason {
     Utf8Decode(std::str::Utf8Error),
     Utf16Decode(std::char::DecodeUtf16Error),
     Io(Arc<std::io::Error>),
+    Qdbp(crate::parquet_metadata::error::QdbpErrorKind),
 
     #[cfg(test)]
     Arrow(Arc<arrow::error::ArrowError>),

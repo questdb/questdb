@@ -1257,6 +1257,7 @@ dependencies = [
  "alloc-checked",
  "arrow",
  "bytes",
+ "crc32fast",
  "criterion",
  "jni",
  "libc",
