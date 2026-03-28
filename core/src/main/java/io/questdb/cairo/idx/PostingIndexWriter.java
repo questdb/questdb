@@ -1267,6 +1267,10 @@ public class PostingIndexWriter implements IndexWriter {
                 Unsafe.getUnsafe().putInt(addr, GeoHashes.INT_NULL);
                 return;
             }
+            case ColumnType.IPv4 -> {
+                Unsafe.getUnsafe().putInt(addr, Numbers.IPv4_NULL);
+                return;
+            }
             case ColumnType.GEOLONG -> {
                 Unsafe.getUnsafe().putLong(addr, GeoHashes.NULL);
                 return;
@@ -1315,9 +1319,9 @@ public class PostingIndexWriter implements IndexWriter {
                 continue;
             }
 
-            long colAddr = coveredColumnMems != null
-                    ? coveredColumnMems[c].addressOf(0)
-                    : coveredColumnAddrs[c];
+            boolean useMem = coveredColumnMems != null;
+            long stableColAddr = useMem ? 0 : coveredColumnAddrs[c];
+            MemoryMA colMem = useMem ? coveredColumnMems[c] : null;
             long colTop = coveredColumnTops[c];
             int valueSize = 1 << shift;
 
@@ -1346,7 +1350,8 @@ public class PostingIndexWriter implements IndexWriter {
                         continue;
                     }
 
-                    // Assemble this key's raw values into sidecarBuf
+                    // Assemble this key's raw values into sidecarBuf.
+                    // colMem is paged — resolve address per offset.
                     long keyOff = keyOffsets[j];
                     long rawOffset = 0;
                     for (int i = 0; i < count; i++) {
@@ -1356,18 +1361,19 @@ public class PostingIndexWriter implements IndexWriter {
                             writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                         } else {
                             long srcOffset = (rowId - colTop) << shift;
+                            long addr = colMem != null ? colMem.addressOf(srcOffset) : stableColAddr + srcOffset;
                             if (valueSize == Long.BYTES) {
                                 Unsafe.getUnsafe().putLong(sidecarBuf + rawOffset,
-                                        Unsafe.getUnsafe().getLong(colAddr + srcOffset));
+                                        Unsafe.getUnsafe().getLong(addr));
                             } else if (valueSize == Integer.BYTES) {
                                 Unsafe.getUnsafe().putInt(sidecarBuf + rawOffset,
-                                        Unsafe.getUnsafe().getInt(colAddr + srcOffset));
+                                        Unsafe.getUnsafe().getInt(addr));
                             } else if (valueSize == Short.BYTES) {
                                 Unsafe.getUnsafe().putShort(sidecarBuf + rawOffset,
-                                        Unsafe.getUnsafe().getShort(colAddr + srcOffset));
+                                        Unsafe.getUnsafe().getShort(addr));
                             } else {
                                 Unsafe.getUnsafe().putByte(sidecarBuf + rawOffset,
-                                        Unsafe.getUnsafe().getByte(colAddr + srcOffset));
+                                        Unsafe.getUnsafe().getByte(addr));
                             }
                         }
                         rawOffset += valueSize;
@@ -1401,9 +1407,9 @@ public class PostingIndexWriter implements IndexWriter {
                     AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
             case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
                     AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.SYMBOL ->
+            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL ->
                     AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE -> {
+            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE -> {
                 Unsafe.getUnsafe().putInt(destBuf, valueCount);
                 Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
                 yield 4 + (valueCount << shift);
@@ -2283,9 +2289,11 @@ public class PostingIndexWriter implements IndexWriter {
             if (ColumnType.isVarSize(colType)) {
                 writeSidecarVarGenBlock(sidecarMems[c], c, colTop, colType, totalValues);
             } else {
-                long colAddr = coveredColumnMems != null
-                        ? coveredColumnMems[c].addressOf(0)
-                        : coveredColumnAddrs[c];
+                // coveredColumnAddrs are stable contiguous native addresses.
+                // coveredColumnMems are MemoryMA instances with paged mappings —
+                // addressOf(offset) resolves to the correct page for that offset.
+                boolean useMem = coveredColumnMems != null;
+                long stableColAddr = useMem ? 0 : coveredColumnAddrs[c];
                 int shift = coveredColumnShifts[c];
                 int valueSize = 1 << shift;
 
@@ -2300,14 +2308,16 @@ public class PostingIndexWriter implements IndexWriter {
                         long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                         for (int i = 0; i < spillCount; i++) {
                             long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
+                            writeSidecarValueSafe(sidecarMems[c], useMem ? coveredColumnMems[c] : null,
+                                    stableColAddr, colTop, rowId, shift, valueSize, colType);
                         }
                     }
 
                     long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                     for (int i = 0; i < pendingCount; i++) {
                         long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValue(sidecarMems[c], colAddr, colTop, rowId, shift, valueSize, colType);
+                        writeSidecarValueSafe(sidecarMems[c], useMem ? coveredColumnMems[c] : null,
+                                stableColAddr, colTop, rowId, shift, valueSize, colType);
                     }
                 }
             }
@@ -2490,6 +2500,26 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private void writeSidecarValueSafe(MemoryMARW mem, MemoryMA colMem, long colAddr,
+                                        long colTop, long rowId, int shift, int valueSize, int colType) {
+        if (rowId < colTop) {
+            writeNullSentinel(mem, valueSize, colType);
+        } else {
+            long srcOffset = (rowId - colTop) << shift;
+            // colMem is paged — resolve address per offset to handle page boundaries
+            long addr = colMem != null ? colMem.addressOf(srcOffset) : colAddr + srcOffset;
+            if (valueSize == Long.BYTES) {
+                mem.putLong(Unsafe.getUnsafe().getLong(addr));
+            } else if (valueSize == Integer.BYTES) {
+                mem.putInt(Unsafe.getUnsafe().getInt(addr));
+            } else if (valueSize == Short.BYTES) {
+                mem.putShort(Unsafe.getUnsafe().getShort(addr));
+            } else {
+                mem.putByte(Unsafe.getUnsafe().getByte(addr));
+            }
+        }
+    }
+
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
@@ -2497,8 +2527,9 @@ public class PostingIndexWriter implements IndexWriter {
             case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> mem.putLong(Numbers.LONG_NULL);
             case ColumnType.GEOLONG -> mem.putLong(GeoHashes.NULL);
             case ColumnType.INT, ColumnType.SYMBOL -> mem.putInt(Numbers.INT_NULL);
+            case ColumnType.IPv4 -> mem.putInt(Numbers.IPv4_NULL);
             case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
-            case ColumnType.SHORT -> mem.putShort((short) 0);
+            case ColumnType.CHAR, ColumnType.SHORT -> mem.putShort((short) 0);
             case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
             case ColumnType.BYTE, ColumnType.BOOLEAN -> mem.putByte((byte) 0);
             case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);

@@ -39,6 +39,7 @@ public final class SqlHints {
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
+    public static final String NO_COVERING_HINT = "no_covering";
 
     public static boolean hasAsOfDenseHint(
             @NotNull QueryModel queryModel,
@@ -96,6 +97,10 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, MARKOUT_HORIZON_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasNoCoveringHint(@NotNull QueryModel queryModel) {
+        return queryModel.getHints().keyIndex(NO_COVERING_HINT) < 0;
     }
 
     private static boolean hasHintWithParams(

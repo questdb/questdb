@@ -315,6 +315,50 @@ public class AlpCompression {
     }
 
     /**
+     * Decompress ALP-encoded doubles directly to native memory.
+     * The workspace must have room for count longs (read from the header at srcAddr).
+     *
+     * @return number of values decoded
+     */
+    public static int decompressDoublesToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int excCount = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        long forBase = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
+
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+        } else {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+            }
+        }
+        pos += packedBytes;
+
+        for (int i = 0; i < count; i++) {
+            Unsafe.getUnsafe().putDouble(outputAddr + (long) i * Double.BYTES,
+                    alpDecode(Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES), e, f));
+        }
+
+        long excPosAddr = pos;
+        long excValAddr = pos + (long) excCount * 4;
+        for (int i = 0; i < excCount; i++) {
+            int excIdx = Unsafe.getUnsafe().getInt(excPosAddr + (long) i * 4);
+            double excVal = Unsafe.getUnsafe().getDouble(excValAddr + (long) i * 8);
+            Unsafe.getUnsafe().putDouble(outputAddr + (long) excIdx * Double.BYTES, excVal);
+        }
+
+        return count;
+    }
+
+    /**
      * Compress a stride of long values using FoR bitpacking.
      *
      * @return number of bytes written
@@ -386,6 +430,33 @@ public class AlpCompression {
         pos += packedBytes;
 
         return (int) (pos - srcAddr);
+    }
+
+    /**
+     * Decompress FoR-encoded longs directly to native memory.
+     * The workspace must have room for count longs (read from the header at srcAddr).
+     *
+     * @return number of values decoded
+     */
+    public static int decompressLongsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        long forBase = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
+
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+            Unsafe.getUnsafe().copyMemory(workspaceAddr, outputAddr, (long) count * Long.BYTES);
+        } else {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(outputAddr + (long) i * Long.BYTES, forBase);
+            }
+        }
+
+        return count;
     }
 
     /**
@@ -478,6 +549,36 @@ public class AlpCompression {
     }
 
     /**
+     * Decompress FoR-encoded ints directly to native memory.
+     * The workspace must have room for count longs (read from the header at srcAddr).
+     *
+     * @return number of values decoded
+     */
+    public static int decompressIntsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int forBase = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, 0, workspaceAddr);
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putInt(outputAddr + (long) i * Integer.BYTES,
+                        forBase + (int) Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putInt(outputAddr + (long) i * Integer.BYTES, forBase);
+            }
+        }
+
+        return count;
+    }
+
+    /**
      * Compute the maximum compressed size for a stride of values.
      * Used to pre-allocate the output buffer.
      */
@@ -493,9 +594,11 @@ public class AlpCompression {
             case ColumnType.GEOLONG:
                 return LONG_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
             case ColumnType.INT:
+            case ColumnType.IPv4:
             case ColumnType.FLOAT:
             case ColumnType.GEOINT:
                 return INT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32);
+            case ColumnType.CHAR:
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:
                 return SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);

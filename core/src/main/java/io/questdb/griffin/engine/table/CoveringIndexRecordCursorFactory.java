@@ -32,6 +32,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -40,15 +43,21 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A RecordCursorFactory that reads covered column values directly from the
@@ -63,14 +72,19 @@ import org.jetbrains.annotations.NotNull;
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
+    private final IntList columnSizeShifts;
 
     private final CoveringCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
+    private final boolean hasVarSizeColumns;
     private final int indexColumnIndex;
     private final int keyQueryPosition;
     private final boolean latestBy;
     private final ObjList<Function> keyValueFuncs;
     private final RecordMetadata metadata;
+    private final CoveringPageFrameCursor pageFrameCursor;
+    private final PageFrameScanCursor pageFrameScanCursor;
+    private final int[] queryColToIncludeIdx;
     private final IntList resolvedKeys;
     private final Function symbolFunction;
 
@@ -108,8 +122,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestBy = latestBy;
         this.keyValueFuncs = null;
         this.resolvedKeys = null;
+        this.columnSizeShifts = columnSizeShifts;
+        this.queryColToIncludeIdx = queryColToIncludeIdx;
+        this.hasVarSizeColumns = hasAnyVarSizeIncludeColumn(queryColToIncludeIdx, metadata);
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes, latestBy);
+        this.pageFrameCursor = !latestBy && !hasVarSizeColumns
+                ? new CoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, metadata, columnIndexes)
+                : null;
+        this.pageFrameScanCursor = pageFrameCursor != null
+                ? new PageFrameScanCursor(pageFrameCursor, queryColToIncludeIdx, metadata)
+                : null;
     }
 
     public CoveringIndexRecordCursorFactory(
@@ -148,6 +171,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.columnIndexes = columnIndexes;
 
         this.latestBy = latestBy;
+        this.columnSizeShifts = columnSizeShifts;
+        this.queryColToIncludeIdx = queryColToIncludeIdx;
+        this.hasVarSizeColumns = hasAnyVarSizeIncludeColumn(queryColToIncludeIdx, metadata);
         this.keyValueFuncs = keyValueFuncs;
         this.resolvedKeys = keyValueFuncs != null ? new IntList(keyValueFuncs.size()) : null;
         int multiKeyCapacity = 0;
@@ -162,6 +188,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes, latestBy);
+        this.pageFrameCursor = !latestBy && !hasVarSizeColumns
+                ? new CoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, metadata, columnIndexes)
+                : null;
+        this.pageFrameScanCursor = pageFrameCursor != null
+                ? new PageFrameScanCursor(pageFrameCursor, queryColToIncludeIdx, metadata)
+                : null;
     }
 
     @Override
@@ -169,10 +201,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         Misc.free(dfcFactory);
         Misc.free(symbolFunction);
         Misc.freeObjList(keyValueFuncs);
+        if (pageFrameCursor != null) {
+            pageFrameCursor.close();
+        }
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Row-by-row CoveringCursor streams values directly from decoded
+        // sidecar arrays — optimal for getCursor() scans. The page frame path
+        // (getPageFrameCursor) is used by aggregation/parallel consumers.
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
@@ -231,8 +269,65 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        if (pageFrameCursor == null) {
+            return null;
+        }
+        PartitionFrameCursor frameCursor = dfcFactory.getCursor(
+                executionContext,
+                columnIndexes,
+                PartitionFrameCursorFactory.ORDER_ASC
+        );
+        try {
+            TableReader reader = frameCursor.getTableReader();
+            if (resolvedKeys != null) {
+                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
+                pageFrameCursor.multiKeys.clear();
+                for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                    int key = resolvedKeys.getQuick(i);
+                    if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
+                        CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
+                        key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                    }
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        pageFrameCursor.multiKeys.add(key);
+                    }
+                }
+                if (pageFrameCursor.multiKeys.size() == 0) {
+                    Misc.free(frameCursor);
+                    pageFrameCursor.ofEmpty();
+                    return pageFrameCursor;
+                }
+            } else {
+                int resolvedKey = pageFrameCursor.symbolKey;
+                if (resolvedKey == SymbolTable.VALUE_NOT_FOUND && symbolFunction != null) {
+                    SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
+                    CharSequence symValue = symbolFunction.getStrA(null);
+                    resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                    if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+                        Misc.free(frameCursor);
+                        pageFrameCursor.ofEmpty();
+                        return pageFrameCursor;
+                    }
+                    pageFrameCursor.resolvedKey = resolvedKey;
+                }
+            }
+            pageFrameCursor.of(frameCursor);
+            return pageFrameCursor;
+        } catch (Throwable th) {
+            Misc.free(frameCursor);
+            throw th;
+        }
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public boolean supportsPageFrameCursor() {
+        return pageFrameCursor != null;
     }
 
     @Override
@@ -244,6 +339,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         } else {
             sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);
         }
+    }
+
+    private static boolean hasAnyVarSizeIncludeColumn(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+        for (int q = 0; q < queryColToIncludeIdx.length; q++) {
+            if (queryColToIncludeIdx[q] >= 0 && ColumnType.isVarSize(metadata.getColumnType(q))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int findQueryPosition(IntList columnIndexes, int readerColIdx) {
@@ -636,12 +740,30 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public char getChar(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return (char) cursor.getCoveredShort(includeIdx);
+            }
+            return 0;
+        }
+
+        @Override
         public int getInt(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
                 return cursor.getCoveredInt(includeIdx);
             }
             return Integer.MIN_VALUE;
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredInt(includeIdx);
+            }
+            return Numbers.IPv4_NULL;
         }
 
         @Override
@@ -811,6 +933,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public char getChar(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getChar(rowId * Character.BYTES);
+            }
+            return 0;
+        }
+
+        @Override
         public double getDouble(int col) {
             if (getIncludeIdx(col) >= 0 && tableReader != null) {
                 return columnMem(col).getDouble(rowId * Double.BYTES);
@@ -832,6 +962,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return columnMem(col).getInt(rowId * Integer.BYTES);
             }
             return Integer.MIN_VALUE;
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getInt(rowId * Integer.BYTES);
+            }
+            return Numbers.IPv4_NULL;
         }
 
         @Override
@@ -981,6 +1119,680 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return -2;
             }
             return queryColToIncludeIdx[col];
+        }
+    }
+
+    /**
+     * Wraps CoveringPageFrameCursor as a RecordCursor for plain scans.
+     * Reads column values directly from page frame native addresses
+     * using Unsafe — no per-value virtual calls.
+     */
+    private static class PageFrameScanCursor implements RecordCursor {
+        private final CoveringPageFrameCursor pfCursor;
+        private final DirectRecord record;
+        private CoveringPageFrame currentFrame;
+        private long rowIndex;
+        private long rowCount;
+
+        PageFrameScanCursor(CoveringPageFrameCursor pfCursor, int[] queryColToIncludeIdx, RecordMetadata metadata) {
+            this.pfCursor = pfCursor;
+            this.record = new DirectRecord(queryColToIncludeIdx, metadata);
+        }
+
+        @Override
+        public void close() {
+            // pfCursor lifecycle managed by the factory
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return pfCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            while (true) {
+                if (rowIndex < rowCount) {
+                    record.setRowIndex(rowIndex++);
+                    return true;
+                }
+                PageFrame frame = pfCursor.next();
+                if (frame == null) {
+                    return false;
+                }
+                currentFrame = (CoveringPageFrame) frame;
+                record.of(currentFrame);
+                rowIndex = 0;
+                rowCount = currentFrame.partitionHi - currentFrame.partitionLo;
+            }
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return pfCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            pfCursor.toTop();
+            currentFrame = null;
+            rowIndex = 0;
+            rowCount = 0;
+        }
+
+        void of() {
+            currentFrame = null;
+            rowIndex = 0;
+            rowCount = 0;
+        }
+    }
+
+    /**
+     * Record that reads fixed-width column values directly from page frame
+     * native addresses. Zero virtual calls per value — just Unsafe reads.
+     */
+    private static class DirectRecord implements Record {
+        private final int[] columnSizeBytes;
+        private final int[] columnTypeTags;
+        private final boolean[] isSymbolColumn;
+        private final int queryColCount;
+        private final int[] queryColToIncludeIdx;
+        private long[] pageAddresses;
+        private long rowIndex;
+        private SymbolTable[] symbolTables; // per-column symbol tables
+
+        DirectRecord(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+            this.queryColToIncludeIdx = queryColToIncludeIdx;
+            this.queryColCount = queryColToIncludeIdx.length;
+            this.columnSizeBytes = new int[queryColCount];
+            this.columnTypeTags = new int[queryColCount];
+            this.isSymbolColumn = new boolean[queryColCount];
+            for (int q = 0; q < queryColCount; q++) {
+                int colType = metadata.getColumnType(q);
+                this.columnTypeTags[q] = ColumnType.tagOf(colType);
+                this.isSymbolColumn[q] = ColumnType.tagOf(colType) == ColumnType.SYMBOL;
+                this.columnSizeBytes[q] = queryColToIncludeIdx[q] >= 0
+                        ? ColumnType.sizeOf(colType)
+                        : Integer.BYTES;
+            }
+        }
+
+        @Override
+        public double getDouble(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getDouble(addr + rowIndex * Double.BYTES) : Double.NaN;
+        }
+
+        @Override
+        public float getFloat(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getFloat(addr + rowIndex * Float.BYTES) : Float.NaN;
+        }
+
+        @Override
+        public int getInt(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES) : Integer.MIN_VALUE;
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES) : Numbers.IPv4_NULL;
+        }
+
+        @Override
+        public long getLong(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getLong(addr + rowIndex * Long.BYTES) : Long.MIN_VALUE;
+        }
+
+        @Override
+        public long getRowId() {
+            return rowIndex;
+        }
+
+        @Override
+        public short getShort(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getShort(addr + rowIndex * Short.BYTES) : 0;
+        }
+
+        @Override
+        public byte getByte(int col) {
+            long addr = pageAddresses[col];
+            return addr != 0 ? Unsafe.getUnsafe().getByte(addr + rowIndex) : 0;
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return getByte(col) != 0;
+        }
+
+        @Override
+        public char getChar(int col) {
+            return (char) getShort(col);
+        }
+
+        @Override
+        public long getDate(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public CharSequence getSymA(int col) {
+            long addr = pageAddresses[col];
+            if (addr != 0 && symbolTables != null && symbolTables[col] != null) {
+                int key = Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES);
+                return symbolTables[col].valueOf(key);
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence getSymB(int col) {
+            long addr = pageAddresses[col];
+            if (addr != 0 && symbolTables != null && symbolTables[col] != null) {
+                int key = Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES);
+                return symbolTables[col].valueBOf(key);
+            }
+            return null;
+        }
+
+        void of(CoveringPageFrame frame) {
+            this.pageAddresses = frame.pageAddresses;
+        }
+
+        void setRowIndex(long rowIndex) {
+            this.rowIndex = rowIndex;
+        }
+
+        void setSymbolTables(SymbolTable[] symbolTables) {
+            this.symbolTables = symbolTables;
+        }
+    }
+
+    private static class CoveringPageFrame implements PageFrame {
+        private final long[] auxPageAddresses;
+        private final long[] auxPageSizes;
+        private final int columnCount;
+        private final long[] pageAddresses;
+        private final long[] pageSizes;
+        private int partitionIndex;
+        private long partitionHi;
+        private long partitionLo;
+
+        CoveringPageFrame(int columnCount) {
+            this.columnCount = columnCount;
+            this.pageAddresses = new long[columnCount];
+            this.pageSizes = new long[columnCount];
+            this.auxPageAddresses = new long[columnCount];
+            this.auxPageSizes = new long[columnCount];
+        }
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return auxPageAddresses[columnIndex];
+        }
+
+        @Override
+        public long getAuxPageSize(int columnIndex) {
+            return auxPageSizes[columnIndex];
+        }
+
+        @Override
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            return null;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        @Override
+        public byte getFormat() {
+            return PartitionFormat.NATIVE;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return pageAddresses[columnIndex];
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return pageSizes[columnIndex];
+        }
+
+        @Override
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return null;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return 0;
+        }
+
+        @Override
+        public int getParquetRowGroupHi() {
+            return 0;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return 0;
+        }
+
+        @Override
+        public long getPartitionHi() {
+            return partitionHi;
+        }
+
+        @Override
+        public int getPartitionIndex() {
+            return partitionIndex;
+        }
+
+        @Override
+        public long getPartitionLo() {
+            return partitionLo;
+        }
+    }
+
+    private static class CoveringPageFrameCursor implements PageFrameCursor {
+        private static final int INITIAL_CAPACITY = 4096;
+        private final long[] columnBufferAddrs;
+        private final long[] columnBufferCapacities;
+        private final IntList columnIndexes;
+        private final int[] columnSizeBytes;
+        private final int[] columnTypeTags;
+        private final CoveringPageFrame frame;
+        private final int indexColumnIndex;
+        private final IntList multiKeys;
+        private final int queryColCount;
+        private final int[] queryColToIncludeIdx;
+        private PartitionFrame cachedPartFrame;
+        private boolean exhausted;
+        private PartitionFrameCursor frameCursor;
+        private int currentKeyIdx;
+        int resolvedKey;
+        int symbolKey;
+        private long symbolFillAddr;
+        private long symbolFillCapacity;
+        private TableReader tableReader;
+
+        CoveringPageFrameCursor(
+                int indexColumnIndex,
+                int symbolKey,
+                int[] queryColToIncludeIdx,
+                RecordMetadata metadata,
+                IntList columnIndexes
+        ) {
+            this.indexColumnIndex = indexColumnIndex;
+            this.symbolKey = symbolKey;
+            this.resolvedKey = symbolKey;
+            this.queryColToIncludeIdx = queryColToIncludeIdx;
+            this.queryColCount = queryColToIncludeIdx.length;
+            this.columnIndexes = columnIndexes;
+            this.frame = new CoveringPageFrame(queryColCount);
+            this.columnBufferAddrs = new long[queryColCount];
+            this.columnBufferCapacities = new long[queryColCount];
+            this.columnSizeBytes = new int[queryColCount];
+            this.columnTypeTags = new int[queryColCount];
+            this.multiKeys = new IntList();
+            for (int q = 0; q < queryColCount; q++) {
+                int colType = metadata.getColumnType(q);
+                this.columnTypeTags[q] = ColumnType.tagOf(colType);
+                if (queryColToIncludeIdx[q] >= 0) {
+                    this.columnSizeBytes[q] = ColumnType.sizeOf(colType);
+                } else if (queryColToIncludeIdx[q] == -1) {
+                    this.columnSizeBytes[q] = Integer.BYTES; // symbol key int
+                }
+            }
+        }
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            // not supported
+        }
+
+        @Override
+        public void close() {
+            frameCursor = Misc.free(frameCursor);
+            freeBuffers();
+        }
+
+        @Override
+        public IntList getColumnIndexes() {
+            return columnIndexes;
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return 0;
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            if (tableReader != null) {
+                return tableReader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+            }
+            return null;
+        }
+
+        @Override
+        public boolean isExternal() {
+            return false;
+        }
+
+        @Override
+        public @Nullable PageFrame next(long skipTarget) {
+            if (frameCursor == null || exhausted) {
+                return null;
+            }
+
+            if (multiKeys.size() > 0) {
+                return nextMultiKey();
+            }
+            return nextSingleKey(resolvedKey);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            if (tableReader != null) {
+                return tableReader.newSymbolTable(columnIndexes.getQuick(columnIndex));
+            }
+            return null;
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return false;
+        }
+
+        @Override
+        public void toTop() {
+            if (frameCursor != null) {
+                frameCursor.toTop();
+            }
+            currentKeyIdx = 0;
+            exhausted = false;
+            cachedPartFrame = null;
+        }
+
+        void of(PartitionFrameCursor frameCursor) {
+            this.frameCursor = frameCursor;
+            this.tableReader = frameCursor.getTableReader();
+            this.currentKeyIdx = 0;
+            this.exhausted = false;
+            this.cachedPartFrame = null;
+        }
+
+        void ofEmpty() {
+            this.frameCursor = null;
+            this.tableReader = null;
+            this.exhausted = true;
+            this.cachedPartFrame = null;
+        }
+
+        private void ensureBufferCapacity(int q, long requiredElements) {
+            long requiredBytes = requiredElements * columnSizeBytes[q];
+            if (columnBufferAddrs[q] == 0 || columnBufferCapacities[q] < requiredBytes) {
+                if (columnBufferAddrs[q] != 0) {
+                    Unsafe.free(columnBufferAddrs[q], columnBufferCapacities[q], MemoryTag.NATIVE_INDEX_READER);
+                }
+                // Exponential growth to avoid repeated reallocation
+                long newCapacity = Math.max(requiredBytes, (long) INITIAL_CAPACITY * columnSizeBytes[q]);
+                if (columnBufferCapacities[q] > 0) {
+                    newCapacity = Math.max(newCapacity, columnBufferCapacities[q] * 2);
+                }
+                columnBufferAddrs[q] = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_INDEX_READER);
+                columnBufferCapacities[q] = newCapacity;
+            }
+        }
+
+        private void ensureSymbolFillCapacity(long requiredElements) {
+            long requiredBytes = requiredElements * Integer.BYTES;
+            if (symbolFillAddr == 0 || symbolFillCapacity < requiredBytes) {
+                if (symbolFillAddr != 0) {
+                    Unsafe.free(symbolFillAddr, symbolFillCapacity, MemoryTag.NATIVE_INDEX_READER);
+                }
+                long newCapacity = Math.max(requiredBytes, (long) INITIAL_CAPACITY * Integer.BYTES);
+                if (symbolFillCapacity > 0) {
+                    newCapacity = Math.max(newCapacity, symbolFillCapacity * 2);
+                }
+                symbolFillAddr = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_INDEX_READER);
+                symbolFillCapacity = newCapacity;
+            }
+        }
+
+        private @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
+            BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                    partitionIndex,
+                    indexColumnIndex,
+                    BitmapIndexReader.DIR_FORWARD
+            );
+            RowCursor rowCursor = indexReader.getCursor(
+                    true,
+                    TableUtils.toIndexKey(rawSymbolKey),
+                    rowLo,
+                    rowHi - 1
+            );
+            if (!(rowCursor instanceof CoveringRowCursor crc) || !crc.hasCovering()) {
+                return null;
+            }
+
+            // Single-pass: iterate cursor writing covered values to native buffers.
+            // Buffers grow on demand. This is one cursor per partition — no double scan.
+            int capacity = INITIAL_CAPACITY;
+            for (int q = 0; q < queryColCount; q++) {
+                if (queryColToIncludeIdx[q] >= 0) {
+                    ensureBufferCapacity(q, capacity);
+                }
+            }
+            ensureSymbolFillCapacity(capacity);
+
+            int count = 0;
+            while (crc.hasNext()) {
+                crc.next();
+                if (count >= capacity) {
+                    capacity = capacity * 2;
+                    for (int q = 0; q < queryColCount; q++) {
+                        if (queryColToIncludeIdx[q] >= 0) {
+                            growBuffer(q, count, capacity);
+                        }
+                    }
+                    growSymbolFillBuffer(capacity);
+                }
+                for (int q = 0; q < queryColCount; q++) {
+                    int includeIdx = queryColToIncludeIdx[q];
+                    if (includeIdx < 0) continue;
+                    long addr = columnBufferAddrs[q];
+                    switch (columnTypeTags[q]) {
+                        case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(
+                                addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
+                        case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(
+                                addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
+                        case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                                Unsafe.getUnsafe().putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
+                        case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                                Unsafe.getUnsafe().putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
+                        case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
+                                Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
+                        case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
+                                Unsafe.getUnsafe().putByte(addr + count, crc.getCoveredByte(includeIdx));
+                        default -> {}
+                    }
+                }
+                count++;
+            }
+            if (count == 0) {
+                return null;
+            }
+
+            // Fill symbol column buffer with constant key using long-word writes
+            fillSymbolKey(rawSymbolKey, count);
+
+            // Set up frame
+            for (int q = 0; q < queryColCount; q++) {
+                int includeIdx = queryColToIncludeIdx[q];
+                if (includeIdx >= 0) {
+                    frame.pageAddresses[q] = columnBufferAddrs[q];
+                    frame.pageSizes[q] = (long) count * columnSizeBytes[q];
+                } else if (includeIdx == -1) {
+                    frame.pageAddresses[q] = symbolFillAddr;
+                    frame.pageSizes[q] = (long) count * Integer.BYTES;
+                }
+                frame.auxPageAddresses[q] = 0;
+                frame.auxPageSizes[q] = 0;
+            }
+            frame.partitionLo = 0;
+            frame.partitionHi = count;
+            frame.partitionIndex = partitionIndex;
+            return frame;
+        }
+
+        private void fillSymbolKey(int rawSymbolKey, int count) {
+            // Pack two copies of the int key into a long for 2x fewer writes
+            long longKey = Integer.toUnsignedLong(rawSymbolKey) | ((long) rawSymbolKey << 32);
+            int i = 0;
+            int pairs = count & ~1; // round down to even
+            for (; i < pairs; i += 2) {
+                Unsafe.getUnsafe().putLong(symbolFillAddr + (long) i * Integer.BYTES, longKey);
+            }
+            if (i < count) {
+                Unsafe.getUnsafe().putInt(symbolFillAddr + (long) i * Integer.BYTES, rawSymbolKey);
+            }
+        }
+
+        private void growBuffer(int q, int currentCount, int newCapacity) {
+            long newBytes = (long) newCapacity * columnSizeBytes[q];
+            long oldBytes = columnBufferCapacities[q];
+            if (newBytes > oldBytes) {
+                long newAddr = Unsafe.malloc(newBytes, MemoryTag.NATIVE_INDEX_READER);
+                if (columnBufferAddrs[q] != 0) {
+                    long copyBytes = (long) currentCount * columnSizeBytes[q];
+                    Unsafe.getUnsafe().copyMemory(columnBufferAddrs[q], newAddr, copyBytes);
+                    Unsafe.free(columnBufferAddrs[q], oldBytes, MemoryTag.NATIVE_INDEX_READER);
+                }
+                columnBufferAddrs[q] = newAddr;
+                columnBufferCapacities[q] = newBytes;
+            }
+        }
+
+        private void growSymbolFillBuffer(int newCapacity) {
+            long newBytes = (long) newCapacity * Integer.BYTES;
+            if (newBytes > symbolFillCapacity) {
+                if (symbolFillAddr != 0) {
+                    Unsafe.free(symbolFillAddr, symbolFillCapacity, MemoryTag.NATIVE_INDEX_READER);
+                }
+                symbolFillAddr = Unsafe.malloc(newBytes, MemoryTag.NATIVE_INDEX_READER);
+                symbolFillCapacity = newBytes;
+            }
+        }
+
+        private void freeBuffers() {
+            for (int q = 0; q < queryColCount; q++) {
+                if (columnBufferAddrs[q] != 0) {
+                    Unsafe.free(columnBufferAddrs[q], columnBufferCapacities[q], MemoryTag.NATIVE_INDEX_READER);
+                    columnBufferAddrs[q] = 0;
+                    columnBufferCapacities[q] = 0;
+                }
+            }
+            if (symbolFillAddr != 0) {
+                Unsafe.free(symbolFillAddr, symbolFillCapacity, MemoryTag.NATIVE_INDEX_READER);
+                symbolFillAddr = 0;
+                symbolFillCapacity = 0;
+            }
+        }
+
+        private @Nullable PageFrame nextMultiKey() {
+            // Iterate all partitions, for each partition try all keys.
+            // This matches how CoveringCursor.advanceMultiKey() works.
+            while (true) {
+                // Try remaining keys in current partition
+                while (currentKeyIdx < multiKeys.size()) {
+                    if (cachedPartFrame != null) {
+                        int rawKey = multiKeys.getQuick(currentKeyIdx);
+                        currentKeyIdx++;
+                        PageFrame result = fillFrameForKey(
+                                rawKey,
+                                cachedPartFrame.getPartitionIndex(),
+                                cachedPartFrame.getRowLo(),
+                                cachedPartFrame.getRowHi()
+                        );
+                        if (result != null) {
+                            return result;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                // Advance to next partition
+                PartitionFrame partFrame = frameCursor.next();
+                if (partFrame == null) {
+                    exhausted = true;
+                    return null;
+                }
+                cachedPartFrame = partFrame;
+                currentKeyIdx = 0;
+            }
+        }
+
+        private @Nullable PageFrame nextSingleKey(int rawSymbolKey) {
+            while (true) {
+                PartitionFrame partFrame = frameCursor.next();
+                if (partFrame == null) {
+                    exhausted = true;
+                    return null;
+                }
+                PageFrame result = fillFrameForKey(
+                        rawSymbolKey,
+                        partFrame.getPartitionIndex(),
+                        partFrame.getRowLo(),
+                        partFrame.getRowHi()
+                );
+                if (result != null) {
+                    return result;
+                }
+            }
         }
     }
 }

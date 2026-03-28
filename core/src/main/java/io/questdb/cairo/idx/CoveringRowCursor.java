@@ -61,7 +61,42 @@ public interface CoveringRowCursor extends RowCursor {
         return null;
     }
 
+    /**
+     * Returns the number of covered columns (INCLUDE list size).
+     */
+    default int getCoveredColumnCount() {
+        return 0;
+    }
+
+    /**
+     * Returns the column type for a covered column by include index.
+     */
+    default int getCoveredColumnType(int includeIdx) {
+        return -1;
+    }
+
+    /**
+     * Returns the total value count for the current key across all gens.
+     * Returns -1 if unknown or covering data is unavailable.
+     */
+    default int getCoveredValueCount() {
+        return -1;
+    }
+
     boolean hasCovering();
+
+    /**
+     * Bulk-decodes all covered column values for the current key into native memory.
+     * For each include column, writes values contiguously starting at the given address.
+     * The caller must ensure each buffer has room for getCoveredValueCount() elements.
+     * Variable-size columns (VARCHAR, STRING) are not supported; their buffer is untouched.
+     *
+     * @param outputAddrs array of native addresses, one per include column
+     * @return number of values written, or -1 if bulk decode is unavailable
+     */
+    default int decodeCoveredColumnsToAddr(long[] outputAddrs) {
+        return -1;
+    }
 
     /**
      * Positions the cursor at the last row, returning its row ID.

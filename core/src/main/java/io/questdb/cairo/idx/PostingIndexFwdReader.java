@@ -142,13 +142,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long decodeWorkspaceAddr; // reusable native workspace for ALP decompress
         private int decodeWorkspaceCapacity;
         private int decodedStride = -1;
+        private int cachedSidecarIdx; // cached sidecarValueIndex() — valid after hasNext() returns true
 
         @Override
         public byte getCoveredByte(int includeIdx) {
             if (!isCurrentGenDense) {
                 return getRawSidecarByte(includeIdx);
             }
-            int idx = sidecarValueIndex();
+            int idx = cachedSidecarIdx;
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return 0;
             }
@@ -160,7 +161,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (!isCurrentGenDense) {
                 return getRawSidecarDouble(includeIdx);
             }
-            int idx = sidecarValueIndex();
+            int idx = cachedSidecarIdx;
             if (idx < 0 || decodedDoubles == null || decodedDoubles[includeIdx] == null) {
                 return Double.NaN;
             }
@@ -172,7 +173,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (!isCurrentGenDense) {
                 return getRawSidecarFloat(includeIdx);
             }
-            int idx = sidecarValueIndex();
+            int idx = cachedSidecarIdx;
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return Float.NaN;
             }
@@ -184,7 +185,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (!isCurrentGenDense) {
                 return getRawSidecarInt(includeIdx);
             }
-            int idx = sidecarValueIndex();
+            int idx = cachedSidecarIdx;
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return Integer.MIN_VALUE;
             }
@@ -196,7 +197,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (!isCurrentGenDense) {
                 return getRawSidecarLong(includeIdx);
             }
-            int idx = sidecarValueIndex();
+            int idx = cachedSidecarIdx;
             if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
                 return Long.MIN_VALUE;
             }
@@ -208,7 +209,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (!isCurrentGenDense) {
                 return getRawSidecarShort(includeIdx);
             }
-            int idx = sidecarValueIndex();
+            int idx = cachedSidecarIdx;
             if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
                 return 0;
             }
@@ -456,11 +457,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return lastRowId;
         }
 
-        private int sidecarValueIndex() {
-            // sidecarStrideKeyStart tracks values skipped by block-skip (delta mode)
-            // or binary search (flat mode) within this key's decoded sidecar block.
-            // sidecarOrdinal counts values iterated (both emitted and filtered).
+        private int sidecarValueIdx() {
             return sidecarStrideKeyStart + sidecarOrdinal - 1;
+        }
+
+        private int sidecarValueIndex() {
+            return cachedSidecarIdx;
         }
 
         private void decodeSidecarKey(int stride, int localKey) {
@@ -485,7 +487,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             for (int c = 0; c < coverCount; c++) {
                 MemoryMR mem = sidecarMems[c];
-                if (mem == null || mem.size() == 0) {
+                if (mem == null) {
+                    continue;
+                }
+                // Ensure the sidecar mapping covers the full file
+                mem.growToFileSize();
+                if (mem.size() == 0) {
                     continue;
                 }
                 // Get stride data offset from stride index
@@ -500,9 +507,17 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 }
 
                 // Per-key layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
+                long keyOffsetsEnd = strideDataStart + (long) ks * Integer.BYTES;
+                if (keyOffsetsEnd > mem.size()) {
+                    continue;
+                }
                 long keyOffsetsAddr = mem.addressOf(strideDataStart);
                 int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
-                long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
+                long keyBlockStart = keyOffsetsEnd + keyBlockOff;
+                if (keyBlockStart + 4 > mem.size()) {
+                    continue;
+                }
+                long keyBlockAddr = mem.addressOf(keyBlockStart);
                 int count = Unsafe.getUnsafe().getInt(keyBlockAddr);
                 if (count == 0) {
                     continue;
@@ -538,6 +553,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         break;
                     }
                     case ColumnType.INT:
+                    case ColumnType.IPv4:
                     case ColumnType.FLOAT:
                     case ColumnType.GEOINT:
                     case ColumnType.SYMBOL: {
@@ -548,6 +564,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         AlpCompression.decompressInts(keyBlockAddr, decodedInts[c], decodeWorkspaceAddr);
                         break;
                     }
+                    case ColumnType.CHAR:
                     case ColumnType.SHORT:
                     case ColumnType.GEOSHORT: {
                         if (decodedInts[c] == null || decodedInts[c].length < count) {
@@ -589,6 +606,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 constantDeltaValue += constantDeltaStep;
                 constantDeltaRemaining--;
                 sidecarOrdinal++;
+                cachedSidecarIdx = sidecarValueIdx();
                 return true;
             }
             return hasNextComplex();
@@ -610,6 +628,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                             constantDeltaValue += constantDeltaStep;
                             constantDeltaRemaining--;
                             sidecarOrdinal++;
+                            cachedSidecarIdx = sidecarValueIdx();
                             return true;
                         }
                         continue;
@@ -627,7 +646,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     }
                     if (value >= minValue) {
                         this.next = value;
-                        if (coverCount > 0) sidecarOrdinal++;
+                        if (coverCount > 0) {
+                            sidecarOrdinal++;
+                            cachedSidecarIdx = sidecarValueIdx();
+                        }
                         return true;
                     }
                     if (coverCount > 0) sidecarOrdinal++;
@@ -656,6 +678,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     constantDeltaValue += constantDeltaStep;
                     constantDeltaRemaining--;
                     sidecarOrdinal++;
+                    cachedSidecarIdx = sidecarValueIdx();
                     return true;
                 }
             }
@@ -708,6 +731,230 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.sidecarStrideKeyStart = 0;
             this.decodedStride = -1;
             advanceToNextRelevantGen();
+        }
+
+        @Override
+        public int getCoveredColumnCount() {
+            return coverCount;
+        }
+
+        @Override
+        public int getCoveredColumnType(int includeIdx) {
+            return sidecarColumnTypes != null && includeIdx < sidecarColumnTypes.length
+                    ? sidecarColumnTypes[includeIdx] : -1;
+        }
+
+        @Override
+        public int getCoveredValueCount() {
+            if (sidecarMems == null || coverCount == 0) {
+                return -1;
+            }
+            // Sum counts across all gens for this key.
+            // Dense gens: read count from sidecar key block header.
+            // Sparse gens: read count from raw sidecar block header.
+            int total = 0;
+            for (int g = 0; g < genCount; g++) {
+                int genKeyCount = genLookup.getGenKeyCount(g);
+                if (genKeyCount >= 0) {
+                    // Dense gen — read count from sidecar key block
+                    total += getDenseGenCount(g, genKeyCount);
+                } else {
+                    // Sparse gen — read count from raw sidecar block
+                    total += getSparseGenCount(g);
+                }
+            }
+            return total;
+        }
+
+        @Override
+        public int decodeCoveredColumnsToAddr(long[] outputAddrs) {
+            if (sidecarMems == null || coverCount == 0) {
+                return -1;
+            }
+            ensureDecodeWorkspaceCapacity(65536); // pre-allocate workspace
+
+            int totalWritten = 0;
+            for (int g = 0; g < genCount; g++) {
+                int genKeyCount = genLookup.getGenKeyCount(g);
+                if (genKeyCount >= 0) {
+                    totalWritten += decodeDenseGenToAddr(g, genKeyCount, outputAddrs, totalWritten);
+                } else {
+                    totalWritten += decodeSparseGenToAddr(g, outputAddrs, totalWritten);
+                }
+            }
+            return totalWritten;
+        }
+
+        private int getDenseGenCount(int gen, int genKeyCount) {
+            // Find the first non-var-size sidecar column to read count from
+            int memIdx = -1;
+            for (int c = 0; c < coverCount; c++) {
+                if (sidecarMems[c] != null && sidecarMems[c].size() > 0
+                        && !ColumnType.isVarSize(sidecarColumnTypes[c])) {
+                    memIdx = c;
+                    break;
+                }
+            }
+            if (memIdx < 0) return 0;
+
+            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
+            int sc = PostingIndexUtils.strideCount(genKeyCount);
+            if (stride >= sc) return 0;
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
+            if (localKey >= ks) return 0;
+
+            MemoryMR mem = sidecarMems[memIdx];
+            int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+            long strideIdxOffset = (long) stride * Integer.BYTES;
+            if (strideIdxOffset + Integer.BYTES > mem.size()) return 0;
+            int strideOff = mem.getInt(strideIdxOffset);
+            long strideDataStart = siSize + strideOff;
+            if (strideDataStart >= mem.size()) return 0;
+            long keyOffsetsAddr = mem.addressOf(strideDataStart);
+            int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
+            long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
+            return Unsafe.getUnsafe().getInt(keyBlockAddr);
+        }
+
+        private int getSparseGenCount(int gen) {
+            // Sparse gen raw sidecar format: [count:4B][values...]
+            // Use column 0's offset to find the count.
+            if (sidecarMems[0] == null) {
+                return 0;
+            }
+            // Compute offset for this gen in column 0's sidecar
+            int[] offsets = new int[coverCount];
+            computeSparseOffsets(gen, offsets);
+            long addr = sidecarMems[0].addressOf(offsets[0]);
+            return Unsafe.getUnsafe().getInt(addr);
+        }
+
+        private void computeSparseOffsets(int gen, int[] offsets) {
+            // Same logic as computePerColumnSidecarOffsets but for a specific gen
+            int firstSparseGen = 0;
+            int denseKeyCount = 0;
+            while (firstSparseGen < gen && genLookup.getGenKeyCount(firstSparseGen) >= 0) {
+                denseKeyCount = genLookup.getGenKeyCount(firstSparseGen);
+                firstSparseGen++;
+            }
+            for (int c = 0; c < coverCount; c++) {
+                if (sidecarMems[c] == null) {
+                    offsets[c] = 0;
+                    continue;
+                }
+                long offset;
+                if (firstSparseGen == 0) {
+                    offset = 0;
+                } else if (c == 0) {
+                    offset = genLookup.getGenSidecarOffset(firstSparseGen);
+                } else {
+                    offset = computeSealedSidecarSize(sidecarMems[c], denseKeyCount);
+                }
+                int colType = sidecarColumnTypes[c];
+                boolean isVar = ColumnType.isVarSize(colType);
+                int elemSize = isVar ? 0 : ColumnType.sizeOf(colType);
+                for (int g = firstSparseGen; g < gen; g++) {
+                    if (genLookup.getGenKeyCount(g) >= 0) continue;
+                    if (offset + 4 > sidecarMems[c].size()) break;
+                    int count = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(offset));
+                    if (isVar) {
+                        if (count == 0) {
+                            offset += 4;
+                        } else {
+                            long sentinelPos = offset + 4 + (long) count * Integer.BYTES;
+                            int dataSize = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(sentinelPos));
+                            offset += 4 + (long) (count + 1) * Integer.BYTES + dataSize;
+                        }
+                    } else {
+                        offset += 4 + (long) count * elemSize;
+                    }
+                }
+                offsets[c] = (int) offset;
+            }
+        }
+
+        private int decodeDenseGenToAddr(int gen, int genKeyCount, long[] outputAddrs, int writeOffset) {
+            int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
+            int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
+            int sc = PostingIndexUtils.strideCount(genKeyCount);
+            if (stride >= sc) return 0;
+            int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
+            if (localKey >= ks) return 0;
+
+            int count = 0;
+            for (int c = 0; c < coverCount; c++) {
+                if (outputAddrs[c] == 0) continue; // column not requested
+                MemoryMR mem = sidecarMems[c];
+                if (mem == null || mem.size() == 0) continue;
+                int colType = sidecarColumnTypes[c];
+                if (ColumnType.isVarSize(colType)) continue;
+
+                long strideIdxOffset = (long) stride * Integer.BYTES;
+                if (strideIdxOffset + Integer.BYTES > mem.size()) continue;
+                int strideOff = mem.getInt(strideIdxOffset);
+                long strideDataStart = siSize + strideOff;
+                if (strideDataStart >= mem.size()) continue;
+
+                long keyOffsetsAddr = mem.addressOf(strideDataStart);
+                int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
+                long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
+                int keyCount = Unsafe.getUnsafe().getInt(keyBlockAddr);
+                if (keyCount == 0) continue;
+                count = keyCount;
+
+                int elemSize = ColumnType.sizeOf(colType);
+                long outAddr = outputAddrs[c] + (long) writeOffset * elemSize;
+                ensureDecodeWorkspaceCapacity(keyCount);
+
+                switch (ColumnType.tagOf(colType)) {
+                    case ColumnType.DOUBLE ->
+                            AlpCompression.decompressDoublesToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                            AlpCompression.decompressLongsToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                            AlpCompression.decompressIntsToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
+                    case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT -> {
+                        long rawAddr = keyBlockAddr + 4;
+                        for (int i = 0; i < keyCount; i++) {
+                            Unsafe.getUnsafe().putShort(outAddr + (long) i * Short.BYTES,
+                                    Unsafe.getUnsafe().getShort(rawAddr + (long) i * Short.BYTES));
+                        }
+                    }
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE -> {
+                        long rawAddr = keyBlockAddr + 4;
+                        Unsafe.getUnsafe().copyMemory(rawAddr, outAddr, keyCount);
+                    }
+                }
+            }
+            return count;
+        }
+
+        private int decodeSparseGenToAddr(int gen, long[] outputAddrs, int writeOffset) {
+            int[] offsets = new int[coverCount];
+            computeSparseOffsets(gen, offsets);
+
+            int count = 0;
+            for (int c = 0; c < coverCount; c++) {
+                if (outputAddrs[c] == 0) continue; // column not requested
+                MemoryMR mem = sidecarMems[c];
+                if (mem == null) continue;
+                int colType = sidecarColumnTypes[c];
+                if (ColumnType.isVarSize(colType)) continue;
+
+                int elemSize = ColumnType.sizeOf(colType);
+                long blockAddr = mem.addressOf(offsets[c]);
+                int genCount = Unsafe.getUnsafe().getInt(blockAddr);
+                if (genCount == 0) continue;
+                count = genCount;
+
+                // Raw sidecar: [count:4B][value0][value1]... — memcpy directly
+                long srcAddr = blockAddr + 4;
+                long dstAddr = outputAddrs[c] + (long) writeOffset * elemSize;
+                Unsafe.getUnsafe().copyMemory(srcAddr, dstAddr, (long) genCount * elemSize);
+            }
+            return count;
         }
 
         private boolean advanceToNextRelevantGen() {

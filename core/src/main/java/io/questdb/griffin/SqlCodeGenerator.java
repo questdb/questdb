@@ -5489,23 +5489,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
 
                         if (filter == null) {
-                            // Check if covering index can serve LATEST ON
-                            int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
-                            int[] coveringMapping = buildCoveringIndexMapping(
-                                    reader, keyReaderColIdx, columnIndexes, metadata
-                            );
-                            if (coveringMapping != null) {
-                                return new CoveringIndexRecordCursorFactory(
-                                        metadata,
-                                        partitionFrameCursorFactory,
-                                        keyReaderColIdx,
-                                        symbol,
-                                        symbolValueFunc,
-                                        columnIndexes,
-                                        columnSizeShifts,
-                                        coveringMapping,
-                                        true
+                            if (!SqlHints.hasNoCoveringHint(model)) {
+                                // Check if covering index can serve LATEST ON
+                                int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
+                                int[] coveringMapping = buildCoveringIndexMapping(
+                                        reader, keyReaderColIdx, columnIndexes, metadata
                                 );
+                                if (coveringMapping != null) {
+                                    return new CoveringIndexRecordCursorFactory(
+                                            metadata,
+                                            partitionFrameCursorFactory,
+                                            keyReaderColIdx,
+                                            symbol,
+                                            symbolValueFunc,
+                                            columnIndexes,
+                                            columnSizeShifts,
+                                            coveringMapping,
+                                            true
+                                    );
+                                }
                             }
 
                             if (symbol == SymbolTable.VALUE_NOT_FOUND) {
@@ -5561,7 +5563,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     // Check if covering index can serve LATEST ON multi-key
-                    if (filter == null) {
+                    if (filter == null && !SqlHints.hasNoCoveringHint(model)) {
                         int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
                         int[] coveringMapping = buildCoveringIndexMapping(
                                 reader, keyReaderColIdx, columnIndexes, metadata
@@ -5582,6 +5584,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                     }
+
 
                     return new LatestByValuesIndexedFilteredRecordCursorFactory(
                             configuration,
@@ -8480,7 +8483,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
 
                             // Check if covering index can serve all selected columns
-                            if (filter == null) {
+                            if (filter == null && !SqlHints.hasNoCoveringHint(model)) {
                                 int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                 int[] coveringMapping = buildCoveringIndexMapping(
                                         reader, keyReaderColIdx, columnIndexes, queryMeta
@@ -8531,7 +8534,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         // Check if covering index can serve IN-list queries
-                        if (filter == null && !orderByKeyColumn) {
+                        if (filter == null && !orderByKeyColumn && !SqlHints.hasNoCoveringHint(model)) {
                             int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                             int[] coveringMapping = buildCoveringIndexMapping(
                                     reader, keyReaderColIdx, columnIndexes, queryMeta
