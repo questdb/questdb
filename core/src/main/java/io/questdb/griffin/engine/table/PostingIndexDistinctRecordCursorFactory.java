@@ -109,7 +109,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("PostingIndexDistinct");
+        sink.type("PostingIndex");
+        sink.meta("op").val("distinct");
         sink.meta("on").putColumnName(cursor.queryColumnPosition);
     }
 

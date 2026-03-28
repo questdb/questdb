@@ -50,6 +50,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -332,8 +333,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type(latestBy ? "CoveringIndex latest" : "CoveringIndex");
+        sink.type("CoveringIndex");
+        if (latestBy) {
+            sink.meta("op").val("latest");
+        }
         sink.meta("on").putColumnName(keyQueryPosition);
+        boolean first = true;
+        for (int q = 0; q < queryColToIncludeIdx.length; q++) {
+            if (queryColToIncludeIdx[q] >= 0) {
+                if (first) {
+                    sink.meta("with");
+                    first = false;
+                } else {
+                    sink.val(", ");
+                }
+                sink.putColumnName(q);
+            }
+        }
         if (keyValueFuncs != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
         } else {
@@ -1433,8 +1449,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private static class CoveringPageFrameCursor implements PageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
-        private final long[] columnBufferAddrs;
-        private final long[] columnBufferCapacities;
+        // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
+        // Each fillFrameForKey() call allocates fresh buffers so that
+        // PageFrameAddressCache can hold addresses from multiple frames
+        // simultaneously (vectorized GROUP BY collects all frames before processing).
+        private final LongList allocatedBuffers = new LongList();
         private final IntList columnIndexes;
         private final int[] columnSizeBytes;
         private final int[] columnTypeTags;
@@ -1449,8 +1468,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int currentKeyIdx;
         int resolvedKey;
         int symbolKey;
-        private long symbolFillAddr;
-        private long symbolFillCapacity;
         private TableReader tableReader;
 
         CoveringPageFrameCursor(
@@ -1467,8 +1484,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.queryColCount = queryColToIncludeIdx.length;
             this.columnIndexes = columnIndexes;
             this.frame = new CoveringPageFrame(queryColCount);
-            this.columnBufferAddrs = new long[queryColCount];
-            this.columnBufferCapacities = new long[queryColCount];
             this.columnSizeBytes = new int[queryColCount];
             this.columnTypeTags = new int[queryColCount];
             this.multiKeys = new IntList();
@@ -1555,6 +1570,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             currentKeyIdx = 0;
             exhausted = false;
             cachedPartFrame = null;
+            freeBuffers();
         }
 
         void of(PartitionFrameCursor frameCursor) {
@@ -1563,6 +1579,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.currentKeyIdx = 0;
             this.exhausted = false;
             this.cachedPartFrame = null;
+            freeBuffers();
         }
 
         void ofEmpty() {
@@ -1572,35 +1589,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.cachedPartFrame = null;
         }
 
-        private void ensureBufferCapacity(int q, long requiredElements) {
-            long requiredBytes = requiredElements * columnSizeBytes[q];
-            if (columnBufferAddrs[q] == 0 || columnBufferCapacities[q] < requiredBytes) {
-                if (columnBufferAddrs[q] != 0) {
-                    Unsafe.free(columnBufferAddrs[q], columnBufferCapacities[q], MemoryTag.NATIVE_INDEX_READER);
-                }
-                // Exponential growth to avoid repeated reallocation
-                long newCapacity = Math.max(requiredBytes, (long) INITIAL_CAPACITY * columnSizeBytes[q]);
-                if (columnBufferCapacities[q] > 0) {
-                    newCapacity = Math.max(newCapacity, columnBufferCapacities[q] * 2);
-                }
-                columnBufferAddrs[q] = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_INDEX_READER);
-                columnBufferCapacities[q] = newCapacity;
-            }
-        }
-
-        private void ensureSymbolFillCapacity(long requiredElements) {
-            long requiredBytes = requiredElements * Integer.BYTES;
-            if (symbolFillAddr == 0 || symbolFillCapacity < requiredBytes) {
-                if (symbolFillAddr != 0) {
-                    Unsafe.free(symbolFillAddr, symbolFillCapacity, MemoryTag.NATIVE_INDEX_READER);
-                }
-                long newCapacity = Math.max(requiredBytes, (long) INITIAL_CAPACITY * Integer.BYTES);
-                if (symbolFillCapacity > 0) {
-                    newCapacity = Math.max(newCapacity, symbolFillCapacity * 2);
-                }
-                symbolFillAddr = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_INDEX_READER);
-                symbolFillCapacity = newCapacity;
-            }
+        private long allocBuffer(long bytes) {
+            long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER);
+            allocatedBuffers.add(addr, bytes);
+            return addr;
         }
 
         private @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
@@ -1619,15 +1611,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return null;
             }
 
-            // Single-pass: iterate cursor writing covered values to native buffers.
-            // Buffers grow on demand. This is one cursor per partition — no double scan.
+            // Single-pass: iterate cursor writing covered values to fresh native
+            // buffers.  Each frame gets its own buffers so that PageFrameAddressCache
+            // can hold addresses from all frames simultaneously.
             int capacity = INITIAL_CAPACITY;
+            long[] colAddrs = new long[queryColCount];
+            long[] colCapacities = new long[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
-                    ensureBufferCapacity(q, capacity);
+                    long bytes = (long) capacity * columnSizeBytes[q];
+                    colAddrs[q] = allocBuffer(bytes);
+                    colCapacities[q] = bytes;
                 }
             }
-            ensureSymbolFillCapacity(capacity);
+            long symBytes = (long) capacity * Integer.BYTES;
+            long symAddr = allocBuffer(symBytes);
+            long symCapacity = symBytes;
 
             int count = 0;
             while (crc.hasNext()) {
@@ -1636,15 +1635,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     capacity = capacity * 2;
                     for (int q = 0; q < queryColCount; q++) {
                         if (queryColToIncludeIdx[q] >= 0) {
-                            growBuffer(q, count, capacity);
+                            long newBytes = (long) capacity * columnSizeBytes[q];
+                            long newAddr = allocBuffer(newBytes);
+                            long copyBytes = (long) count * columnSizeBytes[q];
+                            Unsafe.getUnsafe().copyMemory(colAddrs[q], newAddr, copyBytes);
+                            // Old buffer stays in allocatedBuffers — freed on close/toTop
+                            colAddrs[q] = newAddr;
+                            colCapacities[q] = newBytes;
                         }
                     }
-                    growSymbolFillBuffer(capacity);
+                    long newSymBytes = (long) capacity * Integer.BYTES;
+                    long newSymAddr = allocBuffer(newSymBytes);
+                    // no need to copy sym fill — it's written after the loop
+                    symAddr = newSymAddr;
+                    symCapacity = newSymBytes;
                 }
                 for (int q = 0; q < queryColCount; q++) {
                     int includeIdx = queryColToIncludeIdx[q];
                     if (includeIdx < 0) continue;
-                    long addr = columnBufferAddrs[q];
+                    long addr = colAddrs[q];
                     switch (columnTypeTags[q]) {
                         case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(
                                 addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
@@ -1668,16 +1677,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
 
             // Fill symbol column buffer with constant key using long-word writes
-            fillSymbolKey(rawSymbolKey, count);
+            fillSymbolKey(symAddr, rawSymbolKey, count);
 
-            // Set up frame
+            // Set up frame — addresses are now unique per frame
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx >= 0) {
-                    frame.pageAddresses[q] = columnBufferAddrs[q];
+                    frame.pageAddresses[q] = colAddrs[q];
                     frame.pageSizes[q] = (long) count * columnSizeBytes[q];
                 } else if (includeIdx == -1) {
-                    frame.pageAddresses[q] = symbolFillAddr;
+                    frame.pageAddresses[q] = symAddr;
                     frame.pageSizes[q] = (long) count * Integer.BYTES;
                 }
                 frame.auxPageAddresses[q] = 0;
@@ -1689,58 +1698,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return frame;
         }
 
-        private void fillSymbolKey(int rawSymbolKey, int count) {
+        private static void fillSymbolKey(long addr, int rawSymbolKey, int count) {
             // Pack two copies of the int key into a long for 2x fewer writes
             long longKey = Integer.toUnsignedLong(rawSymbolKey) | ((long) rawSymbolKey << 32);
             int i = 0;
             int pairs = count & ~1; // round down to even
             for (; i < pairs; i += 2) {
-                Unsafe.getUnsafe().putLong(symbolFillAddr + (long) i * Integer.BYTES, longKey);
+                Unsafe.getUnsafe().putLong(addr + (long) i * Integer.BYTES, longKey);
             }
             if (i < count) {
-                Unsafe.getUnsafe().putInt(symbolFillAddr + (long) i * Integer.BYTES, rawSymbolKey);
-            }
-        }
-
-        private void growBuffer(int q, int currentCount, int newCapacity) {
-            long newBytes = (long) newCapacity * columnSizeBytes[q];
-            long oldBytes = columnBufferCapacities[q];
-            if (newBytes > oldBytes) {
-                long newAddr = Unsafe.malloc(newBytes, MemoryTag.NATIVE_INDEX_READER);
-                if (columnBufferAddrs[q] != 0) {
-                    long copyBytes = (long) currentCount * columnSizeBytes[q];
-                    Unsafe.getUnsafe().copyMemory(columnBufferAddrs[q], newAddr, copyBytes);
-                    Unsafe.free(columnBufferAddrs[q], oldBytes, MemoryTag.NATIVE_INDEX_READER);
-                }
-                columnBufferAddrs[q] = newAddr;
-                columnBufferCapacities[q] = newBytes;
-            }
-        }
-
-        private void growSymbolFillBuffer(int newCapacity) {
-            long newBytes = (long) newCapacity * Integer.BYTES;
-            if (newBytes > symbolFillCapacity) {
-                if (symbolFillAddr != 0) {
-                    Unsafe.free(symbolFillAddr, symbolFillCapacity, MemoryTag.NATIVE_INDEX_READER);
-                }
-                symbolFillAddr = Unsafe.malloc(newBytes, MemoryTag.NATIVE_INDEX_READER);
-                symbolFillCapacity = newBytes;
+                Unsafe.getUnsafe().putInt(addr + (long) i * Integer.BYTES, rawSymbolKey);
             }
         }
 
         private void freeBuffers() {
-            for (int q = 0; q < queryColCount; q++) {
-                if (columnBufferAddrs[q] != 0) {
-                    Unsafe.free(columnBufferAddrs[q], columnBufferCapacities[q], MemoryTag.NATIVE_INDEX_READER);
-                    columnBufferAddrs[q] = 0;
-                    columnBufferCapacities[q] = 0;
-                }
+            for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
+                Unsafe.free(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER);
             }
-            if (symbolFillAddr != 0) {
-                Unsafe.free(symbolFillAddr, symbolFillCapacity, MemoryTag.NATIVE_INDEX_READER);
-                symbolFillAddr = 0;
-                symbolFillCapacity = 0;
-            }
+            allocatedBuffers.clear();
         }
 
         private @Nullable PageFrame nextMultiKey() {

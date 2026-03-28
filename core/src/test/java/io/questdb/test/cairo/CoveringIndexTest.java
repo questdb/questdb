@@ -1023,7 +1023,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price FROM t_plan WHERE sym = 'A'",
                     """
                             SelectedRecord
-                                CoveringIndex on: sym
+                                CoveringIndex on: sym with: price
                                   filter: sym='A'
                             """
             );
@@ -1507,7 +1507,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price FROM t_in WHERE sym IN ('A', 'B')",
                     """
                             SelectedRecord
-                                CoveringIndex on: sym
+                                CoveringIndex on: sym with: price
                                   filter: sym IN ['A','B']
                             """
             );
@@ -3368,7 +3368,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price FROM t_latest_plan WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
                     """
                             SelectedRecord
-                                CoveringIndex latest on: sym
+                                CoveringIndex op: latest on: sym with: price
                                   filter: sym='A'
                             """
             );
@@ -3478,11 +3478,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Optimizer rewrites DISTINCT → GROUP BY + count(*), but we intercept in
-            // generateSelectGroupBy and replace the entire chain with PostingIndexDistinct
+            // generateSelectGroupBy and replace the entire chain with PostingIndex distinct
             assertPlanNoLeakCheck(
                     "SELECT DISTINCT sym FROM t_distinct_plan",
                     """
-                            PostingIndexDistinct on: sym
+                            PostingIndex op: distinct on: sym
                             """
             );
         });
@@ -3628,7 +3628,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     @Test
     public void testDistinctSymBitmapFallback() throws Exception {
         assertMemoryLeak(() -> {
-            // BITMAP index (not POSTING) should NOT use PostingIndexDistinct
+            // BITMAP index (not POSTING) should NOT use PostingIndex distinct
             execute("""
                     CREATE TABLE t_distinct_bmp (
                         ts TIMESTAMP,
@@ -3650,7 +3650,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     B
                     """, "SELECT DISTINCT sym FROM t_distinct_bmp ORDER BY sym");
 
-            // Plan should NOT show PostingIndexDistinct
+            // Plan should NOT show PostingIndex distinct
             assertPlanNoLeakCheck(
                     "SELECT DISTINCT sym FROM t_distinct_bmp",
                     """
@@ -4847,7 +4847,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT ts, sym FROM t_cover_ts WHERE sym = 'GOLD'",
                     """
-                            CoveringIndex on: sym
+                            CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
                             """
             );
@@ -4884,7 +4884,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT ts, sym FROM t_cover_ts_wal WHERE sym = 'GOLD'",
                     """
-                            CoveringIndex on: sym
+                            CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
                             """
             );
@@ -4933,7 +4933,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT ts, sym FROM t_cover_tsns WHERE sym = 'GOLD'",
                     """
-                            CoveringIndex on: sym
+                            CoveringIndex on: sym with: ts
                               filter: sym='GOLD'
                             """
             );
@@ -4988,7 +4988,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT c0, c9 FROM t_wide10 WHERE sym = 'A'",
                     """
                             SelectedRecord
-                                CoveringIndex on: sym
+                                CoveringIndex on: sym with: c0, c9
                                   filter: sym='A'
                             """
             );
@@ -5109,7 +5109,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price, qty FROM t_partial WHERE sym = 'A'",
                     """
                             SelectedRecord
-                                CoveringIndex on: sym
+                                CoveringIndex on: sym with: price, qty
                                   filter: sym='A'
                             """
             );
@@ -5255,7 +5255,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price, qty FROM t_30col WHERE sym = 'A'",
                     """
                             SelectedRecord
-                                CoveringIndex on: sym
+                                CoveringIndex on: sym with: price, qty
                                   filter: sym='A'
                             """
             );
@@ -5533,7 +5533,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT price FROM t_hint WHERE sym = 'A'",
                     """
                             SelectedRecord
-                                CoveringIndex on: sym
+                                CoveringIndex on: sym with: price
                                   filter: sym='A'
                             """
             );
@@ -5636,6 +5636,156 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== residual filter + covering index tests ====================
+
+    @Test
+    public void testCoveringIndexWithResidualFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_resid (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_resid VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0, 1),
+                    ('2024-01-01T01:00:00', 'B', 20.0, 2),
+                    ('2024-01-01T02:00:00', 'A', 30.0, 3),
+                    ('2024-01-01T03:00:00', 'B', 40.0, 4),
+                    ('2024-01-01T04:00:00', 'A', 50.0, 5)
+                    """);
+            engine.releaseAllWriters();
+
+            // Plan: Filter wrapping CoveringIndex
+            assertPlanNoLeakCheck(
+                    "SELECT price FROM t_resid WHERE sym = 'A' AND price > 15",
+                    """
+                            SelectedRecord
+                                Filter filter: 15<price
+                                    CoveringIndex on: sym with: price
+                                      filter: sym='A'
+                            """
+            );
+
+            // Data correctness: only A rows with price > 15
+            assertSql("""
+                    price
+                    30.0
+                    50.0
+                    """, "SELECT price FROM t_resid WHERE sym = 'A' AND price > 15");
+
+            // Must match non-covering path
+            assertSql("""
+                    price
+                    30.0
+                    50.0
+                    """, "SELECT /*+ no_covering */ price FROM t_resid WHERE sym = 'A' AND price > 15");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexWithResidualFilterInList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_resid_in (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_resid_in VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0),
+                    ('2024-01-01T03:00:00', 'B', 40.0),
+                    ('2024-01-01T04:00:00', 'C', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // IN-list with residual filter
+            assertSql("""
+                    price
+                    30.0
+                    40.0
+                    """, "SELECT price FROM t_resid_in WHERE sym IN ('A', 'B') AND price > 25");
+            assertSql("""
+                    price
+                    30.0
+                    40.0
+                    """, "SELECT /*+ no_covering */ price FROM t_resid_in WHERE sym IN ('A', 'B') AND price > 25");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexResidualFilterUncoveredColumn() throws Exception {
+        // When the filter references an uncovered column, covering index should NOT be used
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_resid_uncov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_resid_uncov VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0, 100),
+                    ('2024-01-01T01:00:00', 'A', 30.0, 200)
+                    """);
+            engine.releaseAllWriters();
+
+            // Filter on uncovered column 'extra' — can't use covering index
+            assertPlanDoesNotContain(
+                    "SELECT price FROM t_resid_uncov WHERE sym = 'A' AND extra > 150",
+                    "CoveringIndex"
+            );
+
+            // Data must still be correct
+            assertSql("""
+                    price
+                    30.0
+                    """, "SELECT price FROM t_resid_uncov WHERE sym = 'A' AND extra > 150");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexResidualFilterMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_resid_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_resid_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T12:00:00', 'A', 20.0),
+                    ('2024-01-02T00:00:00', 'A', 30.0),
+                    ('2024-01-02T12:00:00', 'B', 40.0),
+                    ('2024-01-03T00:00:00', 'A', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Cross-partition with residual filter
+            String expected = """
+                    price
+                    30.0
+                    50.0
+                    """;
+            assertSql(expected,
+                    "SELECT price FROM t_resid_mp WHERE sym = 'A' AND price >= 30");
+            assertSql(expected,
+                    "SELECT /*+ no_covering */ price FROM t_resid_mp WHERE sym = 'A' AND price >= 30");
+        });
+    }
+
     // ==================== page frame cursor tests ====================
 
     @Test
@@ -5649,31 +5799,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         qty INT
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
-            StringBuilder sb = new StringBuilder("INSERT INTO t_pf_agg VALUES ");
-            double sumA = 0;
-            int countA = 0;
-            for (int i = 0; i < 200; i++) {
-                if (i > 0) sb.append(", ");
-                String sym = (i % 3 == 0) ? "A" : (i % 3 == 1) ? "B" : "C";
-                double price = 10.0 + i * 0.1;
-                sb.append("('2024-01-01T").append(String.format("%02d", i / 60)).append(":")
-                        .append(String.format("%02d", i % 60)).append(":00', '").append(sym)
-                        .append("', ").append(price).append(", ").append(i).append(")");
-                if ("A".equals(sym)) {
-                    sumA += price;
-                    countA++;
-                }
-            }
-            execute(sb.toString());
+            // Generate 200 rows with 3 symbols (A/B/C cycling via modulo)
+            execute("""
+                    INSERT INTO t_pf_agg
+                    SELECT dateadd('m', x::INT, '2024-01-01T00:00:00'),
+                           CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END,
+                           10.0 + x * 0.1,
+                           x::INT
+                    FROM long_sequence(200)
+                    """);
             engine.releaseAllWriters();
 
             // Aggregation should produce correct results via either path
-            assertSql(
-                    "count\n" + countA + "\n",
-                    "SELECT count() FROM t_pf_agg WHERE sym = 'A'"
-            );
-            assertSql(
-                    "count\n" + countA + "\n",
+            assertSqlCursors(
+                    "SELECT count() FROM t_pf_agg WHERE sym = 'A'",
                     "SELECT /*+ no_covering */ count() FROM t_pf_agg WHERE sym = 'A'"
             );
         });
@@ -5730,6 +5869,287 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     val
                     1.0
                     """, "SELECT val FROM t_pf_support WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexGroupByAggregation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_grp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_grp VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0, 1),
+                    ('2024-01-01T01:00:00', 'B', 20.0, 2),
+                    ('2024-01-01T02:00:00', 'A', 30.0, 3),
+                    ('2024-01-01T03:00:00', 'B', 40.0, 4),
+                    ('2024-01-01T04:00:00', 'A', 50.0, 5),
+                    ('2024-01-01T05:00:00', 'C', 60.0, 6)
+                    """);
+            engine.releaseAllWriters();
+
+            // Plan: GroupBy vectorized on top of CoveringIndex
+            assertPlanNoLeakCheck(
+                    "SELECT sym, sum(price), avg(qty) FROM t_grp WHERE sym IN ('A', 'B') GROUP BY sym",
+                    """
+                            GroupBy vectorized: true workers: 1
+                              keys: [sym]
+                              values: [sum(price),avg(qty)]
+                                CoveringIndex on: sym with: price, qty
+                                  filter: sym IN ['A','B']
+                            """
+            );
+
+            // Single-key GROUP BY — covering and non-covering paths must agree
+            String expected = """
+                    sym\tsum\tavg
+                    A\t90.0\t3.0
+                    """;
+            assertSql(expected,
+                    "SELECT sym, sum(price), avg(qty) FROM t_grp WHERE sym = 'A' GROUP BY sym");
+            assertSql(expected,
+                    "SELECT /*+ no_covering */ sym, sum(price), avg(qty) FROM t_grp WHERE sym = 'A' GROUP BY sym");
+
+            // IN-list GROUP BY — covering path must match non-covering
+            String expectedInList = """
+                    sym\tsum\tavg
+                    A\t90.0\t3.0
+                    B\t60.0\t3.0
+                    """;
+            assertSql(expectedInList,
+                    "SELECT sym, sum(price), avg(qty) FROM t_grp WHERE sym IN ('A', 'B') GROUP BY sym ORDER BY sym");
+            assertSql(expectedInList,
+                    "SELECT /*+ no_covering */ sym, sum(price), avg(qty) FROM t_grp WHERE sym IN ('A', 'B') GROUP BY sym ORDER BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexGroupByMinMax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_minmax (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_minmax VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0),
+                    ('2024-01-01T03:00:00', 'B', 40.0),
+                    ('2024-01-01T04:00:00', 'A', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym",
+                    """
+                            GroupBy vectorized: true workers: 1
+                              keys: [sym]
+                              values: [min(price),max(price)]
+                                CoveringIndex on: sym with: price
+                                  filter: sym='A'
+                            """
+            );
+
+            String expected = """
+                    sym\tmin\tmax
+                    A\t10.0\t50.0
+                    """;
+            assertSql(expected,
+                    "SELECT sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym");
+            assertSql(expected,
+                    "SELECT /*+ no_covering */ sym, min(price), max(price) FROM t_minmax WHERE sym = 'A' GROUP BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cnt (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cnt VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0),
+                    ('2024-01-01T03:00:00', 'A', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Count optimization uses CoveringIndex as base — count() doesn't select
+            // any covered columns so "with" is absent
+            assertPlanNoLeakCheck(
+                    "SELECT count() FROM t_cnt WHERE sym = 'A'",
+                    """
+                            Count
+                                CoveringIndex on: sym
+                                  filter: sym='A'
+                            """
+            );
+
+            assertSql("""
+                    count
+                    3
+                    """, "SELECT count() FROM t_cnt WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ord (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_ord VALUES
+                    ('2024-01-01T00:00:00', 'A', 30.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 10.0),
+                    ('2024-01-01T03:00:00', 'A', 50.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT price FROM t_ord WHERE sym = 'A' ORDER BY price",
+                    """
+                            Encode sort
+                              keys: [price]
+                                SelectedRecord
+                                    CoveringIndex on: sym with: price
+                                      filter: sym='A'
+                            """
+            );
+
+            assertSql("""
+                    price
+                    10.0
+                    30.0
+                    50.0
+                    """, "SELECT price FROM t_ord WHERE sym = 'A' ORDER BY price");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexGroupByMultiPartition() throws Exception {
+        // Verify aggregation over covering index works across multiple partitions
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_grp_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_grp_mp VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0, 1),
+                    ('2024-01-01T12:00:00', 'B', 20.0, 2),
+                    ('2024-01-02T00:00:00', 'A', 30.0, 3),
+                    ('2024-01-02T12:00:00', 'B', 40.0, 4),
+                    ('2024-01-03T00:00:00', 'A', 50.0, 5)
+                    """);
+            engine.releaseAllWriters();
+
+            // Both paths must agree across partitions
+            String expected = """
+                    sym\tsum\tcount
+                    A\t90.0\t3
+                    """;
+            assertSql(expected,
+                    "SELECT sym, sum(price), count() FROM t_grp_mp WHERE sym = 'A' GROUP BY sym");
+            assertSql(expected,
+                    "SELECT /*+ no_covering */ sym, sum(price), count() FROM t_grp_mp WHERE sym = 'A' GROUP BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexDistinctPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0),
+                    ('2024-01-02T00:00:00', 'C', 40.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT DISTINCT sym FROM t_dist",
+                    """
+                            PostingIndex op: distinct on: sym
+                            """
+            );
+
+            // Verify data correctness without ORDER BY — PostingIndexDistinct doesn't
+            // support static symbol tables needed for ORDER BY
+            assertSql("""
+                    sym
+                    A
+                    B
+                    C
+                    """, "SELECT DISTINCT sym FROM t_dist");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexLatestOnPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lat (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lat VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'A', 20.0),
+                    ('2024-01-01T02:00:00', 'B', 30.0),
+                    ('2024-01-01T03:00:00', 'A', 40.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
+                    """
+                            SelectedRecord
+                                CoveringIndex op: latest on: sym with: price
+                                  filter: sym='A'
+                            """
+            );
+
+            assertSql("""
+                    price
+                    40.0
+                    """, "SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
         });
     }
 

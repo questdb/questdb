@@ -8483,13 +8483,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
 
                             // Check if covering index can serve all selected columns
-                            if (filter == null && !SqlHints.hasNoCoveringHint(model)) {
+                            if (!SqlHints.hasNoCoveringHint(model)) {
                                 int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                 int[] coveringMapping = buildCoveringIndexMapping(
                                         reader, keyReaderColIdx, columnIndexes, queryMeta
                                 );
                                 if (coveringMapping != null) {
-                                    return new CoveringIndexRecordCursorFactory(
+                                    RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                             queryMeta,
                                             dfcFactory,
                                             keyReaderColIdx,
@@ -8499,6 +8499,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             columnSizeShifts,
                                             coveringMapping
                                     );
+                                    if (filter != null) {
+                                        return new FilteredRecordCursorFactory(coveringFactory, filter);
+                                    }
+                                    return coveringFactory;
                                 }
                             }
 
@@ -8534,13 +8538,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         // Check if covering index can serve IN-list queries
-                        if (filter == null && !orderByKeyColumn && !SqlHints.hasNoCoveringHint(model)) {
+                        if (!orderByKeyColumn && !SqlHints.hasNoCoveringHint(model)) {
                             int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                             int[] coveringMapping = buildCoveringIndexMapping(
                                     reader, keyReaderColIdx, columnIndexes, queryMeta
                             );
                             if (coveringMapping != null) {
-                                return new CoveringIndexRecordCursorFactory(
+                                RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                         queryMeta,
                                         dfcFactory,
                                         keyReaderColIdx,
@@ -8552,6 +8556,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         intrinsicModel.keyValueFuncs,
                                         reader
                                 );
+                                if (filter != null) {
+                                    return new FilteredRecordCursorFactory(coveringFactory, filter);
+                                }
+                                return coveringFactory;
                             }
                         }
 
