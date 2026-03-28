@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
@@ -345,25 +346,25 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testGetTableMetadataNpeForDroppedTable() throws Exception {
         // Regression test for a race where WalPurgeJob calls getTableMetadata()
-        // for a table that is concurrently dropped. The metadata pool's tenant
-        // can throw NullPointerException (not CairoException) during refresh
-        // when its txFile is closed by a concurrent drop. WalPurgeJob must
-        // handle non-CairoException errors gracefully for dropped tables.
+        // for a table that is concurrently dropped. A concurrent drop can close
+        // the metadata pool tenant's txFile during refresh, causing NPE rather
+        // than CairoException. fetchSequencerPairs() must catch NPE for dropped
+        // tables and return gracefully.
         //
-        // We simulate this by clearing the metadata pool cache and then using
-        // a custom FilesFacade that drops the table and throws NPE when the
-        // pool tries to re-create the metadata tenant (opening the _meta file).
+        // We simulate this by clearing the metadata pool cache and intercepting
+        // FilesFacade.openRO: when the pool tries to re-create the metadata
+        // tenant, we drop the table and throw NPE.
         String tableDirName = testName.getMethodName() + "~1";
-        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
         FilesFacade testFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
-                if (shouldThrowNpe.compareAndSet(true, false)
+                if (shouldFail.compareAndSet(true, false)
                         && Utf8s.containsAscii(path, tableDirName)
                         && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
-                    // Simulate concurrent drop: mark the table as dropped, then
-                    // throw NPE like what happens when the metadata pool tenant's
-                    // txFile is closed during a concurrent drop's notifyDropped().
+                    // Simulate concurrent drop: drop the table, then throw NPE
+                    // like what happens when the metadata pool tenant's txFile
+                    // is closed during a concurrent drop's notifyDropped().
                     try {
                         execute("drop table " + testName.getMethodName());
                     } catch (Exception ignored) {
@@ -385,16 +386,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Clear metadata pool so next getTableMetadata() creates a fresh tenant,
-            // which goes through FilesFacade (openRO for _meta file) where we can intercept.
+            // which goes through FilesFacade (openRO for _meta file) where we intercept.
             engine.releaseAllReaders();
 
-            // Arm the NPE trap. The next purge job iteration will try to create a
-            // metadata tenant for this table, hit our FilesFacade hook, drop the table,
-            // and throw NPE. With the fix, fetchSequencerPairs catches the NPE and
-            // checks isTableDropped(), which returns true, so it returns gracefully.
-            shouldThrowNpe.set(true);
+            shouldFail.set(true);
 
-            // This should not throw despite the simulated NPE during metadata access.
+            // This should not throw despite the NPE during metadata access:
+            // fetchSequencerPairs catches NPE, detects the table is dropped, and returns.
             drainPurgeJob();
             drainWalQueue();
             engine.releaseAllWalWriters();
@@ -404,19 +402,17 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testGetTableMetadataNpeForNonDroppedTableRethrows() throws Exception {
-        // When getTableMetadata() throws a non-CairoException and the table is
-        // NOT dropped, fetchSequencerPairs() must re-throw the exception rather
-        // than silently swallowing it.
+        // When getTableMetadata() throws NPE and the table is NOT dropped,
+        // fetchSequencerPairs() re-throws. NPE bypasses the CairoException
+        // catch in forAllWalTables(), so it propagates to the caller.
         String tableDirName = testName.getMethodName() + "~1";
-        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
         FilesFacade testFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
-                if (shouldThrowNpe.compareAndSet(true, false)
+                if (shouldFail.compareAndSet(true, false)
                         && Utf8s.containsAscii(path, tableDirName)
                         && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
-                    // Throw NPE without dropping the table to simulate a
-                    // non-drop-related failure during metadata access.
                     throw new NullPointerException("simulated: non-drop-related NPE");
                 }
                 return super.openRO(path);
@@ -433,14 +429,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainWalQueue();
             engine.releaseAllReaders();
-            shouldThrowNpe.set(true);
+            shouldFail.set(true);
 
-            // fetchSequencerPairs() must re-throw because the table is not dropped.
+            // NPE must propagate because the table is not dropped.
             try {
                 drainPurgeJob();
                 Assert.fail("Expected NullPointerException to propagate");
             } catch (NullPointerException e) {
-                Assert.assertTrue(e.getMessage().contains("simulated"));
+                TestUtils.assertContains(e.getMessage(), "simulated");
             }
         });
     }
