@@ -24,7 +24,7 @@ import java.util.Arrays;
 public class CoveringQueryBenchmark {
 
     private static final int KEY_COUNT = 500;
-    private static final int TOTAL_ROWS = 2_000_000;
+    private static final int TOTAL_ROWS = 10_000_000;
     private static final int WARMUP = 3;
     private static final int ITERS = 7;
 

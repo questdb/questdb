@@ -690,6 +690,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         void of(int key, long minValue, long maxValue) {
+            // Re-allocate fixed buffers if freed by close()
+            if (blockBufferAddr == 0) {
+                blockBufferCapacity = PostingIndexUtils.PACKED_BATCH_SIZE;
+                blockBufferAddr = Unsafe.malloc((long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (blockDeltasAddr == 0) {
+                blockDeltasAddr = Unsafe.malloc((long) PostingIndexUtils.BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
                 totalValueCount = 0;
                 currentGen = genCount;
@@ -1140,6 +1148,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (count > decodeWorkspaceCapacity) {
                 if (decodeWorkspaceAddr != 0) {
                     Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    decodeWorkspaceAddr = 0;
                 }
                 decodeWorkspaceCapacity = count;
                 decodeWorkspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -1159,6 +1168,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (decodeWorkspaceAddr != 0) {
                 Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 decodeWorkspaceAddr = 0;
+                decodeWorkspaceCapacity = 0;
             }
         }
 

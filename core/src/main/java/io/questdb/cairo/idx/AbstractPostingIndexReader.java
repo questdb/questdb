@@ -289,8 +289,9 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
                 if (ff.exists(pcFile)) {
                     sidecarMems[c] = Vm.getCMRInstance();
-                    long fileLen = ff.length(pcFile);
-                    ((MemoryCMR) sidecarMems[c]).of(ff, pcFile, ff.getMapPageSize(), fileLen, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                    // Use -1 to map the full file via fd-based length check,
+                    // avoiding stale length from ff.length(path).
+                    ((MemoryCMR) sidecarMems[c]).of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
                 } else {
                     allSidecarsPresent = false;
                 }
