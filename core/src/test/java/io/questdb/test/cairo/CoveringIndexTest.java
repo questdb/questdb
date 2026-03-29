@@ -4699,7 +4699,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
                            rnd_symbol('K0','K1','K2'),
                            rnd_str('order_alpha','order_beta','order_gamma','order_delta','order_epsilon')
-                    FROM long_sequence(300)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
@@ -4734,7 +4734,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
                            rnd_symbol('A','B'),
                            CASE WHEN x % 5 = 0 THEN null ELSE rnd_str('value_one','value_two','value_three','value_four') END
-                    FROM long_sequence(400)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
@@ -4767,7 +4767,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
                            rnd_symbol('X','Y','Z'),
                            rnd_str('label_alpha','label_beta','label_gamma','label_delta')
-                    FROM long_sequence(300)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
@@ -4800,7 +4800,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
                            rnd_symbol('A','B','C','D'),
                            rnd_str('order_alpha','order_beta','order_gamma','order_delta')
-                    FROM long_sequence(400)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
@@ -4834,7 +4834,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
                            rnd_symbol('A','B'),
                            CASE WHEN x % 3 = 0 THEN '' ELSE rnd_str('alpha_value','beta_value','gamma_value') END
-                    FROM long_sequence(300)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
@@ -4861,7 +4861,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                            rnd_symbol('A','B','C'),
                            rnd_str('order_alpha','order_beta','order_gamma','order_delta'),
                            rnd_double() * 100
-                    FROM long_sequence(300)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
@@ -5197,6 +5197,156 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== additional coverage tests ====================
+
+    @Test
+    public void testDistinctWithIntervalAndNonIntervalFilter() throws Exception {
+        // Regression test: DISTINCT with combined interval + non-interval WHERE
+        // must not lose the interval predicate when the optimization is rejected.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_combined (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist_combined VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 90.0),
+                    ('2024-01-02T00:00:00', 'C', 5.0),
+                    ('2024-01-02T01:00:00', 'D', 95.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Only D matches: ts >= '2024-01-02' AND price > 50
+            assertSql("""
+                    sym
+                    D
+                    """, "SELECT DISTINCT sym FROM t_dist_combined WHERE ts >= '2024-01-02' AND price > 50");
+        });
+    }
+
+    @Test
+    public void testCountPushdownWithInList() throws Exception {
+        // CoveringCursor.size() returns -1 for IN-list (multiKeys != null).
+        // Verify COUNT(*) still works correctly via iteration fallback.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_count_in (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_count_in
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           rnd_symbol('A','B','C'),
+                           rnd_double() * 100
+                    FROM long_sequence(1000)
+                    """);
+            engine.releaseAllWriters();
+
+            String expected = queryAsText("SELECT /*+ no_covering */ COUNT(*) FROM t_count_in WHERE sym IN ('A', 'B')");
+            assertSql(expected, "SELECT COUNT(*) FROM t_count_in WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCountPushdownVarcharOnly() throws Exception {
+        // Regression test for getCoveredValueCount returning 0 for var-only INCLUDE.
+        // Now returns -1, falling back to iteration count.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_count_vc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name),
+                        name VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_count_vc
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           rnd_symbol('A','B'),
+                           rnd_str('alpha','beta','gamma')
+                    FROM long_sequence(100)
+                    """);
+            engine.releaseAllWriters();
+
+            String expected = queryAsText("SELECT /*+ no_covering */ COUNT(*) FROM t_count_vc WHERE sym = 'A'");
+            assertSql(expected, "SELECT COUNT(*) FROM t_count_vc WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testFsstRoundtrip() throws Exception {
+        // Direct test: FSST compress → decompress roundtrip on byte sequences
+        assertMemoryLeak(() -> {
+            // Train on repeating patterns
+            String[] values = {
+                "order_confirmation_alpha_2024",
+                "order_confirmation_beta_2024",
+                "order_confirmation_gamma_2024"
+            };
+            // Build a training buffer
+            int totalLen = 0;
+            for (String v : values) {
+                totalLen += v.length() * 100;
+            }
+            long trainBuf = Unsafe.malloc(totalLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int pos = 0;
+                for (int rep = 0; rep < 100; rep++) {
+                    for (String v : values) {
+                        byte[] bytes = v.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        for (byte b : bytes) {
+                            Unsafe.getUnsafe().putByte(trainBuf + pos++, b);
+                        }
+                    }
+                }
+
+                io.questdb.cairo.idx.FSST.SymbolTable table = io.questdb.cairo.idx.FSST.trainBytes(trainBuf, pos);
+                assertNotNull("FSST training should succeed on repetitive data", table);
+
+                // Compress each value and verify roundtrip
+                long cmpBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+                long decBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (String v : values) {
+                        byte[] bytes = v.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        long srcBuf = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            for (int i = 0; i < bytes.length; i++) {
+                                Unsafe.getUnsafe().putByte(srcBuf + i, bytes[i]);
+                            }
+                            int cmpLen = io.questdb.cairo.idx.FSST.compressBytes(table, srcBuf, bytes.length, cmpBuf);
+                            assertTrue("Compressed size should be > 0", cmpLen > 0);
+                            assertTrue("Compressed should be smaller than original for repetitive data",
+                                    cmpLen < bytes.length);
+
+                            int decLen = io.questdb.cairo.idx.FSST.decompressBytes(table, cmpBuf, cmpLen, decBuf);
+                            assertEquals("Decompressed length must match original", bytes.length, decLen);
+
+                            for (int i = 0; i < bytes.length; i++) {
+                                assertEquals("Byte mismatch at position " + i,
+                                        bytes[i], Unsafe.getUnsafe().getByte(decBuf + i));
+                            }
+                        } finally {
+                            Unsafe.free(srcBuf, bytes.length, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(cmpBuf, 1024, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(decBuf, 1024, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                Unsafe.free(trainBuf, totalLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
     // ==================== var-width page frame tests ====================
 
     @Test
@@ -5406,11 +5556,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarcharPageFrameCountViaIteration() throws Exception {
-        // COUNT(*) with varchar-only INCLUDE: the CoveringCursor.size() fast path
-        // doesn't work for var-width-only INCLUDE because getCoveredValueCount() requires
-        // sidecar metadata that's structured differently. Verify it falls through to
-        // iteration-based count correctly.
+    public void testVarcharPageFrameCountMixed() throws Exception {
+        // COUNT(*) with mixed VARCHAR + DOUBLE INCLUDE. The DOUBLE column provides
+        // a fast-path count via getCoveredValueCount(). Verify correctness.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_vw_count (
@@ -5426,13 +5574,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
                            rnd_symbol('A','B','C'),
                            rnd_str('alpha','beta','gamma'),
                            rnd_double() * 100
-                    FROM long_sequence(300)
+                    FROM long_sequence(1500)
                     """);
             engine.releaseAllWriters();
 
             // COUNT via non-covering path as baseline
             String expected = queryAsText("SELECT /*+ no_covering */ COUNT(*) FROM t_vw_count WHERE sym = 'A'");
             assertSql(expected, "SELECT COUNT(*) FROM t_vw_count WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testMultiVarcharIncludeFsst() throws Exception {
+        // Two VARCHAR columns in INCLUDE — exercises per-includeIdx FSST cache
+        // where each column has a different symbol table.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_multi_vc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, info),
+                        name VARCHAR,
+                        info VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_multi_vc
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           rnd_symbol('A','B'),
+                           rnd_str('name_alpha_one','name_beta_two','name_gamma_three'),
+                           rnd_str('info_first_item','info_second_item','info_third_item')
+                    FROM long_sequence(1500)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT name, info FROM t_multi_vc WHERE sym = 'A'",
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym with: name, info
+                                  filter: sym='A'
+                            """
+            );
+
+            String expected = queryAsText("SELECT /*+ no_covering */ name, info FROM t_multi_vc WHERE sym = 'A'");
+            assertSql(expected, "SELECT name, info FROM t_multi_vc WHERE sym = 'A'");
         });
     }
 

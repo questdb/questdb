@@ -6822,6 +6822,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 IntrinsicModel distinctIntrinsic = null;
                                 ExpressionNode whereClause = tableModel.getWhereClause();
                                 if (whereClause != null) {
+                                    // Deep-clone the WHERE clause before extract() because
+                                    // extract() destructively modifies the expression tree
+                                    // (collapses extracted interval/key nodes). If we reject
+                                    // the optimization, we must restore the original tree.
+                                    ExpressionNode savedWhereClause = ExpressionNode.deepClone(
+                                            expressionNodePool, whereClause);
                                     distinctIntrinsic = whereClauseParser.extract(
                                             tableModel,
                                             expressionNodePool,
@@ -6837,7 +6843,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             false
                                     );
                                     if (distinctIntrinsic.filter != null || distinctIntrinsic.keyColumn != null) {
-                                        // Has non-interval filters — fall through to regular group-by
+                                        // Has non-interval filters — fall through to regular group-by.
+                                        // Restore the WHERE clause that extract() mutated.
+                                        tableModel.setWhereClause(savedWhereClause);
                                         distinctIntrinsic = null;
                                     }
                                 }

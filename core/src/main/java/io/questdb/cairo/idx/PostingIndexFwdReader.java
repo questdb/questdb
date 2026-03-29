@@ -146,10 +146,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // FSST decompression state for var-sized sidecar blocks
         private long fsstDecompBufAddr;
         private int fsstDecompBufCapacity;
-        // Cached FSST symbol table to avoid deserializing per row
-        private FSST.SymbolTable fsstCachedTable;
-        private long fsstCachedBlockBase = -1;
-        private int fsstCachedIncludeIdx = -1;
+        // Cached FSST symbol tables per include column to avoid deserializing per row.
+        // Indexed by includeIdx — each column can have a different FSST table.
+        private FSST.SymbolTable[] fsstCachedTables;
+        private long[] fsstCachedBlockBases;
 
         @Override
         public byte getCoveredByte(int includeIdx) {
@@ -366,16 +366,25 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          * re-deserializing on every row access within the same block.
          */
         private FSST.SymbolTable resolveFsstTable(MemoryMR mem, long blockBase, int includeIdx) {
-            if (fsstCachedBlockBase == blockBase && fsstCachedIncludeIdx == includeIdx && fsstCachedTable != null) {
-                return fsstCachedTable;
+            if (fsstCachedTables == null) {
+                fsstCachedTables = new FSST.SymbolTable[coverCount];
+                fsstCachedBlockBases = new long[coverCount];
+                java.util.Arrays.fill(fsstCachedBlockBases, -1);
+            }
+            if (includeIdx < fsstCachedTables.length
+                    && fsstCachedBlockBases[includeIdx] == blockBase
+                    && fsstCachedTables[includeIdx] != null) {
+                return fsstCachedTables[includeIdx];
             }
             long pos = blockBase + 4;
             int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
             long tableAddr = mem.addressOf(pos + 2);
-            fsstCachedTable = FSST.deserialize(tableAddr);
-            fsstCachedBlockBase = blockBase;
-            fsstCachedIncludeIdx = includeIdx;
-            return fsstCachedTable;
+            FSST.SymbolTable table = FSST.deserialize(tableAddr);
+            if (includeIdx < fsstCachedTables.length) {
+                fsstCachedTables[includeIdx] = table;
+                fsstCachedBlockBases[includeIdx] = blockBase;
+            }
+            return table;
         }
 
         /**
@@ -852,8 +861,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             for (int g = 0; g < genCount; g++) {
                 int genKeyCount = genLookup.getGenKeyCount(g);
                 if (genKeyCount >= 0) {
-                    // Dense gen — read count from sidecar key block
-                    total += getDenseGenCount(g, genKeyCount);
+                    int denseCount = getDenseGenCount(g, genKeyCount);
+                    if (denseCount < 0) return -1; // var-only INCLUDE, count unknown
+                    total += denseCount;
                 } else {
                     // Sparse gen — read count from raw sidecar block
                     total += getSparseGenCount(g);
@@ -891,7 +901,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     break;
                 }
             }
-            if (memIdx < 0) return 0;
+            if (memIdx < 0) return -1; // no non-var-size column to read count from
 
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;

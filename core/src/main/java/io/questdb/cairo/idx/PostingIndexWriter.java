@@ -2502,12 +2502,25 @@ public class PostingIndexWriter implements IndexWriter {
     // Using ff.read() with the file descriptor avoids this single-page limitation.
     private static final int VARCHAR_AUX_READ_BUF_SIZE = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
     private long varAuxReadBuf;
+    private long varDataReadBuf;
+    private int varDataReadBufCapacity;
 
     private long ensureVarAuxReadBuf() {
         if (varAuxReadBuf == 0) {
             varAuxReadBuf = Unsafe.malloc(VARCHAR_AUX_READ_BUF_SIZE, MemoryTag.NATIVE_INDEX_READER);
         }
         return varAuxReadBuf;
+    }
+
+    private long ensureVarDataReadBuf(int needed) {
+        if (varDataReadBuf == 0 || varDataReadBufCapacity < needed) {
+            if (varDataReadBuf != 0) {
+                Unsafe.free(varDataReadBuf, varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+            }
+            varDataReadBufCapacity = Math.max(needed, 1024);
+            varDataReadBuf = Unsafe.malloc(varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+        }
+        return varDataReadBuf;
     }
 
     private void writeVarcharValue(MemoryMARW mem, int covIdx, long row) {
@@ -2540,15 +2553,10 @@ public class PostingIndexWriter implements IndexWriter {
             int size = (header >>> 4) & 0x0FFFFFFF;
             if (size > 0 && dataMem != null) {
                 long dataOffset = Unsafe.getUnsafe().getLong(buf + 8) >>> 16;
-                // Read data from the .d file via pread
                 long dataFd = dataMem.getFd();
-                long dataBuf = Unsafe.malloc(size, MemoryTag.NATIVE_INDEX_READER);
-                try {
-                    if (ff.read(dataFd, dataBuf, size, dataOffset) == size) {
-                        mem.putBlockOfBytes(dataBuf, size);
-                    }
-                } finally {
-                    Unsafe.free(dataBuf, size, MemoryTag.NATIVE_INDEX_READER);
+                long dataBuf = ensureVarDataReadBuf(size);
+                if (ff.read(dataFd, dataBuf, size, dataOffset) == size) {
+                    mem.putBlockOfBytes(dataBuf, size);
                 }
             }
         }
@@ -2579,13 +2587,9 @@ public class PostingIndexWriter implements IndexWriter {
         }
         // Write length prefix + UTF-16 chars
         int totalBytes = Integer.BYTES + len * Character.BYTES;
-        long dataBuf = Unsafe.malloc(totalBytes, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            if (ff.read(dataFd, dataBuf, totalBytes, dataOffset) == totalBytes) {
-                mem.putBlockOfBytes(dataBuf, totalBytes);
-            }
-        } finally {
-            Unsafe.free(dataBuf, totalBytes, MemoryTag.NATIVE_INDEX_READER);
+        long dataBuf = ensureVarDataReadBuf(totalBytes);
+        if (ff.read(dataFd, dataBuf, totalBytes, dataOffset) == totalBytes) {
+            mem.putBlockOfBytes(dataBuf, totalBytes);
         }
     }
 
@@ -3206,6 +3210,11 @@ public class PostingIndexWriter implements IndexWriter {
         if (varAuxReadBuf != 0) {
             Unsafe.free(varAuxReadBuf, VARCHAR_AUX_READ_BUF_SIZE, MemoryTag.NATIVE_INDEX_READER);
             varAuxReadBuf = 0;
+        }
+        if (varDataReadBuf != 0) {
+            Unsafe.free(varDataReadBuf, varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+            varDataReadBuf = 0;
+            varDataReadBufCapacity = 0;
         }
         keyCapacity = 0;
     }
