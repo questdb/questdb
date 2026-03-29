@@ -1793,7 +1793,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         Unsafe.getUnsafe().putByte(auxEntry + 4 + b, value.byteAt(b));
                     }
                     ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, size);
-                    for (int b = 0; b < size; b++) {
+                    // Use bulk copy when the Utf8Sequence has a stable native pointer
+                    // (always true for DirectUtf8String from covering sidecar reads)
+                    long srcPtr = value.ptr();
+                    if (srcPtr != 0) {
+                        Unsafe.getUnsafe().copyMemory(srcPtr, varDataAddrs[q] + varDataPos[q], size);
+                    } else for (int b = 0; b < size; b++) {
                         Unsafe.getUnsafe().putByte(varDataAddrs[q] + varDataPos[q] + b, value.byteAt(b));
                     }
                     Unsafe.getUnsafe().putShort(auxEntry + 10, (short) dataOffset);
