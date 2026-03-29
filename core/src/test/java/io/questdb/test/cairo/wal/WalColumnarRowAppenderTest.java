@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.ColumnarRowAppender;
@@ -134,7 +135,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 // Add a new column while rollSegmentOnNextRow is true
                 // This will configure the column memory but NOT open the file
                 // (because openColumnFiles is skipped when rollSegmentOnNextRow is true)
-                walWriter.addColumn("col_b", ColumnType.LONG, null);
+                walWriter.addColumn("col_b", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
 
                 // Now try columnar write - this should trigger segment roll in beginColumnarWrite()
                 // Before the fix, this would fail with AssertionError in TableUtils.mapRW()
