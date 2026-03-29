@@ -4344,7 +4344,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     m,
                     sqlExecutionContext,
                     false,
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? reader : readerNanos,
+                    false
             );
         }
     }
@@ -4364,7 +4365,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos,
                     sqlExecutionContext,
                     false,
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? noDesignatedTimestampNorIdxReader : noDesignatedTimestampNorIdxReaderNanos,
+                    false
             );
         }
     }
@@ -4383,7 +4385,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos,
                     sqlExecutionContext,
                     false,
-                    noTimestampReader
+                    noTimestampReader,
+                    false
             );
         }
     }
@@ -4403,7 +4406,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     metadata,
                     sqlExecutionContext,
                     false,
-                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? nonEmptyReader : nonEmptyReaderNanos,
+                    false
             );
         }
     }
@@ -4527,7 +4531,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     metadata,
                     sqlExecutionContext,
                     false,
-                    unindexedReader
+                    unindexedReader,
+                    false
             );
         }
     }

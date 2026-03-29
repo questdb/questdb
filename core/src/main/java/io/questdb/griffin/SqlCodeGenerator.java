@@ -5432,7 +5432,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             latestBy.addAll(model.getLatestBy());
             final ExpressionNode latestByNode = latestBy.get(0);
             final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
-            final boolean indexed = IndexType.isIndexed(metadata.getColumnIndexType(latestByIndex));
+            final boolean indexed = IndexType.isIndexed(metadata.getColumnIndexType(latestByIndex))
+                    && !SqlHints.hasNoIndexHint(model);
 
             // 'latest by' clause takes over the filter and the latest by nodes,
             // so that the later generateFilter() and generateLatestBy() are no-op
@@ -6797,14 +6798,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // DISTINCT→GROUP BY rewrite: the GROUP BY model has a single LITERAL column (the key).
             // If that column is a SYMBOL with posting index, enumerate keys via index instead of full scan.
-            if (columns.size() == 1 && columns.getQuick(0).getAst().type == LITERAL) {
+            // Also works when the WHERE clause contains only interval (timestamp) filters — the interval
+            // is pushed into IntervalPartitionFrameCursorFactory which bounds the row range per partition.
+            if (columns.size() == 1 && columns.getQuick(0).getAst().type == LITERAL
+                    && !SqlHints.hasNoIndexHint(model)) {
                 CharSequence colName = columns.getQuick(0).getAst().token;
                 QueryModel tableModel = model.getNestedModel();
                 while (tableModel != null && tableModel.getTableName() == null) {
                     tableModel = tableModel.getNestedModel();
                 }
-                if (tableModel != null && tableModel.getWhereClause() == null
-                        && tableModel.getLatestBy().size() == 0) {
+                if (tableModel != null && tableModel.getLatestBy().size() == 0) {
                     TableToken tableToken = executionContext.getTableTokenIfExists(tableModel.getTableName());
                     if (tableToken != null) {
                         try (TableReader reader = executionContext.getReader(tableToken, tableModel.getMetadataVersion())) {
@@ -6812,34 +6815,83 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             int colIdx = tableMeta.getColumnIndexQuiet(colName);
                             if (colIdx >= 0 && ColumnType.tagOf(tableMeta.getColumnType(colIdx)) == ColumnType.SYMBOL
                                     && tableMeta.getColumnIndexType(colIdx) == IndexType.POSTING) {
-                                GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
-                                distinctMeta.add(new TableColumnMetadata(
-                                        Chars.toString(colName),
-                                        tableMeta.getColumnType(colIdx),
-                                        tableMeta.getColumnIndexType(colIdx),
-                                        tableMeta.getIndexValueBlockCapacity(colIdx),
-                                        tableMeta.isSymbolTableStatic(colIdx),
-                                        null, -1, false, 0,
-                                        tableMeta.getColumnMetadata(colIdx).isSymbolCacheFlag(),
-                                        tableMeta.getColumnMetadata(colIdx).getSymbolCapacity()
-                                ));
-                                IntList colIndexes = new IntList();
-                                colIndexes.add(colIdx);
-                                IntList colSizeShifts = new IntList();
-                                colSizeShifts.add(2);
-                                ExpressionNode viewExpr = tableModel.getViewNameExpr();
-                                PartitionFrameCursorFactory dfcFactory = new FullPartitionFrameCursorFactory(
-                                        tableToken,
-                                        tableModel.getMetadataVersion(),
-                                        GenericRecordMetadata.copyOfNew(tableMeta),
-                                        ORDER_ASC,
-                                        getViewName(viewExpr),
-                                        getViewPosition(viewExpr),
-                                        tableModel.isUpdate()
-                                );
-                                return new PostingIndexDistinctRecordCursorFactory(
-                                        distinctMeta, dfcFactory, colIdx, 0, colIndexes, colSizeShifts
-                                );
+
+                                // Check if the WHERE clause is absent or contains only interval filters.
+                                // If there's a remaining filter (non-interval, non-key predicate), we can't
+                                // use the posting index for DISTINCT because it doesn't do row-level filtering.
+                                IntrinsicModel distinctIntrinsic = null;
+                                ExpressionNode whereClause = tableModel.getWhereClause();
+                                if (whereClause != null) {
+                                    distinctIntrinsic = whereClauseParser.extract(
+                                            tableModel,
+                                            expressionNodePool,
+                                            whereClause,
+                                            tableMeta,
+                                            null,
+                                            tableMeta.getTimestampIndex(),
+                                            functionParser,
+                                            tableMeta,
+                                            executionContext,
+                                            false,
+                                            reader,
+                                            false
+                                    );
+                                    if (distinctIntrinsic.filter != null || distinctIntrinsic.keyColumn != null) {
+                                        // Has non-interval filters — fall through to regular group-by
+                                        distinctIntrinsic = null;
+                                    }
+                                }
+
+                                if (whereClause == null || distinctIntrinsic != null) {
+                                    GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
+                                    distinctMeta.add(new TableColumnMetadata(
+                                            Chars.toString(colName),
+                                            tableMeta.getColumnType(colIdx),
+                                            tableMeta.getColumnIndexType(colIdx),
+                                            tableMeta.getIndexValueBlockCapacity(colIdx),
+                                            tableMeta.isSymbolTableStatic(colIdx),
+                                            null, -1, false, 0,
+                                            tableMeta.getColumnMetadata(colIdx).isSymbolCacheFlag(),
+                                            tableMeta.getColumnMetadata(colIdx).getSymbolCapacity()
+                                    ));
+                                    IntList colIndexes = new IntList();
+                                    colIndexes.add(colIdx);
+                                    IntList colSizeShifts = new IntList();
+                                    colSizeShifts.add(2);
+                                    ExpressionNode viewExpr = tableModel.getViewNameExpr();
+                                    GenericRecordMetadata dfcMeta = GenericRecordMetadata.copyOfNew(tableMeta);
+
+                                    PartitionFrameCursorFactory dfcFactory;
+                                    if (distinctIntrinsic != null && distinctIntrinsic.hasIntervalFilters()) {
+                                        RuntimeIntrinsicIntervalModel intervalModel = distinctIntrinsic.buildIntervalModel();
+                                        dfcFactory = new IntervalPartitionFrameCursorFactory(
+                                                tableToken,
+                                                tableModel.getMetadataVersion(),
+                                                intervalModel,
+                                                tableMeta.getTimestampIndex(),
+                                                dfcMeta,
+                                                ORDER_ASC,
+                                                getViewName(viewExpr),
+                                                getViewPosition(viewExpr),
+                                                tableModel.isUpdate()
+                                        );
+                                    } else {
+                                        dfcFactory = new FullPartitionFrameCursorFactory(
+                                                tableToken,
+                                                tableModel.getMetadataVersion(),
+                                                dfcMeta,
+                                                ORDER_ASC,
+                                                getViewName(viewExpr),
+                                                getViewPosition(viewExpr),
+                                                tableModel.isUpdate()
+                                        );
+                                    }
+                                    // Consume the WHERE clause so it doesn't get applied again downstream
+                                    tableModel.setWhereClause(null);
+                                    return new PostingIndexDistinctRecordCursorFactory(
+                                            distinctMeta, dfcFactory, colIdx, 0, colIndexes, colSizeShifts
+                                    );
+                                }
                             }
                         }
                     }
@@ -8266,7 +8318,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         queryMeta,
                         executionContext,
                         latestByColumnCount > 1,
-                        reader
+                        reader,
+                        SqlHints.hasNoIndexHint(model)
                 );
             } else {
                 intrinsicModel = whereClauseParser.getEmpty(
@@ -8694,7 +8747,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert columnIndex > -1;
 
                         // this is our kind of column — bitmap only (native scanner)
-                        if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP) {
+                        if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
+                                && !SqlHints.hasNoIndexHint(model)) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = BitmapIndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
@@ -8785,7 +8839,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // listColumnFilterA = latest by column indexes
         if (latestByColumnCount == 1) {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-            if (queryMeta.getColumnIndexType(latestByColumnIndex) == IndexType.BITMAP) {
+            if (queryMeta.getColumnIndexType(latestByColumnIndex) == IndexType.BITMAP
+                    && !SqlHints.hasNoIndexHint(model)) {
                 return new LatestByAllIndexedRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,

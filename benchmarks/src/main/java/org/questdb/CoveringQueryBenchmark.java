@@ -108,17 +108,20 @@ public class CoveringQueryBenchmark {
         System.out.flush();
         long t0 = System.nanoTime();
 
+        // Wide table: 10 extra DOUBLE columns to increase per-partition footprint.
+        // Covering index only stores price + qty, so it avoids reading the pad columns.
         engine.execute("""
                 CREATE TABLE bench (
                     ts TIMESTAMP,
                     sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
                     price DOUBLE,
-                    qty INT
+                    qty INT,
+                    pad0 DOUBLE, pad1 DOUBLE, pad2 DOUBLE, pad3 DOUBLE, pad4 DOUBLE,
+                    pad5 DOUBLE, pad6 DOUBLE, pad7 DOUBLE, pad8 DOUBLE, pad9 DOUBLE
                 ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                 """, ctx);
 
         // Insert in per-day chunks — each partition gets ~50k rows with 500 random symbols.
-        // rnd_symbol(count, minLen, maxLen, nullRate) generates `count` distinct symbols.
         int rowsPerDay = 50_000;
         int days = TOTAL_ROWS / rowsPerDay;
         for (int d = 0; d < days; d++) {
@@ -128,19 +131,23 @@ public class CoveringQueryBenchmark {
                             "T00:00:00') + ((" + (d / 28) + ")::LONG * 2592000000000)," +
                             " rnd_symbol(" + KEY_COUNT + ", 4, 8, 0)," +
                             " rnd_double() * 100," +
-                            " rnd_int(0, 1_000_000, 0)" +
+                            " rnd_int(0, 1_000_000, 0)," +
+                            " rnd_double(), rnd_double(), rnd_double(), rnd_double(), rnd_double()," +
+                            " rnd_double(), rnd_double(), rnd_double(), rnd_double(), rnd_double()" +
                             " FROM long_sequence(" + rowsPerDay + ")",
                     ctx
             );
         }
 
-        // Create a no-index copy for comparison
+        // Same schema but no index at all
         engine.execute("""
                 CREATE TABLE bench_noidx (
                     ts TIMESTAMP,
                     sym SYMBOL,
                     price DOUBLE,
-                    qty INT
+                    qty INT,
+                    pad0 DOUBLE, pad1 DOUBLE, pad2 DOUBLE, pad3 DOUBLE, pad4 DOUBLE,
+                    pad5 DOUBLE, pad6 DOUBLE, pad7 DOUBLE, pad8 DOUBLE, pad9 DOUBLE
                 ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                 """, ctx);
         engine.execute("INSERT INTO bench_noidx SELECT * FROM bench", ctx);

@@ -143,6 +143,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int decodeWorkspaceCapacity;
         private int decodedStride = -1;
         private int cachedSidecarIdx; // cached sidecarValueIndex() — valid after hasNext() returns true
+        // FSST decompression state for var-sized sidecar blocks
+        private long fsstDecompBufAddr;
+        private int fsstDecompBufCapacity;
+        // Cached FSST symbol table to avoid deserializing per row
+        private FSST.SymbolTable fsstCachedTable;
+        private long fsstCachedBlockBase = -1;
+        private int fsstCachedIncludeIdx = -1;
 
         @Override
         public byte getCoveredByte(int includeIdx) {
@@ -297,8 +304,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private Utf8Sequence getVarSidecarUtf8(int includeIdx, DirectUtf8String view) {
             if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
-            // For dense (sealed): ordinal = prefix count for this key + per-key ordinal
-            // For sparse (unsealed): use gen-global ordinal
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + sidecarOrdinal - 1
                     : sidecarOrdinal - 1;
@@ -307,8 +312,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
             MemoryMR mem = sidecarMems[includeIdx];
-            int count = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
+            int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
+            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
             if (ordinal >= count) return null;
+
+            if (fsst) {
+                return decompressFsstUtf8(mem, blockBase, count, ordinal, includeIdx, view);
+            }
+
             long offsetsAddr = mem.addressOf(blockBase + 4);
             int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
             int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
@@ -328,8 +340,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
             MemoryMR mem = sidecarMems[includeIdx];
-            int count = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
+            int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
+            boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
+            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
             if (ordinal >= count) return null;
+
+            if (fsst) {
+                return decompressFsstStr(mem, blockBase, count, ordinal, includeIdx, view);
+            }
+
             long offsetsAddr = mem.addressOf(blockBase + 4);
             int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
             int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
@@ -340,6 +359,75 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int len = Unsafe.getUnsafe().getInt(dataAddr);
             if (len < 0) return null;
             return view.of(dataAddr + Integer.BYTES, len);
+        }
+
+        /**
+         * Resolves the FSST symbol table for the given block, caching it to avoid
+         * re-deserializing on every row access within the same block.
+         */
+        private FSST.SymbolTable resolveFsstTable(MemoryMR mem, long blockBase, int includeIdx) {
+            if (fsstCachedBlockBase == blockBase && fsstCachedIncludeIdx == includeIdx && fsstCachedTable != null) {
+                return fsstCachedTable;
+            }
+            long pos = blockBase + 4;
+            int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
+            long tableAddr = mem.addressOf(pos + 2);
+            fsstCachedTable = FSST.deserialize(tableAddr);
+            fsstCachedBlockBase = blockBase;
+            fsstCachedIncludeIdx = includeIdx;
+            return fsstCachedTable;
+        }
+
+        /**
+         * Reads the compressed byte range for ordinal from an FSST block and
+         * decompresses it into the reusable fsstDecompBuf.
+         *
+         * @return decompressed byte count, or -1 if NULL
+         */
+        private int decompressFsstValue(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx) {
+            FSST.SymbolTable table = resolveFsstTable(mem, blockBase, includeIdx);
+            long pos = blockBase + 4;
+            int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
+
+            long offsetsAddr = mem.addressOf(pos + 2 + tableLen);
+            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
+            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            if (lo == hi) return -1; // NULL
+
+            long dataBase = pos + 2 + tableLen + (long) (count + 1) * Integer.BYTES;
+            long compAddr = mem.addressOf(dataBase + lo);
+            int compLen = hi - lo;
+
+            int needed = compLen * 8;
+            if (fsstDecompBufAddr == 0 || fsstDecompBufCapacity < needed) {
+                if (fsstDecompBufAddr != 0) {
+                    Unsafe.free(fsstDecompBufAddr, fsstDecompBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+                }
+                fsstDecompBufCapacity = needed;
+                fsstDecompBufAddr = Unsafe.malloc(needed, MemoryTag.NATIVE_INDEX_READER);
+            }
+            return FSST.decompressBytes(table, compAddr, compLen, fsstDecompBufAddr);
+        }
+
+        /**
+         * Decompress a single FSST-encoded VARCHAR value from an FSST block.
+         * Block format: [count|flag:4B][tableLen:2B][FSST table][offsets:(count+1)×4B][compressed data]
+         */
+        private Utf8Sequence decompressFsstUtf8(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectUtf8String view) {
+            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+            if (decompLen < 0) return null;
+            return view.of(fsstDecompBufAddr, fsstDecompBufAddr + decompLen);
+        }
+
+        /**
+         * Decompress a single FSST-encoded STRING value from an FSST block.
+         */
+        private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view) {
+            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+            if (decompLen < 0) return null;
+            int len = Unsafe.getUnsafe().getInt(fsstDecompBufAddr);
+            if (len < 0) return null;
+            return view.of(fsstDecompBufAddr + Integer.BYTES, len);
         }
 
         /**
@@ -1169,6 +1257,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 decodeWorkspaceAddr = 0;
                 decodeWorkspaceCapacity = 0;
+            }
+            if (fsstDecompBufAddr != 0) {
+                Unsafe.free(fsstDecompBufAddr, fsstDecompBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+                fsstDecompBufAddr = 0;
+                fsstDecompBufCapacity = 0;
             }
         }
 

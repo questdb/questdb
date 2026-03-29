@@ -111,7 +111,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("PostingIndex");
         sink.meta("op").val("distinct");
-        sink.meta("on").putColumnName(cursor.queryColumnPosition);
+        sink.meta("on").val(metadata.getColumnName(cursor.queryColumnPosition));
+        sink.child(dfcFactory);
     }
 
     private static class DistinctCursor implements RecordCursor {
@@ -148,7 +149,10 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return frameCursor.getSymbolTable(columnIndex);
+            // Map query column index to reader column index — the DISTINCT result
+            // has a single column but the underlying table may have the symbol at a
+            // different position.
+            return frameCursor.getSymbolTable(readerColumnIndex);
         }
 
         @Override
@@ -199,7 +203,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return frameCursor.newSymbolTable(columnIndex);
+            return frameCursor.newSymbolTable(readerColumnIndex);
         }
 
         @Override

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -128,7 +129,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.hasVarSizeColumns = hasAnyVarSizeIncludeColumn(queryColToIncludeIdx, metadata);
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes, latestBy);
-        this.pageFrameCursor = !latestBy && !hasVarSizeColumns
+        this.pageFrameCursor = !latestBy
                 ? new CoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, metadata, columnIndexes)
                 : null;
         this.pageFrameScanCursor = pageFrameCursor != null
@@ -189,7 +190,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes, latestBy);
-        this.pageFrameCursor = !latestBy && !hasVarSizeColumns
+        this.pageFrameCursor = !latestBy
                 ? new CoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, metadata, columnIndexes)
                 : null;
         this.pageFrameScanCursor = pageFrameCursor != null
@@ -567,7 +568,38 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public long size() {
-            return -1;
+            if (frameCursor == null || latestBy || multiKeys != null
+                    || symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                return -1;
+            }
+            // Sum posting index key counts across all partitions from generation
+            // metadata, without iterating or decoding individual row values.
+            long total = 0;
+            frameCursor.toTop();
+            try {
+                PartitionFrame frame;
+                while ((frame = frameCursor.next()) != null) {
+                    BitmapIndexReader reader = tableReader.getBitmapIndexReader(
+                            frame.getPartitionIndex(), indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
+                    RowCursor rc = reader.getCursor(true, TableUtils.toIndexKey(symbolKey),
+                            frame.getRowLo(), frame.getRowHi());
+                    if (rc instanceof CoveringRowCursor coveringCursor) {
+                        int count = coveringCursor.getCoveredValueCount();
+                        if (count >= 0) {
+                            total += count;
+                            continue;
+                        }
+                    }
+                    // Fallback for bitmap index or unbounded frames: iterate
+                    while (rc.hasNext()) {
+                        rc.next();
+                        total++;
+                    }
+                }
+            } finally {
+                frameCursor.toTop();
+            }
+            return total;
         }
 
         @Override
@@ -1616,33 +1648,48 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
 
             // Allocate fresh buffers for this frame. Last slot holds the sym buffer.
+            // For var-width columns: addrs[q] = aux buffer, varDataAddrs[q] = data buffer.
             int capacity = INITIAL_CAPACITY;
             long[] addrs = new long[queryColCount + 1];
+            long[] varDataAddrs = new long[queryColCount]; // data buffers for VARCHAR/STRING
+            int[] varDataPos = new int[queryColCount]; // append positions in data buffers
+            int[] varDataCap = new int[queryColCount]; // data buffer capacities
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
-                    addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
+                        addrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                        int initDataCap = capacity * 32;
+                        varDataAddrs[q] = allocBuffer(initDataCap);
+                        varDataCap[q] = initDataCap;
+                    } else if (columnTypeTags[q] == ColumnType.STRING) {
+                        // STRING aux: 8 bytes per row (offset), plus sentinel at end
+                        addrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
+                        int initDataCap = capacity * 32;
+                        varDataAddrs[q] = allocBuffer(initDataCap);
+                        varDataCap[q] = initDataCap;
+                    } else {
+                        addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                    }
                 }
             }
             addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
 
             int count = 0;
             if (coveringCursor != null) {
-                // Read covered values from sidecar files
                 while (coveringCursor.hasNext()) {
                     coveringCursor.next();
                     if (count >= capacity) {
-                        capacity = growFrameBuffers(addrs, count, capacity);
+                        capacity = growFrameBuffers(addrs, varDataAddrs, varDataCap, count, capacity);
                     }
-                    writeCoveredRow(addrs, count, coveringCursor);
+                    writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
                     count++;
                 }
             } else {
-                // Fallback: read from column files (unsealed partitions, index rebuilding)
                 int colBase = tableReader.getColumnBase(partitionIndex);
                 while (rowCursor.hasNext()) {
                     long rowId = rowCursor.next();
                     if (count >= capacity) {
-                        capacity = growFrameBuffers(addrs, count, capacity);
+                        capacity = growFrameBuffers(addrs, varDataAddrs, varDataCap, count, capacity);
                     }
                     writeColumnRow(addrs, count, rowId, colBase);
                     count++;
@@ -1652,22 +1699,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return null;
             }
 
-            // Fill symbol column buffer with constant key
             long symAddr = addrs[queryColCount];
             fillSymbolKey(symAddr, rawSymbolKey, count);
 
-            // Set up frame — addresses are now unique per frame
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
-                if (includeIdx >= 0) {
+                if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.VARCHAR) {
+                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageSizes[q] = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                    frame.pageAddresses[q] = varDataAddrs[q];
+                    frame.pageSizes[q] = varDataPos[q];
+                } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.STRING) {
+                    // Write sentinel offset at [count] position
+                    Unsafe.getUnsafe().putLong(addrs[q] + (long) count * Long.BYTES, varDataPos[q]);
+                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageSizes[q] = (long) (count + 1) * Long.BYTES;
+                    frame.pageAddresses[q] = varDataAddrs[q];
+                    frame.pageSizes[q] = varDataPos[q];
+                } else if (includeIdx >= 0) {
                     frame.pageAddresses[q] = addrs[q];
                     frame.pageSizes[q] = (long) count * columnSizeBytes[q];
+                    frame.auxPageAddresses[q] = 0;
+                    frame.auxPageSizes[q] = 0;
                 } else if (includeIdx == -1) {
                     frame.pageAddresses[q] = symAddr;
                     frame.pageSizes[q] = (long) count * Integer.BYTES;
+                    frame.auxPageAddresses[q] = 0;
+                    frame.auxPageSizes[q] = 0;
                 }
-                frame.auxPageAddresses[q] = 0;
-                frame.auxPageSizes[q] = 0;
             }
             frame.partitionLo = 0;
             frame.partitionHi = count;
@@ -1675,7 +1734,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return frame;
         }
 
-        private void writeCoveredRow(long[] addrs, int count, CoveringRowCursor crc) {
+        private void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                     int count, CoveringRowCursor crc) {
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx < 0) continue;
@@ -1693,8 +1753,88 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
                     case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
                             Unsafe.getUnsafe().putByte(addr + count, crc.getCoveredByte(includeIdx));
+                    case ColumnType.VARCHAR -> writeVarcharToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredVarcharA(includeIdx));
+                    case ColumnType.STRING -> writeStringToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredStrA(includeIdx));
                     default -> {}
                 }
+            }
+        }
+
+        private void writeVarcharToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                          int q, int count, @Nullable Utf8Sequence value) {
+            long auxEntry = auxAddr + (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+            long dataOffset = varDataPos[q];
+
+            if (value == null) {
+                Unsafe.getUnsafe().putInt(auxEntry, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
+                Unsafe.getUnsafe().putInt(auxEntry + 4, 0);
+                Unsafe.getUnsafe().putShort(auxEntry + 8, (short) 0);
+                Unsafe.getUnsafe().putShort(auxEntry + 10, (short) dataOffset);
+                Unsafe.getUnsafe().putInt(auxEntry + 12, (int) (dataOffset >> 16));
+            } else {
+                int size = value.size();
+                if (size <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                    int header = (size << 4) | 1; // HEADER_FLAG_INLINED
+                    if (value.isAscii()) header |= 2; // HEADER_FLAG_ASCII
+                    Unsafe.getUnsafe().putByte(auxEntry, (byte) header);
+                    for (int b = 0; b < size; b++) {
+                        Unsafe.getUnsafe().putByte(auxEntry + 1 + b, value.byteAt(b));
+                    }
+                    for (int b = size; b < VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED; b++) {
+                        Unsafe.getUnsafe().putByte(auxEntry + 1 + b, (byte) 0);
+                    }
+                    Unsafe.getUnsafe().putShort(auxEntry + 10, (short) dataOffset);
+                    Unsafe.getUnsafe().putInt(auxEntry + 12, (int) (dataOffset >> 16));
+                } else {
+                    int header = (size << 4);
+                    if (value.isAscii()) header |= 2;
+                    Unsafe.getUnsafe().putInt(auxEntry, header);
+                    for (int b = 0; b < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES && b < size; b++) {
+                        Unsafe.getUnsafe().putByte(auxEntry + 4 + b, value.byteAt(b));
+                    }
+                    ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, size);
+                    for (int b = 0; b < size; b++) {
+                        Unsafe.getUnsafe().putByte(varDataAddrs[q] + varDataPos[q] + b, value.byteAt(b));
+                    }
+                    Unsafe.getUnsafe().putShort(auxEntry + 10, (short) dataOffset);
+                    Unsafe.getUnsafe().putInt(auxEntry + 12, (int) (dataOffset >> 16));
+                    varDataPos[q] += size;
+                }
+            }
+        }
+
+        private void writeStringToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                         int q, int count, @Nullable CharSequence value) {
+            // STRING aux: 8-byte offset per row into data vector
+            long auxEntry = auxAddr + (long) count * Long.BYTES;
+            long dataOffset = varDataPos[q];
+            Unsafe.getUnsafe().putLong(auxEntry, dataOffset);
+
+            if (value == null) {
+                // Write NULL_LEN (-1) as the length prefix
+                ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, Integer.BYTES);
+                Unsafe.getUnsafe().putInt(varDataAddrs[q] + varDataPos[q], TableUtils.NULL_LEN);
+                varDataPos[q] += Integer.BYTES;
+            } else {
+                int charCount = value.length();
+                int totalBytes = Integer.BYTES + charCount * Character.BYTES;
+                ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
+                long dst = varDataAddrs[q] + varDataPos[q];
+                Unsafe.getUnsafe().putInt(dst, charCount);
+                for (int c = 0; c < charCount; c++) {
+                    Unsafe.getUnsafe().putChar(dst + Integer.BYTES + (long) c * Character.BYTES, value.charAt(c));
+                }
+                varDataPos[q] += totalBytes;
+            }
+        }
+
+        private void ensureVarDataCapacity(long[] varDataAddrs, int[] varDataPos, int[] varDataCap, int q, int needed) {
+            if (varDataPos[q] + needed > varDataCap[q]) {
+                int newCap = Math.max(varDataCap[q] * 2, varDataPos[q] + needed);
+                long newAddr = allocBuffer(newCap);
+                Unsafe.getUnsafe().copyMemory(varDataAddrs[q], newAddr, varDataPos[q]);
+                varDataAddrs[q] = newAddr;
+                varDataCap[q] = newCap;
             }
         }
 
@@ -1726,17 +1866,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * Grow all column and symbol buffers. addrs[0..queryColCount-1] are column
          * buffers; addrs[queryColCount] is the symbol buffer. Returns new capacity.
          */
-        private int growFrameBuffers(long[] addrs, int count, int capacity) {
+        private int growFrameBuffers(long[] addrs, long[] varDataAddrs, int[] varDataCap, int count, int capacity) {
             int newCapacity = capacity * 2;
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
-                    long newBytes = (long) newCapacity * columnSizeBytes[q];
-                    long newAddr = allocBuffer(newBytes);
-                    Unsafe.getUnsafe().copyMemory(addrs[q], newAddr, (long) count * columnSizeBytes[q]);
-                    addrs[q] = newAddr;
+                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
+                        long newAuxBytes = (long) newCapacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                        long newAuxAddr = allocBuffer(newAuxBytes);
+                        Unsafe.getUnsafe().copyMemory(addrs[q], newAuxAddr, (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                        addrs[q] = newAuxAddr;
+                    } else if (columnTypeTags[q] == ColumnType.STRING) {
+                        long newAuxBytes = (long) (newCapacity + 1) * Long.BYTES;
+                        long newAuxAddr = allocBuffer(newAuxBytes);
+                        Unsafe.getUnsafe().copyMemory(addrs[q], newAuxAddr, (long) count * Long.BYTES);
+                        addrs[q] = newAuxAddr;
+                    } else {
+                        long newBytes = (long) newCapacity * columnSizeBytes[q];
+                        long newAddr = allocBuffer(newBytes);
+                        Unsafe.getUnsafe().copyMemory(addrs[q], newAddr, (long) count * columnSizeBytes[q]);
+                        addrs[q] = newAddr;
+                    }
                 }
             }
-            // Symbol fill is written after the loop, no need to copy
             addrs[queryColCount] = allocBuffer((long) newCapacity * Integer.BYTES);
             return newCapacity;
         }

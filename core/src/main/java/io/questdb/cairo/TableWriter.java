@@ -10672,6 +10672,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // added so far. Index writers will start point to different
         // files after switch.
         updateIndexes();
+        // Flush posting index sidecar data before the partition switch.
+        // PostingIndexWriter reads covered column values from the MemoryMA
+        // objects that were set via configureCovering(). Those MemoryMA
+        // objects are the TableWriter's column memories — the same Java
+        // objects get remapped to the new partition's files in openPartition().
+        // Any unflushed pending/spill data still holds row IDs from the
+        // current partition, so we must write the sidecar gen block now,
+        // while the MemoryMA still points to the correct file.
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).getWriter().commit();
+        }
         txWriter.switchPartitions(timestamp);
         openPartition(timestamp, 0);
         setAppendPosition(0, false);

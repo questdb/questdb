@@ -13,7 +13,18 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -31,9 +42,11 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>covering_filter — CoveringIndex + FilteredRecordCursor (reads from sidecar)</li>
  *   <li>non_covering_filter — PageFrame scan + filter (reads from column files)</li>
+ *   <li>no_index_filter — full table scan + filter (no index at all)</li>
  *   <li>covering_no_filter — CoveringIndex without filter (baseline)</li>
  *   <li>covering_filter_in — CoveringIndex IN-list + filter</li>
  *   <li>non_covering_filter_in — PageFrame IN-list + filter</li>
+ *   <li>no_index_filter_in — full table scan IN-list + filter (no index at all)</li>
  * </ul>
  */
 @State(Scope.Benchmark)
@@ -41,7 +54,6 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Warmup(iterations = 3, time = 2)
 @Measurement(iterations = 5, time = 2)
-@Fork(value = 1, jvmArgs = {"-Xmx2g"})
 public class CoveringFilterBenchmark {
 
     private static final int KEY_COUNT = 200;
@@ -51,9 +63,11 @@ public class CoveringFilterBenchmark {
     @Param({
             "covering_filter",
             "non_covering_filter",
+            "no_index_filter",
             "covering_no_filter",
             "covering_filter_in",
-            "non_covering_filter_in"
+            "non_covering_filter_in",
+            "no_index_filter_in"
     })
     public String queryType;
 
@@ -115,6 +129,18 @@ public class CoveringFilterBenchmark {
         LogFactory.haltInstance();
     }
 
+    @Benchmark
+    public long query() throws SqlException {
+        long sum = 0;
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            io.questdb.cairo.sql.Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                sum += Double.doubleToRawLongBits(record.getDouble(0));
+            }
+        }
+        return sum;
+    }
+
     @Setup(Level.Trial)
     public void setupEngine() {
         drainNativeResources();
@@ -132,6 +158,25 @@ public class CoveringFilterBenchmark {
         compiler = new SqlCompilerImpl(engine);
     }
 
+    @Setup(Level.Iteration)
+    public void setupFactory() throws Exception {
+        String sql = switch (queryType) {
+            case "covering_filter" -> "SELECT price, qty FROM filtbench WHERE sym = 'K0' AND price > 50";
+            case "non_covering_filter" ->
+                    "SELECT /*+ no_covering */ price, qty FROM filtbench WHERE sym = 'K0' AND price > 50";
+            case "no_index_filter" ->
+                    "SELECT /*+ no_index */ price, qty FROM filtbench WHERE sym = 'K0' AND price > 50";
+            case "covering_no_filter" -> "SELECT price, qty FROM filtbench WHERE sym = 'K0'";
+            case "covering_filter_in" -> "SELECT price FROM filtbench WHERE sym IN ('K0', 'K1', 'K2') AND price > 50";
+            case "non_covering_filter_in" ->
+                    "SELECT /*+ no_covering */ price FROM filtbench WHERE sym IN ('K0', 'K1', 'K2') AND price > 50";
+            case "no_index_filter_in" ->
+                    "SELECT /*+ no_index */ price FROM filtbench WHERE sym IN ('K0', 'K1', 'K2') AND price > 50";
+            default -> throw new IllegalStateException("Unknown: " + queryType);
+        };
+        factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+    }
+
     @TearDown(Level.Trial)
     public void tearDownEngine() {
         Misc.free(compiler);
@@ -140,48 +185,9 @@ public class CoveringFilterBenchmark {
         checkMemoryLeaks(memBefore);
     }
 
-    @Setup(Level.Iteration)
-    public void setupFactory() throws Exception {
-        String sql = switch (queryType) {
-            case "covering_filter" ->
-                    "SELECT price, qty FROM filtbench WHERE sym = 'K0' AND price > 50";
-            case "non_covering_filter" ->
-                    "SELECT /*+ no_covering */ price, qty FROM filtbench WHERE sym = 'K0' AND price > 50";
-            case "covering_no_filter" ->
-                    "SELECT price, qty FROM filtbench WHERE sym = 'K0'";
-            case "covering_filter_in" ->
-                    "SELECT price FROM filtbench WHERE sym IN ('K0', 'K1', 'K2') AND price > 50";
-            case "non_covering_filter_in" ->
-                    "SELECT /*+ no_covering */ price FROM filtbench WHERE sym IN ('K0', 'K1', 'K2') AND price > 50";
-            default -> throw new IllegalStateException("Unknown: " + queryType);
-        };
-        factory = compiler.compile(sql, ctx).getRecordCursorFactory();
-    }
-
     @TearDown(Level.Iteration)
     public void tearDownFactory() {
         factory.close();
-    }
-
-    @Benchmark
-    public long query() throws SqlException {
-        long sum = 0;
-        try (RecordCursor cursor = factory.getCursor(ctx)) {
-            io.questdb.cairo.sql.Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                sum += Double.doubleToRawLongBits(record.getDouble(0));
-            }
-        }
-        return sum;
-    }
-
-    private static long countRows(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String sql) throws SqlException {
-        try (RecordCursorFactory f = compiler.compile(sql, ctx).getRecordCursorFactory();
-             RecordCursor c = f.getCursor(ctx)) {
-            long count = 0;
-            while (c.hasNext()) count++;
-            return count;
-        }
     }
 
     private static void checkMemoryLeaks(long[] before) {
@@ -204,6 +210,15 @@ public class CoveringFilterBenchmark {
         if (totalAfter > totalBefore) {
             System.err.printf("WARNING: native memory leak detected: %+,d bytes%n", totalAfter - totalBefore);
             System.err.print(leaks);
+        }
+    }
+
+    private static long countRows(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String sql) throws SqlException {
+        try (RecordCursorFactory f = compiler.compile(sql, ctx).getRecordCursorFactory();
+             RecordCursor c = f.getCursor(ctx)) {
+            long count = 0;
+            while (c.hasNext()) count++;
+            return count;
         }
     }
 

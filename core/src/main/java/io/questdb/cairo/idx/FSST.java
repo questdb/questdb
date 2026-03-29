@@ -48,6 +48,7 @@ import io.questdb.std.Unsafe;
 public final class FSST {
 
     public static final int ESCAPE = 255;
+    public static final int FSST_BLOCK_FLAG = 0x80000000;
     public static final int MAX_SYMBOLS = 255;
     // Serialized size: 1 byte (count) + count * (1 byte len + 8 bytes symbol) = 1 + 255*9 = 2296
     public static final int SERIALIZED_MAX_SIZE = 1 + MAX_SYMBOLS * 9;
@@ -74,6 +75,138 @@ public final class FSST {
             dstOff = encodeValue(table, value, dstAddr, dstOff);
         }
         return dstOff;
+    }
+
+    /**
+     * Compress an arbitrary-length byte sequence using a pre-trained symbol table.
+     *
+     * @param table   symbol table
+     * @param srcAddr source byte address
+     * @param srcLen  source byte length
+     * @param dstAddr destination address (worst case: srcLen * 2)
+     * @return number of bytes written to dst
+     */
+    public static int compressBytes(SymbolTable table, long srcAddr, int srcLen, long dstAddr) {
+        int srcOff = 0;
+        int dstOff = 0;
+        while (srcOff < srcLen) {
+            int remaining = srcLen - srcOff;
+            int bestLen = 0;
+            int bestCode = -1;
+
+            if (remaining >= 2) {
+                long window = readWindow(srcAddr + srcOff, Math.min(remaining, 8));
+                int h = hash(window, Math.min(remaining, 8));
+                for (int probe = 0; probe < 4; probe++) {
+                    int idx = (h + probe) & (HASH_SIZE - 1);
+                    int code = table.hashCodes[idx];
+                    if (code < 0) break;
+                    int slen = table.lens[code];
+                    if (slen > remaining || slen <= bestLen) continue;
+                    long sym = table.symbols[code];
+                    long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
+                    if ((window & mask) == sym) {
+                        bestLen = slen;
+                        bestCode = code;
+                    }
+                }
+            }
+
+            if (bestLen <= 1) {
+                int b = Unsafe.getUnsafe().getByte(srcAddr + srcOff) & 0xFF;
+                int singleCode = table.byteMap[b];
+                if (singleCode >= 0) {
+                    Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) singleCode);
+                    dstOff++;
+                    srcOff++;
+                    continue;
+                }
+            }
+
+            if (bestLen >= 2) {
+                Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) bestCode);
+                dstOff++;
+                srcOff += bestLen;
+            } else {
+                int b = Unsafe.getUnsafe().getByte(srcAddr + srcOff) & 0xFF;
+                Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) ESCAPE);
+                Unsafe.getUnsafe().putByte(dstAddr + dstOff + 1, (byte) b);
+                dstOff += 2;
+                srcOff++;
+            }
+        }
+        return dstOff;
+    }
+
+    /**
+     * Decompress an FSST-encoded byte sequence back to original bytes.
+     *
+     * @param table   symbol table
+     * @param srcAddr compressed byte address
+     * @param srcLen  compressed byte length
+     * @param dstAddr destination address
+     * @return number of decompressed bytes written
+     */
+    public static int decompressBytes(SymbolTable table, long srcAddr, int srcLen, long dstAddr) {
+        int srcOff = 0;
+        int dstOff = 0;
+        while (srcOff < srcLen) {
+            int code = Unsafe.getUnsafe().getByte(srcAddr + srcOff) & 0xFF;
+            srcOff++;
+            if (code == ESCAPE) {
+                if (srcOff < srcLen) {
+                    Unsafe.getUnsafe().putByte(dstAddr + dstOff, Unsafe.getUnsafe().getByte(srcAddr + srcOff));
+                    srcOff++;
+                    dstOff++;
+                }
+            } else {
+                int len = table.lens[code];
+                long sym = table.symbols[code];
+                for (int b = 0; b < len; b++) {
+                    Unsafe.getUnsafe().putByte(dstAddr + dstOff + b, (byte) (sym >>> (b * 8)));
+                }
+                dstOff += len;
+            }
+        }
+        return dstOff;
+    }
+
+    /**
+     * Train a symbol table from raw byte data in native memory.
+     * Internally chunks the data into 8-byte segments for the standard training algorithm.
+     *
+     * @param srcAddr byte data address
+     * @param srcLen  byte data length
+     * @return trained SymbolTable, or null if data is too small to benefit from compression
+     */
+    public static SymbolTable trainBytes(long srcAddr, int srcLen) {
+        if (srcLen < 16) {
+            return null;
+        }
+        // Chunk into 8-byte longs for the existing training algorithm
+        int longCount = (srcLen + 7) / 8;
+        long bufAddr = Unsafe.malloc(longCount * 8L, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // Copy, padding last chunk with zeros
+            Unsafe.getUnsafe().copyMemory(srcAddr, bufAddr, srcLen);
+            if (srcLen < longCount * 8L) {
+                Unsafe.getUnsafe().setMemory(bufAddr + srcLen, longCount * 8L - srcLen, (byte) 0);
+            }
+            return train(bufAddr, longCount);
+        } finally {
+            Unsafe.free(bufAddr, longCount * 8L, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Read up to 8 bytes from srcAddr into a long (little-endian), without reading past the boundary.
+     */
+    private static long readWindow(long addr, int available) {
+        long result = 0;
+        for (int i = 0; i < available && i < 8; i++) {
+            result |= ((long) (Unsafe.getUnsafe().getByte(addr + i) & 0xFF)) << (i * 8);
+        }
+        return result;
     }
 
     /**

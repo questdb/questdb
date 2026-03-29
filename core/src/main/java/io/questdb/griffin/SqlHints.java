@@ -40,6 +40,7 @@ public final class SqlHints {
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
     public static final String NO_COVERING_HINT = "no_covering";
+    public static final String NO_INDEX_HINT = "no_index";
 
     public static boolean hasAsOfDenseHint(
             @NotNull QueryModel queryModel,
@@ -100,7 +101,12 @@ public final class SqlHints {
     }
 
     public static boolean hasNoCoveringHint(@NotNull QueryModel queryModel) {
-        return queryModel.getHints().keyIndex(NO_COVERING_HINT) < 0;
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        return hints.keyIndex(NO_COVERING_HINT) < 0 || hints.keyIndex(NO_INDEX_HINT) < 0;
+    }
+
+    public static boolean hasNoIndexHint(@NotNull QueryModel queryModel) {
+        return queryModel.getHints().keyIndex(NO_INDEX_HINT) < 0;
     }
 
     private static boolean hasHintWithParams(
