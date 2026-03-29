@@ -142,6 +142,7 @@ public final class BitpackUtils {
 
         for (int i = 0; i < count; i++) {
             long offset = Unsafe.getUnsafe().getLong(valuesAddr + (long) i * Long.BYTES) - minValue;
+            int oldBufferBits = bufferBits;
             buffer |= (offset << bufferBits);
             bufferBits += bitWidth;
 
@@ -151,6 +152,16 @@ public final class BitpackUtils {
                 buffer >>>= 8;
                 bufferBits -= 8;
                 destOffset++;
+            }
+
+            // When oldBufferBits + bitWidth > 64, the shift above lost the high
+            // bits of offset that didn't fit in the 64-bit buffer. The flush loop
+            // correctly wrote the low bits but left an incorrect residual. Replace
+            // the buffer with the actual high bits of the offset.
+            if (oldBufferBits + bitWidth > 64) {
+                int loBitsStored = 64 - oldBufferBits;
+                buffer = offset >>> loBitsStored;
+                bufferBits = bitWidth - loBitsStored;
             }
         }
 
@@ -190,6 +201,8 @@ public final class BitpackUtils {
         }
         int totalBytes = packedDataSize(valueCount, bitWidth);
 
+        long spillBits = 0;
+        int spillCount = 0;
         for (int i = 0; i < valueCount; i++) {
             // Ensure we have enough bits in buffer
             if (bufferBits < bitWidth) {
@@ -199,11 +212,22 @@ public final class BitpackUtils {
                     bufferBits = 64;
                     srcOffset += 8;
                 } else {
-                    // Slow path: read byte-by-byte near the end or when buffer has residual bits
-                    while (bufferBits < bitWidth) {
-                        buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
-                        bufferBits += 8;
+                    // Slow path: read byte-by-byte near the end or when buffer has residual bits.
+                    while (bufferBits < bitWidth && srcOffset < totalBytes) {
+                        long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
                         srcOffset++;
+                        if (bufferBits <= 56) {
+                            buffer |= (b << bufferBits);
+                            bufferBits += 8;
+                        } else {
+                            // bufferBits > 56: only (64 - bufferBits) bits of the byte fit.
+                            int fitBits = 64 - bufferBits;
+                            buffer |= (b << bufferBits);
+                            // Save the high bits that didn't fit for the next value
+                            spillBits = b >>> fitBits;
+                            spillCount = 8 - fitBits;
+                            bufferBits = 64;
+                        }
                     }
                 }
             }
@@ -213,8 +237,19 @@ public final class BitpackUtils {
             Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + offset);
 
             // Remove used bits
-            buffer >>>= bitWidth;
+            if (bitWidth < 64) {
+                buffer >>>= bitWidth;
+            } else {
+                buffer = 0;
+            }
             bufferBits -= bitWidth;
+
+            // Fold in any spill bits from a byte that didn't fully fit
+            if (spillCount > 0) {
+                buffer |= (spillBits << bufferBits);
+                bufferBits += spillCount;
+                spillCount = 0;
+            }
         }
     }
 

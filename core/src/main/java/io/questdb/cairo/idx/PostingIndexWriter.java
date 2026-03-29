@@ -390,10 +390,13 @@ public class PostingIndexWriter implements IndexWriter {
                                 try {
                                     long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
                                     if (mapped > 0) {
-                                        savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
-                                        savedSidecarSizes[c] = fileLen;
-                                        Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
-                                        ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
+                                        try {
+                                            savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
+                                            savedSidecarSizes[c] = fileLen;
+                                            Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                        } finally {
+                                            ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
+                                        }
                                     }
                                 } finally {
                                     ff.close(fd);
@@ -2690,6 +2693,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             } finally {
                 try {
+                    Misc.free(sealValueMem);
                     if (valueMem.isOpen()) {
                         valueMem.close(false);
                     }
@@ -3222,6 +3226,13 @@ public class PostingIndexWriter implements IndexWriter {
     private void growKeyBuffers(int minCapacity) {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
+        // Realloc both buffers before updating keyCapacity. If the second
+        // realloc fails, freeNativeBuffers() still uses the old keyCapacity
+        // to compute correct sizes for both buffers. The first buffer was
+        // successfully grown but Unsafe.free ignores the size parameter —
+        // it frees the entire allocation. The accounting counters are still
+        // wrong by (newCapacity - keyCapacity) * SLOT * BYTES for the first
+        // buffer, but that's the best we can do without per-buffer capacity.
         long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
@@ -3233,7 +3244,6 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
 
         activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
-
         keyCapacity = newCapacity;
     }
 

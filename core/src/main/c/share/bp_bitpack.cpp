@@ -57,6 +57,7 @@ static void pack_values_scalar(const int64_t *values, int32_t count, int64_t min
 
     for (int i = 0; i < count; i++) {
         uint64_t offset = static_cast<uint64_t>(values[i] - min_value);
+        int old_buffer_bits = buffer_bits;
         buffer |= (offset << buffer_bits);
         buffer_bits += bit_width;
 
@@ -64,6 +65,15 @@ static void pack_values_scalar(const int64_t *values, int32_t count, int64_t min
             dest[dest_offset++] = static_cast<uint8_t>(buffer);
             buffer >>= 8;
             buffer_bits -= 8;
+        }
+
+        // When old_buffer_bits + bit_width > 64, the shift lost high bits of
+        // offset. After flushing, replace the incorrect residual with the
+        // actual high bits.
+        if (old_buffer_bits + bit_width > 64) {
+            int lo_bits_stored = 64 - old_buffer_bits;
+            buffer = offset >> lo_bits_stored;
+            buffer_bits = bit_width - lo_bits_stored;
         }
     }
 
@@ -82,14 +92,33 @@ static void unpack_all_scalar(const uint8_t *src, int32_t value_count,
     uint64_t mask = (bit_width == 64) ? ~0ULL : (1ULL << bit_width) - 1;
 
     for (int i = 0; i < value_count; i++) {
+        uint64_t spill_bits = 0;
+        int spill_count = 0;
         while (buffer_bits < bit_width) {
-            buffer |= (static_cast<uint64_t>(src[src_offset]) << buffer_bits);
-            buffer_bits += 8;
+            uint64_t b = static_cast<uint64_t>(src[src_offset]);
             src_offset++;
+            if (buffer_bits <= 56) {
+                buffer |= (b << buffer_bits);
+                buffer_bits += 8;
+            } else {
+                int fit_bits = 64 - buffer_bits;
+                buffer |= (b << buffer_bits);
+                spill_bits = b >> fit_bits;
+                spill_count = 8 - fit_bits;
+                buffer_bits = 64;
+            }
         }
         dest[i] = min_value + static_cast<int64_t>(buffer & mask);
-        buffer >>= bit_width;
+        if (bit_width < 64) {
+            buffer >>= bit_width;
+        } else {
+            buffer = 0;
+        }
         buffer_bits -= bit_width;
+        if (spill_count > 0) {
+            buffer |= (spill_bits << buffer_bits);
+            buffer_bits += spill_count;
+        }
     }
 }
 

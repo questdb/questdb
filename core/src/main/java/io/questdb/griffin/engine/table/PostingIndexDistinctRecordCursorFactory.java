@@ -121,6 +121,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         private final int readerColumnIndex;
         private boolean[] foundKeys;
         private int foundCount;
+        private boolean foundNull;
+        private boolean nullReturned;
         private int nextKeyToReturn;
         private boolean isScanned;
         private PartitionFrameCursor frameCursor;
@@ -168,13 +170,20 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                     return true;
                 }
             }
+            // After all non-null keys, emit NULL if found
+            if (foundNull && !nullReturned) {
+                nullReturned = true;
+                record.symbolKey = SymbolTable.VALUE_IS_NULL;
+                return true;
+            }
             return false;
         }
 
         private void scanPartitions() {
             // Outer = partitions (each opened once), inner = keys.
             // Each partition's index reader is obtained once and checked for all unfound keys.
-            while (foundCount < symbolCount) {
+            // Also check index key 0 (the NULL key) which is not in the symbol table's range.
+            while (foundCount < symbolCount || !foundNull) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
                     return;
@@ -196,6 +205,18 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                             foundKeys[key] = true;
                             foundCount++;
                         }
+                    }
+                }
+                // Check index key 0 (NULL symbol values)
+                if (!foundNull) {
+                    RowCursor nullCursor = indexReader.getCursor(
+                            true,
+                            0, // NULL index key
+                            frame.getRowLo(),
+                            frame.getRowHi() - 1
+                    );
+                    if (nullCursor.hasNext()) {
+                        foundNull = true;
                     }
                 }
             }
@@ -226,6 +247,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             nextKeyToReturn = 0;
             isScanned = false;
             foundCount = 0;
+            foundNull = false;
+            nullReturned = false;
             if (foundKeys != null) {
                 java.util.Arrays.fill(foundKeys, false);
             }
@@ -243,12 +266,13 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             this.nextKeyToReturn = 0;
             this.isScanned = false;
             this.foundCount = 0;
+            this.foundNull = false;
+            this.nullReturned = false;
             if (foundKeys == null || foundKeys.length < symbolCount) {
                 foundKeys = new boolean[symbolCount];
             } else {
                 java.util.Arrays.fill(foundKeys, 0, symbolCount, false);
             }
-            this.nextKeyToReturn = 0;
         }
     }
 

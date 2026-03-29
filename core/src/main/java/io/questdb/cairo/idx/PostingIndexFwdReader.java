@@ -1370,6 +1370,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.encodedBlockCount = 0;
                 this.currentBlock = 0;
                 this.sidecarStrideKeyStart = effectiveStart - startCount;
+                this.denseVarKeyStartCount = effectiveStart; // adjust for skipped values
                 this.sidecarOrdinal = 0;
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
@@ -1562,6 +1563,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 skippedValueCount += vc;
             }
             this.sidecarStrideKeyStart += skippedValueCount;
+            this.denseVarKeyStartCount += skippedValueCount;
             // For sparse gens, the raw sidecar readers use sidecarOrdinal directly
             // (not sidecarStrideKeyStart). Advance it past skipped blocks' values.
             if (!isCurrentGenDense && coverCount > 0) {
