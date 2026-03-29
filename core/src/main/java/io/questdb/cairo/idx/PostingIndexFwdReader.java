@@ -370,20 +370,21 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 fsstCachedTables = new FSST.SymbolTable[coverCount];
                 fsstCachedBlockBases = new long[coverCount];
                 java.util.Arrays.fill(fsstCachedBlockBases, -1);
+                for (int i = 0; i < coverCount; i++) {
+                    fsstCachedTables[i] = new FSST.SymbolTable();
+                }
             }
             if (includeIdx < fsstCachedTables.length
-                    && fsstCachedBlockBases[includeIdx] == blockBase
-                    && fsstCachedTables[includeIdx] != null) {
+                    && fsstCachedBlockBases[includeIdx] == blockBase) {
                 return fsstCachedTables[includeIdx];
             }
             long pos = blockBase + 4;
             int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
             long tableAddr = mem.addressOf(pos + 2);
-            FSST.SymbolTable table = FSST.deserialize(tableAddr);
-            if (includeIdx < fsstCachedTables.length) {
-                fsstCachedTables[includeIdx] = table;
-                fsstCachedBlockBases[includeIdx] = blockBase;
-            }
+            // Deserialize into existing table — zero allocation after warmup
+            FSST.SymbolTable table = fsstCachedTables[includeIdx];
+            FSST.deserializeInto(tableAddr, table);
+            fsstCachedBlockBases[includeIdx] = blockBase;
             return table;
         }
 

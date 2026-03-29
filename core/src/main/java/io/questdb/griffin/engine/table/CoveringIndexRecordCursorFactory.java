@@ -1501,6 +1501,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         int resolvedKey;
         int symbolKey;
         private TableReader tableReader;
+        // Reusable per-frame arrays (avoid per-frame heap allocation)
+        private final long[] frameAddrs;
+        private final long[] frameVarDataAddrs;
+        private final int[] frameVarDataPos;
+        private final int[] frameVarDataCap;
 
         CoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -1519,6 +1524,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.columnSizeBytes = new int[queryColCount];
             this.columnTypeTags = new int[queryColCount];
             this.multiKeys = new IntList();
+            this.frameAddrs = new long[queryColCount + 1];
+            this.frameVarDataAddrs = new long[queryColCount];
+            this.frameVarDataPos = new int[queryColCount];
+            this.frameVarDataCap = new int[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int colType = metadata.getColumnType(q);
                 this.columnTypeTags[q] = ColumnType.tagOf(colType);
@@ -1647,13 +1656,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 coveringCursor = crc;
             }
 
-            // Allocate fresh buffers for this frame. Last slot holds the sym buffer.
-            // For var-width columns: addrs[q] = aux buffer, varDataAddrs[q] = data buffer.
+            // Allocate fresh native buffers for this frame. Reuse the cursor-level
+            // Java arrays (frameAddrs, frameVarDataAddrs, etc.) to avoid per-frame heap allocation.
             int capacity = INITIAL_CAPACITY;
-            long[] addrs = new long[queryColCount + 1];
-            long[] varDataAddrs = new long[queryColCount]; // data buffers for VARCHAR/STRING
-            int[] varDataPos = new int[queryColCount]; // append positions in data buffers
-            int[] varDataCap = new int[queryColCount]; // data buffer capacities
+            long[] addrs = frameAddrs;
+            long[] varDataAddrs = frameVarDataAddrs;
+            int[] varDataPos = frameVarDataPos;
+            int[] varDataCap = frameVarDataCap;
+            java.util.Arrays.fill(varDataPos, 0);
+            java.util.Arrays.fill(varDataCap, 0);
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
                     if (columnTypeTags[q] == ColumnType.VARCHAR) {

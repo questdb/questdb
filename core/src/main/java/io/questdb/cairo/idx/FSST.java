@@ -653,8 +653,20 @@ public final class FSST {
         final int[] byteMap;   // byte value → code index for single-byte symbols, -1 if none
         final int[] hashCodes; // hash table: hash → code index for multi-byte symbols
         final int[] lens;      // symbol lengths (1-8 bytes)
-        final int symbolCount;
+        int symbolCount;
         final long[] symbols;  // symbol values (little-endian packed bytes)
+
+        /**
+         * Creates a new SymbolTable with pre-allocated arrays.
+         * Call {@link #rebuild(long[], int[], int)} to populate.
+         */
+        SymbolTable() {
+            this.symbols = new long[MAX_SYMBOLS];
+            this.lens = new int[MAX_SYMBOLS];
+            this.byteMap = new int[256];
+            this.hashCodes = new int[HASH_SIZE];
+            this.symbolCount = 0;
+        }
 
         SymbolTable(long[] symbols, int[] lens, int symbolCount) {
             this.symbols = new long[MAX_SYMBOLS];
@@ -662,7 +674,6 @@ public final class FSST {
             this.symbolCount = symbolCount;
 
             System.arraycopy(symbols, 0, this.symbols, 0, symbolCount);
-            System.arraycopy(lens, 0, this.lens, 0, symbolCount);
 
             // Build byte map for single-byte symbols
             this.byteMap = new int[256];
@@ -697,5 +708,61 @@ public final class FSST {
                 }
             }
         }
+
+        /**
+         * Rebuild this symbol table in-place from new symbols and lengths,
+         * reusing the existing arrays (zero allocation).
+         */
+        void rebuild(long[] srcSymbols, int[] srcLens, int count) {
+            this.symbolCount = count;
+            System.arraycopy(srcSymbols, 0, this.symbols, 0, count);
+            System.arraycopy(srcLens, 0, this.lens, 0, count);
+
+            java.util.Arrays.fill(byteMap, -1);
+            for (int i = 0; i < count; i++) {
+                if (lens[i] == 1) {
+                    int b = (int) (symbols[i] & 0xFF);
+                    if (byteMap[b] == -1 && i != ESCAPE) {
+                        byteMap[b] = i;
+                    }
+                }
+            }
+
+            java.util.Arrays.fill(hashCodes, -1);
+            for (int pass = 8; pass >= 2; pass--) {
+                for (int i = 0; i < count; i++) {
+                    if (lens[i] != pass) continue;
+                    if (i == ESCAPE) continue;
+                    int h = hash(symbols[i], lens[i]);
+                    for (int probe = 0; probe < 4; probe++) {
+                        int idx = (h + probe) & (HASH_SIZE - 1);
+                        if (hashCodes[idx] < 0) {
+                            hashCodes[idx] = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Deserialize symbol table from native memory into an existing table (zero allocation).
+     */
+    public static void deserializeInto(long srcAddr, SymbolTable table) {
+        int count = Unsafe.getUnsafe().getByte(srcAddr) & 0xFF;
+        int off = 1;
+        long[] symbols = table.symbols;
+        int[] lens = table.lens;
+        for (int i = 0; i < count; i++) {
+            lens[i] = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
+            off++;
+            symbols[i] = Unsafe.getUnsafe().getLong(srcAddr + off);
+            if (lens[i] < 8) {
+                symbols[i] &= (1L << (lens[i] * 8)) - 1;
+            }
+            off += Long.BYTES;
+        }
+        table.rebuild(symbols, lens, count);
     }
 }
