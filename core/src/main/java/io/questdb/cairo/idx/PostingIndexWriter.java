@@ -91,6 +91,14 @@ public class PostingIndexWriter implements IndexWriter {
     private long[] coveredColumnAddrs;
     private MemoryMA[] coveredColumnAuxMems;
     private MemoryMA[] coveredColumnMems;
+    // Read-only mappings of covered column files for sidecar writes.
+    // MemoryPMARImpl maps one page at a time, so addressOf() fails for random
+    // reads. These are separate RO mmaps (via mmap cache) of the same files,
+    // providing O(1) addressOf for any offset.
+    private long[] coveredColReadAddrs;
+    private long[] coveredColReadSizes;
+    private long[] coveredAuxReadAddrs;
+    private long[] coveredAuxReadSizes;
     private int[] coveredColumnIndices;
     private int[] coveredColumnShifts;
     private long[] coveredColumnTops;
@@ -287,6 +295,7 @@ public class PostingIndexWriter implements IndexWriter {
             int[] coveredColumnTypes,
             int coverCount
     ) {
+        unmapCoveredColumnReads();
         this.coveredColumnAddrs = coveredColumnAddrs;
         this.coveredColumnMems = null;
         this.coveredColumnTops = coveredColumnTops;
@@ -305,6 +314,7 @@ public class PostingIndexWriter implements IndexWriter {
             int[] coveredColumnTypes,
             int coverCount
     ) {
+        unmapCoveredColumnReads();
         this.coveredColumnMems = coveredColumnMems;
         this.coveredColumnAuxMems = coveredColumnAuxMems;
         this.coveredColumnAddrs = null;
@@ -1354,12 +1364,8 @@ public class PostingIndexWriter implements IndexWriter {
                     }
 
                     // Assemble this key's raw values into sidecarBuf.
-                    // MemoryPMARImpl maps only one page at a time, so addressOf()
-                    // fails for pages other than the current one. Use fd-based
-                    // pread for safe random access when using paged MemoryMA.
                     long keyOff = keyOffsets[j];
                     long rawOffset = 0;
-                    long colFd = colMem != null ? colMem.getFd() : -1;
                     for (int i = 0; i < count; i++) {
                         long rowId = Unsafe.getUnsafe().getLong(
                                 mergedValuesAddr + (keyOff + i) * Long.BYTES);
@@ -1368,9 +1374,9 @@ public class PostingIndexWriter implements IndexWriter {
                         } else {
                             long srcOffset = (rowId - colTop) << shift;
                             if (colMem != null) {
-                                long buf = ensureVarAuxReadBuf();
-                                if (ff.read(colFd, buf, valueSize, srcOffset) == valueSize) {
-                                    Unsafe.getUnsafe().copyMemory(buf, sidecarBuf + rawOffset, valueSize);
+                                long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                                if (addr != 0) {
+                                    Unsafe.getUnsafe().copyMemory(addr, sidecarBuf + rawOffset, valueSize);
                                 } else {
                                     writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                                 }
@@ -2310,7 +2316,7 @@ public class PostingIndexWriter implements IndexWriter {
                         long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                         for (int i = 0; i < spillCount; i++) {
                             long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValueSafe(sidecarMems[c], useMem ? coveredColumnMems[c] : null,
+                            writeSidecarValueSafe(sidecarMems[c], c,
                                     stableColAddr, colTop, rowId, shift, valueSize, colType);
                         }
                     }
@@ -2318,7 +2324,7 @@ public class PostingIndexWriter implements IndexWriter {
                     long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                     for (int i = 0; i < pendingCount; i++) {
                         long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValueSafe(sidecarMems[c], useMem ? coveredColumnMems[c] : null,
+                        writeSidecarValueSafe(sidecarMems[c], c,
                                 stableColAddr, colTop, rowId, shift, valueSize, colType);
                     }
                 }
@@ -2503,101 +2509,150 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    // Reusable buffer for reading varchar/string aux entries via fd-based pread.
-    // MemoryPMARImpl.addressOf() only works for the currently mapped page, but
-    // the PostingIndexWriter needs random access to any previously written row.
-    // Using ff.read() with the file descriptor avoids this single-page limitation.
-    private static final int VARCHAR_AUX_READ_BUF_SIZE = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-    private long varAuxReadBuf;
-    private long varDataReadBuf;
-    private int varDataReadBufCapacity;
-
-    private long ensureVarAuxReadBuf() {
-        if (varAuxReadBuf == 0) {
-            varAuxReadBuf = Unsafe.malloc(VARCHAR_AUX_READ_BUF_SIZE, MemoryTag.NATIVE_INDEX_READER);
+    /**
+     * Lazily creates read-only mmaps of the covered column files.
+     * MemoryPMARImpl (the writer's column memory) maps one page at a time,
+     * so addressOf() fails for random reads. These are separate RO mmaps
+     * via the mmap cache, providing O(1) access to any offset.
+     */
+    private void ensureCoveredColumnReadMaps() {
+        if (coveredColReadAddrs != null) {
+            return; // already mapped
         }
-        return varAuxReadBuf;
+        coveredColReadAddrs = new long[coverCount];
+        coveredColReadSizes = new long[coverCount];
+        coveredAuxReadAddrs = new long[coverCount];
+        coveredAuxReadSizes = new long[coverCount];
+
+        for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnMems != null && coveredColumnMems[c] != null) {
+                long fd = coveredColumnMems[c].getFd();
+                long fileSize = ff.length(fd);
+                if (fileSize > 0) {
+                    coveredColReadAddrs[c] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                    coveredColReadSizes[c] = fileSize;
+                }
+            }
+            if (coveredColumnAuxMems != null && coveredColumnAuxMems[c] != null) {
+                long fd = coveredColumnAuxMems[c].getFd();
+                long fileSize = ff.length(fd);
+                if (fileSize > 0) {
+                    coveredAuxReadAddrs[c] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                    coveredAuxReadSizes[c] = fileSize;
+                }
+            }
+        }
     }
 
-    private long ensureVarDataReadBuf(int needed) {
-        if (varDataReadBuf == 0 || varDataReadBufCapacity < needed) {
-            if (varDataReadBuf != 0) {
-                Unsafe.free(varDataReadBuf, varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
-                varDataReadBuf = 0;
+    private void unmapCoveredColumnReads() {
+        if (coveredColReadAddrs != null) {
+            for (int c = 0; c < coveredColReadAddrs.length; c++) {
+                if (coveredColReadAddrs[c] != 0) {
+                    Files.getMmapCache().unmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                    coveredColReadAddrs[c] = 0;
+                }
+                if (coveredAuxReadAddrs[c] != 0) {
+                    Files.getMmapCache().unmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                    coveredAuxReadAddrs[c] = 0;
+                }
             }
-            varDataReadBufCapacity = Math.max(needed, 1024);
-            varDataReadBuf = Unsafe.malloc(varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+            coveredColReadAddrs = null;
+            coveredColReadSizes = null;
+            coveredAuxReadAddrs = null;
+            coveredAuxReadSizes = null;
         }
-        return varDataReadBuf;
+    }
+
+    /**
+     * Returns the RO mmap address for reading covered column aux data at the given offset.
+     * Remaps if the file has grown since the last mapping.
+     */
+    private long getCoveredAuxReadAddr(int covIdx, long offset, long needed) {
+        ensureCoveredColumnReadMaps();
+        if (coveredAuxReadAddrs[covIdx] == 0 || offset + needed > coveredAuxReadSizes[covIdx]) {
+            // Remap — file has grown since we last mapped
+            if (coveredAuxReadAddrs[covIdx] != 0) {
+                Files.getMmapCache().unmap(coveredAuxReadAddrs[covIdx], coveredAuxReadSizes[covIdx], MemoryTag.MMAP_INDEX_WRITER);
+            }
+            long fd = coveredColumnAuxMems[covIdx].getFd();
+            long fileSize = ff.length(fd);
+            if (fileSize <= 0 || offset + needed > fileSize) {
+                coveredAuxReadAddrs[covIdx] = 0;
+                coveredAuxReadSizes[covIdx] = 0;
+                return 0;
+            }
+            coveredAuxReadAddrs[covIdx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+            coveredAuxReadSizes[covIdx] = fileSize;
+        }
+        return coveredAuxReadAddrs[covIdx] + offset;
+    }
+
+    private long getCoveredDataReadAddr(int covIdx, long offset, long needed) {
+        ensureCoveredColumnReadMaps();
+        if (coveredColReadAddrs[covIdx] == 0 || offset + needed > coveredColReadSizes[covIdx]) {
+            if (coveredColReadAddrs[covIdx] != 0) {
+                Files.getMmapCache().unmap(coveredColReadAddrs[covIdx], coveredColReadSizes[covIdx], MemoryTag.MMAP_INDEX_WRITER);
+            }
+            long fd = coveredColumnMems[covIdx].getFd();
+            long fileSize = ff.length(fd);
+            if (fileSize <= 0 || offset + needed > fileSize) {
+                coveredColReadAddrs[covIdx] = 0;
+                coveredColReadSizes[covIdx] = 0;
+                return 0;
+            }
+            coveredColReadAddrs[covIdx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+            coveredColReadSizes[covIdx] = fileSize;
+        }
+        return coveredColReadAddrs[covIdx] + offset;
     }
 
     private void writeVarcharValue(MemoryMARW mem, int covIdx, long row) {
-        MemoryMA auxMem = coveredColumnAuxMems != null ? coveredColumnAuxMems[covIdx] : null;
-        MemoryMA dataMem = coveredColumnMems != null ? coveredColumnMems[covIdx] : null;
-        if (auxMem == null) {
+        if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null) {
             return;
         }
         long auxOffset = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * row;
+        long auxAddr = getCoveredAuxReadAddr(covIdx, auxOffset, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+        if (auxAddr == 0) return;
 
-        // Read the aux entry via pread — safe for MemoryPMARImpl which only maps one page at a time.
-        long buf = ensureVarAuxReadBuf();
-        long auxFd = auxMem.getFd();
-        if (ff.read(auxFd, buf, VARCHAR_AUX_READ_BUF_SIZE, auxOffset) != VARCHAR_AUX_READ_BUF_SIZE) {
-            return; // short read — treat as NULL
-        }
-
-        int header = Unsafe.getUnsafe().getInt(buf);
+        int header = Unsafe.getUnsafe().getInt(auxAddr);
         if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-            return; // NULL
+            return;
         }
         if ((header & 1) != 0) {
-            // Inlined: data at buf + 1, size in header bits 4-7
             int size = (header >>> 4) & 0xF;
             if (size > 0) {
-                mem.putBlockOfBytes(buf + 1, size);
+                mem.putBlockOfBytes(auxAddr + 1, size);
             }
         } else {
-            // Non-inlined: size in header bits 4-31, data in .d file
             int size = (header >>> 4) & 0x0FFFFFFF;
-            if (size > 0 && dataMem != null) {
-                long dataOffset = Unsafe.getUnsafe().getLong(buf + 8) >>> 16;
-                long dataFd = dataMem.getFd();
-                long dataBuf = ensureVarDataReadBuf(size);
-                if (ff.read(dataFd, dataBuf, size, dataOffset) == size) {
-                    mem.putBlockOfBytes(dataBuf, size);
+            if (size > 0 && coveredColumnMems[covIdx] != null) {
+                long dataOffset = Unsafe.getUnsafe().getLong(auxAddr + 8) >>> 16;
+                long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
+                if (dataAddr != 0) {
+                    mem.putBlockOfBytes(dataAddr, size);
                 }
             }
         }
     }
 
     private void writeStringValue(MemoryMARW mem, int covIdx, long row) {
-        MemoryMA auxMem = coveredColumnAuxMems != null ? coveredColumnAuxMems[covIdx] : null;
-        MemoryMA dataMem = coveredColumnMems != null ? coveredColumnMems[covIdx] : null;
-        if (auxMem == null || dataMem == null) {
+        if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null
+                || coveredColumnMems == null || coveredColumnMems[covIdx] == null) {
             return;
         }
-        // Read 8-byte offset from .i file via pread
-        long buf = ensureVarAuxReadBuf();
-        long auxFd = auxMem.getFd();
-        if (ff.read(auxFd, buf, Long.BYTES, row << 3) != Long.BYTES) {
-            return;
-        }
-        long dataOffset = Unsafe.getUnsafe().getLong(buf);
+        long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
+        if (auxAddr == 0) return;
+        long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
 
-        // Read length prefix from .d file
-        long dataFd = dataMem.getFd();
-        if (ff.read(dataFd, buf, Integer.BYTES, dataOffset) != Integer.BYTES) {
-            return;
-        }
-        int len = Unsafe.getUnsafe().getInt(buf);
-        if (len < 0) {
-            return; // NULL or corrupt
-        }
-        // Write length prefix + UTF-16 chars
+        long lenAddr = getCoveredDataReadAddr(covIdx, dataOffset, Integer.BYTES);
+        if (lenAddr == 0) return;
+        int len = Unsafe.getUnsafe().getInt(lenAddr);
+        if (len < 0) return;
+
         int totalBytes = Integer.BYTES + len * Character.BYTES;
-        long dataBuf = ensureVarDataReadBuf(totalBytes);
-        if (ff.read(dataFd, dataBuf, totalBytes, dataOffset) == totalBytes) {
-            mem.putBlockOfBytes(dataBuf, totalBytes);
+        long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, totalBytes);
+        if (dataAddr != 0) {
+            mem.putBlockOfBytes(dataAddr, totalBytes);
         }
     }
 
@@ -2619,28 +2674,26 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    private void writeSidecarValueSafe(MemoryMARW mem, MemoryMA colMem, long colAddr,
+    private void writeSidecarValueSafe(MemoryMARW mem, int covIdx, long colAddr,
                                         long colTop, long rowId, int shift, int valueSize, int colType) {
         if (rowId < colTop) {
             writeNullSentinel(mem, valueSize, colType);
         } else {
             long srcOffset = (rowId - colTop) << shift;
-            if (colMem != null) {
-                // MemoryPMARImpl.addressOf() only works for the currently mapped page.
-                // Use fd-based pread for safe random access to any offset.
-                long buf = ensureVarAuxReadBuf();
-                if (ff.read(colMem.getFd(), buf, valueSize, srcOffset) != valueSize) {
+            if (coveredColumnMems != null && coveredColumnMems[covIdx] != null) {
+                long addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
+                if (addr == 0) {
                     writeNullSentinel(mem, valueSize, colType);
                     return;
                 }
                 if (valueSize == Long.BYTES) {
-                    mem.putLong(Unsafe.getUnsafe().getLong(buf));
+                    mem.putLong(Unsafe.getUnsafe().getLong(addr));
                 } else if (valueSize == Integer.BYTES) {
-                    mem.putInt(Unsafe.getUnsafe().getInt(buf));
+                    mem.putInt(Unsafe.getUnsafe().getInt(addr));
                 } else if (valueSize == Short.BYTES) {
-                    mem.putShort(Unsafe.getUnsafe().getShort(buf));
+                    mem.putShort(Unsafe.getUnsafe().getShort(addr));
                 } else {
-                    mem.putByte(Unsafe.getUnsafe().getByte(buf));
+                    mem.putByte(Unsafe.getUnsafe().getByte(addr));
                 }
             } else {
                 long addr = colAddr + srcOffset;
@@ -3216,15 +3269,7 @@ public class PostingIndexWriter implements IndexWriter {
             unpackBatchAddr = 0;
             unpackBatchCapacity = 0;
         }
-        if (varAuxReadBuf != 0) {
-            Unsafe.free(varAuxReadBuf, VARCHAR_AUX_READ_BUF_SIZE, MemoryTag.NATIVE_INDEX_READER);
-            varAuxReadBuf = 0;
-        }
-        if (varDataReadBuf != 0) {
-            Unsafe.free(varDataReadBuf, varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
-            varDataReadBuf = 0;
-            varDataReadBufCapacity = 0;
-        }
+        unmapCoveredColumnReads();
         keyCapacity = 0;
     }
 
