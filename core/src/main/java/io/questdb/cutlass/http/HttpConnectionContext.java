@@ -118,7 +118,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private String processorName;
-    private boolean protocolSwitched = false;  // WebSocket protocol switch flag
+    private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
     private int receivedBytes;
     private long recvBuffer;
     private int recvBufferReadSize;
@@ -203,10 +203,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
         // SECURITY: these unconditional resets are the safety net for the conditional
-        // skip in reset(), which preserves securityContext while protocolSwitched is true.
+        // skip in reset(), which preserves securityContext while isProtocolSwitched is true.
         // Both fields MUST be reset here to prevent security context leaks between pooled
         // connections. Do not make these conditional.
-        this.protocolSwitched = false;
+        this.isProtocolSwitched = false;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
     }
 
@@ -332,7 +332,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
      * {@code currentHandlerId} which was set during request routing.
      */
     public void switchProtocol() {
-        this.protocolSwitched = true;
+        this.isProtocolSwitched = true;
         this.resumeHandlerId = currentHandlerId;
     }
 
@@ -340,7 +340,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
      * Returns true if the connection has been switched to a different protocol.
      */
     public boolean isProtocolSwitched() {
-        return protocolSwitched;
+        return isProtocolSwitched;
     }
 
     public AssociativeCache<RecordCursorFactory> getSelectCache() {
@@ -419,7 +419,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink.clear();
         this.nCompletedRequests++;
         // Preserve resumeHandlerId for protocol-switched connections (e.g., WebSocket)
-        if (!protocolSwitched) {
+        if (!isProtocolSwitched) {
             this.resumeHandlerId = NO_RESUME_PROCESSOR;
         }
         this.headerParser.clear();
@@ -441,10 +441,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         // persist for the lifetime of the WebSocket connection.
         //
         // SECURITY: this conditional skip is safe ONLY because clear() unconditionally
-        // resets both protocolSwitched and securityContext when the context returns to
+        // resets both isProtocolSwitched and securityContext when the context returns to
         // the pool. The pool (WeakObjectPoolBase.push) always calls clear() before reuse.
         // Do not add code paths that return a context to the pool without calling clear().
-        if (!protocolSwitched) {
+        if (!isProtocolSwitched) {
             this.securityContext = DenyAllSecurityContext.INSTANCE;
         }
         this.sessionIdSink.clear();
@@ -994,7 +994,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private boolean handleClientRecv(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
         // Handle protocol-switched connections (e.g., WebSocket)
-        if (protocolSwitched && resumeHandlerId != NO_RESUME_PROCESSOR) {
+        if (isProtocolSwitched && resumeHandlerId != NO_RESUME_PROCESSOR) {
             return handleProtocolSwitchedRecv(selector);
         }
 
@@ -1104,7 +1104,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         LOG.debug().$("good [fd=").$(getFd()).I$();
                         processor.onRequestComplete(this);
                         // Don't clear resumeHandlerId for protocol-switched connections (e.g., WebSocket)
-                        if (!protocolSwitched) {
+                        if (!isProtocolSwitched) {
                             resumeHandlerId = NO_RESUME_PROCESSOR;
                         }
                         reset();

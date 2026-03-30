@@ -33,16 +33,6 @@ import io.questdb.network.NetworkFacadeImpl;
 public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfiguration {
 
     @Override
-    public boolean isAutoCreateNewColumns() {
-        return true;
-    }
-
-    @Override
-    public boolean isAutoCreateNewTables() {
-        return true;
-    }
-
-    @Override
     public int getBindIPv4Address() {
         return 0;
     }
@@ -63,13 +53,13 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     }
 
     @Override
-    public int getMaxRowsPerTable() {
-        return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
+    public int getMaxFileNameLength() {
+        return 127;
     }
 
     @Override
-    public int getMaxFileNameLength() {
-        return 127;
+    public int getMaxRowsPerTable() {
+        return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
     }
 
     @Override
@@ -98,17 +88,27 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     }
 
     @Override
+    public boolean isAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean isAutoCreateNewTables() {
+        return true;
+    }
+
+    @Override
     public boolean isEnabled() {
         return true;
     }
 
     @Override
-    public boolean isUnicast() {
+    public boolean isOwnThread() {
         return true;
     }
 
     @Override
-    public boolean isOwnThread() {
+    public boolean isUnicast() {
         return true;
     }
 

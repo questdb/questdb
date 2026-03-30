@@ -28,10 +28,6 @@ import io.questdb.network.NetworkFacade;
 
 public interface QwpUdpReceiverConfiguration {
 
-    boolean isAutoCreateNewColumns();
-
-    boolean isAutoCreateNewTables();
-
     int getBindIPv4Address();
 
     int getCommitRate();
@@ -40,9 +36,9 @@ public interface QwpUdpReceiverConfiguration {
 
     int getGroupIPv4Address();
 
-    int getMaxRowsPerTable();
-
     int getMaxFileNameLength();
+
+    int getMaxRowsPerTable();
 
     int getMsgBufferSize();
 
@@ -54,11 +50,15 @@ public interface QwpUdpReceiverConfiguration {
 
     int getReceiveBufferSize();
 
+    boolean isAutoCreateNewColumns();
+
+    boolean isAutoCreateNewTables();
+
     boolean isEnabled();
 
-    boolean isUnicast();
-
     boolean isOwnThread();
+
+    boolean isUnicast();
 
     int ownThreadAffinity();
 }

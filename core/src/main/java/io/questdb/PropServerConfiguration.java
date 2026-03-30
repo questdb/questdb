@@ -311,17 +311,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
     private final byte lineUdpTimestampUnit;
     private final boolean lineUdpUnicast;
-    private final int qwpUdpCommitRate;
-    private final boolean qwpUdpEnabled;
-    private final int qwpUdpGroupIPv4Address;
-    private final int qwpMaxRowsPerTable;
-    private final int qwpUdpMsgBufferSize;
-    private final int qwpUdpMsgCount;
-    private final boolean qwpUdpOwnThread;
-    private final int qwpUdpOwnThreadAffinity;
-    private final int qwpUdpReceiveBufferSize;
-    private final QwpUdpReceiverConfiguration qwpUdpReceiverConfiguration = new PropQwpUdpReceiverConfiguration();
-    private final boolean qwpUdpUnicast;
     private final DateLocale locale;
     private final Log log;
     private final boolean logLevelVerbose;
@@ -412,6 +401,17 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final int qwpMaxRowsPerTable;
+    private final int qwpUdpCommitRate;
+    private final boolean qwpUdpEnabled;
+    private final int qwpUdpGroupIPv4Address;
+    private final int qwpUdpMsgBufferSize;
+    private final int qwpUdpMsgCount;
+    private final boolean qwpUdpOwnThread;
+    private final int qwpUdpOwnThreadAffinity;
+    private final int qwpUdpReceiveBufferSize;
+    private final QwpUdpReceiverConfiguration qwpUdpReceiverConfiguration = new PropQwpUdpReceiverConfiguration();
+    private final boolean qwpUdpUnicast;
     private final int readerPoolMaxSegments;
     private final int recentWriteTrackerCapacity;
     private final Utf8SequenceObjHashMap<Utf8Sequence> redirectMap;
@@ -724,9 +724,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private long queryTimeout;
     private int qwpUdpBindIPV4Address;
     private int qwpUdpPort;
-    private long queryTimeout;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
 
@@ -3926,11 +3926,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getPartitionEncoderParquetMinCompressionRatio() {
-            return partitionEncoderParquetMinCompressionRatio;
-        }
-
-        @Override
         public int getPartitionEncoderParquetCompressionCodec() {
             return partitionEncoderParquetCompressionCodec;
         }
@@ -3943,6 +3938,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionEncoderParquetDataPageSize() {
             return partitionEncoderParquetDataPageSize;
+        }
+
+        @Override
+        public double getPartitionEncoderParquetMinCompressionRatio() {
+            return partitionEncoderParquetMinCompressionRatio;
         }
 
         @Override
@@ -5490,11 +5490,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getQwpMaxRowsPerTable() {
-            return qwpMaxRowsPerTable;
-        }
-
-        @Override
         public CharSequence getInfluxPingVersion() {
             return lineHttpPingVersion;
         }
@@ -5507,6 +5502,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
+        }
+
+        @Override
+        public int getQwpMaxRowsPerTable() {
+            return qwpMaxRowsPerTable;
         }
 
         @Override
@@ -6406,16 +6406,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropQwpUdpReceiverConfiguration implements QwpUdpReceiverConfiguration {
         @Override
-        public boolean isAutoCreateNewColumns() {
-            return ilpAutoCreateNewColumns;
-        }
-
-        @Override
-        public boolean isAutoCreateNewTables() {
-            return ilpAutoCreateNewTables;
-        }
-
-        @Override
         public int getBindIPv4Address() {
             return qwpUdpBindIPV4Address;
         }
@@ -6436,13 +6426,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMaxRowsPerTable() {
-            return qwpMaxRowsPerTable;
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
         }
 
         @Override
-        public int getMaxFileNameLength() {
-            return maxFileNameLength;
+        public int getMaxRowsPerTable() {
+            return qwpMaxRowsPerTable;
         }
 
         @Override
@@ -6471,18 +6461,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isAutoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean isAutoCreateNewTables() {
+            return ilpAutoCreateNewTables;
+        }
+
+        @Override
         public boolean isEnabled() {
             return qwpUdpEnabled;
         }
 
         @Override
-        public boolean isUnicast() {
-            return qwpUdpUnicast;
+        public boolean isOwnThread() {
+            return qwpUdpOwnThread;
         }
 
         @Override
-        public boolean isOwnThread() {
-            return qwpUdpOwnThread;
+        public boolean isUnicast() {
+            return qwpUdpUnicast;
         }
 
         @Override
