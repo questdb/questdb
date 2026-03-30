@@ -99,11 +99,11 @@ public final class FSST {
                 int h = hash(window, Math.min(remaining, 8));
                 for (int probe = 0; probe < 4; probe++) {
                     int idx = (h + probe) & (HASH_SIZE - 1);
-                    int code = table.hashCodes[idx];
+                    int code = table.getHashCode(idx);
                     if (code < 0) break;
-                    int slen = table.lens[code];
+                    int slen = table.getLen(code);
                     if (slen > remaining || slen <= bestLen) continue;
-                    long sym = table.symbols[code];
+                    long sym = table.getSymbol(code);
                     long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
                     if ((window & mask) == sym) {
                         bestLen = slen;
@@ -114,7 +114,7 @@ public final class FSST {
 
             if (bestLen <= 1) {
                 int b = Unsafe.getUnsafe().getByte(srcAddr + srcOff) & 0xFF;
-                int singleCode = table.byteMap[b];
+                int singleCode = table.getByteMap(b);
                 if (singleCode >= 0) {
                     Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) singleCode);
                     dstOff++;
@@ -160,8 +160,8 @@ public final class FSST {
                     dstOff++;
                 }
             } else {
-                int len = table.lens[code];
-                long sym = table.symbols[code];
+                int len = table.getLen(code);
+                long sym = table.getSymbol(code);
                 for (int b = 0; b < len; b++) {
                     Unsafe.getUnsafe().putByte(dstAddr + dstOff + b, (byte) (sym >>> (b * 8)));
                 }
@@ -234,8 +234,8 @@ public final class FSST {
                         bytePos++;
                     }
                 } else {
-                    int len = table.lens[code];
-                    long sym = table.symbols[code];
+                    int len = table.getLen(code);
+                    long sym = table.getSymbol(code);
                     for (int b = 0; b < len && bytePos < 8; b++) {
                         result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
                         bytePos++;
@@ -269,8 +269,8 @@ public final class FSST {
                     bytePos++;
                 }
             } else {
-                int len = table.lens[code];
-                long sym = table.symbols[code];
+                int len = table.getLen(code);
+                long sym = table.getSymbol(code);
                 for (int b = 0; b < len && bytePos < 8; b++) {
                     result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
                     bytePos++;
@@ -296,12 +296,12 @@ public final class FSST {
                 int h = hash(window, remaining);
                 for (int probe = 0; probe < 4; probe++) {
                     int idx = (h + probe) & (HASH_SIZE - 1);
-                    int code = table.hashCodes[idx];
+                    int code = table.getHashCode(idx);
                     if (code < 0) break;
-                    int slen = table.lens[code];
+                    int slen = table.getLen(code);
                     if (slen > remaining) continue;
                     if (slen <= bestLen) continue;
-                    long sym = table.symbols[code];
+                    long sym = table.getSymbol(code);
                     long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
                     if ((window & mask) == sym) {
                         bestLen = slen;
@@ -311,7 +311,7 @@ public final class FSST {
             // Also try single-byte symbol (common case)
             if (bestLen <= 1) {
                 int b = (int) ((value >>> (bytePos * 8)) & 0xFF);
-                int singleCode = table.byteMap[b];
+                int singleCode = table.getByteMap(b);
                 if (singleCode >= 0) {
                     size++;
                     bytePos++;
@@ -343,9 +343,9 @@ public final class FSST {
         Unsafe.getUnsafe().putByte(dstAddr + off, (byte) table.symbolCount);
         off++;
         for (int i = 0; i < table.symbolCount; i++) {
-            Unsafe.getUnsafe().putByte(dstAddr + off, (byte) table.lens[i]);
+            Unsafe.getUnsafe().putByte(dstAddr + off, (byte) table.getLen(i));
             off++;
-            Unsafe.getUnsafe().putLong(dstAddr + off, table.symbols[i]);
+            Unsafe.getUnsafe().putLong(dstAddr + off, table.getSymbol(i));
             off += Long.BYTES;
         }
         return off;
@@ -357,21 +357,9 @@ public final class FSST {
      * @return new SymbolTable
      */
     public static SymbolTable deserialize(long srcAddr) {
-        int count = Unsafe.getUnsafe().getByte(srcAddr) & 0xFF;
-        int off = 1;
-        int[] lens = new int[MAX_SYMBOLS];
-        long[] symbols = new long[MAX_SYMBOLS];
-        for (int i = 0; i < count; i++) {
-            lens[i] = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
-            off++;
-            symbols[i] = Unsafe.getUnsafe().getLong(srcAddr + off);
-            // Mask the symbol to its actual length
-            if (lens[i] < 8) {
-                symbols[i] &= (1L << (lens[i] * 8)) - 1;
-            }
-            off += Long.BYTES;
-        }
-        return new SymbolTable(symbols, lens, count);
+        SymbolTable table = new SymbolTable();
+        deserializeInto(srcAddr, table);
+        return table;
     }
 
     /**
@@ -383,7 +371,7 @@ public final class FSST {
      */
     public static SymbolTable train(long srcAddr, int count) {
         if (count == 0) {
-            return new SymbolTable(new long[0], new int[0], 0);
+            return new SymbolTable();
         }
 
         int sampleCount = Math.min(count, TRAIN_SAMPLE_LIMIT);
@@ -426,10 +414,11 @@ public final class FSST {
         }
 
         if (candidateCount == 0) {
-            return new SymbolTable(new long[0], new int[0], 0);
+            return new SymbolTable();
         }
 
-        SymbolTable table = new SymbolTable(candidateSyms, candidateLens, candidateCount);
+        SymbolTable table = new SymbolTable();
+        table.populateFrom(candidateSyms, candidateLens, candidateCount);
 
         // Iterative refinement
         for (int iter = 0; iter < TRAIN_ITERATIONS; iter++) {
@@ -451,7 +440,7 @@ public final class FSST {
                     int advance;
                     if (code >= 0) {
                         codeFreq[code]++;
-                        advance = table.lens[code];
+                        advance = table.getLen(code);
                     } else {
                         // Escape
                         code = -1;
@@ -490,12 +479,12 @@ public final class FSST {
             // Keep existing symbols with their frequency as gain
             for (int i = 0; i < table.symbolCount; i++) {
                 if (codeFreq[i] > 0 && newCount < newSyms.length) {
-                    newSyms[newCount] = table.symbols[i];
-                    newLens[newCount] = table.lens[i];
+                    newSyms[newCount] = table.getSymbol(i);
+                    newLens[newCount] = table.getLen(i);
                     // Gain = freq * (encodedWithout - encodedWith)
                     // Single-byte symbol saves (2-1)=1 byte per use if the byte would otherwise escape
                     // Multi-byte symbol saves (len*2 - 1) per use in the worst case
-                    newGains[newCount] = (long) codeFreq[i] * (table.lens[i] > 1 ? table.lens[i] : 1);
+                    newGains[newCount] = (long) codeFreq[i] * (table.getLen(i) > 1 ? table.getLen(i) : 1);
                     newCount++;
                 }
             }
@@ -505,12 +494,12 @@ public final class FSST {
                 if (pairKeys[slot] < 0 || pairVals[slot] < 2) continue;
                 int a = pairKeys[slot] / 256;
                 int b = pairKeys[slot] % 256;
-                int combinedLen = table.lens[a] + table.lens[b];
+                int combinedLen = table.getLen(a) + table.getLen(b);
                 if (combinedLen > 8) continue;
                 if (newCount >= newSyms.length) break;
 
                 // Build concatenated symbol
-                long sym = table.symbols[a] | (table.symbols[b] << (table.lens[a] * 8));
+                long sym = table.getSymbol(a) | (table.getSymbol(b) << (table.getLen(a) * 8));
                 if (combinedLen < 8) {
                     sym &= (1L << (combinedLen * 8)) - 1;
                 }
@@ -546,7 +535,7 @@ public final class FSST {
             }
 
             if (selCount == 0) break;
-            table = new SymbolTable(selSyms, selLens, selCount);
+            table.populateFrom(selSyms, selLens, selCount);
         }
 
         return table;
@@ -565,12 +554,12 @@ public final class FSST {
                 int h = hash(window, remaining);
                 for (int probe = 0; probe < 4; probe++) {
                     int idx = (h + probe) & (HASH_SIZE - 1);
-                    int code = table.hashCodes[idx];
+                    int code = table.getHashCode(idx);
                     if (code < 0) break;
-                    int slen = table.lens[code];
+                    int slen = table.getLen(code);
                     if (slen > remaining) continue;
                     if (slen <= bestLen) continue;
-                    long sym = table.symbols[code];
+                    long sym = table.getSymbol(code);
                     long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
                     if ((window & mask) == sym) {
                         bestLen = slen;
@@ -582,7 +571,7 @@ public final class FSST {
             // Try single-byte symbol
             if (bestLen <= 1) {
                 int b = (int) ((value >>> (bytePos * 8)) & 0xFF);
-                int singleCode = table.byteMap[b];
+                int singleCode = table.getByteMap(b);
                 if (singleCode >= 0) {
                     Unsafe.getUnsafe().putByte(dstAddr + dstOff, (byte) singleCode);
                     dstOff++;
@@ -617,12 +606,12 @@ public final class FSST {
             int h = hash(window, remaining);
             for (int probe = 0; probe < 4; probe++) {
                 int idx = (h + probe) & (HASH_SIZE - 1);
-                int code = table.hashCodes[idx];
+                int code = table.getHashCode(idx);
                 if (code < 0) break;
-                int slen = table.lens[code];
+                int slen = table.getLen(code);
                 if (slen > remaining) continue;
                 if (slen <= bestLen) continue;
-                long sym = table.symbols[code];
+                long sym = table.getSymbol(code);
                 long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
                 if ((window & mask) == sym) {
                     bestLen = slen;
@@ -634,7 +623,7 @@ public final class FSST {
         // Try single-byte
         if (bestLen <= 1) {
             int b = (int) ((value >>> (bytePos * 8)) & 0xFF);
-            int singleCode = table.byteMap[b];
+            int singleCode = table.getByteMap(b);
             if (singleCode >= 0) {
                 return singleCode;
             }
@@ -649,60 +638,94 @@ public final class FSST {
         return (int) ((masked * 0x517CC1B727220A95L) >>> (64 - 14)) & (HASH_SIZE - 1);
     }
 
-    public static final class SymbolTable {
-        final int[] byteMap;   // byte value → code index for single-byte symbols, -1 if none
-        final int[] hashCodes; // hash table: hash → code index for multi-byte symbols
-        final int[] lens;      // symbol lengths (1-8 bytes)
-        int symbolCount;
-        final long[] symbols;  // symbol values (little-endian packed bytes)
+    /**
+     * Native-memory symbol table. All arrays (symbols, lens, byteMap, hashCodes)
+     * are stored in a single contiguous native allocation for cache locality and
+     * zero GC pressure. Must be explicitly freed via {@link #close()}.
+     * <p>
+     * Layout of the native block:
+     * <pre>
+     *   [symbols: MAX_SYMBOLS * 8B][lens: MAX_SYMBOLS * 4B][byteMap: 256 * 4B][hashCodes: HASH_SIZE * 4B]
+     * </pre>
+     */
+    public static final class SymbolTable implements io.questdb.std.QuietCloseable {
+        private static final long SYMBOLS_SIZE = (long) MAX_SYMBOLS * Long.BYTES;     // 2040
+        private static final long LENS_SIZE = (long) MAX_SYMBOLS * Integer.BYTES;      // 1020
+        private static final long BYTEMAP_SIZE = 256L * Integer.BYTES;                 // 1024
+        private static final long HASHCODES_SIZE = (long) HASH_SIZE * Integer.BYTES;   // 65536
+        private static final long TOTAL_SIZE = SYMBOLS_SIZE + LENS_SIZE + BYTEMAP_SIZE + HASHCODES_SIZE;
 
-        /**
-         * Creates a new SymbolTable with pre-allocated arrays.
-         * Call {@link #rebuild(long[], int[], int)} to populate.
-         */
+        private static final long LENS_OFFSET = SYMBOLS_SIZE;
+        private static final long BYTEMAP_OFFSET = LENS_OFFSET + LENS_SIZE;
+        private static final long HASHCODES_OFFSET = BYTEMAP_OFFSET + BYTEMAP_SIZE;
+
+        private long baseAddr;
+        int symbolCount;
+
         SymbolTable() {
-            this.symbols = new long[MAX_SYMBOLS];
-            this.lens = new int[MAX_SYMBOLS];
-            this.byteMap = new int[256];
-            this.hashCodes = new int[HASH_SIZE];
+            this.baseAddr = Unsafe.malloc(TOTAL_SIZE, MemoryTag.NATIVE_INDEX_READER);
             this.symbolCount = 0;
         }
 
-        SymbolTable(long[] symbols, int[] lens, int symbolCount) {
-            this.symbols = new long[MAX_SYMBOLS];
-            this.lens = new int[MAX_SYMBOLS];
-            this.symbolCount = symbolCount;
+        long getSymbol(int idx) {
+            return Unsafe.getUnsafe().getLong(baseAddr + (long) idx * Long.BYTES);
+        }
 
-            System.arraycopy(symbols, 0, this.symbols, 0, symbolCount);
-            System.arraycopy(lens, 0, this.lens, 0, symbolCount);
+        void putSymbol(int idx, long sym) {
+            Unsafe.getUnsafe().putLong(baseAddr + (long) idx * Long.BYTES, sym);
+        }
 
-            // Build byte map for single-byte symbols
-            this.byteMap = new int[256];
-            java.util.Arrays.fill(byteMap, -1);
+        int getLen(int idx) {
+            return Unsafe.getUnsafe().getInt(baseAddr + LENS_OFFSET + (long) idx * Integer.BYTES);
+        }
+
+        void putLen(int idx, int len) {
+            Unsafe.getUnsafe().putInt(baseAddr + LENS_OFFSET + (long) idx * Integer.BYTES, len);
+        }
+
+        int getByteMap(int b) {
+            return Unsafe.getUnsafe().getInt(baseAddr + BYTEMAP_OFFSET + (long) b * Integer.BYTES);
+        }
+
+        void putByteMap(int b, int code) {
+            Unsafe.getUnsafe().putInt(baseAddr + BYTEMAP_OFFSET + (long) b * Integer.BYTES, code);
+        }
+
+        int getHashCode(int idx) {
+            return Unsafe.getUnsafe().getInt(baseAddr + HASHCODES_OFFSET + (long) idx * Integer.BYTES);
+        }
+
+        void putHashCode(int idx, int code) {
+            Unsafe.getUnsafe().putInt(baseAddr + HASHCODES_OFFSET + (long) idx * Integer.BYTES, code);
+        }
+
+        /**
+         * Rebuild lookup structures (byteMap, hashCodes) from the current symbols/lens.
+         * Called after symbols and lens have been populated.
+         */
+        void rebuildLookups() {
+            // Fill byteMap with -1
+            Unsafe.getUnsafe().setMemory(baseAddr + BYTEMAP_OFFSET, BYTEMAP_SIZE, (byte) 0xFF);
             for (int i = 0; i < symbolCount; i++) {
-                if (lens[i] == 1) {
-                    int b = (int) (symbols[i] & 0xFF);
-                    // Keep first (highest priority) mapping
-                    if (byteMap[b] == -1 && i != ESCAPE) {
-                        byteMap[b] = i;
+                if (getLen(i) == 1) {
+                    int b = (int) (getSymbol(i) & 0xFF);
+                    if (getByteMap(b) == -1 && i != ESCAPE) {
+                        putByteMap(b, i);
                     }
                 }
             }
 
-            // Build hash table for multi-byte symbols (longest first for greedy matching)
-            this.hashCodes = new int[HASH_SIZE];
-            java.util.Arrays.fill(hashCodes, -1);
-
-            // Insert longest symbols first so they get priority slots
+            // Fill hashCodes with -1
+            Unsafe.getUnsafe().setMemory(baseAddr + HASHCODES_OFFSET, HASHCODES_SIZE, (byte) 0xFF);
             for (int pass = 8; pass >= 2; pass--) {
                 for (int i = 0; i < symbolCount; i++) {
-                    if (lens[i] != pass) continue;
+                    if (getLen(i) != pass) continue;
                     if (i == ESCAPE) continue;
-                    int h = hash(symbols[i], lens[i]);
+                    int h = hash(getSymbol(i), getLen(i));
                     for (int probe = 0; probe < 4; probe++) {
                         int idx = (h + probe) & (HASH_SIZE - 1);
-                        if (hashCodes[idx] < 0) {
-                            hashCodes[idx] = i;
+                        if (getHashCode(idx) < 0) {
+                            putHashCode(idx, i);
                             break;
                         }
                     }
@@ -711,38 +734,22 @@ public final class FSST {
         }
 
         /**
-         * Rebuild this symbol table in-place from new symbols and lengths,
-         * reusing the existing arrays (zero allocation).
+         * Populate from Java arrays (used by train()). Zero-copy into native memory.
          */
-        void rebuild(long[] srcSymbols, int[] srcLens, int count) {
+        void populateFrom(long[] syms, int[] lens, int count) {
             this.symbolCount = count;
-            System.arraycopy(srcSymbols, 0, this.symbols, 0, count);
-            System.arraycopy(srcLens, 0, this.lens, 0, count);
-
-            java.util.Arrays.fill(byteMap, -1);
             for (int i = 0; i < count; i++) {
-                if (lens[i] == 1) {
-                    int b = (int) (symbols[i] & 0xFF);
-                    if (byteMap[b] == -1 && i != ESCAPE) {
-                        byteMap[b] = i;
-                    }
-                }
+                putSymbol(i, syms[i]);
+                putLen(i, lens[i]);
             }
+            rebuildLookups();
+        }
 
-            java.util.Arrays.fill(hashCodes, -1);
-            for (int pass = 8; pass >= 2; pass--) {
-                for (int i = 0; i < count; i++) {
-                    if (lens[i] != pass) continue;
-                    if (i == ESCAPE) continue;
-                    int h = hash(symbols[i], lens[i]);
-                    for (int probe = 0; probe < 4; probe++) {
-                        int idx = (h + probe) & (HASH_SIZE - 1);
-                        if (hashCodes[idx] < 0) {
-                            hashCodes[idx] = i;
-                            break;
-                        }
-                    }
-                }
+        @Override
+        public void close() {
+            if (baseAddr != 0) {
+                Unsafe.free(baseAddr, TOTAL_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                baseAddr = 0;
             }
         }
     }
@@ -753,17 +760,18 @@ public final class FSST {
     public static void deserializeInto(long srcAddr, SymbolTable table) {
         int count = Unsafe.getUnsafe().getByte(srcAddr) & 0xFF;
         int off = 1;
-        long[] symbols = table.symbols;
-        int[] lens = table.lens;
         for (int i = 0; i < count; i++) {
-            lens[i] = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
+            int len = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
             off++;
-            symbols[i] = Unsafe.getUnsafe().getLong(srcAddr + off);
-            if (lens[i] < 8) {
-                symbols[i] &= (1L << (lens[i] * 8)) - 1;
+            long sym = Unsafe.getUnsafe().getLong(srcAddr + off);
+            if (len < 8) {
+                sym &= (1L << (len * 8)) - 1;
             }
             off += Long.BYTES;
+            table.putSymbol(i, sym);
+            table.putLen(i, len);
         }
-        table.rebuild(symbols, lens, count);
+        table.symbolCount = count;
+        table.rebuildLookups();
     }
 }

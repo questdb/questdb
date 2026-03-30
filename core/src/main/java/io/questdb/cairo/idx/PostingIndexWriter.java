@@ -2390,6 +2390,7 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
+        try {
         // Compress each value into a native buffer
         long cmpBufAddr = Unsafe.malloc((long) rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
         int[] cmpOffsets = new int[totalCount + 1];
@@ -2436,6 +2437,9 @@ public class PostingIndexWriter implements IndexWriter {
             }
         } finally {
             Unsafe.free(cmpBufAddr, (long) rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
+        }
+        } finally {
+            table.close();
         }
     }
 

@@ -5309,7 +5309,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                 io.questdb.cairo.idx.FSST.SymbolTable table = io.questdb.cairo.idx.FSST.trainBytes(trainBuf, pos);
                 assertNotNull("FSST training should succeed on repetitive data", table);
-
+                try {
                 // Compress each value and verify roundtrip
                 long cmpBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
                 long decBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
@@ -5340,6 +5340,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 } finally {
                     Unsafe.free(cmpBuf, 1024, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(decBuf, 1024, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                table.close();
                 }
             } finally {
                 Unsafe.free(trainBuf, totalLen, MemoryTag.NATIVE_DEFAULT);

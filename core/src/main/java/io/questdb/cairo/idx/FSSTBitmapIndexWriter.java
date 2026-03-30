@@ -164,7 +164,10 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
                     keyCount = 0;
                     valueMemSize = 0;
                     genCount = 0;
-                    symbolTable = null;
+                    if (symbolTable != null) {
+                        symbolTable.close();
+                        symbolTable = null;
+                    }
                     hasPendingData = false;
                 }
             }
@@ -267,6 +270,7 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
 
                 // Phase 3: Retrain symbol table on all decoded values
                 int trainCount = (int) Math.min(totalValueCount, Integer.MAX_VALUE);
+                if (symbolTable != null) symbolTable.close();
                 symbolTable = FSST.train(allValuesAddr, trainCount);
 
                 // Serialize new symbol table to key file
@@ -415,8 +419,8 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
                             bytePos++;
                         }
                     } else {
-                        int len = symbolTable.lens[code];
-                        long sym = symbolTable.symbols[code];
+                        int len = symbolTable.getLen(code);
+                        long sym = symbolTable.getSymbol(code);
                         for (int b = 0; b < len && bytePos < 8; b++) {
                             result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
                             bytePos++;
@@ -511,6 +515,7 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
             this.genCount = keyMem.getInt(KEY_RESERVED_OFFSET_GEN_COUNT);
 
             if (genCount > 0) {
+                if (symbolTable != null) symbolTable.close();
                 symbolTable = FSST.deserialize(keyMem.addressOf(SYMBOL_TABLE_OFFSET));
             }
 
@@ -640,6 +645,7 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
 
             // Deserialize symbol table if present
             if (genCount > 0) {
+                if (symbolTable != null) symbolTable.close();
                 symbolTable = FSST.deserialize(keyMem.addressOf(SYMBOL_TABLE_OFFSET));
             }
 
@@ -675,7 +681,10 @@ public class FSSTBitmapIndexWriter implements IndexWriter {
         keyCount = 0;
         valueMemSize = 0;
         genCount = 0;
-        symbolTable = null;
+        if (symbolTable != null) {
+            symbolTable.close();
+            symbolTable = null;
+        }
         hasPendingData = false;
         allocateNativeBuffers();
     }

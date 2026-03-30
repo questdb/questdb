@@ -80,6 +80,10 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
 
     @Override
     public void close() {
+        if (symbolTable != null) {
+            symbolTable.close();
+            symbolTable = null;
+        }
         Misc.free(keyMem);
         Misc.free(valueMem);
     }
@@ -266,6 +270,7 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
 
                     // Deserialize symbol table
                     if (genCount > 0) {
+                        if (this.symbolTable != null) this.symbolTable.close();
                         this.symbolTable = FSST.deserialize(keyMem.addressOf(FSSTBitmapIndexUtils.SYMBOL_TABLE_OFFSET));
                     }
                     break;
@@ -348,8 +353,8 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
                         bytePos++;
                     }
                 } else {
-                    int len = symbolTable.lens[code];
-                    long sym = symbolTable.symbols[code];
+                    int len = symbolTable.getLen(code);
+                    long sym = symbolTable.getSymbol(code);
                     for (int b = 0; b < len && bytePos < 8; b++) {
                         result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
                         bytePos++;

@@ -1274,6 +1274,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 fsstDecompBufAddr = 0;
                 fsstDecompBufCapacity = 0;
             }
+            if (fsstCachedTables != null) {
+                for (int i = 0; i < fsstCachedTables.length; i++) {
+                    if (fsstCachedTables[i] != null) {
+                        fsstCachedTables[i].close();
+                        fsstCachedTables[i] = null;
+                    }
+                }
+                fsstCachedTables = null;
+            }
         }
 
         /**
