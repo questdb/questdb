@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,30 +35,30 @@ import org.junit.Test;
 public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMaxAllNull() throws SqlException {
+    public void testArgMaxAllNull() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, null), (null, null)");
-        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxEmptyStringValue() throws SqlException {
+    public void testArgMaxEmptyStringValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('', 5.0), ('beta', 3.0)");
-        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxEmptyTable() throws SqlException {
+    public void testArgMaxEmptyTable() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
-        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxMixedNullValueAndNullKey() throws SqlException {
+    public void testArgMaxMixedNullValueAndNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, 5.0), ('beta', null)");
-        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
@@ -142,21 +141,21 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testArgMaxSimple() throws SqlException {
+    public void testArgMaxSimple() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', 1.0), ('beta', 3.0), ('gamma', 2.0)");
-        assertSql("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxTieBreaking() throws SqlException {
+    public void testArgMaxTieBreaking() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', 3.0), ('beta', 3.0), ('gamma', 1.0)");
-        assertSql("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\nalpha\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxWithGroupBy() throws SqlException {
+    public void testArgMaxWithGroupBy() throws Exception {
         execute("CREATE TABLE tab (sym symbol, value varchar, key double)");
         execute("""
                 INSERT INTO tab VALUES
@@ -165,27 +164,27 @@ public class ArgMaxVarcharDoubleGroupByFunctionFactoryTest extends AbstractCairo
                     ('B', 'gamma', 5.0),
                     ('B', 'delta', 4.0)
                 """);
-        assertSql("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym");
+        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, false, true);
     }
 
     @Test
-    public void testArgMaxWithNullKey() throws SqlException {
+    public void testArgMaxWithNullKey() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES ('alpha', null), ('beta', 3.0), ('gamma', 2.0)");
-        assertSql("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxWithNullValue() throws SqlException {
+    public void testArgMaxWithNullValue() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, 5.0), ('beta', 3.0)");
-        assertSql("arg_max\n\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\n\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 
     @Test
-    public void testArgMaxWithNullValueNotAtMax() throws SqlException {
+    public void testArgMaxWithNullValueNotAtMax() throws Exception {
         execute("CREATE TABLE tab (value varchar, key double)");
         execute("INSERT INTO tab VALUES (null, 1.0), ('beta', 3.0)");
-        assertSql("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab");
+        assertQuery("arg_max\nbeta\n", "SELECT arg_max(value, key) FROM tab", null, false, true);
     }
 }

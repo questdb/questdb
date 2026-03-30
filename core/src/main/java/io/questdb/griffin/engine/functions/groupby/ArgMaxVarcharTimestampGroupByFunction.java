@@ -193,9 +193,4 @@ public class ArgMaxVarcharTimestampGroupByFunction extends VarcharFunction imple
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
-
-    @Override
-    public void toTop() {
-        BinaryFunction.super.toTop();
-    }
 }

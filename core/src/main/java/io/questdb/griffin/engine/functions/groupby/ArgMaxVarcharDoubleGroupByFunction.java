@@ -193,9 +193,4 @@ public class ArgMaxVarcharDoubleGroupByFunction extends VarcharFunction implemen
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
-
-    @Override
-    public void toTop() {
-        BinaryFunction.super.toTop();
-    }
 }
