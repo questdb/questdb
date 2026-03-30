@@ -46,8 +46,13 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
         return this;
     }
 
+    @Override
     public void clear() {
         types.clear();
+    }
+
+    public void set(int index, int type) {
+        types.setQuick(index, type);
     }
 
     @Override

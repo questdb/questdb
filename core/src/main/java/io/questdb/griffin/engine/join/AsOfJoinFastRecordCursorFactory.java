@@ -36,17 +36,20 @@ import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SymbolShortCircuit symbolShortCircuit;
+    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
 
     public AsOfJoinFastRecordCursorFactory(
@@ -59,7 +62,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             int columnSplit,
             SymbolShortCircuit symbolShortCircuit,
             JoinContext joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -79,6 +84,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         );
         this.symbolShortCircuit = symbolShortCircuit;
         this.toleranceInterval = toleranceInterval;
+        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                : null;
     }
 
     @Override
@@ -124,6 +132,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        Misc.free(symbolTranslatingRecord);
     }
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
@@ -160,21 +169,35 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
             symbolShortCircuit.of(slaveCursor);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+            }
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
-                // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
-                // and report no match.
+            // Fast path: skip key matching when master symbol keys don't exist in slave.
+            Record masterKeyRecord = masterRecord;
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(masterRecord);
+                if (symbolTranslatingRecord.hasNonExistentKey()) {
+                    // One of the master record's symbol does not match any symbol in the slave table,
+                    // so we can skip the key matching part and report no match.
+                    record.hasSlave(false);
+                    return;
+                }
+                // Use the translating record so that getInt() on symbol key columns
+                // returns slave symbol IDs for integer-based comparison.
+                masterKeyRecord = symbolTranslatingRecord;
+            } else if (symbolShortCircuit.isShortCircuit(masterRecord)) {
                 record.hasSlave(false);
                 return;
             }
 
-            // ok, the non-keyed matcher found a record with a matching timestamp.
-            // we have to make sure the JOIN keys match as well.
+            // The non-keyed matcher found a record with a matching timestamp.
+            // We have to make sure the JOIN keys match as well.
             masterSinkTarget.clear();
-            masterKeySink.copy(masterRecord, masterSinkTarget);
+            masterKeySink.copy(masterKeyRecord, masterSinkTarget);
 
             long rowLo = slaveTimeFrame.getRowLo();
             int keyedFrameIndex = slaveTimeFrame.getFrameIndex();

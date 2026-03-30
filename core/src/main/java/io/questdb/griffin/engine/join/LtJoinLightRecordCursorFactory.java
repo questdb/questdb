@@ -40,10 +40,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -52,6 +54,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     private final LtJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
 
     public LtJoinLightRecordCursorFactory(
@@ -65,9 +68,14 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordSink slaveKeySink,
             int columnSplit,
             JoinContext joinContext,
-            long toleranceInterval
+            long toleranceInterval,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                : null;
         Map joinKeyMap = null;
         try {
             this.masterKeySink = masterKeySink;
@@ -136,6 +144,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(cursor);
+        Misc.free(symbolTranslatingRecord);
     }
 
     private class LtJoinLightRecordCursor extends AbstractJoinCursor {
@@ -234,8 +243,22 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     this.slaveTimestamp = slaveTimestamp;
                     this.lastSlaveRowID = slaveRowID;
                 }
+
                 key = joinKeyMap.withKey();
-                key.put(masterRecord, masterKeySink);
+                // Fast path: skip map probe when master symbol keys don't exist in slave.
+                if (symbolTranslatingRecord != null) {
+                    symbolTranslatingRecord.of(masterRecord);
+                    if (symbolTranslatingRecord.hasNonExistentKey()) {
+                        record.hasSlave(false);
+                        return true;
+                    }
+                    // Use the translating record so that getInt() on symbol
+                    // key columns returns slave symbol IDs for integer-based map lookup.
+                    key.put(symbolTranslatingRecord, masterKeySink);
+                } else {
+                    key.put(masterRecord, masterKeySink);
+                }
+
                 value = key.findValue();
                 if (value != null) {
                     slaveCursor.recordAt(slaveRecord, value.getLong(0));
@@ -273,6 +296,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             if (!isOpen) {
                 isOpen = true;
                 joinKeyMap.reopen();
+            }
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
             slaveTimestamp = Long.MIN_VALUE;
             lastSlaveRowID = Long.MIN_VALUE;
