@@ -674,6 +674,7 @@ public final class FSST {
             this.symbolCount = symbolCount;
 
             System.arraycopy(symbols, 0, this.symbols, 0, symbolCount);
+            System.arraycopy(lens, 0, this.lens, 0, symbolCount);
 
             // Build byte map for single-byte symbols
             this.byteMap = new int[256];
