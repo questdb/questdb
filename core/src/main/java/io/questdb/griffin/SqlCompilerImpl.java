@@ -4490,6 +4490,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Check if transform already exists
             if (store.hasTransform(executionContext, op.getName())) {
                 if (op.isReplace()) {
+                    // OR REPLACE performs an implicit drop, so the caller needs both permissions
+                    executionContext.getSecurityContext().authorizePayloadTransformDrop();
                     // OR REPLACE uses a non-atomic drop-then-create pattern. A concurrent
                     // reader may briefly observe the transform as absent. This is a
                     // documented v1 limitation consistent with PayloadTransformStore's
