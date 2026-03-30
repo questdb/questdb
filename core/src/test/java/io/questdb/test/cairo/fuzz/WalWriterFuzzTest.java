@@ -173,7 +173,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0,
                 1.0,
                 0.01,
-                0.00,
+                0.01,
                 0.5,
                 0.5,
                 0.1,
@@ -181,7 +181,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.8,
                 0.00,
                 0,
-                0.01
+                0.01,
+                0.1
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);
@@ -433,35 +434,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(50_000) + 1000, rnd.nextInt(100), 20, 1000, 1000, rnd.nextInt(100), rnd.nextInt(400) + 1);
         setFuzzProperties(rnd);
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testWalParquetEncodingFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setTestParams(rnd);
-
-        setFuzzProbabilities(
-                0.01,   // cancelRowsProb
-                0.2,    // notSetProb
-                0.1,    // nullSetProb
-                0.01,   // rollbackProb
-                0.02,   // colAddProb
-                0.02,   // colRemoveProb
-                0.02,   // colRenameProb
-                0.0,    // colTypeChangeProb
-                1.0,    // dataAddProb
-                0.01,   // equalTsRowsProb
-                0.01,   // partitionDropProb
-                0.01,   // truncateProb
-                0.0,    // tableDropProb
-                0.0,    // setTtlProb
-                0.0,    // replaceInsertProb
-                0,      // symbolAccessValidationProb
-                0.0,    // queryProb
-                0.3     // setParquetEncodingProb
-        );
-        setFuzzCounts(rnd.nextBoolean(), 50_000, 100, 20, 10, 200, 0, 3);
         runFuzz(rnd);
     }
 

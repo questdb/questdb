@@ -1175,6 +1175,25 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
+                    ColumnTypeTag::String,
+                ) => {
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                    )?;
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut StringColumnSink::new(&mut slicer, bufs),
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
