@@ -5090,6 +5090,64 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinNestedUnderOtherJoinTwoLevelsDeep() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE categories (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, category_id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO categories VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 2, 'B', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 11.0, 'A', '2024-01-01T00:02:00.000000Z'),
+                    (2, 20.0, 'B', '2024-01-02T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z'),
+                    (10.5, 'A', '2024-01-01T00:01:30.000000Z'),
+                    (19.0, 'B', '2024-01-02T00:00:30.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            category_id	sum
+                            1	19.5
+                            1	42.0
+                            2	39.0
+                            """,
+                    """
+                             SELECT c.id AS category_id, sub1.sum
+                             FROM categories c
+                             JOIN (
+                                 SELECT i.category_id, sub2.sum
+                                 FROM instruments i
+                                 JOIN (
+                                     SELECT sum(t.price + q.price) AS sum, t.instrument_id
+                                     FROM trades t
+                                     WINDOW JOIN quotes q ON tag
+                                         RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                                 ) sub2 ON sub2.instrument_id = i.id
+                             ) sub1 ON sub1.category_id = c.id
+                             ORDER BY c.id, sub1.sum
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinNoOtherCondition() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
