@@ -760,6 +760,7 @@ class LateralJoinRewriter implements Mutable {
     //           ) WHERE __lateral_rn <= 3
     private QueryModel compensateLimit(
             QueryModel current,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) throws SqlException {
         ExpressionNode limitHi = current.getLimitHi();
@@ -769,20 +770,10 @@ class LateralJoinRewriter implements Mutable {
         }
 
         if (limitHi != null && hasCorrelatedExprAtDepth(limitHi, depth)) {
-            throw SqlException.position(limitHi.position)
-                    .put("non-constant LIMIT in LATERAL join is not supported");
+            limitHi = rewriteOuterRefs(limitHi, outerToInnerAlias, depth);
         }
         if (limitLo != null && hasCorrelatedExprAtDepth(limitLo, depth)) {
-            throw SqlException.position(limitLo.position)
-                    .put("non-constant LIMIT in LATERAL join is not supported");
-        }
-        if (limitHi != null && limitHi.type != ExpressionNode.CONSTANT) {
-            throw SqlException.position(limitHi.position)
-                    .put("non-constant LIMIT in LATERAL join is not supported");
-        }
-        if (limitLo != null && limitLo.type != ExpressionNode.CONSTANT) {
-            throw SqlException.position(limitLo.position)
-                    .put("non-constant LIMIT in LATERAL join is not supported");
+            limitLo = rewriteOuterRefs(limitLo, outerToInnerAlias, depth);
         }
 
         orderBySave.clear();
@@ -875,17 +866,11 @@ class LateralJoinRewriter implements Mutable {
 
         ExpressionNode rnFilter;
         if (limitHi != null && limitLo != null) {
-            ExpressionNode upperBound = createBinaryOp("<=",
-                    ExpressionNode.deepClone(expressionNodePool, rnRef),
-                    ExpressionNode.deepClone(expressionNodePool, limitHi));
-            ExpressionNode lowerBound = createBinaryOp(">",
-                    ExpressionNode.deepClone(expressionNodePool, rnRef),
-                    ExpressionNode.deepClone(expressionNodePool, limitLo));
+            ExpressionNode upperBound = createBinaryOp("<=", rnRef, limitHi);
+            ExpressionNode lowerBound = createBinaryOp(">", rnRef, limitLo);
             rnFilter = createBinaryOp("and", lowerBound, upperBound);
         } else {
-            rnFilter = createBinaryOp("<=",
-                    ExpressionNode.deepClone(expressionNodePool, rnRef),
-                    ExpressionNode.deepClone(expressionNodePool, limitHi != null ? limitHi : limitLo));
+            rnFilter = createBinaryOp("<=", rnRef, limitHi != null ? limitHi : limitLo);
         }
 
         QueryModel filterModel = queryModelPool.next();
@@ -1043,7 +1028,7 @@ class LateralJoinRewriter implements Mutable {
 
             // LIMIT compensation for union branch
             if (current.getLimitHi() != null || current.getLimitLo() != null) {
-                QueryModel wrapper = compensateLimit(current, depth);
+                QueryModel wrapper = compensateLimit(current, outerToInnerAlias, depth);
                 if (wrapper != current) {
                     wrapper.setUnionModel(current.getUnionModel());
                     wrapper.setSetOperationType(current.getSetOperationType());
@@ -2041,7 +2026,7 @@ class LateralJoinRewriter implements Mutable {
 
         // 1. LIMIT compensation
         if (current.getLimitHi() != null || current.getLimitLo() != null) {
-            QueryModel wrapper = compensateLimit(current, depth);
+            QueryModel wrapper = compensateLimit(current, outerToInnerAlias, depth);
             if (wrapper != current) {
                 if (parent != null) {
                     parent.setNestedModel(wrapper);
@@ -2117,61 +2102,65 @@ class LateralJoinRewriter implements Mutable {
 
         // 5. Descend or terminate: handle main chain and join branches
         boolean hasJoins = current.getJoinModels().size() > 1;
-        for (int ji = 0, jn = current.getJoinModels().size(); ji < jn; ji++) {
-            QueryModel jm = current.getJoinModels().getQuick(ji);
-            QueryModel jmNested = ji == 0 ? current.getNestedModel() : jm.getNestedModel();
-
-            if (ji == 0 && !hasJoins) {
-                switch (terminate) {
-                    case 1 -> terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
-                    case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
-                    case 3 -> pushDownOuterRefs(
-                            current, nestModel, outerToInnerAlias, isLeftJoin,
-                            countColAliases, outerRefJoinModel, lateralJoinModel, depth
-                    );
-                }
-
-                if (current.getUnionModel() != null) {
-                    compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
-                }
-                break;
+        if (!hasJoins) {
+            switch (terminate) {
+                case 1 -> terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
+                case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
+                case 3 -> pushDownOuterRefs(
+                        current, nestModel, outerToInnerAlias, isLeftJoin,
+                        countColAliases, outerRefJoinModel, lateralJoinModel, depth
+                );
             }
 
-            if (ji == 0) {
-                switch (terminate) {
-                    case 1 -> {
-                        terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
-                        jn = current.getJoinModels().size();
-                        ji = 1;
+            if (current.getUnionModel() != null) {
+                compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
+            }
+        } else {
+            for (int ji = 0, jn = current.getJoinModels().size(); ji < jn; ji++) {
+                QueryModel jm = current.getJoinModels().getQuick(ji);
+                QueryModel jmNested = ji == 0 ? current.getNestedModel() : jm.getNestedModel();
+                if (ji == 0) {
+                    switch (terminate) {
+                        case 1 -> {
+                            terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
+                            jn = current.getJoinModels().size();
+                            ji = 1;
+                        }
+                        case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
+                        case 3 -> pushDownOuterRefs(
+                                current, nestModel, outerToInnerAlias, isLeftJoin,
+                                countColAliases, outerRefJoinModel, lateralJoinModel, depth
+                        );
                     }
-                    case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
-                    case 3 -> pushDownOuterRefs(
-                            current, nestModel, outerToInnerAlias, isLeftJoin,
-                            countColAliases, outerRefJoinModel, lateralJoinModel, depth
+
+                    if (current.getUnionModel() != null) {
+                        compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
+                    }
+                } else {
+                    pushDownOuterRefsForJoinBranch(
+                            current, jm, jmNested, outerToInnerAlias,
+                            countColAliases, outerRefJoinModel, depth
                     );
                 }
-
-                if (current.getUnionModel() != null) {
-                    compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
-                }
-            } else {
-                pushDownOuterRefsForJoinBranch(
-                        current, jm, jmNested, outerToInnerAlias,
-                        countColAliases, outerRefJoinModel, depth
-                );
             }
         }
     }
 
     // Handles a single join branch (ji > 0) inside the lateral subquery.
-    // A cloned __qdb_outer_ref__ is always pushed inside when the branch has
-    // any correlation (ON or nested model). Correlated ON predicates are:
-    //  - Standard joins (INNER/LEFT/RIGHT/FULL/CROSS): moved to branch WHERE
-    //    so they resolve using the clone's aliases inside the subquery.
-    //  - Engine joins (ASOF/LT/SPLICE/WINDOW/HORIZON): rewritten in place
-    //    (ON is a matching key, not a filter predicate).
-    // Table-model branches (no nestedModel) are handled by
-    // extractCorrelatedFromInnerJoins in terminateHere instead.
+    //
+    // 1. Correlated ON is rewritten in place using main chain aliases
+    //    (before save/replace). Main delim is at the join level.
+    //
+    // 2. Table-model branches (jmNested == null): return after ON rewrite.
+    //
+    // 3. Subquery branches with no correlation (nested + ON): return.
+    //
+    // 4. Subquery branches with correlation: create cloned __qdb_outer_ref__,
+    //    push inside for compensation, build alignment criteria
+    //    (clone_col = main_col) appended to branch ON.
+    //
+    // hasCorrelatedCriteria is false when extractCorrelatedFromInnerJoins
+    // already handled ON (terminate=1); true at levels above terminateHere.
     private void pushDownOuterRefsForJoinBranch(
             QueryModel current,
             QueryModel jm,

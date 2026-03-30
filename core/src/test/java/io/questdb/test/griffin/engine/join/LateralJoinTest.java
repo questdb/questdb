@@ -1896,6 +1896,54 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T109: correlated LIMIT with GROUP BY — each outer row limits its own group count
+    @Test
+    public void testT109CorrelatedLimitWithGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, max_categories INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'B', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 'C', 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 'X', 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'Y', 50.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 'Z', 60.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // order 1: max_categories=1 → top 1 category by total
+            // order 2: max_categories=2 → top 2 categories by total
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttotal
+                            1\tC\t30.0
+                            2\tY\t50.0
+                            2\tZ\t60.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, sum(qty) AS total
+                                FROM trades
+                                WHERE order_id = o.id
+                                GROUP BY category
+                                ORDER BY total DESC
+                                LIMIT o.max_categories
+                            ) sub
+                            ORDER BY o.id, sub.total
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T10: INTERSECT, INNER, equality correlation — per-group intersection
     @Test
     public void testT10Intersect() throws Exception {
@@ -2291,43 +2339,80 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T21: Non-constant LIMIT — error
+    // T21: Non-constant LIMIT
     @Test
-    public void testT21NonConstantLimit() throws Exception {
+    public void testT21CorrelatedLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, 2, '2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO trades VALUES (1, 1, 10.0, '2024-01-01T00:30:00.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 2, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 1, 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (5, 2, 50.0, '2024-01-01T01:20:00.000000Z')
+                    """);
 
-            assertException(
+            // Correlated LIMIT: order 1 gets 2 rows, order 2 gets 1 row
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t10.0
+                            1\t20.0
+                            2\t40.0
+                            """,
                     """
                             SELECT o.id, t.qty
                             FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id LIMIT o.n) t
+                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n) t
+                            ORDER BY o.id, t.qty
                             """,
-                    98,
-                    "non-constant LIMIT in LATERAL join is not supported"
+                    null, true, false
             );
         });
     }
 
     @Test
-    public void testT21bNonConstantOffset() throws Exception {
+    public void testT21bCorrelatedOffset() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, 2, '2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO trades VALUES (1, 1, 10.0, '2024-01-01T00:30:00.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (2, 0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 1, 30.0, '2024-01-01T00:30:00.000000Z'),
+                    (4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+                    (5, 2, 50.0, '2024-01-01T01:20:00.000000Z')
+                    """);
 
-            assertException(
+            // Correlated offset: order 1 skips 1 row (gets rows 2-3), order 2 skips 0 (gets rows 1-3)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t20.0
+                            1\t30.0
+                            2\t40.0
+                            2\t50.0
+                            """,
                     """
                             SELECT o.id, t.qty
                             FROM orders o
-                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id LIMIT o.n, 5) t
+                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id ORDER BY qty LIMIT o.n, 5) t
+                            ORDER BY o.id, t.qty
                             """,
-                    98,
-                    "non-constant LIMIT in LATERAL join is not supported"
+                    null, true, false
             );
         });
     }
@@ -5548,23 +5633,37 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testT72NonConstantLimitExpression() throws Exception {
+    public void testT72FunctionLimitExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t1 VALUES (1, '2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO t2 VALUES (1, 10, '2024-01-01T00:10:00.000000Z')");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (1, 30, '2024-01-01T00:30:00.000000Z')
+                    """);
 
-            assertException(
+            // Non-constant LIMIT expression: abs(2) = 2
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t10
+                            1\t20
+                            """,
                     """
                             SELECT t1.id, sub.val
                             FROM t1
                             JOIN LATERAL (
-                                SELECT val FROM t2 WHERE t2.t1_id = t1.id LIMIT abs(2)
+                                SELECT val FROM t2 WHERE t2.t1_id = t1.id ORDER BY val LIMIT abs(2)
                             ) sub
+                            ORDER BY t1.id, sub.val
                             """,
-                    97,
-                    "non-constant LIMIT in LATERAL join is not supported"
+                    null, true, false
             );
         });
     }
