@@ -570,28 +570,28 @@ class LateralJoinRewriter implements Mutable {
             int lateralJoinIndex,
             int lateralDepth,
             ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns,
-            boolean trackDepth
+            boolean isTrackingDepth
     ) {
         QueryModel current = model;
         while (current != null) {
-            if (trackDepth) {
+            if (isTrackingDepth) {
                 hasCorrelation = false;
             }
 
             scanModelForCorrelatedRefs(current, outerModel, lateralJoinIndex, lateralDepth, correlatedColumns);
 
-            if (trackDepth && hasCorrelation) {
+            if (isTrackingDepth && hasCorrelation) {
                 current.makeCorrelatedAtDepth(lateralDepth);
             }
 
             for (int i = 1, n = current.getJoinModels().size(); i < n; i++) {
                 QueryModel jm = current.getJoinModels().getQuick(i);
                 if (jm.getNestedModel() != null) {
-                    collectCorrelatedRefs(jm.getNestedModel(), outerModel, lateralJoinIndex, lateralDepth, correlatedColumns, trackDepth);
+                    collectCorrelatedRefs(jm.getNestedModel(), outerModel, lateralJoinIndex, lateralDepth, correlatedColumns, isTrackingDepth);
                 }
             }
             if (current.getUnionModel() != null) {
-                collectCorrelatedRefs(current.getUnionModel(), outerModel, lateralJoinIndex, lateralDepth, correlatedColumns, trackDepth);
+                collectCorrelatedRefs(current.getUnionModel(), outerModel, lateralJoinIndex, lateralDepth, correlatedColumns, isTrackingDepth);
             }
 
             current = current.getNestedModel();
@@ -711,21 +711,21 @@ class LateralJoinRewriter implements Mutable {
     ) throws SqlException {
         ObjList<ExpressionNode> latestBy = inner.getLatestBy();
 
-        boolean canUseNativeLatestBy = !hasNonEqualityCorrelation(inner.getWhereClause(), depth)
+        boolean isNativeLatestByUsable = !hasNonEqualityCorrelation(inner.getWhereClause(), depth)
                 && groupingCols.size() > 0;
 
-        if (canUseNativeLatestBy) {
+        if (isNativeLatestByUsable) {
             for (int i = 0, n = groupingCols.size(); i < n; i++) {
                 CharSequence outerRefAlias = groupingCols.getQuick(i).token;
                 CharSequence innerCol = findInnerPhysicalColumn(inner.getWhereClause(), outerRefAlias, outerToInnerAlias);
                 if (innerCol == null) {
-                    canUseNativeLatestBy = false;
+                    isNativeLatestByUsable = false;
                     break;
                 }
             }
         }
 
-        if (canUseNativeLatestBy) {
+        if (isNativeLatestByUsable) {
             for (int i = 0, n = groupingCols.size(); i < n; i++) {
                 CharSequence outerRefAlias = groupingCols.getQuick(i).token;
                 CharSequence innerCol = findInnerPhysicalColumn(inner.getWhereClause(), outerRefAlias, outerToInnerAlias);

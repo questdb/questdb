@@ -1415,6 +1415,68 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T104: self-join lateral — lateral subquery queries the same table as outer
+    @Test
+    public void testT104SelfJoinLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, parent_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 0, 100.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1, 50.0, '2024-01-01T01:00:00.000000Z'),
+                    (3, 1, 30.0, '2024-01-01T02:00:00.000000Z'),
+                    (4, 2, 20.0, '2024-01-01T03:00:00.000000Z')
+                    """);
+
+            // Self-join: for each order, find child orders (where parent_id = o.id)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tchild_id\tchild_amount
+                            1\t2\t50.0
+                            1\t3\t30.0
+                            2\t4\t20.0
+                            """,
+                    """
+                            SELECT o.id, sub.child_id, sub.child_amount
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT id AS child_id, amount AS child_amount
+                                FROM orders
+                                WHERE parent_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.child_id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT105UnsupportedJoinLateralError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertException(
+                    "SELECT * FROM t1 ASOF JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t",
+                    27,
+                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
+            );
+
+            assertException(
+                    "SELECT * FROM t1 SPLICE JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t",
+                    29,
+                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
+            );
+
+            assertException(
+                    "SELECT * FROM t1 FULL OUTER JOIN LATERAL (SELECT * FROM t2 WHERE x = t1.x) t ON true",
+                    33,
+                    "LATERAL is only supported with INNER, LEFT, or CROSS joins"
+            );
+        });
+    }
+
     // T10: INTERSECT, INNER, equality correlation — per-group intersection
     @Test
     public void testT10Intersect() throws Exception {
