@@ -128,6 +128,11 @@ public class QwpWalAppenderTest {
     }
 
     @Test
+    public void testMapQuestDBTypeToQwpTimestampNanos() {
+        assertEquals(QwpConstants.TYPE_TIMESTAMP_NANOS, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.TIMESTAMP_NANO));
+    }
+
+    @Test
     public void testMapQuestDBTypeToQwpUUID() {
         assertEquals(QwpConstants.TYPE_UUID, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.UUID));
     }
