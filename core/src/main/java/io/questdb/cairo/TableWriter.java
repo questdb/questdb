@@ -5374,8 +5374,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
 
             if (index != 0) {
-                openPartition(prevTimestamp, newTransientRowCount);
-                setAppendPosition(newTransientRowCount, false);
+                if (!isLastPartitionParquet()) {
+                    openPartition(prevTimestamp, newTransientRowCount);
+                    setAppendPosition(newTransientRowCount, false);
+                } else {
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
+                }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
             }
