@@ -1477,6 +1477,425 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T106: LEFT JOIN with correlated ON inside lateral
+    @Test
+    public void testT106LeftJoinCorrelatedOnSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            // Adjustment only for order 1
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            // LEFT JOIN ON a.order_id = o.id: correlated ON
+            // Order 2's trade has no matching adjustment → adj = NULL
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            2\t30.0\tnull
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM trades t
+                                LEFT JOIN adjustments a ON a.order_id = o.id AND a.order_id = t.order_id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T106b: RIGHT JOIN with correlated ON inside lateral.
+    @Test
+    public void testT106bRightJoinCorrelatedOnSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z')
+                    """);
+            // Adjustments for both orders
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // RIGHT JOIN ON a.order_id = o.id: preserves all adjustments,
+            // but WHERE a.order_id = o.id filters after join.
+            // o.id=1: trade(10)+adj(1.5) match; adj(2.0) preserved by RIGHT
+            //   but WHERE filters it (2≠1) → only (10, 1.5)
+            // o.id=2: no trades; adj(2.0) preserved, WHERE passes (2=2) → (null, 2.0)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            2\tnull\t2.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM trades t
+                                RIGHT JOIN adjustments a ON a.order_id = o.id AND a.order_id = t.order_id
+                                WHERE a.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.adj
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T106c: FULL OUTER JOIN with correlated ON inside lateral
+    @Test
+    public void testT106cFullOuterJoinCorrelatedOnSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO refunds VALUES
+                    (2, 5.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // FULL OUTER: both sides preserved
+            // o.id=1: trades match, no refunds with order_id=1 → (10, null), (20, null)
+            // o.id=2: no trades with order_id=2, refund(5.0) with order_id=2 → (null, 5.0)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tamount
+                            1\t10.0\tnull
+                            1\t20.0\tnull
+                            2\tnull\t5.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.amount
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, r.amount
+                                FROM trades t
+                                FULL OUTER JOIN refunds r ON r.order_id = t.order_id
+                                WHERE t.order_id = o.id OR r.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T106d: RIGHT JOIN with correlated ON — subquery branch (not table model)
+    @Test
+    public void testT106dRightJoinSubqueryBranchCorrelatedOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, active INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, 1, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, 1, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // RIGHT JOIN with subquery branch + correlated ON
+            // Correlated ON rewritten in place, not moved to WHERE
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            2\tnull\t2.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM trades t
+                                RIGHT JOIN (SELECT order_id, adj FROM adjustments WHERE active = 1) a
+                                    ON a.order_id = o.id AND a.order_id = t.order_id
+                                WHERE a.order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T106e: LEFT JOIN with non-equality correlated ON inside lateral
+    @Test
+    public void testT106eLeftJoinNonEqCorrelatedOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE bonuses (trade_order_id INT, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 15.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 5.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO bonuses VALUES
+                    (1, 100.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 200.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // LEFT JOIN ON with non-eq correlated predicate: b.bonus > o.min_qty
+            // o.id=1 (min_qty=15): trades(10,20), bonus(100>15)→match → (10,100),(20,100)
+            // o.id=2 (min_qty=5): trades(30), bonus(200>5)→match → (30,200)
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tbonus
+                            1\t10.0\t100.0
+                            1\t20.0\t100.0
+                            2\t30.0\t200.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.bonus
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, b.bonus
+                                FROM trades t
+                                LEFT JOIN bonuses b ON b.trade_order_id = t.order_id AND b.bonus > o.min_qty
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testT107CorrelatedJoinAboveDataSourceLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO adjustments VALUES
+                    (1, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 2.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // The join with adjustments is at the SELECT level (above trades),
+            // not at the data source level where terminateHere runs.
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tadj
+                            1\t10.0\t1.5
+                            1\t20.0\t1.5
+                            2\t30.0\t2.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.adj
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, a.adj
+                                FROM (SELECT order_id, qty FROM trades WHERE order_id = o.id) t
+                                JOIN adjustments a ON a.order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // UNION branch where only one branch is correlated, other is not.
+    @Test
+    public void testT108aTerminateNonCorrelatedUnionBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO returns VALUES
+                    (1, 5.0, '2024-01-01T00:30:00.000000Z')
+                    """);
+
+            // Both UNION branches correlated
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t5.0
+                            1\t10.0
+                            2\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades WHERE order_id = o.id
+                                UNION ALL
+                                SELECT qty FROM returns WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T108b: terminate=3 — deeply correlated, nested subquery itself has correlation.
+    @Test
+    public void testT108bTerminateDeepCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 15.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 5.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // WHERE has two correlations: order_id = o.id AND qty > o.min_qty
+            // Both are at the table level → terminate=3 not needed, but tests
+            // that non-eq correlation doesn't prevent correct results
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t20.0
+                            2\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades
+                                WHERE order_id = o.id AND qty > o.min_qty
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT108cWhereCorrelatedOverNonCorrelatedSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 'B', 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 'A', 30.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 'A', 40.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // Inner FROM is a non-correlated subquery with GROUP BY.
+            // Outer SELECT WHERE filters by o.id on the subquery result.
+            // The GROUP BY runs once (un-multiplied); CROSS JOIN happens above it.
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttotal
+                            1\tA\t10.0
+                            1\tB\t20.0
+                            2\tA\t70.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT category, total
+                                FROM (SELECT order_id, category, sum(qty) AS total
+                                      FROM trades GROUP BY order_id, category)
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.category
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T10: INTERSECT, INNER, equality correlation — per-group intersection
     @Test
     public void testT10Intersect() throws Exception {

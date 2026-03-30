@@ -755,9 +755,9 @@ class LateralJoinRewriter implements Mutable {
     // per-outer-row limiting.
     //   Before: SELECT * FROM trades WHERE order_id = __outer_ref__.id ORDER BY ts LIMIT 3
     //   After:  SELECT * FROM (
-    //             SELECT *, row_number() OVER (PARTITION BY __outer_ref__.id ORDER BY ts) AS _lateral_rn
+    //             SELECT *, row_number() OVER (PARTITION BY __outer_ref__.id ORDER BY ts) AS __lateral_rn
     //             FROM trades ...
-    //           ) WHERE _lateral_rn <= 3
+    //           ) WHERE __lateral_rn <= 3
     private QueryModel compensateLimit(
             QueryModel current,
             int depth
@@ -804,7 +804,7 @@ class LateralJoinRewriter implements Mutable {
             cur = cur.getNestedModel();
         }
 
-        CharSequence rnAlias = createColumnAlias("_lateral_rn", current);
+        CharSequence rnAlias = createColumnAlias("__lateral_rn", current);
         ExpressionNode rnFunc = expressionNodePool.next().of(
                 ExpressionNode.FUNCTION, "row_number", 0, 0
         );
@@ -1465,25 +1465,35 @@ class LateralJoinRewriter implements Mutable {
         for (int i = 1, n = inner.getJoinModels().size(); i < n; i++) {
             QueryModel jm = inner.getJoinModels().getQuick(i);
             ExpressionNode joinCriteria = jm.getJoinCriteria();
-            if (joinCriteria != null
-                    && (jm.getJoinType() == QueryModel.JOIN_INNER
-                    || jm.getJoinType() == QueryModel.JOIN_CROSS)) {
-                innerJoinCorrelated.clear();
-                innerJoinNonCorrelated.clear();
-                extractCorrelatedPredicates(joinCriteria, innerJoinCorrelated, innerJoinNonCorrelated, depth);
+            if (joinCriteria != null && hasCorrelatedExprAtDepth(joinCriteria, depth)) {
+                int jt = jm.getJoinType();
+                if (jt == QueryModel.JOIN_INNER || jt == QueryModel.JOIN_CROSS) {
+                    // INNER/CROSS: split ON into correlated/non-correlated, then:
+                    //  - pure outer predicates (allLiteralsAreCorrelated) → extract
+                    //    to __qdb_outer_ref__0 criteria for early filtering
+                    //  - mixed predicates (inner + outer cols) → rewrite in place
+                    // Example ON: a.order_id = o.id AND o.status = 'ACTIVE'
+                    //  → mixed: a.order_id = __qdb_outer_ref__0_id (stays in ON)
+                    //  → pure:  o.status = 'ACTIVE' (→ __qdb_outer_ref__0 criteria)
+                    innerJoinCorrelated.clear();
+                    innerJoinNonCorrelated.clear();
+                    extractCorrelatedPredicates(joinCriteria, innerJoinCorrelated, innerJoinNonCorrelated, depth);
 
-                if (innerJoinCorrelated.size() > 0) {
-                    for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
-                        ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
-                        if (allLiteralsAreCorrelated(pred, depth)) {
-                            correlated.add(pred);
-                        } else {
-                            ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias, depth);
-                            innerJoinNonCorrelated.add(rewritten);
+                    if (innerJoinCorrelated.size() > 0) {
+                        for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
+                            ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
+                            if (allLiteralsAreCorrelated(pred, depth)) {
+                                correlated.add(pred);
+                            } else {
+                                ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias, depth);
+                                innerJoinNonCorrelated.add(rewritten);
+                            }
                         }
+                        jm.setJoinCriteria(innerJoinNonCorrelated.size() > 0
+                                ? conjoin(innerJoinNonCorrelated) : null);
                     }
-                    jm.setJoinCriteria(innerJoinNonCorrelated.size() > 0
-                            ? conjoin(innerJoinNonCorrelated) : null);
+                } else {
+                    jm.setJoinCriteria(rewriteOuterRefs(joinCriteria, outerToInnerAlias, depth));
                 }
             }
         }
@@ -1761,6 +1771,17 @@ class LateralJoinRewriter implements Mutable {
             }
 
             if (m == dataSourceLayer) {
+                for (int ji = 1, jn = m.getJoinModels().size(); ji < jn; ji++) {
+                    QueryModel bjm = m.getJoinModels().getQuick(ji);
+                    if (bjm.getAlias() != null
+                            && Chars.equalsIgnoreCase(bjm.getAlias().token, outerRefAlias)) {
+                        continue;
+                    }
+                    ExpressionNode jmCrit = bjm.getJoinCriteria();
+                    if (jmCrit != null && hasUnmappedOuterRefLiteral(jmCrit, outerRefAlias, aliasMap)) {
+                        return false;
+                    }
+                }
                 break;
             }
             parent = m;
@@ -1988,6 +2009,36 @@ class LateralJoinRewriter implements Mutable {
             }
         }
 
+        // Determine termination strategy:
+        // 0 = current not correlated at all → terminateHere at current, skip steps 2-4
+        // 1 = leaf or nestModel not correlated, no projection correlation → terminateHere at current
+        // 2 = nestModel not correlated but projection has correlation → terminateHere at nestModel
+        // 3 = nestModel is correlated → descend
+        byte terminate;
+        QueryModel nestModel = current.getNestedModel();
+
+        if (!current.isCorrelatedAtDepth(depth)) {
+            terminate = 0;
+        } else if (nestModel == null) {
+            terminate = 1;
+        } else if (nestModel.isCorrelatedAtDepth(depth)) {
+            terminate = 3;
+        } else {
+            terminate = 1;
+            for (int i = 0, n = current.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn col = current.getBottomUpColumns().getQuick(i);
+                if (col.getAst() != null && hasCorrelatedExprAtDepth(col.getAst(), depth)) {
+                    terminate = 2;
+                    break;
+                }
+            }
+        }
+
+        if (terminate == 0) {
+            terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
+            return;
+        }
+
         // 1. LIMIT compensation
         if (current.getLimitHi() != null || current.getLimitLo() != null) {
             QueryModel wrapper = compensateLimit(current, depth);
@@ -2071,14 +2122,15 @@ class LateralJoinRewriter implements Mutable {
             QueryModel jmNested = ji == 0 ? current.getNestedModel() : jm.getNestedModel();
 
             if (ji == 0 && !hasJoins) {
-                if (current.getNestedModel() != null) {
-                    pushDownOuterRefs(
-                            current, current.getNestedModel(), outerToInnerAlias, isLeftJoin,
+                switch (terminate) {
+                    case 1 -> terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
+                    case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
+                    case 3 -> pushDownOuterRefs(
+                            current, nestModel, outerToInnerAlias, isLeftJoin,
                             countColAliases, outerRefJoinModel, lateralJoinModel, depth
                     );
-                } else {
-                    terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
                 }
+
                 if (current.getUnionModel() != null) {
                     compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
                 }
@@ -2086,19 +2138,19 @@ class LateralJoinRewriter implements Mutable {
             }
 
             if (ji == 0) {
-                // Main chain: use original outer ref
-                if (current.getNestedModel() != null) {
-                    pushDownOuterRefs(
-                            current, current.getNestedModel(), outerToInnerAlias, isLeftJoin,
+                switch (terminate) {
+                    case 1 -> {
+                        terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
+                        jn = current.getJoinModels().size();
+                        ji = 1;
+                    }
+                    case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
+                    case 3 -> pushDownOuterRefs(
+                            current, nestModel, outerToInnerAlias, isLeftJoin,
                             countColAliases, outerRefJoinModel, lateralJoinModel, depth
                     );
-                } else {
-                    terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
-                    // shifting existing branches right. Update jn and skip
-                    // the inserted model (it has no correlated refs).
-                    jn = current.getJoinModels().size();
-                    ji = 1;
                 }
+
                 if (current.getUnionModel() != null) {
                     compensateSetOp(current, outerToInnerAlias, depth, outerRefJoinModel);
                 }
@@ -2112,26 +2164,14 @@ class LateralJoinRewriter implements Mutable {
     }
 
     // Handles a single join branch (ji > 0) inside the lateral subquery.
-    // Each correlated branch gets its own cloned __qdb_outer_ref__ (with a fresh
-    // alias like __qdb_outer_ref__1) and is recursively pushed down independently.
-    // Correlated ON predicates are moved to the branch's WHERE and rewritten.
-    // After recursion, alignment join criteria are built for the branch.
-    //
-    // Example:
-    //   LATERAL (SELECT ... FROM t1 JOIN t2 ON t2.x = o.id WHERE t1.id = o.id)
-    //   Main chain (t1): gets __qdb_outer_ref__0 via terminateHere
-    //   Join branch (t2): gets cloned __qdb_outer_ref__1, ON t2.x = o.id is
-    //     rewritten to WHERE t2.x = __qdb_outer_ref__1.id inside t2's subquery
-    //
-    // TODO: the Neumann-Kemper paper prescribes different strategies per join type:
-    //  - INNER: current approach (move ON to WHERE) is semantically equivalent
-    //  - LEFT: moving correlated ON to WHERE changes LEFT JOIN semantics (unmatched
-    //    rows that should produce NULLs may be filtered out). Currently safe because
-    //    the correlated predicate filters the data source, and the alignment ON
-    //    preserves LEFT JOIN behavior at the outer level. But edge cases with
-    //    non-equality correlations in LEFT JOIN ON may need special handling.
-    //  - RIGHT/FULL OUTER: forced to process even without correlation
-    //    (isDelimRequiredForJoinType) but uses the same approach as INNER.
+    // A cloned __qdb_outer_ref__ is always pushed inside when the branch has
+    // any correlation (ON or nested model). Correlated ON predicates are:
+    //  - Standard joins (INNER/LEFT/RIGHT/FULL/CROSS): moved to branch WHERE
+    //    so they resolve using the clone's aliases inside the subquery.
+    //  - Engine joins (ASOF/LT/SPLICE/WINDOW/HORIZON): rewritten in place
+    //    (ON is a matching key, not a filter predicate).
+    // Table-model branches (no nestedModel) are handled by
+    // extractCorrelatedFromInnerJoins in terminateHere instead.
     private void pushDownOuterRefsForJoinBranch(
             QueryModel current,
             QueryModel jm,
@@ -2144,37 +2184,19 @@ class LateralJoinRewriter implements Mutable {
         boolean hasCorrelatedCriteria = jm.getJoinCriteria() != null
                 && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
 
-        if (hasCorrelatedCriteria) {
-            ExpressionNode jmCrit = jm.getJoinCriteria();
-            splitAndPredicates(jmCrit, innerJoinCorrelated);
-            ExpressionNode remainingJoinCrit = null;
-            for (int ci = 0, cn = innerJoinCorrelated.size(); ci < cn; ci++) {
-                ExpressionNode pred = innerJoinCorrelated.getQuick(ci);
-                if (hasCorrelatedExprAtDepth(pred, depth)) {
-                    ExpressionNode rewritten = rewriteOuterRefs(pred, outerToInnerAlias, depth);
-                    if (jmNested != null) {
-                        ExpressionNode w = jmNested.getWhereClause();
-                        jmNested.setWhereClause(w != null ? createBinaryOp("and", w, rewritten) : rewritten);
-                    } else {
-                        remainingJoinCrit = remainingJoinCrit == null
-                                ? rewritten : createBinaryOp("and", remainingJoinCrit, rewritten);
-                    }
-                } else {
-                    remainingJoinCrit = remainingJoinCrit == null
-                            ? pred : createBinaryOp("and", remainingJoinCrit, pred);
-                }
-            }
-            jm.setJoinCriteria(remainingJoinCrit);
-        }
-
         if (jmNested == null) {
+            if (hasCorrelatedCriteria) {
+                jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
+            }
             return;
         }
         boolean isJmCorrelated = jmNested.isCorrelatedAtDepth(depth);
-        boolean isDelimRequiredForJoinType = jm.getJoinType() == QueryModel.JOIN_RIGHT_OUTER
-                || jm.getJoinType() == QueryModel.JOIN_FULL_OUTER;
-        if (!(isJmCorrelated || isDelimRequiredForJoinType || hasCorrelatedCriteria)) {
+        if (!(isJmCorrelated || hasCorrelatedCriteria)) {
             return;
+        }
+
+        if (hasCorrelatedCriteria) {
+            jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
         }
 
         characterStore.newEntry();
