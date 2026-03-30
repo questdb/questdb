@@ -49,6 +49,7 @@ import java.util.Base64;
 public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
 
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
+    public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
     public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
     // Header names (case-insensitive)
@@ -209,6 +210,13 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return null if valid, error message otherwise
      */
     public static String validateHandshake(HttpRequestHeader header) {
+        // Reject browser-originated requests. QWP is a machine-to-machine protocol;
+        // browsers send Origin automatically, legitimate clients do not.
+        // This prevents Cross-Site WebSocket Hijacking (CSWSH).
+        if (header.getHeader(HEADER_ORIGIN) != null) {
+            return "Origin header not allowed on QWP WebSocket";
+        }
+
         // Check Upgrade header
         Utf8Sequence upgradeHeader = header.getHeader(HEADER_UPGRADE);
         if (upgradeHeader == null) {

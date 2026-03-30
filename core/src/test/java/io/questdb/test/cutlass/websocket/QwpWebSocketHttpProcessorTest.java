@@ -161,6 +161,23 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testValidateHandshakeRejectsOriginHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+                header.setHeader("Origin", "https://evil-site.com");
+
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("Origin"));
+            }
+        });
+    }
+
+    @Test
     public void testValidateHandshakeSuccess() throws Exception {
         assertMemoryLeak(() -> {
             try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
