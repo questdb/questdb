@@ -254,6 +254,7 @@ public class SqlOptimiser implements Mutable {
                 queryModelPool,
                 windowExpressionPool,
                 sqlNodeStack,
+                sqlNodeStack2,
                 functionParser,
                 tempExprs,
                 groupByNodes,
@@ -292,51 +293,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return appearsInArgs;
-    }
-
-    static boolean checkForChildWindowFunctions(ArrayDeque<ExpressionNode> sqlNodeStack, ExpressionNode node) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.windowExpression != null) {
-                return true;
-            }
-            if (node.paramCount < 3) {
-                if (node.rhs != null) {
-                    if (node.rhs.windowExpression != null) {
-                        return true;
-                    }
-                    sqlNodeStack.push(node.rhs);
-                }
-
-                if (node.lhs != null) {
-                    if (node.lhs.windowExpression != null) {
-                        return true;
-                    }
-                    node = node.lhs;
-                } else if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            } else {
-                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
-                for (int i = 0, k = node.paramCount; i < k; i++) {
-                    ExpressionNode arg = node.args.getQuick(i);
-                    if (arg != null) {
-                        if (arg.windowExpression != null) {
-                            return true;
-                        }
-                        sqlNodeStack.push(arg);
-                    }
-                }
-                if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            }
-        }
-        return false;
     }
 
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
@@ -10812,6 +10768,51 @@ public class SqlOptimiser implements Mutable {
         final QueryModel outerModel = createWrapperModel(model);
         outerModel.addBottomUpColumn(nextColumn("*"));
         return outerModel;
+    }
+
+    static boolean checkForChildWindowFunctions(ArrayDeque<ExpressionNode> sqlNodeStack, ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowExpression != null) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowExpression != null) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowExpression != null) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
     }
 
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {

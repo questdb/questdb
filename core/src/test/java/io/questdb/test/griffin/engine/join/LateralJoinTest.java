@@ -1308,6 +1308,113 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testT103ReplaceColumnRefBinaryExpr() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tnext_id\tqty
+                            1\t2\t10.0
+                            2\t3\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.order_id + 1 AS next_id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT order_id, qty FROM trades WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT103bReplaceColumnRefMultiArgFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, qty2 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, null, '2024-01-01T00:10:00.000000Z'),
+                    (2, null, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tresult
+                            1\t10.0
+                            2\t30.0
+                            """,
+                    """
+                            SELECT o.id, coalesce(sub.qty, sub.qty2, 0) AS result
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty, qty2 FROM trades WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T103c: nested expressions in outer SELECT — (sub.qty * 2) + (sub.qty - 1).
+    @Test
+    public void testT103cReplaceColumnRefNestedExpr() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // (10*2)+(10-1)=29, (30*2)+(30-1)=89
+            assertQueryNoLeakCheck(
+                    """
+                            id\tresult
+                            1\t29.0
+                            2\t89.0
+                            """,
+                    """
+                            SELECT o.id, (sub.qty * 2) + (sub.qty - 1) AS result
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM trades WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
     // T10: INTERSECT, INNER, equality correlation — per-group intersection
     @Test
     public void testT10Intersect() throws Exception {

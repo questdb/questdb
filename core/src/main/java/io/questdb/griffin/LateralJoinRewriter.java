@@ -68,6 +68,7 @@ class LateralJoinRewriter implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ArrayDeque<ExpressionNode> sqlNodeStack;
+    private final ArrayDeque<ExpressionNode> sqlNodeStack2;
     private final ObjList<CharSequence> subCountColAliases;
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private boolean hasCorrelation;
@@ -80,6 +81,7 @@ class LateralJoinRewriter implements Mutable {
             ObjectPool<QueryModel> queryModelPool,
             ObjectPool<WindowExpression> windowExpressionPool,
             ArrayDeque<ExpressionNode> sqlNodeStack,
+            ArrayDeque<ExpressionNode> sqlNodeStack2,
             FunctionParser functionParser,
             ObjList<ExpressionNode> tempGroupingCols,
             ObjList<ExpressionNode> tempOuterCols,
@@ -96,6 +98,7 @@ class LateralJoinRewriter implements Mutable {
         this.queryModelPool = queryModelPool;
         this.windowExpressionPool = windowExpressionPool;
         this.sqlNodeStack = sqlNodeStack;
+        this.sqlNodeStack2 = sqlNodeStack2;
         this.functionParser = functionParser;
         this.groupingCols = tempGroupingCols;
         this.outerCols = tempOuterCols;
@@ -1614,7 +1617,6 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-
     private boolean hasNonEqualityCorrelation(ExpressionNode where, int depth) {
         if (where == null) {
             return false;
@@ -1778,41 +1780,104 @@ class LateralJoinRewriter implements Mutable {
         if (node == null) {
             return null;
         }
-        if (node.type == ExpressionNode.LITERAL) {
-            if (matchesOuterRefAlias(node.token, outerRefAlias)
-                    && node.token.length() > outerRefAlias.length()) {
-                ExpressionNode original = findOriginalOuterRef(node.token, outerRefCols);
-                return ExpressionNode.deepClone(expressionNodePool, original != null ? original : node);
-            }
-            CharSequence colName = node.token;
-            int dotPos = Chars.indexOf(colName, '.');
-            if (dotPos > 0) {
-                colName = colName.subSequence(dotPos + 1, colName.length());
-            }
-            CharSequence selectAlias;
-            if (dataSourceLayer != null) {
-                selectAlias = propagateColumnUp(colName, branchTop, dataSourceLayer);
-            } else {
-                ExpressionNode innerRef = expressionNodePool.next().of(
-                        ExpressionNode.LITERAL, colName, node.precedence, node.position
-                );
-                selectAlias = ensureColumnInSelect(branchTop, innerRef, colName);
-            }
-            CharSequence qualified = qualifyWithAlias(lateralAlias, selectAlias);
-            return expressionNodePool.next().of(
-                    ExpressionNode.LITERAL, qualified, node.precedence, node.position
-            );
+
+        ExpressionNode rootResult = liftLeaf(node, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+        if (rootResult != null) {
+            return rootResult;
         }
-        ExpressionNode clone = expressionNodePool.next().of(
+
+        ExpressionNode rootClone = expressionNodePool.next().of(
                 node.type, node.token, node.precedence, node.position
         );
-        clone.paramCount = node.paramCount;
-        clone.lhs = liftExpression(node.lhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
-        clone.rhs = liftExpression(node.rhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            clone.args.add(liftExpression(node.args.getQuick(i), outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer));
+        rootClone.paramCount = node.paramCount;
+        sqlNodeStack.clear();
+        sqlNodeStack2.clear();
+        sqlNodeStack.push(node);
+        sqlNodeStack2.push(rootClone);
+
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode orig = sqlNodeStack.pop();
+            ExpressionNode clone = sqlNodeStack2.pop();
+            if (orig.lhs != null) {
+                ExpressionNode leafResult = liftLeaf(orig.lhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+                if (leafResult != null) {
+                    clone.lhs = leafResult;
+                } else {
+                    clone.lhs = expressionNodePool.next().of(
+                            orig.lhs.type, orig.lhs.token, orig.lhs.precedence, orig.lhs.position
+                    );
+                    clone.lhs.paramCount = orig.lhs.paramCount;
+                    sqlNodeStack.push(orig.lhs);
+                    sqlNodeStack2.push(clone.lhs);
+                }
+            }
+            if (orig.rhs != null) {
+                ExpressionNode leafResult = liftLeaf(orig.rhs, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+                if (leafResult != null) {
+                    clone.rhs = leafResult;
+                } else {
+                    clone.rhs = expressionNodePool.next().of(
+                            orig.rhs.type, orig.rhs.token, orig.rhs.precedence, orig.rhs.position
+                    );
+                    clone.rhs.paramCount = orig.rhs.paramCount;
+                    sqlNodeStack.push(orig.rhs);
+                    sqlNodeStack2.push(clone.rhs);
+                }
+            }
+            for (int i = 0, n = orig.args.size(); i < n; i++) {
+                ExpressionNode argOrig = orig.args.getQuick(i);
+                ExpressionNode leafResult = liftLeaf(argOrig, outerRefAlias, outerRefCols, lateralAlias, branchTop, dataSourceLayer);
+                if (leafResult != null) {
+                    clone.args.add(leafResult);
+                } else {
+                    ExpressionNode argClone = expressionNodePool.next().of(
+                            argOrig.type, argOrig.token, argOrig.precedence, argOrig.position
+                    );
+                    argClone.paramCount = argOrig.paramCount;
+                    clone.args.add(argClone);
+                    sqlNodeStack.push(argOrig);
+                    sqlNodeStack2.push(argClone);
+                }
+            }
         }
-        return clone;
+        return rootClone;
+    }
+
+    // Returns transformed node if node is a LITERAL (leaf), null if non-leaf.
+    private ExpressionNode liftLeaf(
+            ExpressionNode node,
+            CharSequence outerRefAlias,
+            ObjList<QueryColumn> outerRefCols,
+            CharSequence lateralAlias,
+            QueryModel branchTop,
+            QueryModel dataSourceLayer
+    ) throws SqlException {
+        if (node.type != ExpressionNode.LITERAL) {
+            return null;
+        }
+        if (matchesOuterRefAlias(node.token, outerRefAlias)
+                && node.token.length() > outerRefAlias.length()) {
+            ExpressionNode original = findOriginalOuterRef(node.token, outerRefCols);
+            return ExpressionNode.deepClone(expressionNodePool, original != null ? original : node);
+        }
+        CharSequence colName = node.token;
+        int dotPos = Chars.indexOf(colName, '.');
+        if (dotPos > 0) {
+            colName = colName.subSequence(dotPos + 1, colName.length());
+        }
+        CharSequence selectAlias;
+        if (dataSourceLayer != null) {
+            selectAlias = propagateColumnUp(colName, branchTop, dataSourceLayer);
+        } else {
+            ExpressionNode innerRef = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, colName, node.precedence, node.position
+            );
+            selectAlias = ensureColumnInSelect(branchTop, innerRef, colName);
+        }
+        CharSequence qualified = qualifyWithAlias(lateralAlias, selectAlias);
+        return expressionNodePool.next().of(
+                ExpressionNode.LITERAL, qualified, node.precedence, node.position
+        );
     }
 
     private void liftOuterRefExpressions(
@@ -2293,6 +2358,7 @@ class LateralJoinRewriter implements Mutable {
         return result;
     }
 
+    // Iterative copy-on-write leaf replacement using post-order two-stack traversal.
     private ExpressionNode replaceColumnRef(
             ExpressionNode node,
             CharSequence qualifiedRef,
@@ -2301,34 +2367,69 @@ class LateralJoinRewriter implements Mutable {
         if (node == null) {
             return null;
         }
-        if (node.type == ExpressionNode.LITERAL
-                && Chars.equalsIgnoreCase(node.token, qualifiedRef)) {
-            return ExpressionNode.deepClone(expressionNodePool, replacement);
-        }
-        ExpressionNode newLhs = replaceColumnRef(node.lhs, qualifiedRef, replacement);
-        ExpressionNode newRhs = replaceColumnRef(node.rhs, qualifiedRef, replacement);
-        if (newLhs == node.lhs && newRhs == node.rhs) {
-            boolean isArgsChanged = false;
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                if (replaceColumnRef(node.args.getQuick(i), qualifiedRef, replacement) != node.args.getQuick(i)) {
-                    isArgsChanged = true;
-                    break;
+
+        sqlNodeStack.clear();
+        sqlNodeStack2.clear();
+        sqlNodeStack.push(node);
+        while (!sqlNodeStack.isEmpty()) {
+            ExpressionNode current = sqlNodeStack.pop();
+            sqlNodeStack2.push(current);
+            if (current.type != ExpressionNode.LITERAL && current.type != ExpressionNode.CONSTANT) {
+                if (current.lhs != null) {
+                    sqlNodeStack.push(current.lhs);
+                }
+                if (current.rhs != null) {
+                    sqlNodeStack.push(current.rhs);
+                }
+                for (int i = 0, n = current.args.size(); i < n; i++) {
+                    sqlNodeStack.push(current.args.getQuick(i));
                 }
             }
-            if (!isArgsChanged) {
-                return node;
+        }
+
+        while (!sqlNodeStack2.isEmpty()) {
+            ExpressionNode orig = sqlNodeStack2.pop();
+            if (orig.type == ExpressionNode.LITERAL) {
+                sqlNodeStack.push(Chars.equalsIgnoreCase(orig.token, qualifiedRef)
+                        ? ExpressionNode.deepClone(expressionNodePool, replacement)
+                        : orig);
+            } else if (orig.type == ExpressionNode.CONSTANT) {
+                sqlNodeStack.push(orig);
+            } else {
+                boolean changed = false;
+                int argsSize = orig.args.size();
+                // Pop args (top = args[n-1]) into nonCorrelatedPreds in reverse → forward order
+                nonCorrelatedPreds.clear();
+                for (int i = argsSize - 1; i >= 0; i--) {
+                    ExpressionNode newArg = sqlNodeStack.pop();
+                    nonCorrelatedPreds.add(newArg);
+                    if (newArg != orig.args.getQuick(i)) {
+                        changed = true;
+                    }
+                }
+                ExpressionNode newRhs = orig.rhs != null ? sqlNodeStack.pop() : null;
+                ExpressionNode newLhs = orig.lhs != null ? sqlNodeStack.pop() : null;
+                if (newLhs != orig.lhs || newRhs != orig.rhs) {
+                    changed = true;
+                }
+                if (!changed) {
+                    sqlNodeStack.push(orig);
+                } else {
+                    ExpressionNode clone = expressionNodePool.next().of(
+                            orig.type, orig.token, orig.precedence, orig.position
+                    );
+                    clone.paramCount = orig.paramCount;
+                    clone.lhs = newLhs;
+                    clone.rhs = newRhs;
+
+                    for (int i = nonCorrelatedPreds.size() - 1; i >= 0; i--) {
+                        clone.args.add(nonCorrelatedPreds.getQuick(i));
+                    }
+                    sqlNodeStack.push(clone);
+                }
             }
         }
-        ExpressionNode clone = expressionNodePool.next().of(
-                node.type, node.token, node.precedence, node.position
-        );
-        clone.paramCount = node.paramCount;
-        clone.lhs = newLhs;
-        clone.rhs = newRhs;
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            clone.args.add(replaceColumnRef(node.args.getQuick(i), qualifiedRef, replacement));
-        }
-        return clone;
+        return sqlNodeStack.pop();
     }
 
     private void replaceColumnRefInModel(
@@ -2344,6 +2445,7 @@ class LateralJoinRewriter implements Mutable {
                 col.of(col.getAlias(), rewritten);
             }
         }
+
         ObjList<ExpressionNode> orderBy = outerModel.getOrderBy();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             ExpressionNode rewritten = replaceColumnRef(orderBy.getQuick(i), qualifiedRef, replacement);
