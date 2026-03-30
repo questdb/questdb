@@ -27,10 +27,12 @@ package io.questdb.griffin;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.ev.ExpiringViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.table.ShowCreateExpiringViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateViewRecordCursorFactory;
@@ -68,6 +70,16 @@ public interface SqlParserCallback {
             throw SqlException.$(tableNameExpr.position, "view name expected, got table name");
         }
         return viewToken;
+    }
+
+    default RecordCursorFactory generateShowCreateExpiringViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final CharSequence viewName = model.getTableNameExpr().token;
+        final CharSequence unquoted = GenericLexer.unquote(viewName);
+        final ExpiringViewDefinition def = executionContext.getCairoEngine().getExpiringViewDefinition(unquoted);
+        if (def == null) {
+            throw SqlException.$(model.getTableNameExpr().position, "expiring view does not exist [name=").put(unquoted).put(']');
+        }
+        return new ShowCreateExpiringViewRecordCursorFactory(def, model.getTableNameExpr().position);
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {

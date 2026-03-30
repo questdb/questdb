@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ev.ExpiringViewDefinition;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -43,6 +44,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateExpiringViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CompileViewModel;
@@ -118,6 +120,7 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
+    private final CreateExpiringViewOperationBuilderImpl createExpiringViewOperationBuilder = new CreateExpiringViewOperationBuilderImpl();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -1197,6 +1200,10 @@ public class SqlParser {
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
+        if (isExpiringKeyword(tok)) {
+            expectTok(lexer, "view");
+            return parseCreateExpiringView(lexer, executionContext);
+        }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
                 throw SqlException.$(0, "materialized views are disabled");
@@ -2119,6 +2126,208 @@ public class SqlParser {
         return parseCreateViewExt(lexer, executionContext, sqlParserCallback, tok, vOpBuilder);
     }
 
+    private void expandExpiringView(
+            QueryModel model,
+            ExpiringViewDefinition evDef,
+            int viewPosition,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        // Build: SELECT * FROM <base_table> WHERE <negated predicate>
+        // The predicate describes WHEN rows expire, so we negate it to keep non-expired rows.
+        // For TIMESTAMP_COMPARE views, use "col >= now()" for better planner optimization
+        // instead of the generic "NOT (col < now())".
+        final String filterSql;
+        if (evDef.isTimestampCompare() && evDef.getExpiryColumnIndex() >= 0) {
+            filterSql = buildTimestampCompareFilter(evDef);
+        } else {
+            filterSql = "NOT (" + evDef.getExpiryPredicateSql() + ")";
+        }
+        final String syntheticSql = "SELECT * FROM " + evDef.getBaseTableName() + " WHERE " + filterSql;
+
+        final GenericLexer viewLexer = viewLexers.next();
+        viewLexer.of(syntheticSql);
+
+        final QueryModel subQuery = parseAsSubQuery(viewLexer, null, false, sqlParserCallback, null, true);
+        model.setNestedModel(subQuery);
+        model.setNestedModelIsSubQuery(true);
+        if (model.getAlias() == null) {
+            model.setAlias(literal(evDef.getViewToken().getTableName(), viewPosition));
+        }
+    }
+
+    private static String buildTimestampCompareFilter(ExpiringViewDefinition evDef) {
+        // Extract column name from predicate patterns like "col < now()" or "col <= now()"
+        // or "now() > col" or "now() >= col"
+        final String predicate = evDef.getExpiryPredicateSql().trim();
+        final String lower = predicate.toLowerCase();
+
+        if (lower.endsWith("< now()") || lower.endsWith("<now()")) {
+            final String col = predicate.substring(0, predicate.lastIndexOf('<')).trim();
+            return col + " >= now()";
+        }
+        if (lower.endsWith("<= now()") || lower.endsWith("<=now()")) {
+            final String col = predicate.substring(0, predicate.lastIndexOf('<')).trim();
+            return col + " > now()";
+        }
+        if (lower.startsWith("now() >")) {
+            String rest = predicate.substring(7).trim();
+            if (rest.startsWith("=")) {
+                // now() >= col => col < now() is expired => keep col >= now() ... wait, that's wrong
+                // now() >= col means col <= now() is expired, so keep NOT(col <= now()) = col > now()
+                rest = rest.substring(1).trim();
+                return rest + " > now()";
+            }
+            // now() > col => col < now() is expired => keep col >= now()
+            return rest + " >= now()";
+        }
+        // Fallback to generic negation
+        return "NOT (" + predicate + ")";
+    }
+
+    private ExecutionModel parseCreateExpiringView(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final CreateExpiringViewOperationBuilderImpl builder = createExpiringViewOperationBuilder;
+        builder.clear();
+
+        // Parse: [IF NOT EXISTS] <view_name>
+        CharSequence tok = tok(lexer, "view name or 'if'");
+        if (isIfKeyword(tok)) {
+            if (isNotKeyword(tok(lexer, "'not'")) && isExistsKeyword(tok(lexer, "'exists'"))) {
+                builder.setIfNotExists(true);
+                tok = tok(lexer, "view name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        }
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        final String viewName = Chars.toString(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()));
+        builder.setViewName(viewName, lexer.lastTokenPosition());
+
+        // Parse: ON <base_table>
+        expectTok(lexer, "on");
+        tok = tok(lexer, "base table name");
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        final String baseTableName = Chars.toString(unquote(tok));
+        builder.setBaseTableName(baseTableName, lexer.lastTokenPosition());
+
+        // Validate base table exists
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(baseTableName);
+        if (baseTableToken == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "base table does not exist [table=").put(baseTableName).put(']');
+        }
+
+        // Parse: EXPIRE WHEN <predicate>
+        expectTok(lexer, "expire");
+        expectTok(lexer, "when");
+
+        // Capture predicate SQL text: everything between WHEN and CLEANUP (or end of statement)
+        final int predicateStart = lexer.getPosition();
+        int predicateEnd = predicateStart;
+        int depth = 0;
+        boolean foundCleanup = false;
+        while (true) {
+            tok = optTok(lexer);
+            if (tok == null || Chars.equals(tok, ';')) {
+                predicateEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                break;
+            }
+            if (depth == 0 && isCleanupKeyword(tok)) {
+                predicateEnd = lexer.lastTokenPosition();
+                foundCleanup = true;
+                break;
+            }
+            if (Chars.equals(tok, '(')) {
+                depth++;
+            } else if (Chars.equals(tok, ')')) {
+                depth--;
+            }
+        }
+
+        final String predicateSql = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
+        if (predicateSql.isEmpty()) {
+            throw SqlException.$(predicateStart, "EXPIRE WHEN predicate is empty");
+        }
+        builder.setExpiryPredicateSql(predicateSql);
+
+        // Detect TIMESTAMP_COMPARE fast path pattern: <column> < now() or now() > <column>
+        detectTimestampComparePattern(builder, predicateSql, baseTableToken, executionContext);
+
+        // Parse: CLEANUP INTERVAL <duration>
+        if (foundCleanup) {
+            expectTok(lexer, "interval");
+            tok = tok(lexer, "cleanup interval value (e.g., 1h, 30m, 24h)");
+            final int multiple = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+            final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+            final long micros = strideToMicros(multiple, unit, lexer.lastTokenPosition());
+            builder.setCleanupIntervalMicros(micros);
+
+            // Check for trailing tokens
+            tok = optTok(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+        } else {
+            // Default cleanup interval: 1 hour
+            builder.setCleanupIntervalMicros(3_600_000_000L);
+        }
+
+        return builder;
+    }
+
+    private void detectTimestampComparePattern(
+            CreateExpiringViewOperationBuilderImpl builder,
+            String predicateSql,
+            TableToken baseTableToken,
+            SqlExecutionContext executionContext
+    ) {
+        // Pattern-match for: <column> < now() or <column> <= now() or now() > <column> or now() >= <column>
+        // This is a simple heuristic — check if the predicate is of the form "X < now()" or "now() > X"
+        final String normalized = predicateSql.trim().toLowerCase();
+
+        String columnName = null;
+        if (normalized.endsWith("< now()") || normalized.endsWith("<now()")) {
+            columnName = normalized.substring(0, normalized.lastIndexOf('<')).trim();
+        } else if (normalized.endsWith("<= now()") || normalized.endsWith("<=now()")) {
+            columnName = normalized.substring(0, normalized.lastIndexOf('<')).trim();
+        } else if (normalized.startsWith("now() >")) {
+            String rest = normalized.substring(7).trim();
+            if (rest.startsWith("=")) {
+                rest = rest.substring(1).trim();
+            }
+            columnName = rest;
+        }
+
+        if (columnName != null && !columnName.isEmpty() && !columnName.contains(" ")) {
+            // Try to resolve the column in the base table metadata
+            try (io.questdb.cairo.sql.TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(baseTableToken)) {
+                final int colIndex = metadata.getColumnIndexQuiet(columnName);
+                if (colIndex >= 0) {
+                    final int colType = metadata.getColumnType(colIndex);
+                    if (colType == io.questdb.cairo.ColumnType.TIMESTAMP) {
+                        builder.setExpiryType(ExpiringViewDefinition.EXPIRY_TYPE_TIMESTAMP_COMPARE);
+                        builder.setExpiryColumnIndex(colIndex);
+                    }
+                }
+            }
+        }
+    }
+
+    private static long strideToMicros(int multiple, char unit, int position) throws SqlException {
+        return switch (unit) {
+            case 's' -> multiple * 1_000_000L;
+            case 'm' -> multiple * 60_000_000L;
+            case 'h' -> multiple * 3_600_000_000L;
+            case 'd' -> multiple * 86_400_000_000L;
+            case 'w' -> multiple * 604_800_000_000L;
+            default ->
+                    throw SqlException.$(position, "unsupported cleanup interval unit, expected s/m/h/d/w");
+        };
+    }
+
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
@@ -2405,11 +2614,15 @@ public class SqlParser {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
                         showKind = QueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else if (tok != null && isExpiringKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_EXPIRING_VIEW;
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = QueryModel.SHOW_CREATE_VIEW;
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'EXPIRING VIEW'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
@@ -2611,8 +2824,13 @@ public class SqlParser {
             proposedNested = variableExpr.rhs.queryModel;
         }
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
-        if (tt != null && tt.isView()) {
+        final CharSequence unquotedTok = unquote(tok);
+        final ExpiringViewDefinition evDef = cairoEngine.getExpiringViewDefinition(unquotedTok);
+        final TableToken tt = evDef == null ? cairoEngine.getTableTokenIfExists(unquotedTok) : null;
+        if (evDef != null) {
+            expandExpiringView(model, evDef, lexer.lastTokenPosition(), sqlParserCallback);
+            tok = setModelAliasAndTimestamp(lexer, model);
+        } else if (tt != null && tt.isView()) {
             compileViewQuery(model, tt, lexer.lastTokenPosition());
             tok = setModelAliasAndTimestamp(lexer, model);
             // expect "(" in case of sub-query
@@ -3277,8 +3495,12 @@ public class SqlParser {
 
         tok = expectTableNameOrSubQuery(lexer);
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
-        if (tt != null && tt.isView()) {
+        final CharSequence unquotedJoinTok = unquote(tok);
+        final ExpiringViewDefinition joinEvDef = cairoEngine.getExpiringViewDefinition(unquotedJoinTok);
+        final TableToken tt = joinEvDef == null ? cairoEngine.getTableTokenIfExists(unquotedJoinTok) : null;
+        if (joinEvDef != null) {
+            expandExpiringView(joinModel, joinEvDef, lexer.lastTokenPosition(), sqlParserCallback);
+        } else if (tt != null && tt.isView()) {
             compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
         } else if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, true, sqlParserCallback, decls));

@@ -34,6 +34,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.ev.ExpiringViewDefinition;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
@@ -81,6 +82,9 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.ops.CopyImportFactory;
+import io.questdb.griffin.engine.ops.CreateExpiringViewOperation;
+import io.questdb.griffin.engine.ops.CreateExpiringViewOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateExpiringViewOperationImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -503,6 +507,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 break;
             case OperationCodes.DROP_MAT_VIEW:
                 executeDropMatView((GenericDropOperation) op, executionContext);
+                break;
+            case OperationCodes.CREATE_EXPIRING_VIEW:
+                executeCreateExpiringView((CreateExpiringViewOperation) op, executionContext);
+                break;
+            case OperationCodes.DROP_EXPIRING_VIEW:
+                executeDropExpiringView((GenericDropOperation) op, executionContext);
                 break;
             case OperationCodes.DROP_ALL:
                 executeDropAllTables(executionContext);
@@ -1730,12 +1740,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isViewKeyword(tok))) {
+        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isViewKeyword(tok) && !isExpiringKeyword(tok))) {
             compileAlterExt(executionContext, tok);
             return;
         }
 
-        if (isTableKeyword(tok)) {
+        if (isExpiringKeyword(tok)) {
+            expectKeyword(lexer, "view");
+            if (executionContext.isValidationOnly()) {
+                compiledQuery.ofAlterView();
+                return;
+            }
+            compileAlterExpiringView(executionContext);
+        } else if (isTableKeyword(tok)) {
             if (executionContext.isValidationOnly()) {
                 compiledQuery.ofAlter(null);
                 return;
@@ -1754,6 +1771,107 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             compileAlterView(executionContext);
         }
+    }
+
+    private void compileAlterExpiringView(SqlExecutionContext executionContext) throws SqlException {
+        final int viewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "expiring view name");
+        assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
+        tok = unquote(tok);
+        final String viewName = Chars.toString(tok);
+
+        final ExpiringViewDefinition existingDef = engine.getExpiringViewDefinition(viewName);
+        if (existingDef == null) {
+            throw SqlException.$(viewNamePosition, "expiring view does not exist [name=").put(viewName).put(']');
+        }
+
+        // Expect: SET EXPIRE WHEN <predicate> [CLEANUP INTERVAL <duration>]
+        expectKeyword(lexer, "set");
+        expectKeyword(lexer, "expire");
+        expectKeyword(lexer, "when");
+
+        // Capture predicate SQL text (same logic as in parser's parseCreateExpiringView)
+        final int predicateStart = lexer.getPosition();
+        int predicateEnd = predicateStart;
+        int depth = 0;
+        boolean foundCleanup = false;
+        while (true) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || Chars.equals(tok, ';')) {
+                predicateEnd = tok == null ? lexer.getPosition() : lexer.lastTokenPosition();
+                break;
+            }
+            if (depth == 0 && isCleanupKeyword(tok)) {
+                predicateEnd = lexer.lastTokenPosition();
+                foundCleanup = true;
+                break;
+            }
+            if (Chars.equals(tok, '(')) {
+                depth++;
+            } else if (Chars.equals(tok, ')')) {
+                depth--;
+            }
+        }
+
+        final String predicateSql = Chars.toString(lexer.getContent(), predicateStart, predicateEnd).trim();
+        if (predicateSql.isEmpty()) {
+            throw SqlException.$(predicateStart, "EXPIRE WHEN predicate is empty");
+        }
+
+        long cleanupIntervalMicros;
+        if (foundCleanup) {
+            expectKeyword(lexer, "interval");
+            tok = expectToken(lexer, "cleanup interval value (e.g., 1h, 30m, 24h)");
+            final int multiple = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+            final char unit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
+            cleanupIntervalMicros = strideToMicros(multiple, unit, lexer.lastTokenPosition());
+        } else {
+            cleanupIntervalMicros = existingDef.getCleanupIntervalMicros(); // keep existing
+        }
+
+        // Detect timestamp compare pattern
+        int expiryType = ExpiringViewDefinition.EXPIRY_TYPE_CUSTOM;
+        int expiryColumnIndex = -1;
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(existingDef.getBaseTableName());
+        if (baseTableToken != null) {
+            final String normalized = predicateSql.trim().toLowerCase();
+            String columnName = null;
+            if (normalized.endsWith("< now()") || normalized.endsWith("<now()")) {
+                columnName = normalized.substring(0, normalized.lastIndexOf('<')).trim();
+            } else if (normalized.endsWith("<= now()") || normalized.endsWith("<=now()")) {
+                columnName = normalized.substring(0, normalized.lastIndexOf('<')).trim();
+            } else if (normalized.startsWith("now() >")) {
+                String rest = normalized.substring(7).trim();
+                if (rest.startsWith("=")) {
+                    rest = rest.substring(1).trim();
+                }
+                columnName = rest;
+            }
+            if (columnName != null && !columnName.isEmpty() && !columnName.contains(" ")) {
+                try (TableMetadata metadata = engine.getTableMetadata(baseTableToken)) {
+                    int colIndex = metadata.getColumnIndexQuiet(columnName);
+                    if (colIndex >= 0 && metadata.getColumnType(colIndex) == ColumnType.TIMESTAMP) {
+                        expiryType = ExpiringViewDefinition.EXPIRY_TYPE_TIMESTAMP_COMPARE;
+                        expiryColumnIndex = colIndex;
+                    }
+                }
+            }
+        }
+
+        engine.alterExpiringView(path, blockFileWriter, viewName, predicateSql, expiryType, expiryColumnIndex, cleanupIntervalMicros);
+        compiledQuery.ofAlterView();
+    }
+
+    private static long strideToMicros(int multiple, char unit, int position) throws SqlException {
+        return switch (unit) {
+            case 's' -> multiple * 1_000_000L;
+            case 'm' -> multiple * 60_000_000L;
+            case 'h' -> multiple * 3_600_000_000L;
+            case 'd' -> multiple * 86_400_000_000L;
+            case 'w' -> multiple * 604_800_000_000L;
+            default ->
+                    throw SqlException.$(position, "unsupported cleanup interval unit, expected s/m/h/d/w");
+        };
     }
 
     private void compileAlterMatView(SqlExecutionContext executionContext) throws SqlException {
@@ -2689,6 +2807,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
+            } else if (isExpiringKeyword(tok)) {
+                // DROP EXPIRING VIEW [ IF EXISTS ] name [;]
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.getPosition(), "expected ").put("[IF EXISTS] expiring-view-name");
+                }
+                boolean hasIfExists = false;
+                int evNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS expiring-view-name");
+                    }
+                    hasIfExists = true;
+                    evNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "expiring view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence evName = unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_EXPIRING_VIEW);
+                dropOperationBuilder.setEntityName(evName);
+                dropOperationBuilder.setEntityNamePosition(evNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
             } else if (isAllKeyword(tok)) {
                 // DROP ALL[;] or legacy DROP ALL TABLES [;]
                 tok = SqlUtil.fetchNext(lexer);
@@ -3524,6 +3680,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_EXPIRING_VIEW:
+                    compiledQuery.ofCreateExpiringView(((CreateExpiringViewOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
@@ -4234,6 +4394,80 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 ((CairoException) th).position(createViewOp.getTableNamePosition());
             }
             QueryProgress.logError(th, sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
+    private void executeCreateExpiringView(CreateExpiringViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+            final String viewName = op.getViewName();
+            final TableToken existingToken = executionContext.getTableTokenIfExists(viewName);
+            if (existingToken != null) {
+                if (op.ignoreIfExists()) {
+                    ((CreateExpiringViewOperationImpl) op).updateOperationFutureTableToken(existingToken);
+                    return;
+                }
+                throw SqlException.$(op.getViewNamePosition(), "table or view with this name already exists");
+            }
+
+            // Check if an expiring view with this name already exists
+            final ExpiringViewDefinition existingDef = engine.getExpiringViewDefinition(viewName);
+            if (existingDef != null) {
+                if (op.ignoreIfExists()) {
+                    ((CreateExpiringViewOperationImpl) op).updateOperationFutureTableToken(existingDef.getViewToken());
+                    return;
+                }
+                throw SqlException.$(op.getViewNamePosition(), "expiring view already exists [name=").put(viewName).put(']');
+            }
+
+            // Validate base table exists
+            final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+            if (baseTableToken == null) {
+                throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [table=").put(op.getBaseTableName()).put(']');
+            }
+
+            final ExpiringViewDefinition definition = engine.createExpiringView(
+                    executionContext.getSecurityContext(),
+                    blockFileWriter,
+                    path,
+                    op
+            );
+
+            ((CreateExpiringViewOperationImpl) op).updateOperationFutureTableToken(definition.getViewToken());
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                ((CairoException) th).position(op.getViewNamePosition());
+            }
+            QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
+            throw th;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
+        }
+    }
+
+    private void executeDropExpiringView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+            final ExpiringViewDefinition definition = engine.getExpiringViewDefinition(op.getEntityName());
+            if (definition == null) {
+                if (op.ifExists()) {
+                    return;
+                }
+                throw SqlException.$(op.getEntityNamePosition(), "expiring view does not exist [name=").put(op.getEntityName()).put(']');
+            }
+
+            engine.dropExpiringView(path, op.getEntityName());
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+        } catch (Throwable th) {
+            QueryProgress.logError(th, sqlId, op.getSqlText(), executionContext, beginNanos);
             throw th;
         } finally {
             queryRegistry.unregister(sqlId, executionContext);

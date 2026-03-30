@@ -29,6 +29,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
+import io.questdb.cairo.ev.ExpiringViewDefinition;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -168,6 +169,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
+    private final ConcurrentHashMap<ExpiringViewDefinition> expiringViewRegistry = new ConcurrentHashMap<>();
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -309,6 +311,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_TABLE_AS_SELECT:
             case CREATE_MAT_VIEW:
             case CREATE_VIEW:
+            case CREATE_EXPIRING_VIEW:
             case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
                 try (Operation op = cq.getOperation()) {
@@ -525,6 +528,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
             }
+
+            // Load expiring view definitions from _ev.* files in table directories
+            loadExpiringViewDefinitions(tableTokenBucket, reader, path, pathLen);
         }
     }
 
@@ -555,6 +561,7 @@ public class CairoEngine implements Closeable, WriterSource {
         matViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
+        expiringViewRegistry.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -698,6 +705,143 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
         return viewDefinition;
+    }
+
+    public @NotNull ExpiringViewDefinition createExpiringView(
+            SecurityContext securityContext,
+            BlockFileWriter blockFileWriter,
+            @Transient Path path,
+            io.questdb.griffin.engine.ops.CreateExpiringViewOperation op
+    ) {
+        final String viewName = op.getViewName();
+
+        // Check for name conflicts
+        if (getTableTokenIfExists(viewName) != null) {
+            throw CairoException.nonCritical().put("table or view with this name already exists [name=").put(viewName).put(']');
+        }
+        if (expiringViewRegistry.get(viewName) != null) {
+            throw CairoException.nonCritical().put("expiring view already exists [name=").put(viewName).put(']');
+        }
+
+        // Validate base table exists
+        final TableToken baseTableToken = getTableTokenIfExists(op.getBaseTableName());
+        if (baseTableToken == null) {
+            throw CairoException.nonCritical().put("base table does not exist [table=").put(op.getBaseTableName()).put(']');
+        }
+
+        // Create a simple TableToken for the view (not a real table)
+        final int viewId = (int) tableIdGenerator.getNextId();
+        final TableToken viewToken = new TableToken(viewName, viewName, null, viewId, false, false, false, false, false, false);
+
+        // Initialize the definition
+        final ExpiringViewDefinition definition = new ExpiringViewDefinition();
+        definition.init(
+                viewToken,
+                op.getBaseTableName(),
+                op.getExpiryPredicateSql(),
+                op.getExpiryType(),
+                op.getExpiryColumnIndex(),
+                op.getCleanupIntervalMicros()
+        );
+
+        // Persist _ev file in the base table's directory
+        path.of(configuration.getDbRoot()).concat(baseTableToken).concat(ExpiringViewDefinition.EXPIRING_VIEW_DEFINITION_FILE_NAME).put('.').put(viewName);
+        blockFileWriter.of(path.$());
+        ExpiringViewDefinition.append(definition, blockFileWriter);
+        blockFileWriter.close();
+
+        // Register in memory
+        expiringViewRegistry.put(viewName, definition);
+
+        LOG.info().$("created expiring view [name=").$(viewName)
+                .$(", baseTable=").$(op.getBaseTableName())
+                .$(", expiryType=").$(op.getExpiryType())
+                .$(']').$();
+
+        return definition;
+    }
+
+    public void dropExpiringView(@Transient Path path, CharSequence viewName) {
+        final ExpiringViewDefinition definition = expiringViewRegistry.get(viewName);
+        if (definition == null) {
+            throw CairoException.nonCritical().put("expiring view does not exist [name=").put(viewName).put(']');
+        }
+
+        // Remove the _ev file from the base table's directory
+        final TableToken baseTableToken = getTableTokenIfExists(definition.getBaseTableName());
+        if (baseTableToken != null) {
+            path.of(configuration.getDbRoot()).concat(baseTableToken).concat(ExpiringViewDefinition.EXPIRING_VIEW_DEFINITION_FILE_NAME).put('.').put(viewName);
+            configuration.getFilesFacade().remove(path.$());
+        }
+
+        // Deregister from memory
+        expiringViewRegistry.remove(viewName);
+
+        LOG.info().$("dropped expiring view [name=").$(viewName).$(']').$();
+    }
+
+    public void alterExpiringView(
+            @Transient Path path,
+            BlockFileWriter blockFileWriter,
+            CharSequence viewName,
+            String expiryPredicateSql,
+            int expiryType,
+            int expiryColumnIndex,
+            long cleanupIntervalMicros
+    ) {
+        final ExpiringViewDefinition definition = expiringViewRegistry.get(viewName);
+        if (definition == null) {
+            throw CairoException.nonCritical().put("expiring view does not exist [name=").put(viewName).put(']');
+        }
+
+        final String baseTableName = definition.getBaseTableName();
+        final TableToken baseTableToken = getTableTokenIfExists(baseTableName);
+        if (baseTableToken == null) {
+            throw CairoException.nonCritical().put("base table does not exist [table=").put(baseTableName).put(']');
+        }
+
+        // Delete old _ev file
+        path.of(configuration.getDbRoot()).concat(baseTableToken).concat(ExpiringViewDefinition.EXPIRING_VIEW_DEFINITION_FILE_NAME).put('.').put(viewName);
+        configuration.getFilesFacade().remove(path.$());
+
+        // Update definition in memory
+        definition.init(
+                definition.getViewToken(),
+                baseTableName,
+                expiryPredicateSql,
+                expiryType,
+                expiryColumnIndex,
+                cleanupIntervalMicros
+        );
+
+        // Write new _ev file
+        path.of(configuration.getDbRoot()).concat(baseTableToken).concat(ExpiringViewDefinition.EXPIRING_VIEW_DEFINITION_FILE_NAME).put('.').put(viewName);
+        blockFileWriter.of(path.$());
+        ExpiringViewDefinition.append(definition, blockFileWriter);
+        blockFileWriter.close();
+
+        LOG.info().$("altered expiring view [name=").$(viewName)
+                .$(", baseTable=").$(baseTableName)
+                .$(']').$();
+    }
+
+    public ExpiringViewDefinition getExpiringViewDefinition(CharSequence viewName) {
+        return expiringViewRegistry.get(viewName);
+    }
+
+    public ConcurrentHashMap<ExpiringViewDefinition> getExpiringViewRegistry() {
+        return expiringViewRegistry;
+    }
+
+    public int getExpiringViewsByBaseTable(CharSequence baseTableName, ObjList<ExpiringViewDefinition> dest) {
+        dest.clear();
+        for (CharSequence viewName : expiringViewRegistry.keySet()) {
+            final ExpiringViewDefinition def = expiringViewRegistry.get(viewName);
+            if (def != null && Chars.equals(def.getBaseTableName(), baseTableName)) {
+                dest.add(def);
+            }
+        }
+        return dest.size();
     }
 
     public ViewCompilerExecutionContext createViewCompilerContext(int workerCount) {
@@ -2096,6 +2240,76 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.viewDoesNotExist(tableToken.getTableName());
         }
         return state.getViewMetadata();
+    }
+
+    private void loadExpiringViewDefinitions(
+            ObjHashSet<TableToken> tableTokenBucket,
+            BlockFileReader reader,
+            Path path,
+            int pathLen
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final String evPrefix = ExpiringViewDefinition.EXPIRING_VIEW_DEFINITION_FILE_NAME + ".";
+        final io.questdb.std.str.StringSink nameSink = new io.questdb.std.str.StringSink();
+
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            final TableToken tableToken = tableTokenBucket.get(i);
+            if (tableToken.isView() || tableToken.isMatView()) {
+                continue;
+            }
+
+            // Scan directory for _ev.* files
+            long pFind = ff.findFirst(path.trimTo(pathLen).concat(tableToken).$());
+            if (pFind > 0) {
+                try {
+                    do {
+                        if (ff.findType(pFind) == Files.DT_FILE) {
+                            nameSink.clear();
+                            io.questdb.std.str.Utf8s.utf8ToUtf16Z(ff.findName(pFind), nameSink);
+                            if (Chars.startsWith(nameSink, evPrefix)) {
+                                final String viewName = nameSink.subSequence(evPrefix.length(), nameSink.length()).toString();
+                                loadSingleExpiringView(viewName, tableToken, reader, path, pathLen, nameSink.toString());
+                            }
+                        }
+                    } while (ff.findNext(pFind) > 0);
+                } finally {
+                    ff.findClose(pFind);
+                }
+            }
+        }
+    }
+
+    private void loadSingleExpiringView(
+            String viewName,
+            TableToken baseTableToken,
+            BlockFileReader reader,
+            Path path,
+            int pathLen,
+            String fileName
+    ) {
+        try {
+            path.trimTo(pathLen).concat(baseTableToken).concat(fileName);
+            reader.of(path.$());
+            final BlockFileReader.BlockCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                final io.questdb.cairo.file.ReadableBlock block = cursor.next();
+                if (block.type() == ExpiringViewDefinition.EXPIRING_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+                    final ExpiringViewDefinition definition = new ExpiringViewDefinition();
+                    final int viewId = (int) tableIdGenerator.getNextId();
+                    final TableToken viewToken = new TableToken(viewName, viewName, null, viewId, false, false, false, false, false, false);
+                    ExpiringViewDefinition.readDefinitionFromBlock(definition, block, viewToken);
+                    expiringViewRegistry.put(viewName, definition);
+                    LOG.info().$("loaded expiring view [name=").$(viewName)
+                            .$(", baseTable=").$(definition.getBaseTableName())
+                            .$(']').$();
+                    break;
+                }
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not load expiring view [name=").$(viewName)
+                    .$(", msg=").$(th.getMessage())
+                    .I$();
+        }
     }
 
     private void notifyViewStoresAboutDrop(TableToken droppedToken) {

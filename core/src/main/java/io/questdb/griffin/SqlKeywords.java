@@ -250,6 +250,17 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'y';
     }
 
+    public static boolean isCleanupKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'a'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 'u'
+                && (tok.charAt(6) | 32) == 'p';
+    }
+
     public static boolean isColonColon(CharSequence tok) {
         return tok.length() == 2
                 && tok.charAt(0) == ':'
@@ -735,6 +746,18 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 's';
     }
 
+    public static boolean isExpiringKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'x'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'n'
+                && (tok.charAt(7) | 32) == 'g';
+    }
+
     public static boolean isExplainKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'e'
@@ -1024,6 +1047,18 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'e'
                 && (tok.charAt(7) | 32) == 'c'
                 && (tok.charAt(8) | 32) == 't';
+    }
+
+    public static boolean isIntervalKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'i'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'v'
+                && (tok.charAt(6) | 32) == 'a'
+                && (tok.charAt(7) | 32) == 'l';
     }
 
     public static boolean isIntoKeyword(CharSequence tok) {
