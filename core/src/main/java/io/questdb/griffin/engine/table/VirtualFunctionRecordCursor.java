@@ -35,17 +35,13 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
-import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
-    private static final Log LOG = LogFactory.getLog(VirtualFunctionRecordCursor.class);
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
@@ -54,7 +50,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
-    private int debugRowCount;
 
     public VirtualFunctionRecordCursor(
             @NotNull PriorityMetadata priorityMetadata,
@@ -131,23 +126,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (result && memoizerCount > 0) {
             memoizeFunctions(recordA);
         }
-        if (FillRangeRecordCursorFactory.INSTRUMENT_LOG && result && debugRowCount < 80 && functions.size() >= 2 && functions.getQuick(0) instanceof ColumnFunction) {
-            debugRowCount++;
-            long f0val = Long.MIN_VALUE;
-            long f1val = Long.MIN_VALUE;
-            try {
-                f0val = functions.getQuick(0).getLong(recordA.getInternalJoinRecord());
-                f1val = functions.getQuick(1).getTimestamp(recordA.getInternalJoinRecord());
-            } catch (Throwable ignore) {
-                // best-effort debug logging
-            }
-            LOG.info().$("hasNext row #").$(debugRowCount)
-                    .$(" funcs=").$(functions.size())
-                    .$(" baseCursor=").$(baseCursor.getClass().getSimpleName())
-                    .$(" f0.getLong=").$(f0val)
-                    .$(" f1.getTimestamp=").$(f1val)
-                    .$();
-        }
         return result;
     }
 
@@ -169,7 +147,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         if (recordB != null) {
             recordB.of(baseCursor.getRecordB());
         }
-        debugRowCount = 0;
         cursor.toTop();
     }
 
@@ -206,7 +183,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         assert baseCursor != null;
         baseCursor.toTop();
         GroupByUtils.toTop(functions);
-        debugRowCount = 0;
     }
 
     private void memoizeFunctions(VirtualFunctionRecord record) {

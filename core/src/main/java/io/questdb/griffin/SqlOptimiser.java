@@ -43,7 +43,6 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
-import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowDefaultTransactionReadOnlyCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
@@ -10967,13 +10966,7 @@ public class SqlOptimiser implements Mutable {
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteDistinct(rewrittenModel);
 
-            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
-                LOG.info().$("optimise :: (1) before `rewriteSampleBy`: ").$(rewrittenModel).$();
-            }
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
-            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
-                LOG.info().$("optimise :: (2) after `rewriteSampleBy`: ").$(rewrittenModel).$();
-            }
 
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
@@ -10983,13 +10976,7 @@ public class SqlOptimiser implements Mutable {
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
 
-            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
-                LOG.info().$("optimise :: (3) before `rewriteSelectClause`: ").$(rewrittenModel).$();
-            }
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            if (FillRangeRecordCursorFactory.INSTRUMENT_LOG) {
-                LOG.info().$("optimise :: (4) after `rewriteSelectClause`: ").$(rewrittenModel).$();
-            }
 
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);

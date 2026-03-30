@@ -2033,7 +2033,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY",
@@ -2126,7 +2126,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"
@@ -2185,7 +2185,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2216,7 +2216,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T01:00:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T01:00:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2248,7 +2248,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T01:59:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T01:59:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -2279,7 +2279,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-27T23:01:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-27T23:01:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -5248,7 +5248,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-10-29T22:00:00.000000Z', 3600 * 1000000) " +
+                            "SELECT x::INT, timestamp_sequence('2021-10-29T22:00:00.000000Z', 3_600_000_000L) " +
                             "FROM long_sequence(100);"
             );
 
@@ -5286,7 +5286,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-03-26T23:00:00.000000Z', 3600 * 1000000) " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-26T23:00:00.000000Z', 3_600_000_000L) " +
                             "FROM long_sequence(100);"
             );
 
@@ -5324,7 +5324,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-04-02T10:15:00.000000Z', 3600 * 1000000) " +
+                            "SELECT x::INT, timestamp_sequence('2021-04-02T10:15:00.000000Z', 3_600_000_000L) " +
                             "FROM long_sequence(120);"
             );
 
@@ -5364,7 +5364,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-09-23T11:15:00.000000Z', 3600 * 1000000) " +
+                            "SELECT x::INT, timestamp_sequence('2021-09-23T11:15:00.000000Z', 3_600_000_000L) " +
                             "FROM long_sequence(120);"
             );
 
@@ -5751,7 +5751,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -5770,7 +5770,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "   rnd_double(1)*180 lat," +
                     "   rnd_double(1)*180 lon," +
                     "   rnd_symbol('a') s," +
-                    "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                    "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                     "   from" +
                     "   long_sequence(100)" +
                     "), index(s) timestamp(k) partition by DAY");
@@ -6134,7 +6134,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   rnd_symbol('a','b','c') s1," +
                         "   rnd_symbol('foo','bar') s2," +
                         "   rnd_double(1) d1," +
-                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60*1000000L) ts" +
+                        "   timestamp_sequence('2023-05-16T00:00:00.00000Z', 60_000_000L) ts" +
                         "   from long_sequence(100)" +
                         "), index(s1), index(s2) timestamp(ts) partition by DAY",
                 null,
@@ -7119,7 +7119,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-10-30T21:00:00.000000Z', 600 * 1000000) " +
+                            "SELECT x::INT, timestamp_sequence('2021-10-30T21:00:00.000000Z', 600_000_000L) " +
                             "FROM long_sequence(96);"
             );
 
@@ -7161,7 +7161,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-03-27T21:00:00.000000Z', 600 * 1000000) " +
+                            "SELECT x::INT, timestamp_sequence('2021-03-27T21:00:00.000000Z', 600_000_000L) " +
                             "FROM long_sequence(96);"
             );
 
@@ -11208,7 +11208,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11288,7 +11288,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11370,7 +11370,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11504,7 +11504,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11798,7 +11798,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11918,7 +11918,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_byte() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12038,7 +12038,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_float() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12158,7 +12158,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12278,7 +12278,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_short() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12481,7 +12481,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -12529,7 +12529,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -13251,7 +13251,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3100000000) k" +
+                        " timestamp_sequence(172800000000, 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -13443,7 +13443,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -15389,7 +15389,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3100000000) k" +
+                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000Z' as timestamp), 3_100_000_000L) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -18021,7 +18021,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60_000_000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"

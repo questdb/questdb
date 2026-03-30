@@ -42,8 +42,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -66,8 +64,6 @@ import org.jetbrains.annotations.Nullable;
  * via the above optimisation).
  */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
-    public static final boolean INSTRUMENT_LOG = false;
-    public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor;
     private final ObjList<Function> fillValues;
@@ -120,25 +116,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             } else {
                 throw SqlException.$(-1, "not enough fill values");
-            }
-        }
-
-        if (INSTRUMENT_LOG) {
-            RecordMetadata ownMeta = getMetadata();
-            RecordMetadata baseMeta = base.getMetadata();
-            for (int i = 0, n = ownMeta.getColumnCount(); i < n; i++) {
-                LOG.info().$("FillRange own metadata: col[").$(i)
-                        .$("]=").$(ownMeta.getColumnName(i))
-                        .$(" type=").$(ColumnType.nameOf(ownMeta.getColumnType(i)))
-                        .$(" tsIdx=").$(ownMeta.getTimestampIndex())
-                        .$();
-            }
-            for (int i = 0, n = baseMeta.getColumnCount(); i < n; i++) {
-                LOG.info().$("FillRange base metadata: col[").$(i)
-                        .$("]=").$(baseMeta.getColumnName(i))
-                        .$(" type=").$(ColumnType.nameOf(baseMeta.getColumnType(i)))
-                        .$(" tsIdx=").$(baseMeta.getTimestampIndex())
-                        .$();
             }
         }
 
@@ -267,14 +244,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             // that is not ordered on time. For that reason all the filling is done at the end
             if (gapFilling) {
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-                boolean found = foundGapToFill();
-                if (INSTRUMENT_LOG && found && columnCount >= 2) {
-                    LOG.info().$("hasNext gap row: ts=").$(nextBucketTimestamp)
-                            .$(" getLong(0)=").$(fillingRecord.getLong(0))
-                            .$(" getLong(1)=").$(fillingRecord.getLong(1))
-                            .$();
-                }
-                return found;
+                return foundGapToFill();
             } else if (baseCursor.hasNext()) {
                 // Scan base cursor and return all the records
                 // Also save all the timestamps already returned by the base cursor
@@ -287,34 +257,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 // Start saving timestamps to determine the gaps
                 presentTimestamps.add(lastTimestamp = timestamp);
-                if (INSTRUMENT_LOG && columnCount >= 2) {
-                    LOG.info().$("hasNext base row: ts=").$(timestamp)
-                            .$(" getLong(0)=").$(fillingRecord.getLong(0))
-                            .$(" getLong(1)=").$(fillingRecord.getLong(1))
-                            .$();
-                }
                 return true;
             }
             gapFilling = true;
             prepareGapFilling();
-            if (INSTRUMENT_LOG) {
-                LOG.info().$("switching to gap filling: timestampIndex=").$(timestampIndex)
-                        .$(" fillValues.size=").$(fillValues.size())
-                        .$();
-                for (int i = 0, n = fillValues.size(); i < n; i++) {
-                    LOG.info().$("  fillValues[").$(i).$("]=").$(fillValues.getQuick(i) != null ? fillValues.getQuick(i).getClass().getSimpleName() : "null")
-                            .$(" type=").$(fillValues.getQuick(i) != null ? fillValues.getQuick(i).getType() : -1)
-                            .$();
-                }
-            }
-            boolean firstGap = foundGapToFill();
-            if (INSTRUMENT_LOG && firstGap && columnCount >= 2) {
-                LOG.info().$("hasNext first gap row: ts=").$(nextBucketTimestamp)
-                        .$(" getLong(0)=").$(fillingRecord.getLong(0))
-                        .$(" getLong(1)=").$(fillingRecord.getLong(1))
-                        .$();
-            }
-            return firstGap;
+            return foundGapToFill();
         }
 
         @Override
@@ -370,57 +317,20 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
-            if (INSTRUMENT_LOG) {
-                for (int dbg = 0; dbg < valueFuncs.size(); dbg++) {
-                    Function f = valueFuncs.getQuick(dbg);
-                    LOG.info().$("initValueFuncs ENTER [").$(dbg).$("]=")
-                            .$(f == null ? "java-null" : f.getClass().getSimpleName())
-                            .$(f == NullConstant.NULL ? " (IS NullConstant.NULL)" : "")
-                            .$(" size=").$(valueFuncs.size())
-                            .$(" timestampIndex=").$(timestampIndex)
-                            .$();
-                }
-            }
             // can't just check null, as we use this as the placeholder value
             if (valueFuncs.size() - 1 < timestampIndex) {
                 // timestamp is the last column, so we add it
-                if (INSTRUMENT_LOG) {
-                    LOG.info().$("initValueFuncs: extendAndSet NullConstant.NULL at timestampIndex=").$(timestampIndex).$();
-                }
                 valueFuncs.extendAndSet(timestampIndex, NullConstant.NULL);
                 return;
             }
 
             // else we grab the value in the corresponding slot
             final Function func = valueFuncs.getQuick(timestampIndex);
-            if (INSTRUMENT_LOG) {
-                LOG.info().$("initValueFuncs: func at timestampIndex=").$(timestampIndex)
-                        .$(" is ").$(func == null ? "java-null" : func.getClass().getSimpleName())
-                        .$(func == NullConstant.NULL ? " (IS NullConstant.NULL)" : "")
-                        .$(" func!=null=").$(func != null)
-                        .$();
-            }
 
             // if it is a real function, i.e we've not added our placeholder null
             if (func != null) {
                 // then we insert at this position
-                if (INSTRUMENT_LOG) {
-                    LOG.info().$("initValueFuncs: INSERTING NullConstant.NULL at timestampIndex=").$(timestampIndex)
-                            .$(" list grows from ").$(valueFuncs.size()).$(" to ").$(valueFuncs.size() + 1)
-                            .$();
-                }
                 valueFuncs.insert(timestampIndex, 1, NullConstant.NULL);
-            }
-
-            if (INSTRUMENT_LOG) {
-                for (int dbg = 0; dbg < valueFuncs.size(); dbg++) {
-                    Function f = valueFuncs.getQuick(dbg);
-                    LOG.info().$("initValueFuncs EXIT [").$(dbg).$("]=")
-                            .$(f == null ? "java-null" : f.getClass().getSimpleName())
-                            .$(f == NullConstant.NULL ? " (IS NullConstant.NULL)" : "")
-                            .$(" size=").$(valueFuncs.size())
-                            .$();
-                }
             }
         }
 
@@ -428,11 +338,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordCursor baseCursor,
                 SqlExecutionContext executionContext
         ) throws SqlException {
-            if (INSTRUMENT_LOG) {
-                LOG.info().$("FillRange of() CALLED: fillValues.size=").$(fillValues.size())
-                        .$(" baseCursor=").$(baseCursor.getClass().getSimpleName())
-                        .$();
-            }
             this.baseCursor = baseCursor;
             Function.init(fillValues, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
@@ -452,11 +357,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             assert fillValues.size() <= columnCount : "fillValues.size()=" + fillValues.size() + " exceeds columnCount=" + columnCount;
             baseRecord = baseCursor.getRecord();
-            if (INSTRUMENT_LOG) {
-                LOG.info().$("FillRange of() DONE: fillValues.size=").$(fillValues.size())
-                        .$(" timestampIndex=").$(timestampIndex)
-                        .$();
-            }
             toTop();
         }
 

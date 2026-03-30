@@ -960,6 +960,132 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
         });
     }
 
+    @Test
+    public void testOffsetEqualsStride() throws Exception {
+        // Offset = stride (1h offset with 1h stride). The bucket grid should
+        // shift by exactly one stride, so bucket boundaries land at :00 of
+        // each hour (same as no offset, since offset % stride == 0).
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2024-01-15T10:00:00.000000Z
+                        """,
+                "1h", "2024-01-15T10:30:00.000000Z", null, "01:00", "Europe/Berlin"
+        ));
+
+        // Verify across DST boundary with offset=stride
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2021-03-28T01:00:00.000000Z
+                        """,
+                "1h", "2021-03-28T01:30:00.000000Z", null, "01:00", "Europe/Berlin"
+        ));
+    }
+
+    @Test
+    public void testOffsetGreaterThanStride() throws Exception {
+        // Offset > stride: 1h offset with 30m stride. The floor math uses
+        // modular arithmetic, so offset=60m with stride=30m is equivalent
+        // to offset=0m (60 % 30 == 0).
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2024-01-15T10:00:00.000000Z
+                        """,
+                "30m", "2024-01-15T10:20:00.000000Z", null, "01:00", "Europe/Berlin"
+        ));
+
+        // 75m offset with 30m stride: 75 % 30 = 15m effective shift.
+        // Buckets at :15, :45, :15, ... 10:20 UTC → local 11:20 CET,
+        // floor(11:20, 30m, 75m) = 11:15, result = 11:15 - 1h = 10:15 UTC.
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2024-01-15T10:15:00.000000Z
+                        """,
+                "30m", "2024-01-15T10:20:00.000000Z", null, "01:15", "Europe/Berlin"
+        ));
+    }
+
+    @Test
+    public void testNegativeOffset() throws Exception {
+        // Negative offset shifts the bucket grid backwards.
+        // -15m offset with 1h stride: buckets at :45 of each hour.
+        // 10:50 UTC → local 11:50 CET → floor to 11:45 CET → 10:45 UTC.
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2024-01-15T10:45:00.000000Z
+                        """,
+                "1h", "2024-01-15T10:50:00.000000Z", null, "-00:15", "Europe/Berlin"
+        ));
+
+        // Negative offset across DST spring-forward (Berlin, 2021-03-28).
+        // UTC 01:50, stdOff=+1h → local 02:50, floor(02:50, 1h, -15m) → 02:45,
+        // result = 02:45 - 1h = 01:45 UTC.
+        assertMemoryLeak(() -> assertTimestampFloorUtc(
+                """
+                        timestamp_floor_utc
+                        2021-03-28T01:45:00.000000Z
+                        """,
+                "1h", "2021-03-28T01:50:00.000000Z", null, "-00:15", "Europe/Berlin"
+        ));
+    }
+
+    @Test
+    public void testNonNullFromWithOffsetAndDstTimezone() throws Exception {
+        // Non-null FROM + non-zero offset + DST timezone. The effective anchor
+        // is from + offset. FROM='2021-03-28T00:30:00Z' with offset='00:15'
+        // means effectiveOffset = from + 15m in local time.
+        //
+        // Must match the fixed-offset path during winter (no DST) to prove
+        // the from+offset combination is handled consistently.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts AS (" +
+                            "SELECT timestamp_sequence('2024-01-15T00:00:00.000000Z', 1_000_000 * 60 * 3) k " +
+                            "FROM long_sequence(200)" +
+                            ") TIMESTAMP(k)"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            mismatches
+                            0
+                            """,
+                    "SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('1h', k, '2024-01-15T00:30:00.000000Z', '00:15', '+01:00')",
+                    null, false, true, false
+            );
+        });
+
+        // Same combination but with data spanning DST spring-forward.
+        // Both DST-aware and fixed-offset paths should produce monotonically
+        // increasing bucket timestamps.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts2 AS (" +
+                            "SELECT timestamp_sequence('2021-03-28T00:00:00.000000Z', 1_000_000 * 60 * 5) k " +
+                            "FROM long_sequence(100)" +
+                            ") TIMESTAMP(k)"
+            );
+            // Verify monotonicity: no row should have a bucket > the next row's bucket
+            assertQueryNoLeakCheck(
+                    """
+                            violations
+                            0
+                            """,
+                    "SELECT count(*) violations FROM (" +
+                            "SELECT timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin') bucket, " +
+                            "lead(timestamp_floor_utc('1h', k, '2021-03-28T00:30:00.000000Z', '00:20', 'Europe/Berlin')) OVER (ORDER BY k) next_bucket " +
+                            "FROM ts2" +
+                            ") WHERE next_bucket IS NOT NULL AND bucket > next_bucket",
+                    null, false, true, false
+            );
+        });
+    }
+
     private void assertTimestampFloorUtc(
             String expected,
             String interval,

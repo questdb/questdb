@@ -900,18 +900,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             );
         }
 
-        // For sub-day intervals, timestamp_floor_utc uses standard offset for UTC↔local
-        // and adds the user offset POST-floor. This means bucket key K contains raw data
-        // from [K - userOffset, K - userOffset + stride). Use data-aligned boundaries
-        // (exclude user offset) so that:
-        // 1. Boundaries match raw-data timestamp ranges → overlap check against WAL intervals works
-        // 2. Scan range covers all raw data for each bucket
-        // 3. Output keys (= boundary + userOffset) fall within [boundary, boundary + stride)
+        // For sub-day intervals, timestamp_floor_utc uses the standard (non-DST)
+        // offset for UTC↔local conversion and bakes the user offset into the floor
+        // anchor. Bucket key K covers raw data in [K, K + stride). The iterator
+        // boundaries must include the user offset so they align with bucket keys.
         if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
             long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
             return fixedOffsetIterator.of(
                     sampler,
-                    -stdOff,
+                    fixedOffset - stdOff,
                     refreshIntervals,
                     minTs,
                     maxTs,
