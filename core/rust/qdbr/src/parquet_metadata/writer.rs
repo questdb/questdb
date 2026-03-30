@@ -22,42 +22,44 @@
  *
  ******************************************************************************/
 
-//! Writer for `.qdbp` metadata files (create and update modes).
+//! Writer for `_pm` metadata files (create and update modes).
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::footer::{Footer, FooterBuilder};
 use crate::parquet_metadata::header::FileHeaderBuilder;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
-use crate::parquet_metadata::types::{ColumnFlags, BLOCK_ALIGNMENT, FOOTER_CHECKSUM_SIZE};
+use crate::parquet_metadata::types::{
+    ColumnFlags, BLOCK_ALIGNMENT, FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE,
+};
 
-// ── QdbpWriter (create mode) ───────────────────────────────────────────
+// ── ParquetMetaWriter (create mode) ───────────────────────────────────────────
 
-/// Builds a complete `.qdbp` metadata file from scratch.
+/// Builds a complete `_pm` metadata file from scratch.
 ///
 /// Usage:
 /// ```ignore
-/// let bytes = QdbpWriter::new()
+/// let bytes = ParquetMetaWriter::new()
 ///     .designated_timestamp(0)
 ///     .add_column(0, "ts", 0, 8, ColumnFlags::new())
 ///     .add_row_group(rg_builder)
 ///     .parquet_footer(offset, length)
 ///     .finish()?;
 /// ```
-pub struct QdbpWriter {
+pub struct ParquetMetaWriter {
     header_builder: FileHeaderBuilder,
     row_groups: Vec<RowGroupBlockBuilder>,
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
 }
 
-impl Default for QdbpWriter {
+impl Default for ParquetMetaWriter {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl QdbpWriter {
+impl ParquetMetaWriter {
     pub fn new() -> Self {
         Self {
             header_builder: FileHeaderBuilder::new(-1),
@@ -101,7 +103,7 @@ impl QdbpWriter {
         self
     }
 
-    /// Finishes writing and returns the complete `.qdbp` file bytes.
+    /// Finishes writing and returns the complete `_pm` file bytes.
     ///
     /// Returns `(bytes, footer_offset)` where `footer_offset` is the byte
     /// offset of the footer within the file (to store in `_txn`).
@@ -127,21 +129,23 @@ impl QdbpWriter {
         let footer_offset = fb.write_to(&mut buf) as u64;
 
         // Compute and write CRC32 over [0, checksum_field_offset).
-        let checksum_field_offset = buf.len() - FOOTER_CHECKSUM_SIZE;
+        // The trailer (last 4 bytes) is NOT covered by the CRC.
+        let checksum_field_offset = buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
         let crc = crc32fast::hash(&buf[..checksum_field_offset]);
-        buf[checksum_field_offset..].copy_from_slice(&crc.to_le_bytes());
+        buf[checksum_field_offset..checksum_field_offset + FOOTER_CHECKSUM_SIZE]
+            .copy_from_slice(&crc.to_le_bytes());
 
         Ok((buf, footer_offset))
     }
 }
 
-// ── QdbpUpdateWriter (update mode) ─────────────────────────────────────
+// ── ParquetMetaUpdateWriter (update mode) ─────────────────────────────────────
 
-/// Produces bytes to append to an existing `.qdbp` file for an incremental
+/// Produces bytes to append to an existing `_pm` file for an incremental
 /// update (new/changed row group blocks + new footer).
 ///
 /// Unchanged row groups keep their original offsets in the new footer.
-pub struct QdbpUpdateWriter<'a> {
+pub struct ParquetMetaUpdateWriter<'a> {
     existing: &'a [u8],
     existing_footer_offset: u64,
     #[allow(dead_code)]
@@ -159,19 +163,22 @@ enum RowGroupEntry {
     New(RowGroupBlockBuilder),
 }
 
-impl<'a> QdbpUpdateWriter<'a> {
+impl<'a> ParquetMetaUpdateWriter<'a> {
     /// Creates an update writer from the existing file data and its footer offset.
     pub fn new(existing: &'a [u8], existing_footer_offset: u64) -> ParquetResult<Self> {
         let footer_usize = usize::try_from(existing_footer_offset).map_err(|_| {
-            qdbp_err!(
-                QdbpErrorKind::Truncated,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "footer offset {} exceeds addressable range",
                 existing_footer_offset
             )
         })?;
-        let footer_data = existing
-            .get(footer_usize..)
-            .ok_or_else(|| qdbp_err!(QdbpErrorKind::Truncated, "footer offset out of bounds"))?;
+        let footer_data = existing.get(footer_usize..).ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "footer offset out of bounds"
+            )
+        })?;
         let footer = Footer::new(footer_data)?;
 
         let header_data = existing;
@@ -202,8 +209,8 @@ impl<'a> QdbpUpdateWriter<'a> {
     ) -> ParquetResult<&mut Self> {
         let len = self.entries.len();
         let slot = self.entries.get_mut(index).ok_or_else(|| {
-            qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "row group index {} out of range [0, {})",
                 index,
                 len
@@ -284,7 +291,9 @@ impl<'a> QdbpUpdateWriter<'a> {
         let new_footer_offset = (append_start + footer_rel_start) as u64;
 
         // Compute CRC32 over the entire file [0, checksum_field).
-        let checksum_field_abs = append_start + append_buf.len() - FOOTER_CHECKSUM_SIZE;
+        // The trailer (last 4 bytes) is NOT covered by the CRC.
+        let checksum_field_abs =
+            append_start + append_buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
         let mut hasher = crc32fast::Hasher::new();
         // Hash existing bytes up to append_start.
         hasher.update(&self.existing[..append_start]);
@@ -294,8 +303,9 @@ impl<'a> QdbpUpdateWriter<'a> {
         let crc = hasher.finalize();
 
         // Write CRC into the append buffer.
-        let crc_offset_in_buf = append_buf.len() - FOOTER_CHECKSUM_SIZE;
-        append_buf[crc_offset_in_buf..].copy_from_slice(&crc.to_le_bytes());
+        let crc_offset_in_buf = append_buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
+        append_buf[crc_offset_in_buf..crc_offset_in_buf + FOOTER_CHECKSUM_SIZE]
+            .copy_from_slice(&crc.to_le_bytes());
 
         Ok((append_buf, new_footer_offset))
     }
@@ -305,11 +315,11 @@ impl<'a> QdbpUpdateWriter<'a> {
 mod tests {
     use super::*;
     use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
-    use crate::parquet_metadata::reader::QdbpReader;
+    use crate::parquet_metadata::reader::ParquetMetaReader;
     use crate::parquet_metadata::types::{Codec, FieldRepetition};
 
     fn make_simple_file() -> (Vec<u8>, u64) {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
         w.add_column(
             0,
@@ -336,7 +346,7 @@ mod tests {
     #[test]
     fn create_and_read_back() {
         let (bytes, footer_offset) = make_simple_file();
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
 
         assert_eq!(reader.column_count(), 2);
         assert_eq!(reader.row_group_count(), 1);
@@ -352,11 +362,11 @@ mod tests {
 
     #[test]
     fn create_empty() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (bytes, footer_offset) = w.finish().unwrap();
 
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.row_group_count(), 0);
     }
@@ -365,7 +375,7 @@ mod tests {
     fn update_append_row_group() {
         let (original, footer_offset) = make_simple_file();
 
-        let mut updater = QdbpUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
 
         let mut rg = RowGroupBlockBuilder::new(2);
         rg.set_num_rows(500);
@@ -385,7 +395,8 @@ mod tests {
         let mut full = original[..old_end].to_vec();
         full.extend_from_slice(&append_bytes);
 
-        let reader = QdbpReader::new(&full, new_footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&full, new_footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
         assert_eq!(reader.row_group_count(), 2);
         assert_eq!(reader.parquet_footer_offset(), 8192);
 
@@ -402,7 +413,7 @@ mod tests {
     #[test]
     fn update_replace_row_group() {
         // Build a file with 2 row groups.
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
 
         let mut rg0 = RowGroupBlockBuilder::new(1);
@@ -416,7 +427,7 @@ mod tests {
         let (original, footer_offset) = w.finish().unwrap();
 
         // Replace row group 1.
-        let mut updater = QdbpUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
         let mut new_rg1 = RowGroupBlockBuilder::new(1);
         new_rg1.set_num_rows(999);
         updater.replace_row_group(1, new_rg1).unwrap();
@@ -429,7 +440,8 @@ mod tests {
         let mut full = original[..old_end].to_vec();
         full.extend_from_slice(&append_bytes);
 
-        let reader = QdbpReader::new(&full, new_footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&full, new_footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
         assert_eq!(reader.row_group_count(), 2);
 
         // Row group 0 unchanged.
@@ -441,7 +453,7 @@ mod tests {
     #[test]
     fn replace_row_group_out_of_range() {
         let (original, footer_offset) = make_simple_file();
-        let mut updater = QdbpUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
         let rg = RowGroupBlockBuilder::new(2);
         // Only 1 row group exists (index 0), so index 5 is out of range.
         assert!(updater.replace_row_group(5, rg).is_err());
@@ -449,10 +461,10 @@ mod tests {
 
     #[test]
     fn default_creates_same_as_new() {
-        let mut w = QdbpWriter::default();
+        let mut w = ParquetMetaWriter::default();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.designated_timestamp(), None);
     }

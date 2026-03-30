@@ -22,28 +22,26 @@
  *
  ******************************************************************************/
 
-//! `_pm` parquet partition metadata file format.
-//!
-//! This module implements readers and writers for the binary metadata file
-//! that accompanies each `data.parquet` partition file. The format stores
-//! column descriptors, per-row-group column chunk metadata (byte ranges,
-//! encodings, statistics), and a footer whose offset is tracked in `_txn`.
+package io.questdb.griffin.engine.table.parquet;
 
-pub mod column_chunk;
-pub mod convert;
-pub mod error;
-pub mod footer;
-pub mod header;
-pub mod jni;
-pub mod reader;
-pub mod row_group;
-pub mod types;
-pub mod writer;
+/**
+ * Generates a {@code _pm} metadata file from an existing parquet file.
+ * <p>
+ * The native implementation reads the parquet footer, extracts column and
+ * row group metadata, and writes a compact binary {@code _pm} file that
+ * replaces the need to read the parquet footer for metadata access.
+ */
+public class ParquetMetadataWriter {
 
-pub use column_chunk::ColumnChunkRaw;
-pub use footer::{Footer, FooterBuilder};
-pub use header::{ColumnDescriptorRaw, FileHeader, FileHeaderBuilder};
-pub use reader::ParquetMetaReader;
-pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader};
-pub use types::*;
-pub use writer::ParquetMetaWriter;
+    /**
+     * Reads parquet metadata from the file descriptor {@code parquetFd},
+     * generates the {@code _pm} metadata file, and writes it to
+     * {@code parquetMetaFd}.
+     *
+     * @param parquetFd       file descriptor of the parquet file (read-only)
+     * @param parquetFileSize size of the parquet file in bytes
+     * @param parquetMetaFd   file descriptor of the parquet meta file (write)
+     * @return the parquet meta file size (to store in {@code _txn}), or -1 on error
+     */
+    public static native long generate(int parquetFd, long parquetFileSize, int parquetMetaFd);
+}

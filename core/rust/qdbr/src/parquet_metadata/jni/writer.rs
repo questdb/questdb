@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-//! JNI bindings for `QdbpFileWriter` (Java class `io.questdb.cairo.QdbpFileWriter`).
+//! JNI bindings for `ParquetMetaFileWriter` (Java class `io.questdb.cairo.ParquetMetaFileWriter`).
 //!
 //! These `extern "system"` functions are called from Java via JNI. Raw pointer
 //! parameters are null-checked via the `check_not_null!` macro before
@@ -31,23 +31,23 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use crate::parquet::error::fmt_err;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::ColumnFlags;
-use crate::parquet_metadata::writer::QdbpWriter;
+use crate::parquet_metadata::writer::ParquetMetaWriter;
 use jni::objects::JClass;
 use jni::sys::jint;
 use jni::JNIEnv;
 use std::slice;
 
-/// Holds the QdbpWriter plus a column count tracker.
-pub struct JniQdbpWriter {
-    writer: QdbpWriter,
+/// Holds the ParquetMetaWriter plus a column count tracker.
+pub struct JniParquetMetaWriter {
+    writer: ParquetMetaWriter,
     column_count: u32,
 }
 
-/// Holds the finished .qdbp file bytes and footer offset.
-pub struct QdbpBuiltFile {
+/// Holds the finished _pm file bytes and footer offset.
+pub struct ParquetMetaBuiltFile {
     data: Vec<u8>,
     footer_offset: u64,
 }
@@ -62,19 +62,19 @@ macro_rules! check_not_null {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_create(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_create(
     _env: JNIEnv,
     _class: JClass,
-) -> *mut JniQdbpWriter {
-    let wrapper = JniQdbpWriter { writer: QdbpWriter::new(), column_count: 0 };
+) -> *mut JniParquetMetaWriter {
+    let wrapper = JniParquetMetaWriter { writer: ParquetMetaWriter::new(), column_count: 0 };
     Box::into_raw(Box::new(wrapper))
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_destroyWriter(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_destroyWriter(
     _env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
+    ptr: *mut JniParquetMetaWriter,
 ) {
     if !ptr.is_null() {
         drop(unsafe { Box::from_raw(ptr) });
@@ -82,22 +82,22 @@ pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_destroyWriter(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_setDesignatedTimestamp(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setDesignatedTimestamp(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
+    ptr: *mut JniParquetMetaWriter,
     index: jint,
 ) {
-    check_not_null!(env, ptr, "QdbpFileWriter");
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
     let wrapper = unsafe { &mut *ptr };
     wrapper.writer.designated_timestamp(index);
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addColumn(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
+    ptr: *mut JniParquetMetaWriter,
     top: u64,
     name_ptr: *const u8,
     name_len: jint,
@@ -105,7 +105,7 @@ pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addColumn(
     col_type: jint,
     flags: jint,
 ) {
-    check_not_null!(env, ptr, "QdbpFileWriter");
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
     if name_ptr.is_null() || name_len < 0 {
         let err = fmt_err!(InvalidType, "invalid column name pointer or length");
         return err.into_cairo_exception().throw(&mut env);
@@ -115,8 +115,8 @@ pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addColumn(
     let name = match std::str::from_utf8(name_bytes) {
         Ok(s) => s,
         Err(e) => {
-            let err = qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            let err = parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "invalid UTF-8 in column name: {}",
                 e
             );
@@ -130,29 +130,29 @@ pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addColumn(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addSortingColumn(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
+    ptr: *mut JniParquetMetaWriter,
     index: jint,
 ) {
-    check_not_null!(env, ptr, "QdbpFileWriter");
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
     let wrapper = unsafe { &mut *ptr };
     wrapper.writer.add_sorting_column(index as u32);
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addRowGroup(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addRowGroup(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
+    ptr: *mut JniParquetMetaWriter,
     num_rows: u64,
 ) {
-    check_not_null!(env, ptr, "QdbpFileWriter");
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
     let wrapper = unsafe { &mut *ptr };
     if wrapper.column_count == 0 {
-        let err = qdbp_err!(
-            QdbpErrorKind::InvalidValue,
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
             "cannot add row group: no columns defined"
         );
         return err.into_cairo_exception().throw(&mut env);
@@ -163,75 +163,77 @@ pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_addRowGroup(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_setParquetFooter(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setParquetFooter(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
+    ptr: *mut JniParquetMetaWriter,
     offset: u64,
     length: jint,
 ) {
-    check_not_null!(env, ptr, "QdbpFileWriter");
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
     let wrapper = unsafe { &mut *ptr };
     wrapper.writer.parquet_footer(offset, length as u32);
 }
 
-/// Finishes building the .qdbp file. Borrows (does not consume) the writer.
+/// Finishes building the _pm file. Borrows (does not consume) the writer.
 /// The caller must still call `destroyWriter` to free the writer.
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_finish(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_finish(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *mut JniQdbpWriter,
-) -> *mut QdbpBuiltFile {
-    check_not_null!(env, ptr, "QdbpFileWriter");
+    ptr: *mut JniParquetMetaWriter,
+) -> *mut ParquetMetaBuiltFile {
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
     let wrapper = unsafe { &*ptr };
     match wrapper.writer.finish() {
-        Ok((data, footer_offset)) => Box::into_raw(Box::new(QdbpBuiltFile { data, footer_offset })),
+        Ok((data, footer_offset)) => {
+            Box::into_raw(Box::new(ParquetMetaBuiltFile { data, footer_offset }))
+        }
         Err(mut err) => {
-            err.add_context("error in QdbpFileWriter.finish");
+            err.add_context("error in ParquetMetaFileWriter.finish");
             err.into_cairo_exception().throw(&mut env)
         }
     }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_resultDataPtr(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultDataPtr(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *const QdbpBuiltFile,
+    ptr: *const ParquetMetaBuiltFile,
 ) -> *const u8 {
-    check_not_null!(env, ptr, "QdbpBuiltFile");
+    check_not_null!(env, ptr, "ParquetMetaBuiltFile");
     let result = unsafe { &*ptr };
     result.data.as_ptr()
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_resultDataLen(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultDataLen(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *const QdbpBuiltFile,
+    ptr: *const ParquetMetaBuiltFile,
 ) -> u64 {
-    check_not_null!(env, ptr, "QdbpBuiltFile");
+    check_not_null!(env, ptr, "ParquetMetaBuiltFile");
     let result = unsafe { &*ptr };
     result.data.len() as u64
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_resultFooterOffset(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultFooterOffset(
     mut env: JNIEnv,
     _class: JClass,
-    ptr: *const QdbpBuiltFile,
+    ptr: *const ParquetMetaBuiltFile,
 ) -> u64 {
-    check_not_null!(env, ptr, "QdbpBuiltFile");
+    check_not_null!(env, ptr, "ParquetMetaBuiltFile");
     let result = unsafe { &*ptr };
     result.footer_offset
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_QdbpFileWriter_destroyResult(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_destroyResult(
     _env: JNIEnv,
     _class: JClass,
-    ptr: *mut QdbpBuiltFile,
+    ptr: *mut ParquetMetaBuiltFile,
 ) {
     if !ptr.is_null() {
         drop(unsafe { Box::from_raw(ptr) });

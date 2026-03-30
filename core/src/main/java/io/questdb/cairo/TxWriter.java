@@ -424,11 +424,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setPartitionParquetFormat(long timestamp, long fileLength) {
-        setPartitionParquetFormat(timestamp, fileLength, true);
+    public void setPartitionParquetFormat(long timestamp, long parquetMetaFileSize) {
+        setPartitionParquetFormat(timestamp, parquetMetaFileSize, true);
     }
 
-    public void setPartitionParquetFormat(long timestamp, long fileLength, boolean isParquetFormat) {
+    public void setPartitionParquetFormat(long timestamp, long parquetMetaFileSize, boolean isParquetFormat) {
         int indexRaw = findAttachedPartitionRawIndex(timestamp);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
@@ -440,8 +440,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setQuick(offset, maskedSize);
 
-        int fileLenOffset = indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET;
-        attachedPartitions.setQuick(fileLenOffset, fileLength);
+        int fileSize = indexRaw + PARTITION_PARQUET_METADATA_FILE_SIZE;
+        attachedPartitions.setQuick(fileSize, parquetMetaFileSize);
     }
 
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {

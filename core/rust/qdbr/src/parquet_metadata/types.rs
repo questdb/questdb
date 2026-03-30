@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-//! Constants, enums, and bitfield types for the `.qdbp` metadata file format.
+//! Constants, enums, and bitfield types for the `_pm` metadata file format.
 
 #[cfg(not(target_endian = "little"))]
-compile_error!("qdbp metadata format requires a little-endian target");
+compile_error!("pm metadata format requires a little-endian target");
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 
 // ── File format constants ──────────────────────────────────────────────
 
@@ -49,6 +49,11 @@ pub const FOOTER_FIXED_SIZE: usize = 16;
 
 /// Size of the CRC32 checksum appended after the footer entries.
 pub const FOOTER_CHECKSUM_SIZE: usize = 4;
+
+/// Size of the footer length trailer appended after the CRC32.
+/// Stores the total footer size (fixed + entries + CRC) as a little-endian u32,
+/// enabling readers to locate the footer given only the file size.
+pub const FOOTER_TRAILER_SIZE: usize = 4;
 
 /// Size of a single row group entry in the footer.
 pub const ROW_GROUP_ENTRY_SIZE: usize = 4;
@@ -81,8 +86,8 @@ impl BlockAlignedOffset {
     /// Creates from an absolute byte offset. The offset must be block-aligned.
     pub fn from_byte_offset(offset: u64) -> ParquetResult<Self> {
         if !offset.is_multiple_of(BLOCK_ALIGNMENT as u64) {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Alignment,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Alignment,
                 "offset {} is not {}-byte aligned",
                 offset,
                 BLOCK_ALIGNMENT
@@ -90,8 +95,8 @@ impl BlockAlignedOffset {
         }
         let shifted = offset >> BLOCK_ALIGNMENT_SHIFT;
         if shifted > u32::MAX as u64 {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Alignment,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Alignment,
                 "offset {} exceeds maximum representable block-aligned offset",
                 offset
             ));
@@ -129,8 +134,8 @@ impl TryFrom<u8> for Codec {
             5 => Ok(Codec::Lz4),
             6 => Ok(Codec::Zstd),
             7 => Ok(Codec::Lz4Raw),
-            _ => Err(qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            _ => Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "invalid codec value: {}",
                 value
             )),
@@ -158,7 +163,7 @@ impl From<parquet2::compression::Compression> for Codec {
 
 /// Bitmask of parquet encodings used in a column chunk.
 ///
-/// Each bit corresponds to an encoding type per the `.qdbp` spec:
+/// Each bit corresponds to an encoding type per the `_pm` spec:
 /// - bit 0: PLAIN
 /// - bit 1: RLE_DICTIONARY
 /// - bit 2: DELTA_BINARY_PACKED
@@ -218,7 +223,7 @@ impl From<&[parquet2::encoding::Encoding]> for EncodingMask {
                 Encoding::DeltaByteArray => Self::DELTA_BYTE_ARRAY,
                 Encoding::ByteStreamSplit => Self::BYTE_STREAM_SPLIT,
                 // RLE and BitPacked are used for definition/repetition levels,
-                // not data encodings tracked in the qdbp mask.
+                // not data encodings tracked in the pm mask.
                 Encoding::Rle | Encoding::BitPacked => 0,
             };
         }
@@ -339,8 +344,8 @@ impl TryFrom<u8> for FieldRepetition {
             0 => Ok(FieldRepetition::Required),
             1 => Ok(FieldRepetition::Optional),
             2 => Ok(FieldRepetition::Repeated),
-            _ => Err(qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            _ => Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "invalid field repetition: {}",
                 value
             )),

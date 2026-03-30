@@ -22,27 +22,73 @@
  *
  ******************************************************************************/
 
-//! Zero-copy reader for `.qdbp` metadata files.
+//! Zero-copy reader for `_pm` metadata files.
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::footer::Footer;
 use crate::parquet_metadata::header::{ColumnDescriptorRaw, FileHeader};
 use crate::parquet_metadata::row_group::RowGroupBlockReader;
-use crate::parquet_metadata::types::FOOTER_CHECKSUM_SIZE;
+use crate::parquet_metadata::types::{FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE};
 
-/// Main reader for a `.qdbp` metadata file.
+/// Main reader for a `_pm` metadata file.
 ///
 /// Operates directly over a `&[u8]` slice (typically from an mmap).
 /// Validates the format version and CRC32 checksum on construction.
-pub struct QdbpReader<'a> {
+pub struct ParquetMetaReader<'a> {
     data: &'a [u8],
     header: FileHeader<'a>,
     footer: Footer<'a>,
     footer_offset: u64,
 }
 
-impl<'a> QdbpReader<'a> {
+impl<'a> ParquetMetaReader<'a> {
+    /// Creates a reader by reading the footer length trailer at the end of the file.
+    ///
+    /// `file_size` is the total size of the `_pm` file. The last 4 bytes store
+    /// the footer length (from footer start through CRC, inclusive). The footer
+    /// offset is derived as `file_size - 4 - footer_length`.
+    #[must_use = "returns the reader"]
+    pub fn from_file_size(data: &'a [u8], file_size: u64) -> ParquetResult<Self> {
+        let file_size_usize = usize::try_from(file_size).map_err(|_| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "file size {} exceeds addressable range",
+                file_size
+            )
+        })?;
+        if file_size_usize < FOOTER_TRAILER_SIZE {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "file too small for footer trailer: {} bytes",
+                file_size
+            ));
+        }
+        let trailer = data
+            .get(file_size_usize - FOOTER_TRAILER_SIZE..file_size_usize)
+            .ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "footer trailer out of bounds at file size {}",
+                    file_size
+                )
+            })?;
+        let footer_length =
+            u32::from_le_bytes(trailer.try_into().expect("slice is 4 bytes")) as u64;
+        let footer_offset = file_size
+            .checked_sub(FOOTER_TRAILER_SIZE as u64)
+            .and_then(|s| s.checked_sub(footer_length))
+            .ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "footer length {} exceeds file size {}",
+                    footer_length,
+                    file_size
+                )
+            })?;
+        Self::new(data, footer_offset)
+    }
+
     /// Creates a reader over the given byte slice.
     ///
     /// `footer_offset` is the absolute byte offset of the footer within the file
@@ -56,15 +102,15 @@ impl<'a> QdbpReader<'a> {
         let header = FileHeader::new(data)?;
 
         let footer_usize = usize::try_from(footer_offset).map_err(|_| {
-            qdbp_err!(
-                QdbpErrorKind::Truncated,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "footer offset {} exceeds addressable range",
                 footer_offset
             )
         })?;
         let footer_data = data.get(footer_usize..).ok_or_else(|| {
-            qdbp_err!(
-                QdbpErrorKind::Truncated,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "footer offset {} out of bounds",
                 footer_offset
             )
@@ -77,21 +123,23 @@ impl<'a> QdbpReader<'a> {
     /// Verifies the CRC32 checksum stored in the footer against the file contents.
     pub fn verify_checksum(&self) -> ParquetResult<()> {
         let footer_usize = self.footer_offset as usize;
-        let footer_total = Footer::total_size(self.footer.row_group_count())?;
+        let size_through_crc = Footer::size_through_crc(self.footer.row_group_count())?;
         let checksum_abs = footer_usize
-            .checked_add(footer_total)
+            .checked_add(size_through_crc)
             .and_then(|s| s.checked_sub(FOOTER_CHECKSUM_SIZE))
-            .ok_or_else(|| qdbp_err!(QdbpErrorKind::Truncated, "checksum offset overflow"))?;
+            .ok_or_else(|| {
+                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "checksum offset overflow")
+            })?;
         if checksum_abs > self.data.len() {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Truncated,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "checksum field out of bounds"
             ));
         }
         let stored_crc = self.footer.checksum()?;
         let computed_crc = crc32fast::hash(&self.data[..checksum_abs]);
         if stored_crc != computed_crc {
-            return Err(qdbp_err!(QdbpErrorKind::ChecksumMismatch {
+            return Err(parquet_meta_err!(ParquetMetaErrorKind::ChecksumMismatch {
                 stored: stored_crc,
                 computed: computed_crc,
             }));
@@ -136,15 +184,15 @@ impl<'a> QdbpReader<'a> {
     pub fn row_group(&self, index: usize) -> ParquetResult<RowGroupBlockReader<'a>> {
         let block_offset_u64 = self.footer.row_group_block_offset(index)?;
         let block_offset = usize::try_from(block_offset_u64).map_err(|_| {
-            qdbp_err!(
-                QdbpErrorKind::Truncated,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "row group block offset {} exceeds addressable range",
                 block_offset_u64
             )
         })?;
         let block_data = self.data.get(block_offset..).ok_or_else(|| {
-            qdbp_err!(
-                QdbpErrorKind::Truncated,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "row group block offset {} out of bounds",
                 block_offset
             )
@@ -174,7 +222,7 @@ mod tests {
     use crate::parquet_metadata::types::{
         encode_stat_sizes, ColumnFlags, FieldRepetition, StatFlags,
     };
-    use crate::parquet_metadata::writer::QdbpWriter;
+    use crate::parquet_metadata::writer::ParquetMetaWriter;
 
     #[test]
     fn round_trip_all_column_types() {
@@ -191,14 +239,14 @@ mod tests {
             (26, "varchar_col"),
         ];
 
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(5); // ts_col
         for (type_code, name) in types {
             w.add_column(0, name, -1, *type_code, ColumnFlags::new());
         }
         let (bytes, footer_offset) = w.finish().unwrap();
 
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), types.len() as u32);
         assert_eq!(reader.designated_timestamp(), Some(5));
 
@@ -211,19 +259,19 @@ mod tests {
 
     #[test]
     fn crc_corruption_detected() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (mut bytes, footer_offset) = w.finish().unwrap();
 
         // Corrupt one byte in the header.
         bytes[0] ^= 0xFF;
         // Should fail on version check (new() no longer checks CRC).
-        assert!(QdbpReader::new(&bytes, footer_offset).is_err());
+        assert!(ParquetMetaReader::new(&bytes, footer_offset).is_err());
     }
 
     #[test]
     fn crc_corrupted_in_body() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
@@ -235,23 +283,23 @@ mod tests {
         if mid < bytes.len() {
             bytes[mid] ^= 0xFF;
         }
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert!(reader.verify_checksum().is_err());
     }
 
     #[test]
     fn verify_checksum_passes_on_valid_file() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (bytes, footer_offset) = w.finish().unwrap();
 
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         reader.verify_checksum().unwrap();
     }
 
     #[test]
     fn multiple_row_groups_with_stats() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(
             0,
             "ts",
@@ -275,7 +323,7 @@ mod tests {
         }
 
         let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
 
         assert_eq!(reader.row_group_count(), 5);
         for i in 0..5 {
@@ -288,11 +336,11 @@ mod tests {
 
     #[test]
     fn footer_offset_accessor() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (bytes, footer_offset) = w.finish().unwrap();
 
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.footer_offset(), footer_offset);
     }
 
@@ -300,7 +348,7 @@ mod tests {
     fn row_group_block_offset_out_of_bounds() {
         // Build a valid file, then manually corrupt a row group entry
         // to point past the end of the file.
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(10);
@@ -314,11 +362,12 @@ mod tests {
         bytes[entry_offset..entry_offset + 4].copy_from_slice(&bad_offset.to_le_bytes());
 
         // Fix the CRC so the reader doesn't reject on checksum mismatch.
-        let crc_offset = bytes.len() - 4;
+        // CRC is at len - TRAILER(4) - CRC(4).
+        let crc_offset = bytes.len() - 8;
         let crc = crc32fast::hash(&bytes[..crc_offset]);
-        bytes[crc_offset..].copy_from_slice(&crc.to_le_bytes());
+        bytes[crc_offset..crc_offset + 4].copy_from_slice(&crc.to_le_bytes());
 
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert!(reader.row_group(0).is_err());
     }
 
@@ -327,29 +376,63 @@ mod tests {
         // Construct a file where the footer claims many row groups but the data
         // is truncated so the checksum field falls outside the slice.
         // Simplest: just truncate a valid file at the footer.
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (bytes, footer_offset) = w.finish().unwrap();
 
         // Truncate the file to cut off the last byte (the CRC).
         let truncated = &bytes[..bytes.len() - 1];
         // This should fail because the footer's checksum field is out of bounds.
-        assert!(QdbpReader::new(truncated, footer_offset).is_err());
+        assert!(ParquetMetaReader::new(truncated, footer_offset).is_err());
     }
 
     #[test]
     fn footer_offset_out_of_bounds() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.add_column(0, "x", 0, 5, ColumnFlags::new());
         let (bytes, _) = w.finish().unwrap();
 
         // Use a footer offset past the end of the file.
-        assert!(QdbpReader::new(&bytes, bytes.len() as u64 + 100).is_err());
+        assert!(ParquetMetaReader::new(&bytes, bytes.len() as u64 + 100).is_err());
+    }
+
+    #[test]
+    fn from_file_size_round_trip() {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column(0, "ts", 0, 8, ColumnFlags::new());
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(42);
+        w.add_row_group(rg);
+        w.parquet_footer(4096, 256);
+        let (bytes, footer_offset) = w.finish().unwrap();
+
+        // from_file_size should derive the same footer offset from the trailer.
+        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+        assert_eq!(reader.footer_offset(), footer_offset);
+        assert_eq!(reader.column_count(), 1);
+        assert_eq!(reader.row_group_count(), 1);
+        assert_eq!(reader.parquet_footer_offset(), 4096);
+        assert_eq!(reader.parquet_footer_length(), 256);
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 42);
+    }
+
+    #[test]
+    fn from_file_size_too_small() {
+        assert!(ParquetMetaReader::from_file_size(&[0u8; 3], 3).is_err());
+    }
+
+    #[test]
+    fn from_file_size_bad_trailer() {
+        // Trailer claims footer length larger than the file.
+        let mut buf = vec![0u8; 20];
+        buf[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        assert!(ParquetMetaReader::from_file_size(&buf, buf.len() as u64).is_err());
     }
 
     #[test]
     fn sorting_columns_round_trip() {
-        let mut w = QdbpWriter::new();
+        let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
         w.add_column(0, "ts", 0, 8, ColumnFlags::new());
         w.add_column(0, "key", 1, 12, ColumnFlags::new());
@@ -357,7 +440,7 @@ mod tests {
         w.add_sorting_column(1);
 
         let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = QdbpReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
 
         assert_eq!(reader.sorting_column_count(), 2);
         assert_eq!(reader.sorting_column(0).unwrap(), 0);

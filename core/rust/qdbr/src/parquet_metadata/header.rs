@@ -25,7 +25,7 @@
 //! File header, column descriptors, and sorting columns.
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{
     ColumnFlags, COLUMN_DESCRIPTOR_SIZE, FILE_FORMAT_VERSION, HEADER_FIXED_SIZE,
 };
@@ -68,7 +68,7 @@ const _: () = assert!(size_of::<FileHeaderRaw>() == HEADER_FIXED_SIZE);
 
 // ── FileHeader (zero-copy reader) ──────────────────────────────────────
 
-/// Zero-copy reader over the file header region of a `.qdbp` file.
+/// Zero-copy reader over the file header region of a `_pm` file.
 pub struct FileHeader<'a> {
     raw: &'a FileHeaderRaw,
     data: &'a [u8],
@@ -77,12 +77,12 @@ pub struct FileHeader<'a> {
 impl<'a> FileHeader<'a> {
     /// Creates a `FileHeader` reader over the given byte slice.
     ///
-    /// The slice must start at byte 0 of the `.qdbp` file and be large enough
+    /// The slice must start at byte 0 of the `_pm` file and be large enough
     /// to contain the full header (fixed fields + descriptors + sorting columns).
     pub fn new(data: &'a [u8]) -> ParquetResult<Self> {
         if data.len() < HEADER_FIXED_SIZE {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Truncated,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "file too small for header"
             ));
         }
@@ -93,7 +93,7 @@ impl<'a> FileHeader<'a> {
         let raw = unsafe { &*ptr };
 
         if raw.format_version != FILE_FORMAT_VERSION {
-            return Err(qdbp_err!(QdbpErrorKind::VersionMismatch {
+            return Err(parquet_meta_err!(ParquetMetaErrorKind::VersionMismatch {
                 found: raw.format_version,
                 expected: FILE_FORMAT_VERSION,
             }));
@@ -101,8 +101,8 @@ impl<'a> FileHeader<'a> {
 
         let min_size = Self::min_size(raw.column_count, raw.sorting_column_count)?;
         if data.len() < min_size {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Truncated,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "file too small for {} columns and {} sorting columns",
                 raw.column_count,
                 raw.sorting_column_count
@@ -118,10 +118,14 @@ impl<'a> FileHeader<'a> {
             .checked_add(
                 (column_count as usize)
                     .checked_mul(COLUMN_DESCRIPTOR_SIZE)
-                    .ok_or_else(|| qdbp_err!(QdbpErrorKind::Truncated, "column_count overflow"))?,
+                    .ok_or_else(|| {
+                        parquet_meta_err!(ParquetMetaErrorKind::Truncated, "column_count overflow")
+                    })?,
             )
             .and_then(|s| s.checked_add((sorting_column_count as usize).saturating_mul(4)))
-            .ok_or_else(|| qdbp_err!(QdbpErrorKind::Truncated, "header size overflow"))
+            .ok_or_else(|| {
+                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "header size overflow")
+            })
     }
 
     pub fn format_version(&self) -> u32 {
@@ -149,8 +153,8 @@ impl<'a> FileHeader<'a> {
     /// Returns a zero-copy reference to the column descriptor at `index`.
     pub fn column_descriptor(&self, index: usize) -> ParquetResult<&'a ColumnDescriptorRaw> {
         if index >= self.raw.column_count as usize {
-            return Err(qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "column descriptor index {} out of range [0, {})",
                 index,
                 self.raw.column_count
@@ -169,16 +173,16 @@ impl<'a> FileHeader<'a> {
         let start = desc.name_offset as usize;
         let len = desc.name_length as usize;
         let end = start.checked_add(len).ok_or_else(|| {
-            qdbp_err!(
-                QdbpErrorKind::Truncated,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "column name offset {}+{} overflows",
                 start,
                 len
             )
         })?;
         if end > self.data.len() {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Truncated,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "column name offset {}+{} exceeds file size {}",
                 start,
                 len,
@@ -186,8 +190,8 @@ impl<'a> FileHeader<'a> {
             ));
         }
         std::str::from_utf8(&self.data[start..start + len]).map_err(|e| {
-            qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "invalid UTF-8 in column name at offset {}: {}",
                 start,
                 e
@@ -218,8 +222,8 @@ impl<'a> FileHeader<'a> {
     pub fn sorting_column(&self, index: usize) -> ParquetResult<u32> {
         let cols = self.sorting_columns();
         if index >= cols.len() {
-            return Err(qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "sorting column index {} out of range [0, {})",
                 index,
                 cols.len()
@@ -248,7 +252,7 @@ struct ColumnEntry {
     flags: ColumnFlags,
 }
 
-/// Builds a `.qdbp` file header into a `Vec<u8>`.
+/// Builds a `_pm` file header into a `Vec<u8>`.
 pub struct FileHeaderBuilder {
     designated_timestamp: i32,
     columns: Vec<ColumnEntry>,

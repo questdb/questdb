@@ -169,7 +169,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                     if (convert) {
                         final int partition = Math.max(0, random.nextInt(partitionCount - 1));
                         final boolean delete = random.nextBoolean();
-                        final boolean isParquet = writer.getPartitionParquetFileSize(partition) > 0;
+                        final boolean isParquet = writer.getPartitionParquetMetaFileSize(partition) > 0;
                         final long timestamp = writer.getPartitionTimestamp(partition);
                         if (isParquet) {
                             writer.convertPartitionParquetToNative(timestamp);

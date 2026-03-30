@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
@@ -48,6 +49,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
@@ -163,6 +165,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
+        private ParquetMetaFileReader parquetMetaReader;
         private int rootLen;
         private TableReader tableReader;
         private int timestampType;
@@ -170,6 +173,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public void close() {
+            closeParquetMeta();
             detachedMetaReader = Misc.free(detachedMetaReader);
             detachedTxReader = Misc.free(detachedTxReader);
             attachablePartitions.clear();
@@ -234,6 +238,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private void loadNextPartition() {
+            // Ensure any _pm mmap from a previous iteration is released.
+            closeParquetMeta();
             isReadOnly = false;
             isActive = false;
             isDetached = false;
@@ -255,13 +261,13 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // we are within the partition table
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
                 isParquet = tableTxReader.isPartitionParquet(partitionIndex);
-                if (isParquet) {
-                    parquetFileSize = tableTxReader.getPartitionParquetFileSize(partitionIndex);
-                }
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, timestampType, partitionBy, timestamp);
                 TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
+                if (isParquet) {
+                    openParquetMeta(path, tableTxReader.getPartitionParquetMetaFileSize(partitionIndex));
+                }
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
@@ -335,7 +341,15 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                if (partitionIndex >= partitionCount || !tableTxReader.isPartitionParquet(partitionIndex)) {
+                if (isParquet && parquetMetaReader != null && parquetMetaReader.isOpen()) {
+                    int tsIndex = tableReader.getMetadata().getTimestampIndex();
+                    int rowGroupCount = parquetMetaReader.getRowGroupCount();
+                    if (rowGroupCount > 0) {
+                        minTimestamp = parquetMetaReader.getRowGroupMinTimestamp(0, tsIndex);
+                        maxTimestamp = parquetMetaReader.getRowGroupMaxTimestamp(rowGroupCount - 1, tsIndex);
+                    }
+                    closeParquetMeta();
+                } else if (!isParquet) {
                     TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
                     long fd = -1;
                     try {
@@ -351,10 +365,55 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                             ff.close(fd);
                         }
                     }
-                } else {
-                    minTimestamp = Long.MIN_VALUE;
-                    maxTimestamp = Long.MIN_VALUE;
                 }
+            }
+        }
+
+        /**
+         * Mmaps the _pm file, initializes the lazy ParquetMetaFileReader, and extracts
+         * the parquet file size. The reader stays open so that min/max timestamps
+         * can be read later in the same loadNextPartition() call. The mmap is
+         * released when the reader is cleared after timestamp extraction.
+         */
+        /**
+         * Mmaps the _pm file, initializes the lazy ParquetMetaFileReader, and extracts
+         * the parquet file size. The reader stays open so that min/max timestamps
+         * can be read later in the same loadNextPartition() call.
+         * Call {@link #closeParquetMeta()} to release the mmap.
+         */
+        private void openParquetMeta(Path partitionDirPath, long parquetMetaFileSize) {
+            if (parquetMetaFileSize <= 0) {
+                return;
+            }
+            int dirLen = partitionDirPath.size();
+            partitionDirPath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long addr = 0;
+            try {
+                addr = TableUtils.mapRO(ff, partitionDirPath.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                if (parquetMetaReader == null) {
+                    parquetMetaReader = new ParquetMetaFileReader();
+                }
+                parquetMetaReader.of(addr, parquetMetaFileSize);
+                parquetFileSize = parquetMetaReader.getParquetFileSize();
+            } catch (CairoException e) {
+                LOG.error().$("could not read pm metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
+                closeParquetMeta();
+                // If of() threw before setting addr, the reader is not open.
+                // Munmap the raw address directly to prevent a leak.
+                if (addr != 0 && (parquetMetaReader == null || !parquetMetaReader.isOpen())) {
+                    ff.munmap(addr, parquetMetaFileSize, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                partitionDirPath.trimTo(dirLen);
+            }
+        }
+
+        private void closeParquetMeta() {
+            if (parquetMetaReader != null && parquetMetaReader.isOpen()) {
+                long addr = parquetMetaReader.getAddr();
+                long size = parquetMetaReader.getFileSize();
+                parquetMetaReader.clear();
+                ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
             }
         }
 

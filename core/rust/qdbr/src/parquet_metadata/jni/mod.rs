@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
-//! JNI bindings for the `.qdbp` metadata file format.
+//! JNI bindings for the `_pm` metadata file format.
 
+pub mod converter;
 pub mod writer;

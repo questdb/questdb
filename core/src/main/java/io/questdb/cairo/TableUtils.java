@@ -128,6 +128,7 @@ public final class TableUtils {
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
+    public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -1919,6 +1920,21 @@ public final class TableUtils {
     public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
         setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
         path.concat(PARQUET_PARTITION_NAME);
+    }
+
+    /**
+     * Sets the path to the metadata file of a Parquet partition taking into account the timestamp, the partitioning
+     * scheme and the partition version.
+     *
+     * @param path          Set to the root directory for a table, this will be updated to the metadata file of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
+     */
+    public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        path.concat(PARQUET_METADATA_FILE_NAME);
     }
 
     /**

@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-//! Error types specific to the `.qdbp` metadata file format.
+//! Error types specific to the `_pm` metadata file format.
 
 use std::fmt;
 
-/// Classifies `.qdbp` format errors into programmatically matchable categories.
+/// Classifies `_pm` format errors into programmatically matchable categories.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum QdbpErrorKind {
+pub enum ParquetMetaErrorKind {
     /// Format version in the file does not match the expected version.
     VersionMismatch { found: u32, expected: u32 },
     /// CRC32 checksum mismatch between stored and computed values.
@@ -41,11 +41,11 @@ pub enum QdbpErrorKind {
     InvalidValue,
     /// Column counts differ between metadata sources.
     SchemaMismatch,
-    /// Parquet-to-qdbp conversion failed (unsupported feature, stat type, etc.).
+    /// Parquet-to-pm conversion failed (unsupported feature, stat type, etc.).
     Conversion,
 }
 
-impl fmt::Display for QdbpErrorKind {
+impl fmt::Display for ParquetMetaErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::VersionMismatch { found, expected } => {
@@ -67,26 +67,26 @@ impl fmt::Display for QdbpErrorKind {
 }
 
 /// Creates a [`ParquetError`](crate::parquet::error::ParquetError) with a
-/// [`QdbpErrorKind`] reason.
+/// [`ParquetMetaErrorKind`] reason.
 ///
 /// Two forms:
-/// - `qdbp_err!(kind, "format string", args...)` — uses the format string as the description.
-/// - `qdbp_err!(kind)` — uses the kind's `Display` impl as the description.
-macro_rules! qdbp_err {
+/// - `parquet_meta_err!(kind, "format string", args...)` — uses the format string as the description.
+/// - `parquet_meta_err!(kind)` — uses the kind's `Display` impl as the description.
+macro_rules! parquet_meta_err {
     ($kind:expr, $($arg:tt)+) => {
         $crate::parquet::error::ParquetError::with_descr(
-            $crate::parquet::error::ParquetErrorReason::Qdbp($kind),
+            $crate::parquet::error::ParquetErrorReason::ParquetMeta($kind),
             format!($($arg)+))
     };
     ($kind:expr) => {{
         let k = $kind;
         $crate::parquet::error::ParquetError::with_descr(
-            $crate::parquet::error::ParquetErrorReason::Qdbp(k),
+            $crate::parquet::error::ParquetErrorReason::ParquetMeta(k),
             k.to_string())
     }};
 }
 
-pub(crate) use qdbp_err;
+pub(crate) use parquet_meta_err;
 
 #[cfg(test)]
 mod tests {
@@ -95,17 +95,32 @@ mod tests {
     #[test]
     fn display_all_variants() {
         assert_eq!(
-            QdbpErrorKind::VersionMismatch { found: 99, expected: 1 }.to_string(),
+            ParquetMetaErrorKind::VersionMismatch { found: 99, expected: 1 }.to_string(),
             "version mismatch: found 99, expected 1"
         );
         assert_eq!(
-            QdbpErrorKind::ChecksumMismatch { stored: 0xAABB, computed: 0xCCDD }.to_string(),
+            ParquetMetaErrorKind::ChecksumMismatch { stored: 0xAABB, computed: 0xCCDD }.to_string(),
             "checksum mismatch: stored 0x0000AABB, computed 0x0000CCDD"
         );
-        assert_eq!(QdbpErrorKind::Truncated.to_string(), "truncated data");
-        assert_eq!(QdbpErrorKind::Alignment.to_string(), "alignment error");
-        assert_eq!(QdbpErrorKind::InvalidValue.to_string(), "invalid value");
-        assert_eq!(QdbpErrorKind::SchemaMismatch.to_string(), "schema mismatch");
-        assert_eq!(QdbpErrorKind::Conversion.to_string(), "conversion error");
+        assert_eq!(
+            ParquetMetaErrorKind::Truncated.to_string(),
+            "truncated data"
+        );
+        assert_eq!(
+            ParquetMetaErrorKind::Alignment.to_string(),
+            "alignment error"
+        );
+        assert_eq!(
+            ParquetMetaErrorKind::InvalidValue.to_string(),
+            "invalid value"
+        );
+        assert_eq!(
+            ParquetMetaErrorKind::SchemaMismatch.to_string(),
+            "schema mismatch"
+        );
+        assert_eq!(
+            ParquetMetaErrorKind::Conversion.to_string(),
+            "conversion error"
+        );
     }
 }

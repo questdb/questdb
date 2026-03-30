@@ -22,24 +22,26 @@
  *
  ******************************************************************************/
 
-//! Conversion from parquet2 `FileMetaData` (+ optional `QdbMeta`) to `.qdbp` format.
+//! Conversion from parquet2 `FileMetaData` (+ optional `QdbMeta`) to `_pm` format.
 
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaColFormat};
 use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
     encode_stat_sizes, BlockAlignedOffset, Codec, ColumnFlags, EncodingMask, FieldRepetition,
     StatFlags,
 };
-use crate::parquet_metadata::writer::QdbpWriter;
+use crate::parquet_metadata::writer::ParquetMetaWriter;
+use crate::parquet_read::decoders::int32::DayToMillisConverter;
+use crate::parquet_read::decoders::int96::Int96ToTimestampConverter;
 use parquet2::metadata::FileMetaData;
 use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType, TimeUnit};
 use parquet2::statistics::{BinaryStatistics, BooleanStatistics, PrimitiveStatistics, Statistics};
 use qdb_core::col_type::ColumnTypeTag;
 
-/// Converts a parquet file's metadata into a `.qdbp` binary representation.
+/// Converts a parquet file's metadata into a `_pm` binary representation.
 ///
 /// # Arguments
 /// - `file_metadata` - Parquet file metadata from `read_metadata_with_size()`.
@@ -65,8 +67,8 @@ pub fn convert_from_parquet(
     // Validate QdbMeta schema length matches.
     if let Some(meta) = qdb_meta {
         if meta.schema.len() != col_count {
-            return Err(qdbp_err!(
-                QdbpErrorKind::SchemaMismatch,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::SchemaMismatch,
                 "QdbMeta schema has {} columns but parquet has {}",
                 meta.schema.len(),
                 col_count
@@ -82,7 +84,7 @@ pub fn convert_from_parquet(
     let designated_ts = detect_designated_timestamp(file_metadata, qdb_meta, &sorting_cols);
 
     // Build the writer.
-    let mut writer = QdbpWriter::new();
+    let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_ts);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
 
@@ -136,8 +138,8 @@ pub fn convert_from_parquet(
     for rg in &file_metadata.row_groups {
         let rg_columns = rg.columns();
         if rg_columns.len() != col_count {
-            return Err(qdbp_err!(
-                QdbpErrorKind::SchemaMismatch,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::SchemaMismatch,
                 "row group has {} columns but schema has {}",
                 rg_columns.len(),
                 col_count
@@ -376,9 +378,9 @@ fn extract_stat_values(stats: &dyn Statistics, physical_type: PhysicalType) -> R
 /// This is the single source of truth for the mapping. Handles:
 /// - **Narrowing**: INT32-backed types (Byte, Short, Char, GeoByte, GeoShort) are
 ///   truncated from 4 bytes to their QuestDB fixed size.
-/// - **Date days→millis**: INT32 Date (days since epoch) → i64 millis.
-/// - **Timestamp millis→micros**: INT64 Timestamp(Millis) with QDB Timestamp type → i64 micros.
-/// - **INT96→nanos**: 12-byte Julian day + nanos-of-day → i64 epoch nanos.
+/// - **Date days->millis**: INT32 Date (days since epoch) -> i64 millis.
+/// - **Timestamp millis->micros**: INT64 Timestamp(Millis) with QDB Timestamp type -> i64 micros.
+/// - **INT96->nanos**: 12-byte Julian day + nanos-of-day -> i64 epoch nanos.
 ///
 /// Returns `None` if the input is empty.
 fn convert_stat_to_qdb(
@@ -392,45 +394,48 @@ fn convert_stat_to_qdb(
     }
 
     match (physical_type, col_type_tag) {
-        // Narrowing: INT32 → 1 byte for Byte/GeoByte.
+        // Narrowing: INT32 -> 1 byte for Byte/GeoByte.
         (PhysicalType::Int32, Some(ColumnTypeTag::Byte | ColumnTypeTag::GeoByte))
             if !raw.is_empty() =>
         {
             Some(vec![raw[0]])
         }
 
-        // Narrowing: INT32 → 2 bytes for Short/Char/GeoShort.
+        // Narrowing: INT32 -> 2 bytes for Short/Char/GeoShort.
         (
             PhysicalType::Int32,
             Some(ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort),
         ) if raw.len() >= 2 => Some(vec![raw[0], raw[1]]),
 
-        // Date stored as INT32 days → i64 millis.
+        // Date stored as INT32 days -> i64 millis.
         // i32 * 86_400_000 always fits in i64 (max ≈ 1.86e17 < 9.22e18).
         (PhysicalType::Int32, Some(ColumnTypeTag::Date)) if raw.len() == 4 => {
-            let days = read_i32_le(raw) as i64;
-            let millis = days * 86_400_000;
+            // Safety: we just checked the length is 4 bytes.
+            let days = i32::from_le_bytes(unsafe { raw[..4].try_into().unwrap_unchecked() });
+            let millis = DayToMillisConverter::convert(days);
             Some(millis.to_le_bytes().to_vec())
         }
 
         // External parquet Date (INT32 + Date logical type) without QdbMeta.
         (PhysicalType::Int32, None) if raw.len() == 4 => {
             if matches!(logical_type, Some(PrimitiveLogicalType::Date)) {
-                let days = read_i32_le(raw) as i64;
-                let millis = days * 86_400_000;
+                // Safety: we just checked the length is 4 bytes.
+                let days = i32::from_le_bytes(unsafe { raw[..4].try_into().unwrap_unchecked() });
+                let millis = DayToMillisConverter::convert(days);
                 Some(millis.to_le_bytes().to_vec())
             } else {
                 Some(raw.to_vec())
             }
         }
 
-        // Timestamp(Millis) → micros, only for QDB Timestamp (not Date).
+        // Timestamp(Millis) -> micros, only for QDB Timestamp (not Date).
         (PhysicalType::Int64, Some(ColumnTypeTag::Timestamp)) if raw.len() == 8 => {
             if matches!(
                 logical_type,
                 Some(PrimitiveLogicalType::Timestamp { unit: TimeUnit::Milliseconds, .. })
             ) {
-                let millis = read_i64_le(raw);
+                // Safety: we just checked the length is 8 bytes.
+                let millis = i64::from_le_bytes(unsafe { raw[..8].try_into().unwrap_unchecked() });
                 let micros = millis.checked_mul(1000).unwrap_or(if millis >= 0 {
                     i64::MAX
                 } else {
@@ -443,9 +448,12 @@ fn convert_stat_to_qdb(
             }
         }
 
-        // INT96 → epoch nanos.
+        // INT96 -> epoch nanos.
         (PhysicalType::Int96, _) if raw.len() == 12 => {
-            Some(int96_to_epoch_nanos(raw).to_le_bytes().to_vec())
+            let mut arr = [0u8; 12];
+            arr.copy_from_slice(&raw[..12]);
+            let nanos = Int96ToTimestampConverter::convert(arr.into());
+            Some(nanos.to_le_bytes().to_vec())
         }
 
         // Pass-through for everything else.
@@ -453,54 +461,12 @@ fn convert_stat_to_qdb(
     }
 }
 
-/// Converts a parquet INT96 value (12 bytes: nanos-of-day + Julian day) to epoch nanoseconds.
-///
-/// INT96 layout (as serialized by parquet2 from `[u32; 3]`):
-/// - `[0..4]`: low 32 bits of nanos-of-day
-/// - `[4..8]`: high 32 bits of nanos-of-day
-/// - `[8..12]`: Julian day number
-///
-/// Julian day 2_440_588 corresponds to the Unix epoch (1970-01-01).
-/// All callers guarantee `raw.len() >= 4` via match guards.
-fn read_i32_le(raw: &[u8]) -> i32 {
-    i32::from_le_bytes(raw[..4].try_into().expect("caller guarantees >= 4 bytes"))
-}
-
-/// All callers guarantee `raw.len() >= 8` via match guards.
-fn read_i64_le(raw: &[u8]) -> i64 {
-    i64::from_le_bytes(raw[..8].try_into().expect("caller guarantees >= 8 bytes"))
-}
-
-/// All callers guarantee `raw.len() >= 4` via match guards or prior length check.
-fn read_u32_le(raw: &[u8]) -> u32 {
-    u32::from_le_bytes(raw[..4].try_into().expect("caller guarantees >= 4 bytes"))
-}
-
-/// Caller guarantees `raw.len() == 12` via the match guard.
-fn int96_to_epoch_nanos(raw: &[u8]) -> i64 {
-    debug_assert!(raw.len() >= 12);
-    let nanos_lo = read_u32_le(raw) as i64;
-    let nanos_hi = read_u32_le(&raw[4..]) as i64;
-    let julian_day = read_u32_le(&raw[8..]) as i64;
-    let nanos_of_day = nanos_lo | (nanos_hi << 32);
-    let days_since_epoch = julian_day - 2_440_588;
-    let day_nanos =
-        days_since_epoch
-            .checked_mul(86_400_000_000_000)
-            .unwrap_or(if days_since_epoch >= 0 {
-                i64::MAX
-            } else {
-                i64::MIN
-            });
-    day_nanos.saturating_add(nanos_of_day)
-}
-
 fn validate_file_paths(file_metadata: &FileMetaData) -> ParquetResult<()> {
     for (rg_idx, rg) in file_metadata.row_groups.iter().enumerate() {
         for (col_idx, col) in rg.columns().iter().enumerate() {
             if col.file_path().is_some() {
-                return Err(qdbp_err!(
-                    QdbpErrorKind::Conversion,
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Conversion,
                     "column chunk at rg={}, col={} references an external file_path (not supported)",
                     rg_idx,
                     col_idx
@@ -534,8 +500,8 @@ fn extract_sorting_columns(file_metadata: &FileMetaData) -> ParquetResult<Vec<So
         if let Some(ref prev) = result {
             // Validate consistency.
             if prev.len() != current.len() {
-                return Err(qdbp_err!(
-                    QdbpErrorKind::SchemaMismatch,
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::SchemaMismatch,
                     "sorting columns differ between row groups: rg 0 has {} but rg {} has {}",
                     prev.len(),
                     rg_idx,
@@ -544,8 +510,8 @@ fn extract_sorting_columns(file_metadata: &FileMetaData) -> ParquetResult<Vec<So
             }
             for (i, (p, c)) in prev.iter().zip(current.iter()).enumerate() {
                 if p.column_idx != c.column_idx || p.descending != c.descending {
-                    return Err(qdbp_err!(
-                        QdbpErrorKind::SchemaMismatch,
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::SchemaMismatch,
                         "sorting column {} differs between row groups 0 and {}",
                         i,
                         rg_idx
@@ -609,7 +575,7 @@ fn detect_designated_timestamp(
 mod tests {
     use super::*;
     use crate::parquet::tests::ColumnTypeTagExt;
-    use crate::parquet_metadata::reader::QdbpReader;
+    use crate::parquet_metadata::reader::ParquetMetaReader;
     use crate::parquet_metadata::types::Codec;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, ParquetEncodingConfig, Partition};
@@ -674,10 +640,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (qdbp_bytes, footer_offset) =
+        let (pm_bytes, footer_offset) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.row_group_count(), 1);
         assert_eq!(reader.column_name(0).unwrap(), "ts");
@@ -698,9 +664,9 @@ mod tests {
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
-        let (qdbp_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
+        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         let chunk = reader.row_group(0).unwrap().column_chunk(0).unwrap();
         assert_eq!(chunk.codec().unwrap(), Codec::Snappy);
     }
@@ -711,9 +677,9 @@ mod tests {
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
-        let (qdbp_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
+        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);
         let desc = reader.column_descriptor(0).unwrap();
         assert_eq!(desc.col_type, -1); // Unknown without QdbMeta.
@@ -853,10 +819,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (qdbp_bytes, footer_offset) =
+        let (pm_bytes, footer_offset) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 1024, 200).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 4);
         assert_eq!(reader.row_group_count(), 1);
         assert_eq!(reader.parquet_footer_offset(), 1024);
@@ -912,10 +878,9 @@ mod tests {
             ascii: Some(true),
         });
 
-        let (qdbp_bytes, footer_offset) =
-            convert_from_parquet(&metadata, Some(&meta), 0, 0).unwrap();
+        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, Some(&meta), 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         let desc = reader.column_descriptor(0).unwrap();
         let flags = desc.flags();
         assert!(flags.is_local_key_global());
@@ -939,10 +904,10 @@ mod tests {
         });
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
-        let (qdbp_bytes, footer_offset) =
+        let (pm_bytes, footer_offset) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
 
         if has_sorting {
             assert!(reader.sorting_column_count() > 0);
@@ -998,10 +963,10 @@ mod tests {
         assert!(metadata.row_groups.len() >= 2);
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
-        let (qdbp_bytes, footer_offset) =
+        let (pm_bytes, footer_offset) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         assert_eq!(reader.row_group_count(), metadata.row_groups.len() as u32);
 
         // Verify each row group has correct num_rows.
@@ -1055,10 +1020,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (qdbp_bytes, footer_offset) =
+        let (pm_bytes, footer_offset) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         let rg = reader.row_group(0).unwrap();
         let chunk = rg.column_chunk(0).unwrap();
         let flags = chunk.stat_flags();
@@ -1196,10 +1161,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (qdbp_bytes, footer_offset) =
+        let (pm_bytes, footer_offset) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = QdbpReader::new(&qdbp_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         let rg = reader.row_group(0).unwrap();
 
         // Check that at least one column has distinct_count or null_count set.
@@ -1483,16 +1448,6 @@ mod tests {
         );
         let val = i64::from_le_bytes(result.unwrap().try_into().unwrap());
         assert_eq!(val, i64::MIN);
-    }
-
-    #[test]
-    fn convert_stat_int96_extreme_julian_day_saturates() {
-        // Julian day u32::MAX → days_since_epoch overflows, should saturate.
-        let mut raw = vec![0u8; 12];
-        raw[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
-        let result = convert_stat_to_qdb(&raw, PhysicalType::Int96, None, None);
-        let val = i64::from_le_bytes(result.unwrap().try_into().unwrap());
-        assert_eq!(val, i64::MAX);
     }
 
     // ── Mismatched-length stats fall through to passthrough ───────────

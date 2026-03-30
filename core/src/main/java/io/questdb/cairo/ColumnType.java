@@ -68,7 +68,7 @@ public final class ColumnType {
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
     public static final int LEGACY_VAR_SIZE_AUX_SHL = 3;
-    public static final int MIGRATION_VERSION = 426;
+    public static final int MIGRATION_VERSION = 427;
     public static final short OVERLOAD_FULL = -1; // akin to no distance
     public static final short OVERLOAD_NONE = 10000; // akin to infinite distance
     // our type system is absolutely ordered ranging
@@ -150,7 +150,7 @@ public final class ColumnType {
     public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
-    public static final int VERSION = 426;
+    public static final int VERSION = 427;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
     private static final int ARRAY_ELEMTYPE_FIELD_MASK = 0x3F;

@@ -589,7 +589,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             long partitionTimestamp,
             long partitionRowCount,
             long partitionNameTxn,
-            long parquetSize,
+            long parquetMetadataFileSize,
             int partitionBy,
             int timestampType
     ) {
@@ -606,10 +606,26 @@ public class TableSnapshotRestore implements QuietCloseable {
             ObjList<BitmapIndexWriter> indexWriters = new ObjList<>();
             path.trimTo(pathTableLen);
 
-            // Set path to parquet partition and mmap
-            TableUtils.setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            path.concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            // Set path to partition dir
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            int partitionDirLen = path.size();
 
+            // Derive parquet file size from _pm metadata.
+            path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            final long parquetSize;
+            {
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                try {
+                    ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+            }
+
+            // mmap data.parquet
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             if (!ff.exists(path.$())) {
                 LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
                 return;
@@ -682,7 +698,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+                final long parquetMetaFileSize = txWriter.getPartitionParquetMetaFileSize(partitionIndex);
 
                 futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
                         tablePathStr,
@@ -690,7 +706,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                         partitionTimestamp,
                         partitionRowCount,
                         partitionNameTxn,
-                        parquetSize,
+                        parquetMetaFileSize,
                         partitionBy,
                         timestampType
                 )));

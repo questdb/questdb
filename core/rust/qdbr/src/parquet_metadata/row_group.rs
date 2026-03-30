@@ -26,7 +26,7 @@
 
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
-use crate::parquet_metadata::error::{qdbp_err, QdbpErrorKind};
+use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE};
 
 // ── RowGroupBlockReader (zero-copy) ────────────────────────────────────
@@ -46,8 +46,8 @@ impl<'a> RowGroupBlockReader<'a> {
     pub fn new(data: &'a [u8], column_count: u32) -> ParquetResult<Self> {
         let min_size = Self::min_block_size(column_count)?;
         if data.len() < min_size {
-            return Err(qdbp_err!(
-                QdbpErrorKind::Truncated,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
                 "row group block too small: {} bytes, need at least {}",
                 data.len(),
                 min_size
@@ -64,8 +64,8 @@ impl<'a> RowGroupBlockReader<'a> {
             .checked_mul(COLUMN_CHUNK_SIZE)
             .and_then(|s| s.checked_add(8))
             .ok_or_else(|| {
-                qdbp_err!(
-                    QdbpErrorKind::Truncated,
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
                     "column_count overflow in row group block size"
                 )
             })
@@ -79,8 +79,8 @@ impl<'a> RowGroupBlockReader<'a> {
     /// Returns a zero-copy reference to the column chunk at `index`.
     pub fn column_chunk(&self, index: usize) -> ParquetResult<&'a ColumnChunkRaw> {
         if index >= self.column_count as usize {
-            return Err(qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "column chunk index {} out of range [0, {})",
                 index,
                 self.column_count
@@ -141,8 +141,8 @@ impl RowGroupBlockBuilder {
     ) -> ParquetResult<&mut Self> {
         let len = self.chunks.len();
         let slot = self.chunks.get_mut(index).ok_or_else(|| {
-            qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "column chunk index {} out of range [0, {})",
                 index,
                 len
@@ -164,8 +164,8 @@ impl RowGroupBlockBuilder {
     ) -> ParquetResult<&mut Self> {
         let len = self.chunks.len();
         let chunk = self.chunks.get_mut(col_index).ok_or_else(|| {
-            qdbp_err!(
-                QdbpErrorKind::InvalidValue,
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
                 "column chunk index {} out of range [0, {})",
                 col_index,
                 len

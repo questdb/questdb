@@ -106,7 +106,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
 
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
-        final long parquetSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
+        final long parquetMetaFileSize = tableWriter.getPartitionParquetMetaFileSize(partitionIndex);
         long duplicateCount = 0;
         long newParquetSize;
         boolean isRewrite = false;
@@ -120,7 +120,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final RowGroupStatBuffers rowGroupStatBuffers = ctx.getRowGroupStatBuffers();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
+        long parquetSize = 0;
         try {
+            // Derive parquet file size from _pm metadata.
+            int parquetNameLen = path.size();
+            int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            {
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                try {
+                    ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize);
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+            }
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+
             long parquetAddr = 0;
             try {
                 parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -548,12 +565,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
             ctx.releaseResources();
-            // Determine the parquet file size from the correct path.
+            // Determine the _pm metadata file size from the correct path.
             path.of(pathToTable);
             if (isRewrite) {
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
+                setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, txn);
             } else {
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
             }
             final long fileSize = Files.length(path.$());
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
@@ -563,7 +580,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // flags: lowInt = partitionMutates (0 when rewritten, 1 when mutated in place)
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, 0));
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // _pm file size
 
 
             tableWriter.o3CountDownDoneLatch();
