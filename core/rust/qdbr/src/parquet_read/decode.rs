@@ -1260,9 +1260,15 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
+                    dict_page,
                     ColumnTypeTag::String,
                 ) => {
+                    let dict_page = dict_page.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?;
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
