@@ -1019,6 +1019,29 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, ColumnTypeTag::Uuid) => {
+                let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                    Int128ToUuidConverter::new(),
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        nulls::UUID,
+                        bufs,
+                    )?,
+                )?;
+                Ok(true)
+            }
             _ => Ok(false),
         },
         (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
@@ -1066,6 +1089,28 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, 16, ColumnTypeTag::Long128) => {
+                let dict_decoder = BasePrimitiveDictDecoder::<Long128, Long128>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        Long128::NULL,
+                        bufs,
+                    )?,
+                )?;
+                Ok(true)
+            }
             (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
@@ -1075,6 +1120,28 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         bufs,
                         Long256::NULL,
                     ),
+                )?;
+                Ok(true)
+            }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, 32, ColumnTypeTag::Long256) => {
+                let dict_decoder = BasePrimitiveDictDecoder::<Long256, Long256>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        Long256::NULL,
+                        bufs,
+                    )?,
                 )?;
                 Ok(true)
             }

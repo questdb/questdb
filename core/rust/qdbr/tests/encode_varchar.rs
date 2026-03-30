@@ -3,18 +3,17 @@ mod common;
 use arrow::array::{Array, StringArray};
 use common::encode::{
     build_qdb_varchar_data, generate_nulls, make_varchar_column, read_parquet_batches,
-    write_parquet, EncodeEncoding, ALL_NULL_PATTERNS,
+    write_parquet, ALL_NULL_PATTERNS,
 };
 use common::types::varchar::expected_varchar_str;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
 
+use crate::common::Encoding;
+
 const COUNT: usize = 1_000;
 
-const VARCHAR_ENCODINGS: [EncodeEncoding; 2] = [
-    EncodeEncoding::RleDictionary,
-    EncodeEncoding::DeltaLengthByteArray,
-];
+const VARCHAR_ENCODINGS: [Encoding; 2] = [Encoding::RleDictionary, Encoding::DeltaLengthByteArray];
 
 #[test]
 fn test_encode_varchar() {
