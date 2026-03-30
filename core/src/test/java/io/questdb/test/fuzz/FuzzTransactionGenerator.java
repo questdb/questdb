@@ -379,6 +379,7 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
     }
 
+
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
             long lastTimestamp, Rnd rnd
