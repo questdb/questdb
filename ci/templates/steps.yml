@@ -120,6 +120,53 @@ steps:
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
 
+  - bash: |
+      set -eux
+      SCCACHE_VERSION="0.10.0"
+
+      export PATH="$(CARGO_INSTALL_PATH)/bin:$PATH"
+
+      if [ "$(uname)" == "Darwin" ]; then
+        SCCACHE_BINARY="sccache"
+        ARCH="$(uname -m)"
+        if [ "$ARCH" == "arm64" ]; then
+          ARCHIVE="sccache-v${SCCACHE_VERSION}-aarch64-apple-darwin.tar.gz"
+        else
+          ARCHIVE="sccache-v${SCCACHE_VERSION}-x86_64-apple-darwin.tar.gz"
+        fi
+      else
+        SCCACHE_BINARY="sccache.exe"
+        ARCHIVE="sccache-v${SCCACHE_VERSION}-x86_64-pc-windows-msvc.tar.gz"
+      fi
+
+      if [ -f "$(CARGO_INSTALL_PATH)/bin/${SCCACHE_BINARY}" ]; then
+        echo "sccache already installed at: $(CARGO_INSTALL_PATH)/bin"
+      else
+        echo "Installing sccache ${SCCACHE_VERSION} for $(uname)..."
+
+        URL="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/${ARCHIVE}"
+        echo "Downloading from: $URL"
+
+        curl -L "$URL" -o sccache.tar.gz
+        tar xzf sccache.tar.gz
+
+        mkdir -p "$(CARGO_INSTALL_PATH)/bin"
+        find . -name "${SCCACHE_BINARY}" | head -1 | xargs -I {} mv {} "$(CARGO_INSTALL_PATH)/bin/"
+
+        rm -rf sccache.tar.gz sccache-v${SCCACHE_VERSION}-*
+
+        echo "sccache installed successfully"
+      fi
+
+      sccache --version
+      set +x  # workaround for https://github.com/microsoft/azure-pipelines-tasks/issues/10331
+      echo "##vso[task.setvariable variable=RUSTC_WRAPPER]$(CARGO_INSTALL_PATH)/bin/${SCCACHE_BINARY}"
+    displayName: "Install sccache (Windows and macOS)"
+    condition: or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
+    env:
+      SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
+      SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
+
   - template: install-llvm.yml
     parameters:
       shouldRun: |
@@ -138,12 +185,42 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
       options:
-        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(
         eq(variables['testset'], 'none'),
         eq(variables['SOURCE_CODE_CHANGED'], 'false')
+      )
+  - task: Maven@3
+    displayName: "Run tests (with sccache)"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenPomFile: "pom.xml"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode -Dtest.include=$(includeTests)
+        -Dtest.exclude=$(excludeTests)
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+        -P build-web-console
+         $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
+      RUSTC_WRAPPER: $(RUSTC_WRAPPER)
+      SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
+      SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
+      CARGO_INCREMENTAL: 0
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'all'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
       )
   - task: Maven@3
     displayName: "Run tests"
@@ -154,9 +231,9 @@ steps:
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
+        "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -P build-web-console
@@ -168,7 +245,8 @@ steps:
     condition: |
       and(
         eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['os'], 'Linux')
       )
   - bash: find . -name '*.profraw' -delete
     displayName: "Clean stale profraw files"

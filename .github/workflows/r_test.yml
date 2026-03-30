@@ -16,6 +16,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
           cache: 'maven'
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
+        with:
+          toolchain: nightly-2025-09-24
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
       - name: Unpack distribution

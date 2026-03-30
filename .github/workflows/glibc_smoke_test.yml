@@ -12,8 +12,10 @@ on:
   pull_request:
     types: [ synchronize, opened, reopened, edited ]
     paths:
-      - 'core/src/main/resources/io/questdb/bin/**'
-      - './core/src/main/bin/**'
+      - 'core/src/main/c/**'
+      - 'core/CMakeLists.txt'
+      - 'core/rust/qdbr/**'
+      - 'core/rust/qdb-core/**'
   workflow_dispatch:
 
 jobs:
@@ -72,6 +74,10 @@ jobs:
           ln -sf /opt/apache-maven-3.9.9 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2025-09-24
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $GITHUB_ENV
       - name: Build distribution
         run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
         env:
@@ -134,6 +140,10 @@ jobs:
           ln -sf /opt/apache-maven-3.9.9 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "/opt/maven/bin" >> $GITHUB_PATH
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly-2025-09-24
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
         env:

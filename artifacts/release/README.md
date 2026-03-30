@@ -73,15 +73,14 @@ docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/ques
 
 ### Build QuestDB binaries
 
-[Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) Azure pipeline will
-automatically run on release tag. This pipeline will upload the binaries to the existing Github release draft.
+[Github Release - Binaries](https://github.com/questdb/questdb/actions/workflows/github-binaries-release.yml) GitHub Actions workflow will
+automatically run on release tag. This workflow will upload the binaries to the existing Github release draft.
 It will also mark the release draft as non-draft and latest.
 
-Check the job run status and when completed go to the latest release
+Check the workflow run status and when completed go to the latest release
 in https://github.com/questdb/questdb/releases to check that everything is in order.
 
-In case of [Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) job failure, the
-binaries can be compiled using maven on Windows and Linux
+In case of workflow failure, the binaries can be compiled using maven on Windows and Linux
 and uploaded to GH release page
 
 ```bash

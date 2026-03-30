@@ -1,0 +1,306 @@
+name: Github Release - Binaries
+
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build Rust libraries for all platforms (5 parallel jobs)
+  # ---------------------------------------------------------------------------
+  build-rust-linux-x64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust in manylinux2014 (glibc 2.17)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/build" \
+            quay.io/pypa/manylinux2014_x86_64 \
+            bash -c '
+              set -eux
+              yum install -y python3 curl
+              curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --profile minimal
+              export PATH="$HOME/.cargo/bin:$PATH"
+              cd /build/core/rust/qdbr
+              cargo build --release
+              rustc --version --verbose
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-linux-x64
+          path: core/rust/qdbr/target/release/libquestdbr.so
+
+  build-rust-linux-arm64:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust in manylinux_2_28 (glibc 2.28)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/build" \
+            quay.io/pypa/manylinux_2_28_aarch64 \
+            bash -c '
+              set -eux
+              yum install -y python3 curl
+              curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --profile minimal
+              export PATH="$HOME/.cargo/bin:$PATH"
+              cd /build/core/rust/qdbr
+              cargo build --release
+              rustc --version --verbose
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-linux-arm64
+          path: core/rust/qdbr/target/release/libquestdbr.so
+
+  build-rust-macos-arm64:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust
+        run: |
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+          cd core/rust/qdbr
+          cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-macos-arm64
+          path: core/rust/qdbr/target/release/libquestdbr.dylib
+
+  build-rust-macos-x64:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust
+        run: |
+          export MACOSX_DEPLOYMENT_TARGET=13.0
+          cd core/rust/qdbr
+          cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-macos-x64
+          path: core/rust/qdbr/target/release/libquestdbr.dylib
+
+  build-rust-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build Rust
+        run: |
+          cd core/rust/qdbr
+          cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-windows
+          path: core/rust/qdbr/target/release/questdbr.dll
+
+  # ---------------------------------------------------------------------------
+  # Package QuestDB (Linux) — produces no-jre + rt-linux-x86-64
+  # The no-jre JAR contains Rust binaries for ALL platforms.
+  # ---------------------------------------------------------------------------
+  package-linux:
+    needs:
+      - build-rust-linux-x64
+      - build-rust-linux-arm64
+      - build-rust-macos-arm64
+      - build-rust-macos-x64
+      - build-rust-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install GraalVM Community 17.0.9
+        run: |
+          set -eux
+          GRAAL_VERSION=17.0.9
+          TAG="jdk-${GRAAL_VERSION}"
+          FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
+          BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
+
+          curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
+          curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
+
+          HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
+          echo "${HASH}  ${FILENAME}" | sha256sum -c -
+
+          INSTALL_DIR="${HOME}/graalvm-community-jdk-${GRAAL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
+
+          echo "JAVA_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "GRAALVM_HOME=${INSTALL_DIR}" >> "$GITHUB_ENV"
+          echo "${INSTALL_DIR}/bin" >> "$GITHUB_PATH"
+
+      # Download all Rust libraries into the classpath so they end up in the JAR
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-linux-x64
+          path: core/target/classes/io/questdb/bin/linux-x86-64/
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-linux-arm64
+          path: core/target/classes/io/questdb/bin/linux-aarch64/
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-macos-arm64
+          path: core/target/classes/io/questdb/bin/darwin-aarch64/
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-macos-x64
+          path: core/target/classes/io/questdb/bin/darwin-x86-64/
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-windows
+          path: core/target/classes/io/questdb/bin/windows-x86-64/
+
+      - name: Verify Rust libraries
+        run: |
+          echo "=== All Rust libraries ==="
+          find core/target/classes/io/questdb/bin/ -type f -exec ls -la {} \;
+
+      - name: Build QuestDB
+        working-directory: core
+        run: mvn package -DskipTests -DskipNative -Dhttp.keepAlive=false -P build-web-console,build-binaries
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: core/target/questdb-*.gz
+
+  # ---------------------------------------------------------------------------
+  # Package QuestDB (Windows) — produces rt-windows-x86-64
+  # ---------------------------------------------------------------------------
+  package-windows:
+    needs:
+      - build-rust-windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install GraalVM Community 17.0.9
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $GRAAL_VERSION = "17.0.9"
+          $tag = "jdk-$GRAAL_VERSION"
+          $fileName = "graalvm-community-jdk-$GRAAL_VERSION`_windows-x64_bin.zip"
+          $baseUrl = "https://github.com/graalvm/graalvm-ce-builds/releases/download/$tag"
+          $zipPath = Join-Path $env:USERPROFILE $fileName
+          $shaPath = "$zipPath.sha256"
+
+          Invoke-WebRequest "$baseUrl/$fileName" -OutFile $zipPath
+          Invoke-WebRequest "$baseUrl/$fileName.sha256" -OutFile $shaPath
+
+          $expected = (Get-Content $shaPath).Split(" ")[0].ToLower()
+          $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) {
+            throw "SHA256 mismatch for $fileName. Expected $expected but got $actual"
+          }
+
+          $dest = Join-Path $env:USERPROFILE "graalvm-ce-17"
+          Expand-Archive $zipPath -DestinationPath $dest
+          $dir = Get-ChildItem $dest | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          $graalHome = $dir.FullName
+
+          echo "JAVA_HOME=$graalHome" >> $env:GITHUB_ENV
+          echo "GRAALVM_HOME=$graalHome" >> $env:GITHUB_ENV
+          echo "$graalHome\bin" >> $env:GITHUB_PATH
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-windows
+          path: core/target/classes/io/questdb/bin/windows-x86-64/
+
+      - name: Build QuestDB
+        working-directory: core
+        run: mvn package -DskipTests -DskipNative "-Dhttp.keepAlive=false" -P build-web-console,build-binaries
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: core/target/questdb-*-rt-*.gz
+
+  # ---------------------------------------------------------------------------
+  # Upload to GitHub Releases + deploy AMI
+  # ---------------------------------------------------------------------------
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - package-linux
+      - package-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+          path: artifacts/
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: artifacts/
+
+      - name: Validate semver tag
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' is not a valid semver release tag"
+            exit 1
+          fi
+
+      - name: List release artifacts
+        run: ls -la artifacts/
+
+      - name: Upload to GitHub Release
+        run: |
+          set -e
+          tag_name="${GITHUB_REF_NAME}"
+          echo "Uploading to release ${tag_name}..."
+          gh release upload "${tag_name}" artifacts/*.gz
+          gh release edit "${tag_name}" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Packer
+        run: |
+          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update && sudo apt-get install -y packer jq
+
+      - name: Deploy AMI
+        run: |
+          cd pkg/ami/marketplace
+          make install_aws_plugin
+          make build_release
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-west-1

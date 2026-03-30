@@ -44,11 +44,20 @@
             <outputDirectory>${runtime.name}/bin</outputDirectory>
         </fileSet>
 
-        <!-- questdb native libs -->
+        <!-- questdb native C++ lib -->
         <fileSet>
             <directory>src/main/resources/io/questdb/bin/${platform.dir.name}</directory>
             <includes>
-                <include>*.*</include>
+                <include>libquestdb.*</include>
+            </includes>
+            <outputDirectory>${runtime.name}/lib</outputDirectory>
+        </fileSet>
+
+        <!-- questdb native Rust lib -->
+        <fileSet>
+            <directory>target/classes/io/questdb/bin/${platform.dir.name}</directory>
+            <includes>
+                <include>*questdbr.*</include>
             </includes>
             <outputDirectory>${runtime.name}/lib</outputDirectory>
         </fileSet>

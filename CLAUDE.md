@@ -115,9 +115,9 @@ offending character, not the start of the expression.
 
 ### Prerequisites
 
-- Java 11+ (64-bit)
+- Java 11+ (64-bit) with `JAVA_HOME` set
 - Maven 3
-- `JAVA_HOME` environment variable set
+- Rust toolchain (version pinned in `core/rust/qdbr/rust-toolchain.toml`)
 
 ### Building
 

@@ -38,10 +38,10 @@
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>1.2.0</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
-        <qdbr.release>false</qdbr.release>
+        <qdbr.release>true</qdbr.release>
 
         <!--
-        For production builds, use -P qdbr-release
+        For debug builds, use -P qdbr-debug
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
@@ -466,16 +466,17 @@
         </profile>
         <profile>
             <id>build-rust-library</id>
+            <activation>
+                <property>
+                    <name>!skipNative</name>
+                </property>
+            </activation>
             <build>
                 <plugins>
                     <!--
-                    The plugin is used in the development environments, that require Rust
-                    code changes. The binary need not be placed in the platform-specific directory
-                    as it is expected to be NOT PRESENT in all other environments. E.g. those
-                    that do not target Rust library changes.
-
-                    The runtime libquestdbr library will be picked up from the source control. It will
-                    be deposited to the source control via CI job.
+                    Builds the Rust native library (libquestdbr) from source.
+                    The binary is placed in target/classes/io/questdb/bin/<platform>/
+                    where Os.java picks it up via the classpath. Skip with -DskipNative.
                     -->
                     <plugin>
                         <groupId>org.questdb</groupId>
@@ -490,7 +491,7 @@
                                 <configuration>
                                     <path>${qdbr.path}</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/rust</copyTo>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                 </configuration>
                             </execution>
                         </executions>
@@ -510,6 +511,7 @@
                 <archive.name>${project.version}-rt-windows-x86-64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-x86-64</runtime.name>
                 <runtime.assembly>src/main/assembly/rt-win.xml</runtime.assembly>
+                <platform.dir.name>windows-x86-64</platform.dir.name>
             </properties>
         </profile>
         <profile>
@@ -563,7 +565,7 @@
             <activation>
                 <os>
                     <family>Mac</family>
-                    <arch>amd64</arch>
+                    <arch>x86_64</arch>
                 </os>
             </activation>
             <properties>
@@ -639,15 +641,15 @@
             </dependencies>
         </profile>
         <profile>
-            <id>qdbr-release</id>
+            <id>qdbr-debug</id>
             <properties>
-                <qdbr.release>true</qdbr.release>
+                <qdbr.release>false</qdbr.release>
             </properties>
         </profile>
         <profile>
             <id>qdbr-coverage</id>
             <properties>
-                <qdr.release>false</qdr.release>
+                <qdbr.release>false</qdbr.release>
                 <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
             </properties>
             <build>
@@ -665,8 +667,7 @@
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>
-                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
-                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                     </environmentVariables>
