@@ -5680,8 +5680,14 @@ public class SqlOptimiser implements Mutable {
                     emitLiteralsTopDown(jc.aNodes.getQuick(k), model);
                     emitLiteralsTopDown(jc.bNodes.getQuick(k), model);
 
-                    emitLiteralsTopDown(jc.aNodes.getQuick(k), jm);
-                    emitLiteralsTopDown(jc.bNodes.getQuick(k), jm);
+                    // Use vanilla column names (without table alias prefix) when
+                    // emitting to the join model. The expression nodes carry the
+                    // outer query's table aliases (e.g. "v2.max") which cannot be
+                    // resolved within the join model's own scope (e.g. v2 internally
+                    // uses aliases like "v1", "t0"). Using the plain column name
+                    // allows the column to be found in the join model's alias map.
+                    addTopDownColumn(jc.aNames.getQuick(k), jm);
+                    addTopDownColumn(jc.bNames.getQuick(k), jm);
 
                     if (papaModel != null) {
                         emitLiteralsTopDown(jc.aNodes.getQuick(k), papaModel);

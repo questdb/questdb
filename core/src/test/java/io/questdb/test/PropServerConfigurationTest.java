@@ -454,9 +454,6 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
-        Assert.assertTrue(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
         Assert.assertFalse(configuration.getPGWireConfiguration().readOnlySecurityContext());
         Assert.assertEquals("quest", configuration.getPGWireConfiguration().getDefaultPassword());
         Assert.assertEquals("admin", configuration.getPGWireConfiguration().getDefaultUsername());
@@ -1501,9 +1498,6 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isInsertCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getInsertCacheRowCount());
-            Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
-            Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
-            Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
             Assert.assertTrue(configuration.getPGWireConfiguration().readOnlySecurityContext());
             Assert.assertEquals("my_quest", configuration.getPGWireConfiguration().getDefaultPassword());
             Assert.assertEquals("my_admin", configuration.getPGWireConfiguration().getDefaultUsername());

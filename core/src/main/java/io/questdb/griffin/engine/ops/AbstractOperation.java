@@ -51,12 +51,18 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     private int tableId;
     private long tableVersion;
 
+    /**
+     * Authorizes the operation against the current security context.
+     * Cached operations must be re-authorized on every execution.
+     */
+    public abstract void authorize();
+
     public void clearCommandCorrelationId() {
         setCommandCorrelationId(NO_CORRELATION_ID);
     }
 
     public void clearSecurityContext() {
-        Misc.clear(securityContext);
+        securityContext = Misc.clear(securityContext);
     }
 
     @Override
