@@ -97,6 +97,56 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCommitDuringColumnarWrite_Throws() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_lifecycle_commit_guard", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(1);
+                putTimestampColumn(appender, walWriter, new long[]{1_000_000L}, 1);
+
+                try {
+                    walWriter.commit();
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot commit during columnar write"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackDuringColumnarWrite_Throws() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_lifecycle_rollback_guard", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(1);
+                putTimestampColumn(appender, walWriter, new long[]{1_000_000L}, 1);
+
+                try {
+                    walWriter.rollback();
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot rollback during columnar write"));
+                }
+            }
+        });
+    }
+
     /**
      * Tests that beginColumnarWrite() properly handles segment rolling when columns
      * are added while rollSegmentOnNextRow is true.

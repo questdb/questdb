@@ -295,10 +295,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     public void close() {
         if (isOpen()) {
             try {
-                // If distressed, no need to rollback, WalWriter will not be used anymore
-                if (!distressed) {
-                    rollback();
-                }
+                cleanupBeforeClose();
             } finally {
                 doClose(walDirectoryPolicy.truncateFilesOnClose());
             }
@@ -486,7 +483,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        if (columnarAppender != null && columnarAppender.isInColumnarWrite()) {
+        if (isInColumnarWrite()) {
             throw CairoException.nonCritical().put("cannot use row-oriented newRow() during columnar write");
         }
         timestampDriver.validateBounds(timestamp);
@@ -540,7 +537,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             );
             getSequencerTxn();
         } catch (Throwable th) {
-            rollback();
+            rollback0();
             throw th;
         }
     }
@@ -556,6 +553,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void rollback() {
+        throwIfInColumnarWrite("rollback");
+        rollback0();
+    }
+
+    protected final void cleanupBeforeClose() {
+        // If distressed, no need to rollback, WalWriter will not be used any more.
+        if (isDistressed()) {
+            return;
+        }
+        if (isInColumnarWrite()) {
+            columnarAppender.cancelColumnarWrite();
+        }
+        rollback0();
+    }
+
+    private void rollback0() {
         try {
             if (!isDistressed() && (inTransaction() || hasDirtyColumns(currentTxnStartRowNum))) {
                 setAppendPosition(currentTxnStartRowNum);
@@ -623,7 +636,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             lastSegmentTxn = events.truncate();
             getSequencerTxn();
         } catch (Throwable th) {
-            rollback();
+            rollback0();
             throw th;
         }
     }
@@ -900,6 +913,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             byte dedupMode
     ) {
         checkDistressed();
+        throwIfInColumnarWrite("commit");
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 final long txnRowCount = getUncommittedRowCount();
@@ -988,7 +1002,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         } catch (Throwable th) {
             // If distressed, no need to rollback, WalWriter will not be used anymore
             if (!isDistressed()) {
-                rollback();
+                rollback0();
             }
             throw th;
         } finally {
@@ -1311,6 +1325,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
+    private boolean isInColumnarWrite() {
+        return columnarAppender != null && columnarAppender.isInColumnarWrite();
+    }
+
     private boolean isTruncateFilesOnClose() {
         return walDirectoryPolicy.truncateFilesOnClose();
     }
@@ -1598,6 +1616,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
         resetSymbolMaps();
+    }
+
+    private void throwIfInColumnarWrite(CharSequence operation) {
+        if (isInColumnarWrite()) {
+            throw CairoException.nonCritical().put("cannot ").put(operation).put(" during columnar write");
+        }
     }
 
     private void resetSymbolMaps() {
