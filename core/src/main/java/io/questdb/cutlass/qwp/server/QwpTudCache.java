@@ -65,16 +65,16 @@ import io.questdb.tasks.TelemetryTask;
 public class QwpTudCache implements QuietCloseable {
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
-    private MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
     private final CairoEngine engine;
-    private Path path = new Path();
-    private WeakClosableObjectPool<SymbolCache> symbolCachePool;
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
+    private MemoryMARW ddlMem = Vm.getCMARWInstance();
     private boolean isDistressed = false;
+    private Path path = new Path();
+    private WeakClosableObjectPool<SymbolCache> symbolCachePool;
 
     public QwpTudCache(
             CairoEngine engine,
