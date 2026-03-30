@@ -1898,6 +1898,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         public long structureVersion;
 
         @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            structureVersion++;
+        }
+
+        @Override
         public void addColumn(
                 CharSequence columnName,
                 int columnType,
@@ -2024,6 +2029,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private class MetadataWriterService implements MetadataServiceStub {
+
+        @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            // WAL writer accepts add-index without local changes — the sequencer
+            // metadata is updated when the WAL transaction is applied.
+        }
 
         @Override
         public void addColumn(

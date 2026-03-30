@@ -5885,6 +5885,45 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCoveringWithTimestampNsWal() throws Exception {
+        // Reproduction of user's WAL table with TIMESTAMP_NS and INCLUDE
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_tsns_wal (
+                        ts TIMESTAMP_NS,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (exchange, ts, best_bid, best_ask),
+                        exchange SYMBOL,
+                        commodity_class SYMBOL,
+                        best_bid DOUBLE,
+                        best_ask DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY HOUR WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cover_tsns_wal VALUES
+                    ('2024-01-01T00:00:00.000000000', 'GOLD', 'CME', 'metal', 2050.5, 2051.0),
+                    ('2024-01-01T00:01:00.000000000', 'SILVER', 'LME', 'metal', 24.3, 24.5),
+                    ('2024-01-01T00:02:00.000000000', 'GOLD', 'LME', 'metal', 2051.0, 2052.0)
+                    """);
+            drainWalQueue();
+
+            // Plan should use CoveringIndex for covered columns on WAL table
+            assertPlanNoLeakCheck(
+                    "SELECT ts, sym FROM t_cover_tsns_wal WHERE sym = 'GOLD'",
+                    """
+                            CoveringIndex on: sym with: ts
+                              filter: sym='GOLD'
+                            """
+            );
+
+            assertSql("""
+                    ts\tsym
+                    2024-01-01T00:00:00.000000000Z\tGOLD
+                    2024-01-01T00:02:00.000000000Z\tGOLD
+                    """, "SELECT ts, sym FROM t_cover_tsns_wal WHERE sym = 'GOLD'");
+        });
+    }
+
     // ---- Wide table and wide INCLUDE edge case tests ----
 
     @Test

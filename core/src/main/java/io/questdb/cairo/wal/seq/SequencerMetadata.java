@@ -44,6 +44,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -92,6 +93,26 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     ) {
         addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, indexType, indexValueBlockCapacity, isDedupKey);
         readColumnOrder.add(columnMetadata.size() - 1);
+        structureVersion.incrementAndGet();
+    }
+
+    public void addIndex(CharSequence columnName, int indexValueBlockSize, byte indexType, ObjList<CharSequence> coveringColumnNames) {
+        int colIdx = columnNameIndexMap.get(columnName);
+        if (colIdx < 0) {
+            return;
+        }
+        TableColumnMetadata colMeta = columnMetadata.getQuick(colIdx);
+        colMeta.setIndexType(indexType);
+        colMeta.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
+            int[] coveringIndices = new int[coveringColumnNames.size()];
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                int covIdx = columnNameIndexMap.get(coveringColumnNames.get(i));
+                coveringIndices[i] = covIdx >= 0 ? covIdx : -1;
+            }
+            colMeta.setCoveringColumnIndices(coveringIndices);
+        }
         structureVersion.incrementAndGet();
     }
 
@@ -322,6 +343,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
+            // Propagate covering column indices (INCLUDE list) from the table structure
+            int[] coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.length > 0) {
+                columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(coveringIndices);
+            }
             readColumnOrder.add(i);
         }
 
@@ -408,6 +434,33 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     }
                 }
             }
+
+            // Optional section: covering column indices (backward compatible)
+            if (memSize > offset + 8 + 4) {
+                long coverCheckSum = checkSum * 31 + 0x434F5652; // "COVR" salt
+                long storedCoverSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCoverSum == coverCheckSum) {
+                    int coveringColumnCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    for (int c = 0; c < coveringColumnCount; c++) {
+                        if (memSize - offset < 2 * Integer.BYTES) break;
+                        int colIdx = metaMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        int includeCount = metaMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        if (includeCount > 0 && memSize - offset >= (long) includeCount * Integer.BYTES
+                                && colIdx >= 0 && colIdx < columnCount) {
+                            int[] indices = new int[includeCount];
+                            for (int j = 0; j < includeCount; j++) {
+                                indices[j] = metaMem.getInt(offset);
+                                offset += Integer.BYTES;
+                            }
+                            columnMetadata.getQuick(colIdx).setCoveringColumnIndices(indices);
+                        }
+                    }
+                }
+            }
         } catch (Throwable e) {
             columnNameIndexMap.clear();
             columnMetadata.clear();
@@ -464,6 +517,29 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(columnCount);
         for (int i = 0; i < columnCount; i++) {
             metaMem.putByte(getColumnMetadata(i).getIndexType());
+        }
+
+        // write covering column indices (optional section, backward compatible)
+        long coverCheckSum = checkSum * 31 + 0x434F5652; // "COVR" salt
+        metaMem.putLong(coverCheckSum);
+        // Count how many columns have covering indices
+        int coveringColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            int[] indices = getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.length > 0) {
+                coveringColumnCount++;
+            }
+        }
+        metaMem.putInt(coveringColumnCount);
+        for (int i = 0; i < columnCount; i++) {
+            int[] indices = getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.length > 0) {
+                metaMem.putInt(i); // column index
+                metaMem.putInt(indices.length);
+                for (int idx : indices) {
+                    metaMem.putInt(idx);
+                }
+            }
         }
 
         // update metadata size
