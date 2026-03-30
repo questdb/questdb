@@ -31,6 +31,7 @@ import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMNS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_TABLE_NAME_LENGTH;
 
@@ -56,10 +57,22 @@ public class QwpTableHeader {
 
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
     private final DirectUtf8String tableNameUtf8 = new DirectUtf8String();
+    private final int maxRowCount;
     private int bytesConsumed;
     private int columnCount;
     private long rowCount;
     private String tableNameStr;  // Lazily allocated when getTableName() is called
+
+    public QwpTableHeader() {
+        this(DEFAULT_MAX_ROWS_PER_TABLE);
+    }
+
+    public QwpTableHeader(int maxRowCount) {
+        if (maxRowCount < 1 || maxRowCount > DEFAULT_MAX_ROWS_PER_TABLE) {
+            throw new IllegalArgumentException("maxRowCount must be between 1 and " + DEFAULT_MAX_ROWS_PER_TABLE);
+        }
+        this.maxRowCount = maxRowCount;
+    }
 
     /**
      * Encodes this table header to direct memory.
@@ -217,10 +230,10 @@ public class QwpTableHeader {
         }
         QwpVarint.decode(address + offset, limit, decodeResult);
         this.rowCount = decodeResult.value;
-        if (rowCount > Integer.MAX_VALUE) {
+        if (rowCount > maxRowCount) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED,
-                    "row count exceeds maximum: " + rowCount
+                    "row count exceeds maximum: " + rowCount + " (max " + maxRowCount + ')'
             );
         }
         offset += decodeResult.bytesRead;
@@ -252,19 +265,6 @@ public class QwpTableHeader {
         rowCount = 0;
         columnCount = 0;
         bytesConsumed = 0;
-    }
-
-    public void setColumnCount(int columnCount) {
-        this.columnCount = columnCount;
-    }
-
-    public void setRowCount(long rowCount) {
-        this.rowCount = rowCount;
-    }
-
-    public void setTableName(String tableName) {
-        this.tableNameStr = tableName;
-        this.tableNameUtf8.clear();  // Not valid when set from String
     }
 
     @Override

@@ -55,7 +55,7 @@ public class QwpTableBlockCursor implements Mutable {
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
     private final QwpSchema.ParseResult parseResult = new QwpSchema.ParseResult();
-    private final QwpTableHeader tableHeader = new QwpTableHeader();
+    private final QwpTableHeader tableHeader;
     private int arrayColumnCount;
     private int[] arrayColumnIndices = new int[16];
     private int booleanColumnCount;
@@ -86,6 +86,14 @@ public class QwpTableBlockCursor implements Mutable {
     private int[] symbolColumnIndices = new int[16];
     private int timestampColumnCount;
     private int[] timestampColumnIndices = new int[16];
+
+    public QwpTableBlockCursor() {
+        this(DEFAULT_MAX_ROWS_PER_TABLE);
+    }
+
+    public QwpTableBlockCursor(int maxRowsPerTable) {
+        this.tableHeader = new QwpTableHeader(maxRowsPerTable);
+    }
 
     @Override
     public void clear() {

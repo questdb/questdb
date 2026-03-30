@@ -584,6 +584,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
+    QWP_MAX_ROWS_PER_TABLE("qwp.max.rows.per.table"),
     QWP_UDP_BIND_TO("qwp.udp.bind.to"),
     QWP_UDP_COMMIT_RATE("qwp.udp.commit.rate"),
     QWP_UDP_ENABLED("qwp.udp.enabled"),

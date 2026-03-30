@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -59,6 +60,11 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     @Override
     public int getGroupIPv4Address() {
         return Net.parseIPv4("224.1.1.1");
+    }
+
+    @Override
+    public int getMaxRowsPerTable() {
+        return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
     }
 
     @Override

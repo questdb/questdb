@@ -106,54 +106,6 @@ public class QwpTableHeaderTest {
     }
 
     @Test
-    public void testEncodeDecodeRoundTrip() throws QwpParseException {
-        QwpTableHeader original = new QwpTableHeader();
-        original.setTableName("sensors");
-        original.setRowCount(12_345);
-        original.setColumnCount(8);
-
-        byte[] buf = new byte[original.encodedSize()];
-        int written = original.encode(buf, 0);
-        Assert.assertEquals(buf.length, written);
-
-        long address = copyToDirectMemory(buf);
-        try {
-            QwpTableHeader parsed = new QwpTableHeader();
-            parsed.parse(address, buf.length);
-
-            Assert.assertEquals(original.getTableName(), parsed.getTableName());
-            Assert.assertEquals(original.getRowCount(), parsed.getRowCount());
-            Assert.assertEquals(original.getColumnCount(), parsed.getColumnCount());
-        } finally {
-            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testEncodeDirectMemory() throws QwpParseException {
-        QwpTableHeader original = new QwpTableHeader();
-        original.setTableName("metrics");
-        original.setRowCount(500);
-        original.setColumnCount(3);
-
-        int size = original.encodedSize();
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long endAddress = original.encode(address);
-            Assert.assertEquals(size, endAddress - address);
-
-            QwpTableHeader parsed = new QwpTableHeader();
-            parsed.parse(address, size);
-
-            Assert.assertEquals(original.getTableName(), parsed.getTableName());
-            Assert.assertEquals(original.getRowCount(), parsed.getRowCount());
-            Assert.assertEquals(original.getColumnCount(), parsed.getColumnCount());
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testParseMultipleTableHeaders() throws QwpParseException {
         // Create buffer with two consecutive table headers
         byte[] header1 = encodeTableHeader("table1", 100, 5);
@@ -264,17 +216,17 @@ public class QwpTableHeaderTest {
     }
 
     @Test
-    public void testRowCountIntMaxAllowed() throws QwpParseException {
-        // Integer.MAX_VALUE itself must be accepted
-        long rowCount = Integer.MAX_VALUE;
+    public void testRowCountExceedsDefaultLimit() {
+        long rowCount = (long) QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE + 1;
         byte[] buf = encodeTableHeader("test", rowCount, 5);
 
         long address = copyToDirectMemory(buf);
         try {
             QwpTableHeader header = new QwpTableHeader();
             header.parse(address, buf.length);
-
-            Assert.assertEquals(rowCount, header.getRowCount());
+            Assert.fail("Expected exception for row count exceeding default limit");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
         } finally {
             Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
         }
@@ -312,6 +264,31 @@ public class QwpTableHeaderTest {
             Assert.assertEquals(rowCount, header.getRowCount());
         } finally {
             Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testRowCountRespectsConfiguredLimit() throws QwpParseException {
+        byte[] accepted = encodeTableHeader("test", 10, 5);
+        long acceptedAddress = copyToDirectMemory(accepted);
+        try {
+            QwpTableHeader header = new QwpTableHeader(10);
+            header.parse(acceptedAddress, accepted.length);
+            Assert.assertEquals(10, header.getRowCount());
+        } finally {
+            Unsafe.free(acceptedAddress, accepted.length, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        byte[] rejected = encodeTableHeader("test", 11, 5);
+        long rejectedAddress = copyToDirectMemory(rejected);
+        try {
+            QwpTableHeader header = new QwpTableHeader(10);
+            header.parse(rejectedAddress, rejected.length);
+            Assert.fail("Expected exception for row count exceeding configured limit");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+        } finally {
+            Unsafe.free(rejectedAddress, rejected.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

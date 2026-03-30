@@ -28,6 +28,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 
 /**
@@ -52,7 +53,7 @@ public class QwpMessageCursor implements Mutable {
 
     private static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
-    private final QwpTableBlockCursor tableBlockCursor = new QwpTableBlockCursor();
+    private final QwpTableBlockCursor tableBlockCursor;
     private final QwpVarint.DecodeResult varintResult = new QwpVarint.DecodeResult();
     private ObjList<String> connectionSymbolDict;
     private long currentTableAddress;
@@ -64,6 +65,14 @@ public class QwpMessageCursor implements Mutable {
     private long payloadEnd;
     private QwpSchemaCache schemaCache;
     private int tableCount;
+
+    public QwpMessageCursor() {
+        this(DEFAULT_MAX_ROWS_PER_TABLE);
+    }
+
+    public QwpMessageCursor(int maxRowsPerTable) {
+        this.tableBlockCursor = new QwpTableBlockCursor(maxRowsPerTable);
+    }
 
     @Override
     public void clear() {

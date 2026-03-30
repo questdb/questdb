@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
@@ -78,14 +79,14 @@ import io.questdb.std.QuietCloseable;
  */
 public class QwpStreamingDecoder implements QuietCloseable {
 
-    private final QwpMessageCursor messageCursor = new QwpMessageCursor();
+    private final QwpMessageCursor messageCursor;
     private final QwpSchemaCache schemaCache;
 
     /**
      * Creates a streaming decoder without schema caching.
      */
     public QwpStreamingDecoder() {
-        this(null);
+        this(null, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
     }
 
     /**
@@ -94,7 +95,12 @@ public class QwpStreamingDecoder implements QuietCloseable {
      * @param schemaCache schema cache for reference mode, or null to disable
      */
     public QwpStreamingDecoder(QwpSchemaCache schemaCache) {
+        this(schemaCache, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
+    }
+
+    public QwpStreamingDecoder(QwpSchemaCache schemaCache, int maxRowsPerTable) {
         this.schemaCache = schemaCache;
+        this.messageCursor = new QwpMessageCursor(maxRowsPerTable);
     }
 
     @Override

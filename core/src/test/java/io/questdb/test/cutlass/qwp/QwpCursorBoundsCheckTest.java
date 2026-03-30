@@ -138,6 +138,48 @@ public class QwpCursorBoundsCheckTest {
     }
 
     @Test
+    public void testMessageCursorRejectsOversizedRowCountBeforeColumnParsing() {
+        byte[] payload = encodeTableHeaderPayload("test", 2_000_000_000L, 1);
+        byte[] message = new byte[HEADER_SIZE + payload.length];
+        int offset = 0;
+
+        message[offset++] = 'Q';
+        message[offset++] = 'W';
+        message[offset++] = 'P';
+        message[offset++] = '1';
+        message[offset++] = 1;
+        message[offset++] = FLAG_GORILLA;
+        message[offset++] = 1;
+        message[offset++] = 0;
+        message[offset++] = (byte) payload.length;
+        message[offset++] = (byte) (payload.length >>> 8);
+        message[offset++] = (byte) (payload.length >>> 16);
+        message[offset++] = (byte) (payload.length >>> 24);
+        System.arraycopy(payload, 0, message, offset, payload.length);
+
+        long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < message.length; i++) {
+                Unsafe.getUnsafe().putByte(address + i, message[i]);
+            }
+
+            QwpMessageCursor cursor = new QwpMessageCursor();
+            cursor.of(address, message.length, null, null);
+
+            try {
+                cursor.nextTable();
+                Assert.fail("expected QwpParseException for oversized rowCount");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+            }
+        } catch (QwpParseException e) {
+            Assert.fail("message header should parse successfully before table validation: " + e.getMessage());
+        } finally {
+            Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testStringCursorRejectsAttackerControlledOffset() throws QwpParseException {
         // 1 non-null string row: flag(0) + offset array (8 bytes) + string data (5 bytes)
         int legitimateSize = 14;
@@ -184,5 +226,21 @@ public class QwpCursorBoundsCheckTest {
         } finally {
             Unsafe.free(address, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static byte[] encodeTableHeaderPayload(String tableName, long rowCount, int columnCount) {
+        byte[] nameBytes = tableName.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int size = QwpVarint.encodedLength(nameBytes.length)
+                + nameBytes.length
+                + QwpVarint.encodedLength(rowCount)
+                + QwpVarint.encodedLength(columnCount);
+        byte[] buf = new byte[size];
+        int offset = 0;
+        offset = QwpVarint.encode(buf, offset, nameBytes.length);
+        System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
+        offset += nameBytes.length;
+        offset = QwpVarint.encode(buf, offset, rowCount);
+        QwpVarint.encode(buf, offset, columnCount);
+        return buf;
     }
 }

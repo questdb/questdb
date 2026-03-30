@@ -33,6 +33,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
@@ -246,6 +247,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public int getDefaultTimestampColumnType() {
             return ColumnType.TIMESTAMP_MICRO;
+        }
+
+        @Override
+        public int getQwpMaxRowsPerTable() {
+            return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
         }
 
         @Override

@@ -170,6 +170,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                         }
 
                         @Override
+                        public int getQwpMaxRowsPerTable() {
+                            return configuration.getMaxRowsPerTable();
+                        }
+
+                        @Override
                         public CharSequence getInfluxPingVersion() {
                             return "";
                         }
@@ -225,7 +230,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             );
 
             this.messageHeader = new QwpMessageHeader();
-            this.messageCursor = new QwpMessageCursor();
+            this.messageCursor = new QwpMessageCursor(configuration.getMaxRowsPerTable());
             this.buf = buf;
             this.walAppender = walAppender;
             this.tudCache = tudCache;
