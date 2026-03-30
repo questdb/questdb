@@ -41,7 +41,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-
 import static io.questdb.cairo.TableUtils.validationException;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
@@ -374,9 +373,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         if (offset >= memSize) {
             return;
         }
+
         // Read covering column indices for each column that has the covering flag
         for (int i = 0; i < columnCount; i++) {
-            if (TableUtils.isColumnCovering(mem, i)) {
+            boolean isCovering = TableUtils.isColumnCovering(mem, i);
+            if (isCovering) {
                 if (offset + Integer.BYTES > mem.size()) {
                     break;
                 }
