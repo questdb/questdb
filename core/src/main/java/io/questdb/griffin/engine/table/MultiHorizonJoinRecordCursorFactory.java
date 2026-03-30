@@ -194,9 +194,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
     private static class MultiHorizonJoinRecordCursor implements RecordCursor {
         private final ObjList<Map> asOfJoinMaps;
-        private final long bwdScanAbsoluteThreshold;
-        private final long bwdScanMinGap;
-        private final long bwdScanSwitchFactor;
         private final Map dataMap;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
@@ -249,9 +246,6 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             this.keyFunctions = keyFunctions;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.offsets = offsets;
-            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.size();
             this.slaveSymbolSources = new ObjList<>(slaveCount);
@@ -306,6 +300,9 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
                 // Create per-slave maps, symbol translating records, and time frame helpers
                 final long lookahead = configuration.getSqlAsOfJoinLookAhead();
+                final long bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
+                final long bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
+                final long bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
                 for (int s = 0; s < slaveCount; s++) {
                     HorizonJoinSlaveState ss = slaveStates.getQuick(s);
                     if (ss.getAsOfJoinKeyTypes() != null) {

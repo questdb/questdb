@@ -209,9 +209,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
     private static class HorizonJoinRecordCursor implements RecordCursor {
         private final Map asOfJoinMap;
-        private final long bwdScanAbsoluteThreshold;
-        private final long bwdScanMinGap;
-        private final long bwdScanSwitchFactor;
         private final Map dataMap;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
@@ -261,9 +258,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 long masterTsScale,
                 long slaveTsScale
         ) {
-            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.keyFunctions = keyFunctions;
@@ -325,7 +319,9 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
                     configuration.getSqlAsOfJoinLookAhead(), slaveTsScale,
-                    bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                    configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
+                    configuration.getSqlHorizonJoinBwdScanMinGap(),
+                    configuration.getSqlHorizonJoinBwdScanSwitchFactor()
             );
             this.isOpen = true;
         }

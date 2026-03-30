@@ -188,9 +188,6 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
     private class HorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         private final Map asOfJoinMap;
-        private final long bwdScanAbsoluteThreshold;
-        private final long bwdScanMinGap;
-        private final long bwdScanSwitchFactor;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
@@ -233,9 +230,6 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.offsets = offsets;
             this.masterTsScale = masterTsScale;
-            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.masterAsOfJoinMapSink = masterAsOfJoinMapSink;
             this.slaveAsOfJoinMapSink = slaveAsOfJoinMapSink;
 
@@ -265,7 +259,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
 
             this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
                     configuration.getSqlAsOfJoinLookAhead(), slaveTsScale,
-                    bwdScanAbsoluteThreshold, bwdScanMinGap, bwdScanSwitchFactor
+                    configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
+                    configuration.getSqlHorizonJoinBwdScanMinGap(),
+                    configuration.getSqlHorizonJoinBwdScanSwitchFactor()
             );
             this.isOpen = true;
         }

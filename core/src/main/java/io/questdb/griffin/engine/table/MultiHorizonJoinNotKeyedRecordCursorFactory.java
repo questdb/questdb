@@ -178,9 +178,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
     private class MultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<Map> asOfJoinMaps;
-        private final long bwdScanAbsoluteThreshold;
-        private final long bwdScanMinGap;
-        private final long bwdScanSwitchFactor;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
@@ -220,9 +217,6 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.groupByFunctions = groupByFunctions;
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.offsets = offsets;
-            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.slaveStates = slaveStates;
             this.slaveCount = slaveStates.size();
             this.slaveSymbolSources = new ObjList<>(slaveCount);
@@ -253,6 +247,9 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
                 // Create per-slave maps, symbol translating records, and time frame helpers
                 final long lookahead = configuration.getSqlAsOfJoinLookAhead();
+                final long bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
+                final long bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
+                final long bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
                 for (int s = 0; s < slaveCount; s++) {
                     HorizonJoinSlaveState ss = slaveStates.getQuick(s);
                     if (ss.getAsOfJoinKeyTypes() != null) {
