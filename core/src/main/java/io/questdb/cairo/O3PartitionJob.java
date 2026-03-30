@@ -2017,7 +2017,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Integer division of maxRowGroupSize / 2 is intentional: the target
         // must be representable exactly in integer arithmetic to avoid off-by-one
         // overflows when distributing remainder rows across chunks.
-        final long maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2;
+        final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
         int numChunks;
         if (mergeRowCount > maxChunkTarget) {
             numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
