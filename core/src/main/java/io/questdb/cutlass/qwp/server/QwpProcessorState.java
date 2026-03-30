@@ -94,7 +94,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             this.streamingDecoder = new QwpStreamingDecoder(new QwpSchemaCache(), configuration.getQwpMaxRowsPerTable());
             this.walAppender = new QwpWalAppender(
                     configuration.autoCreateNewColumns(),
-                    engine.getConfiguration().getMaxFileNameLength()
+                    engine.getConfiguration().getMaxFileNameLength(),
+                    engine.getConfiguration().getMaxSqlRecompileAttempts()
             );
             this.walAppender.setSymbolCache(symbolCache);
 

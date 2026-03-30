@@ -183,7 +183,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     configuration.isStringToCharCastAllowed(),
                     configuration.getTimestampUnit(),
                     sink,
-                    cairoConfiguration.getMaxFileNameLength()
+                    cairoConfiguration.getMaxFileNameLength(),
+                    cairoConfiguration.getMaxSqlRecompileAttempts()
             );
         } catch (Throwable t) {
             close();

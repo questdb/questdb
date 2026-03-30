@@ -67,6 +67,7 @@ public class QwpWalAppender implements QuietCloseable {
 
     private final boolean autoCreateNewColumns;
     private final int maxFileNameLength;
+    private final int maxMetadataChangeRetries;
 
     // Reusable mapping arrays
     private int[] columnIndexMap;  // Maps ILP column index to QuestDB column index
@@ -83,9 +84,10 @@ public class QwpWalAppender implements QuietCloseable {
      * @param autoCreateNewColumns whether to auto-create columns that don't exist
      * @param maxFileNameLength    maximum column name length
      */
-    public QwpWalAppender(boolean autoCreateNewColumns, int maxFileNameLength) {
+    public QwpWalAppender(boolean autoCreateNewColumns, int maxFileNameLength, int maxMetadataChangeRetries) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.maxFileNameLength = maxFileNameLength;
+        this.maxMetadataChangeRetries = maxMetadataChangeRetries;
         this.columnIndexMap = new int[64];
         this.columnTypeMap = new int[64];
         this.ilpTypes = new byte[64];
@@ -166,14 +168,19 @@ public class QwpWalAppender implements QuietCloseable {
      * @throws CommitFailedException if commit fails
      * @throws QwpParseException     if parsing fails during cursor iteration
      */
-    public void appendToWalStreaming(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
-                                     TableUpdateDetails tud) throws CommitFailedException, QwpParseException {
-        while (!tud.isDropped()) {
+    public void appendToWalStreaming(
+            SecurityContext securityContext,
+            QwpTableBlockCursor tableBlock,
+            TableUpdateDetails tud
+    ) throws CommitFailedException, QwpParseException {
+        for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
                 appendToWalStreaming0(securityContext, tableBlock, tud);
-                break;
+                return;
             } catch (MetadataChangedException e) {
-                // Retry - reset cursor and retry
+                if (retryCount == maxMetadataChangeRetries) {
+                    throw CairoException.nonCritical().put("metadata changed too many times during WAL append");
+                }
                 tableBlock.resetRowIteration();
             }
         }

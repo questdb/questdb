@@ -129,7 +129,8 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             walAppender = new QwpWalAppender(
                     configuration.isAutoCreateNewColumns(),
-                    engine.getConfiguration().getMaxFileNameLength()
+                    engine.getConfiguration().getMaxFileNameLength(),
+                    engine.getConfiguration().getMaxSqlRecompileAttempts()
             );
 
             DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(

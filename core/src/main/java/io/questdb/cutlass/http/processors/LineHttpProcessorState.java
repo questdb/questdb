@@ -99,7 +99,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampUnit(),
                 utf8Sink,
-                engine.getConfiguration().getMaxFileNameLength()
+                engine.getConfiguration().getMaxFileNameLength(),
+                engine.getConfiguration().getMaxSqlRecompileAttempts()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
