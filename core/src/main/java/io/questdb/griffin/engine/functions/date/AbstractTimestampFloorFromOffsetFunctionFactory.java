@@ -313,8 +313,12 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
             // the mat view refresh iterator produces matching bucket boundaries.
             final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
             final long localTimestamp = timestamp + tzOff;
-            final long result = floorFunc.floor(localTimestamp, stride, from);
-            return CommonUtils.offsetFlooredUtcResult(result, tzOff, offset, tzRules, unit);
+            // Include offset in the floor anchor (matching the non-UTC path and
+            // the fixed-offset AllConstFunc path) so that the bucket grid is
+            // shifted by the user offset. Pass offset=0 to offsetFlooredUtcResult
+            // since the floor already incorporates it.
+            final long result = floorFunc.floor(localTimestamp, stride, from + offset);
+            return CommonUtils.offsetFlooredUtcResult(result, tzOff, 0, tzRules, unit);
         }
         final long tzOff = tzRules.getOffset(timestamp);
         final long localTimestamp = timestamp + tzOff;

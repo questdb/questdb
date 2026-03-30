@@ -867,26 +867,25 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testWithOffsetAcrossDstFallBack() throws Exception {
-        // Non-zero offset + DST fall-back: the offset is a pure shift applied after flooring.
+        // Non-zero offset + DST fall-back: the offset shifts the floor grid anchor.
         // 30m stride with 15m offset across Berlin fall-back.
         // Standard-local anchoring: stdOff = +1h (CET).
-        // UTC 00:40, local(std) = 01:40, floor(01:40, 30m, 0) = 01:30,
-        // result = 01:30 - 1h + 15m = 00:45 UTC
+        // UTC 00:40, local(std) = 01:40, floor(01:40, 30m, 15m) = 01:15,
+        // result = 01:15 - 1h = 00:15 UTC
         assertMemoryLeak(() -> assertTimestampFloorUtc(
                 """
                         timestamp_floor_utc
-                        2021-10-31T00:45:00.000000Z
+                        2021-10-31T00:15:00.000000Z
                         """,
                 "30m", "2021-10-31T00:40:00.000000Z", null, "00:15", "Europe/Berlin"
         ));
 
-        // UTC 01:40, local(std) = 02:40, floor(02:40, 30m, 0) = 02:30,
-        // result = 02:30 - 1h + 15m = 01:45 UTC
-        // The invariant bucket = bucket_no_offset + offset holds across DST transitions.
+        // UTC 01:40, local(std) = 02:40, floor(02:40, 30m, 15m) = 02:15,
+        // result = 02:15 - 1h = 01:15 UTC
         assertMemoryLeak(() -> assertTimestampFloorUtc(
                 """
                         timestamp_floor_utc
-                        2021-10-31T01:45:00.000000Z
+                        2021-10-31T01:15:00.000000Z
                         """,
                 "30m", "2021-10-31T01:40:00.000000Z", null, "00:15", "Europe/Berlin"
         ));
@@ -926,6 +925,36 @@ public class TimestampFloorFromOffsetUtcFunctionFactoryTest extends AbstractCair
                     "SELECT count(*) mismatches FROM ts " +
                             "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
                             "timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin')",
+                    null, false, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNonZeroOffsetDstTzMatchesFixedTz() throws Exception {
+        // C1 bug: floorWithTz (DST-aware path) floors with anchor=from, then adds
+        // offset post-floor. AllConstFunc (fixed-offset path) floors with
+        // anchor=from+offset. These produce different bucket assignments when
+        // offset % stride != 0.
+        //
+        // During January, Europe/Berlin is CET (+1h) — same as the fixed '+01:00'
+        // offset. Both paths receive the same effective timezone offset, so they
+        // MUST produce identical results. Any mismatch proves the floor anchor bug.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE ts AS (" +
+                            "SELECT timestamp_sequence('2024-01-15T00:00:00.000000Z', 1_000_000 * 60 * 7) k " +
+                            "FROM long_sequence(200)" +
+                            ") TIMESTAMP(k)"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            mismatches
+                            0
+                            """,
+                    "SELECT count(*) mismatches FROM ts " +
+                            "WHERE timestamp_floor_utc('1h', k, null, '00:30', 'Europe/Berlin') != " +
+                            "timestamp_floor_utc('1h', k, null, '00:30', '+01:00')",
                     null, false, true, false
             );
         });

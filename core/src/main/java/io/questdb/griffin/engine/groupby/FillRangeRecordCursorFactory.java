@@ -195,6 +195,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
+        Misc.free(cursor);
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.freeObjList(fillValues);
