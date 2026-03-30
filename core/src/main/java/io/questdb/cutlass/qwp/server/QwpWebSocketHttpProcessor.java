@@ -63,15 +63,23 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * The WebSocket magic GUID used in the Sec-WebSocket-Accept calculation.
      */
     public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     /**
      * The required WebSocket version (RFC 6455).
      */
     public static final int WEBSOCKET_VERSION = 13;
+    private static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
+    private static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
+    private static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
+    private static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";
+    private static final String ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER = "Missing Sec-WebSocket-Key header";
+    private static final String ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER = "Missing Sec-WebSocket-Version header";
+    private static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
+    private static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
+    private static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
+    private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
-    private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
     private static final ThreadLocal<MessageDigest> SHA1_DIGEST = ThreadLocal.withInitial(() -> {
@@ -81,6 +89,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             throw new RuntimeException("SHA-1 not available", e);
         }
     });
+    private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpWebSocketUpgradeProcessor processor;
 
     /**
@@ -180,6 +189,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return versionHeader != null && Numbers.parseNonNegativeIntQuiet(versionHeader) == WEBSOCKET_VERSION;
     }
 
+    public static boolean isVersionValidationError(String validationError) {
+        return ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER.equals(validationError)
+                || ERROR_UNSUPPORTED_WEBSOCKET_VERSION.equals(validationError);
+    }
+
     /**
      * Checks if the given header indicates a WebSocket upgrade request.
      *
@@ -214,43 +228,43 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         // browsers send Origin automatically, legitimate clients do not.
         // This prevents Cross-Site WebSocket Hijacking (CSWSH).
         if (header.getHeader(HEADER_ORIGIN) != null) {
-            return "Origin header not allowed on QWP WebSocket";
+            return ERROR_ORIGIN_HEADER_NOT_ALLOWED;
         }
 
         // Check Upgrade header
         Utf8Sequence upgradeHeader = header.getHeader(HEADER_UPGRADE);
         if (upgradeHeader == null) {
-            return "Missing Upgrade header";
+            return ERROR_MISSING_UPGRADE_HEADER;
         }
         if (!isWebSocketUpgrade(upgradeHeader)) {
-            return "Invalid Upgrade header value";
+            return ERROR_INVALID_UPGRADE_HEADER_VALUE;
         }
 
         // Check Connection header
         Utf8Sequence connectionHeader = header.getHeader(HEADER_CONNECTION);
         if (connectionHeader == null) {
-            return "Missing Connection header";
+            return ERROR_MISSING_CONNECTION_HEADER;
         }
         if (!isConnectionUpgrade(connectionHeader)) {
-            return "Connection header must contain 'upgrade'";
+            return ERROR_CONNECTION_MUST_CONTAIN_UPGRADE;
         }
 
         // Check Sec-WebSocket-Key
         Utf8Sequence keyHeader = header.getHeader(HEADER_SEC_WEBSOCKET_KEY);
         if (keyHeader == null) {
-            return "Missing Sec-WebSocket-Key header";
+            return ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER;
         }
         if (!isValidKey(keyHeader)) {
-            return "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
+            return ERROR_INVALID_SEC_WEBSOCKET_KEY;
         }
 
         // Check Sec-WebSocket-Version
         Utf8Sequence versionHeader = header.getHeader(HEADER_SEC_WEBSOCKET_VERSION);
         if (versionHeader == null) {
-            return "Missing Sec-WebSocket-Version header";
+            return ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER;
         }
         if (!isValidVersion(versionHeader)) {
-            return "Unsupported WebSocket version (must be 13)";
+            return ERROR_UNSUPPORTED_WEBSOCKET_VERSION;
         }
 
         return null;
@@ -295,12 +309,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return offset;
     }
 
-    private static int digitCount(int value) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3; // QWP version will not exceed 255
-    }
-
     @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         // Always return the same processor instance. Per-connection state lives
@@ -325,5 +333,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
+    }
+
+    private static int digitCount(int value) {
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        return 3; // QWP version will not exceed 255
     }
 }

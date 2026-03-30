@@ -115,8 +115,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         String contentLength = String.valueOf(reasonBytes.length);
         byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
 
-        int requiredSize = BAD_REQUEST_PREFIX.length + contentLengthBytes.length +
-                HTTP_HEADER_END.length + reasonBytes.length;
+        int requiredSize = badRequestResponseSize(reasonBytes.length);
 
         if (requiredSize > bufferSize) {
             return -1;
@@ -145,6 +144,17 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         return offset;
+    }
+
+    private static int badRequestResponseSize(String reason) {
+        return badRequestResponseSize(reason.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    private static int badRequestResponseSize(int reasonByteCount) {
+        return BAD_REQUEST_PREFIX.length
+                + Integer.toString(reasonByteCount).length()
+                + HTTP_HEADER_END.length
+                + reasonByteCount;
     }
 
     /**
@@ -185,6 +195,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         return UPGRADE_REQUIRED_RESPONSE.length;
     }
 
+    private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {
+        LOG.error().$("WebSocket ").$(responseType).$(" does not fit send buffer [fd=").$(fd)
+                .$(", required=").$(requiredSize)
+                .$(", available=").$(bufferSize).I$();
+        return HttpException.instance("WebSocket ").put(responseType)
+                .put(" does not fit send buffer [required=").put(requiredSize)
+                .put(", available=").put(bufferSize)
+                .put(']');
+    }
+
     @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
@@ -222,23 +242,45 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (validationError != null) {
             LOG.error().$("WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();
-            int bytesWritten = validationError.contains("version")
+            final boolean versionError = QwpWebSocketHttpProcessor.isVersionValidationError(validationError);
+            final int requiredSize = versionError ? UPGRADE_REQUIRED_RESPONSE.length : badRequestResponseSize(validationError);
+            final CharSequence responseType = versionError ? "426 upgrade response" : "400 bad request response";
+            if (requiredSize > bufferSize) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), responseType, bufferSize, requiredSize);
+            }
+
+            final int bytesWritten = versionError
                     ? writeUpgradeRequiredResponse(bufferAddr, bufferSize)
                     : writeBadRequestResponse(bufferAddr, bufferSize, validationError);
-            if (bytesWritten > 0) {
-                try {
-                    rawSocket.send(bytesWritten);
-                } catch (PeerIsSlowToReadException e) {
-                    // Send buffer full right after receiving headers with invalid handshake, that's weird error response cannot be delivered.
-                    // Throw HttpException so handleClientRecv disconnects the connection
-                    throw HttpException.instance("WebSocket handshake rejected: ").put(validationError);
-                }
-                // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
+            if (bytesWritten <= 0) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), responseType, bufferSize, requiredSize);
             }
+            try {
+                rawSocket.send(bytesWritten);
+            } catch (PeerIsSlowToReadException e) {
+                // Send buffer full right after receiving headers with invalid handshake, that's weird error response cannot be delivered.
+                // Throw HttpException so handleClientRecv disconnects the connection
+                throw HttpException.instance("WebSocket handshake rejected: ").put(validationError);
+            }
+            // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
             return;
         }
 
-        // Initialize or get the ILP processor state for this connection
+        HttpRequestHeader requestHeader = context.getRequestHeader();
+        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
+
+        // Read QWP version negotiation headers
+        int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+                QwpWebSocketHttpProcessor.computeAcceptKey(wsKey),
+                negotiatedVersion
+        );
+        if (requiredHandshakeSize > bufferSize) {
+            throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
+        }
+
+        // Initialize or get the ILP processor state for this connection only after
+        // confirming the 101 response fits in the raw HTTP send buffer.
         QwpProcessorState state = LV.get(context);
         if (state == null) {
             state = new QwpProcessorState(
@@ -252,32 +294,27 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.clear();
         }
         state.of(context.getFd(), context.getSecurityContext());
-
-        HttpRequestHeader requestHeader = context.getRequestHeader();
-        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
-
-        // Read QWP version negotiation headers
-        int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
         state.setNegotiatedVersion((byte) negotiatedVersion);
 
         // Write the 101 Switching Protocols response
         int bytesWritten = writeHandshakeResponse(bufferAddr, bufferSize, wsKey, negotiatedVersion);
-        if (bytesWritten > 0) {
-            try {
-                rawSocket.send(bytesWritten);
-            } catch (PeerIsSlowToReadException e) {
-                // Handshake blocked — shouldn't happen on a fresh connection.
-                // Throw HttpException so handleClientRecv disconnects the connection
-                // rather than leaving the buffer in an inconsistent state.
-                throw HttpException.instance("WebSocket 101 handshake blocked");
-            }
-            // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
-            state.setWsHandshakeSent(true);
-            LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
-
-            // Switch to WebSocket protocol - this tells the framework to bypass HTTP parsing
-            context.switchProtocol();
+        if (bytesWritten <= 0) {
+            throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
+        try {
+            rawSocket.send(bytesWritten);
+        } catch (PeerIsSlowToReadException e) {
+            // Handshake blocked — shouldn't happen on a fresh connection.
+            // Throw HttpException so handleClientRecv disconnects the connection
+            // rather than leaving the buffer in an inconsistent state.
+            throw HttpException.instance("WebSocket 101 handshake blocked");
+        }
+        // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
+        state.setWsHandshakeSent(true);
+        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
+
+        // Switch to WebSocket protocol - this tells the framework to bypass HTTP parsing
+        context.switchProtocol();
     }
 
     @Override
