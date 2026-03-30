@@ -192,14 +192,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (state == null) {
             return;
         }
-        // Try to flush any pending ACKs before closing
+        // Best effort: flush any blocked outbound response first, then ACK
+        // already-committed data before dropping the connection state.
         try {
-            if (state.isSending()) {
-                // Try to flush pending buffer first
-                context.resumeResponseSend();
-                state.onResumeSendComplete();
-            }
-            // Now try to send any remaining ACKs
+            drainPendingResponse(context, state);
             flushPendingAck(context, state);
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
             // Connection is closing anyway, ignore
@@ -363,21 +359,35 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             throw ServerDisconnectException.INSTANCE;
         }
 
-        if (state.isSending()) {
-            // Try to flush the pending ACK in the buffer
-            context.resumeResponseSend();
-
-            // If we get here, the send succeeded
-            state.onResumeSendComplete();
-            LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
-                    .$(", upTo=").$(state.getLastAckedSequence()).I$();
-
-            // Check if more ACKs are pending (messages arrived while we were blocked)
-            if (state.hasPendingAck()) {
-                trySendAck(context, state);
-            }
+        switch (state.getSendState()) {
+            case QwpProcessorState.SEND_STATE_READY:
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ACK:
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
+                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                if (state.hasPendingAck()) {
+                    trySendAck(context, state);
+                }
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ERROR:
+                context.resumeResponseSend();
+                LOG.debug().$("Resumed error response sent successfully [fd=").$(context.getFd()).I$();
+                state.onResumeErrorComplete();
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR:
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
+                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                sendDeferredErrorResponse(context, state);
+                return;
+            default:
+                LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
+                        .$(", state=").$(state.getSendState()).I$();
+                throw ServerDisconnectException.INSTANCE;
         }
-        // If in READY state, nothing to do - no pending buffer data
     }
 
     /**
@@ -454,7 +464,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         } else {
             // Error - first ACK all successful messages (if in READY state), then send error
             if (state.hasPendingAck()) {
-                trySendAck(context, state);
+                try {
+                    trySendAck(context, state);
+                } catch (PeerIsSlowToReadException e) {
+                    state.onErrorBlocked(responseStatus, seq, errorMessage);
+                    throw e;
+                }
             }
             sendErrorResponse(context, state, seq, responseStatus, errorMessage);
         }
@@ -477,9 +492,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             flushPendingAck(context, state);
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
             // Best effort — if the ACK can't be sent, proceed with close.
-            // PeerIsSlowToReadException transitions state to SENDING, so the
-            // isSendReady() check below will skip the close response (the ACK
-            // in the send buffer is more important than the close frame).
+            // PeerIsSlowToReadException transitions into a resume state, so the
+            // isSendReady() check below will skip the close response.
         }
 
         // Send close response only if buffer is clear
@@ -743,19 +757,32 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Sends an error response for the given sequence number.
+     * Sends the deferred error response stored in the processor state.
      * <p>
-     * Note: This method only sends when in READY state. If in SENDING state,
-     * the error is logged but not sent (the pending ACK takes priority, and
-     * the connection will likely be closed anyway due to the error).
+     * Used after a blocked ACK resumes and the original failure response must
+     * be delivered before any later ACK activity can overtake it.
      */
-    private void sendErrorResponse(HttpConnectionContext context, QwpProcessorState state, long sequence, byte status, String errorMessage) {
-        // Can only send when buffer is clear
+    private void sendDeferredErrorResponse(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        sendErrorResponse(
+                context,
+                state,
+                state.getDeferredErrorSequence(),
+                state.getDeferredErrorStatus(),
+                state.getDeferredErrorMessage()
+        );
+    }
+
+    private void sendErrorResponse(
+            HttpConnectionContext context,
+            QwpProcessorState state,
+            long sequence,
+            byte status,
+            CharSequence errorMessage
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (!state.isSendReady()) {
-            LOG.error().$("Cannot send error response, buffer busy [fd=").$(context.getFd())
-                    .$(", seq=").$(sequence)
-                    .$(", status=").$(status).I$();
-            return;
+            state.onErrorBlocked(status, sequence, errorMessage);
+            throw PeerIsSlowToReadException.INSTANCE;
         }
 
         try {
@@ -791,15 +818,46 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 offset += msgLen;
 
                 rawSocket.send(offset);
+                state.onErrorSent();
                 LOG.debug().$("Sent error response [fd=").$(context.getFd())
                         .$(", seq=").$(sequence)
                         .$(", status=").$(status).I$();
             } else {
-                LOG.error().$("Buffer too small for error response [fd=").$(context.getFd()).I$();
+                LOG.critical().$("Buffer too small for error response [fd=").$(context.getFd())
+                        .$(", required=").$(frameSize)
+                        .$(", bufferSize=").$(bufferSize).I$();
+                throw PeerDisconnectedException.INSTANCE;
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+        } catch (PeerIsSlowToReadException e) {
+            state.onErrorBlocked(status, sequence, errorMessage);
             LOG.debug().$("Failed to send error response [fd=").$(context.getFd())
                     .$(", seq=").$(sequence).I$();
+            throw e;
+        }
+    }
+
+    private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        switch (state.getSendState()) {
+            case QwpProcessorState.SEND_STATE_READY:
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ACK:
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ERROR:
+                context.resumeResponseSend();
+                state.onResumeErrorComplete();
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR:
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                sendDeferredErrorResponse(context, state);
+                return;
+            default:
+                LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
+                        .$(", state=").$(state.getSendState()).I$();
+                throw PeerDisconnectedException.INSTANCE;
         }
     }
 
@@ -809,12 +867,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * State transitions (managed by {@link QwpProcessorState}):
      * <ul>
      *   <li>READY + success → stays READY, updates lastAckedSequence</li>
-     *   <li>READY + PeerIsSlowToReadException → transitions to SENDING, throws</li>
+     *   <li>READY + PeerIsSlowToReadException → transitions to SEND_STATE_RESUME_ACK, throws</li>
      * </ul>
      *
      * @param context the HTTP connection context
      * @param state   the per-connection processor state
-     * @throws PeerIsSlowToReadException if the client's receive buffer is full (transitions to SENDING)
+     * @throws PeerIsSlowToReadException if the client's receive buffer is full (transitions to SEND_STATE_RESUME_ACK)
      * @throws PeerDisconnectedException if the client disconnected
      */
     private void trySendAck(HttpConnectionContext context, QwpProcessorState state)

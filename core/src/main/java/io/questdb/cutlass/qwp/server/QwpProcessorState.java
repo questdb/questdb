@@ -53,8 +53,13 @@ import io.questdb.std.str.StringSink;
  */
 public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
+    static final int SEND_STATE_READY = 0;
+    static final int SEND_STATE_RESUME_ACK = 1;
+    static final int SEND_STATE_RESUME_ERROR = 2;
+    static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
+    private final StringSink deferredErrorMessage = new StringSink();
     private final StringSink error = new StringSink();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
@@ -71,11 +76,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
+    private long deferredErrorSequence = -1;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
+    private byte deferredErrorStatus;
     private int recvBufferLen;
     private SecurityContext securityContext;
-    private SendState sendState = SendState.READY;
-    private long sequenceInBuffer = -1;
+    // The response sink owns the serialized bytes; sendState tracks what
+    // resumeResponseSend() will flush next and what must follow it.
+    private int sendState = SEND_STATE_READY;
+    private long resumeAckSequence = -1;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
     private QwpWalAppender walAppender;
@@ -176,6 +185,18 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return highestProcessedSequence;
     }
 
+    public CharSequence getDeferredErrorMessage() {
+        return deferredErrorMessage;
+    }
+
+    public long getDeferredErrorSequence() {
+        return deferredErrorSequence;
+    }
+
+    public byte getDeferredErrorStatus() {
+        return deferredErrorStatus;
+    }
+
     public long getLastAckedSequence() {
         return lastAckedSequence;
     }
@@ -193,7 +214,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
      * ACKed yet and the send buffer is clear (READY state).
      */
     public boolean hasPendingAck() {
-        return sendState == SendState.READY && highestProcessedSequence > lastAckedSequence;
+        return sendState == SEND_STATE_READY && highestProcessedSequence > lastAckedSequence;
     }
 
     public boolean isOk() {
@@ -201,11 +222,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     public boolean isSendReady() {
-        return sendState == SendState.READY;
+        return sendState == SEND_STATE_READY;
     }
 
     public boolean isSending() {
-        return sendState == SendState.SENDING;
+        return sendState != SEND_STATE_READY;
     }
 
     public boolean isWsHandshakeSent() {
@@ -223,11 +244,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     /**
      * Records that an ACK send was blocked by a full OS buffer.
-     * Transitions from READY to SENDING state.
+     * Transitions from READY to RESUME_ACK state.
      */
     public void onAckBlocked(long sequence) {
-        sendState = SendState.SENDING;
-        sequenceInBuffer = sequence;
+        sendState = SEND_STATE_RESUME_ACK;
+        resumeAckSequence = sequence;
     }
 
     /**
@@ -235,6 +256,26 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
      */
     public void onAckSent(long sequence) {
         lastAckedSequence = sequence;
+    }
+
+    public void onErrorBlocked(byte status, long sequence, CharSequence errorMessage) {
+        deferredErrorStatus = status;
+        deferredErrorSequence = sequence;
+        deferredErrorMessage.clear();
+        if (errorMessage != null) {
+            deferredErrorMessage.put(errorMessage);
+        }
+
+        if (sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_ACK_THEN_ERROR) {
+            sendState = SEND_STATE_RESUME_ACK_THEN_ERROR;
+        } else {
+            sendState = SEND_STATE_RESUME_ERROR;
+        }
+    }
+
+    public void onErrorSent() {
+        clearDeferredError();
+        sendState = SEND_STATE_READY;
     }
 
     @Override
@@ -248,8 +289,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         lastAckedSequence = -1;
         messageSequence = 0;
         recvBufferLen = 0;
-        sequenceInBuffer = -1;
-        sendState = SendState.READY;
+        resumeAckSequence = -1;
+        sendState = SEND_STATE_READY;
+        clearDeferredError();
         wsHandshakeSent = false;
 
         // Log cache stats before clearing (only if there were any lookups)
@@ -267,13 +309,17 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     /**
-     * Completes a resumed send that was previously blocked.
-     * Transitions from SENDING back to READY state.
+     * Completes a resumed ACK send that was previously blocked.
      */
-    public void onResumeSendComplete() {
-        lastAckedSequence = sequenceInBuffer;
-        sequenceInBuffer = -1;
-        sendState = SendState.READY;
+    public void onResumeAckComplete() {
+        lastAckedSequence = resumeAckSequence;
+        resumeAckSequence = -1;
+        sendState = SEND_STATE_READY;
+    }
+
+    public void onResumeErrorComplete() {
+        clearDeferredError();
+        sendState = SEND_STATE_READY;
     }
 
     public void processMessage() {
@@ -369,13 +415,23 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.wsHandshakeSent = wsHandshakeSent;
     }
 
+    public int getSendState() {
+        return sendState;
+    }
+
     /**
      * Returns true if the ACK batch threshold has been reached and the send
      * buffer is clear, meaning a cumulative ACK should be sent now.
      */
     public boolean shouldSendAck(int batchSize) {
-        return sendState == SendState.READY
+        return sendState == SEND_STATE_READY
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
+    }
+
+    private void clearDeferredError() {
+        deferredErrorMessage.clear();
+        deferredErrorSequence = -1;
+        deferredErrorStatus = 0;
     }
 
     private void ensureCapacity(int required) {
@@ -385,11 +441,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             bufferAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferSize = newSize;
         }
-    }
-
-    enum SendState {
-        READY,
-        SENDING
     }
 
     public enum Status {
