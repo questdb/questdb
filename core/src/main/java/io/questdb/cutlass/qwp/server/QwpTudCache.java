@@ -46,6 +46,8 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Decimals;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -63,6 +65,7 @@ import io.questdb.tasks.TelemetryTask;
  * Cache for table update details in QWP v1 processing.
  */
 public class QwpTudCache implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(QwpTudCache.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final DefaultColumnTypes defaultColumnTypes;
@@ -97,16 +100,24 @@ public class QwpTudCache implements QuietCloseable {
 
     public void clear() {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            if (isDistressed) {
-                Misc.free(tud);
-            } else {
-                tud.rollback();
+        if (!isDistressed) {
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = keys.get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                try {
+                    tud.rollback();
+                } catch (Throwable th) {
+                    LOG.error().$("could not rollback [table=").$(tableName).$(", e=").$(th).I$();
+                    isDistressed = true;
+                }
             }
         }
         if (isDistressed) {
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = keys.get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                Misc.free(tud);
+            }
             tableUpdateDetails.clear();
             isDistressed = false;
         }
