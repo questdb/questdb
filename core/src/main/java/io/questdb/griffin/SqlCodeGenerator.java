@@ -1591,6 +1591,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
+     * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where
+     * writeSymbolAsString is currently set (i.e., non-self-join pairs), this method:
+     * <ul>
+     *   <li>Unsets writeSymbolAsString for both master and slave column indices</li>
+     *   <li>Changes the keyTypes entry from STRING to INT</li>
+     *   <li>Collects master/slave column indices into arrays</li>
+     * </ul>
+     * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
+     *
+     * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
+     */
+    private int @Nullable [][] convertSymbolJoinKeysToInt(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata
+    ) {
+        IntList masterSymbolKeyCols = null;
+        IntList slaveSymbolKeyCols = null;
+        for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
+            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
+            if (slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
+                    && masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
+                    && masterMetadata.isSymbolTableStatic(masterColIndex)
+                    && slaveMetadata.isSymbolTableStatic(slaveColIndex)
+                    && writeSymbolAsString.get(slaveColIndex)) {
+                // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
+                writeSymbolAsString.unset(slaveColIndex);
+                writeSymbolAsString.unset(masterColIndex);
+                keyTypes.set(k, ColumnType.INT);
+                if (masterSymbolKeyCols == null) {
+                    masterSymbolKeyCols = new IntList();
+                    slaveSymbolKeyCols = new IntList();
+                }
+                masterSymbolKeyCols.add(masterColIndex);
+                slaveSymbolKeyCols.add(slaveColIndex);
+            }
+        }
+        if (masterSymbolKeyCols != null) {
+            return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
+        }
+        return null;
+    }
+
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -1940,49 +1985,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             metadata.setTimestampIndex(timestampIndex);
         }
         return metadata;
-    }
-
-    /**
-     * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
-     * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where
-     * writeSymbolAsString is currently set (i.e., non-self-join pairs), this method:
-     * <ul>
-     *   <li>Unsets writeSymbolAsString for both master and slave column indices</li>
-     *   <li>Changes the keyTypes entry from STRING to INT</li>
-     *   <li>Collects master/slave column indices into arrays</li>
-     * </ul>
-     * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
-     *
-     * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
-     */
-    private int @Nullable [][] convertSymbolJoinKeysToInt(
-            RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata
-    ) {
-        IntList masterSymbolKeyCols = null;
-        IntList slaveSymbolKeyCols = null;
-        for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
-            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            if (slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
-                    && masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
-                    && writeSymbolAsString.get(slaveColIndex)) {
-                // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
-                writeSymbolAsString.unset(slaveColIndex);
-                writeSymbolAsString.unset(masterColIndex);
-                keyTypes.set(k, ColumnType.INT);
-                if (masterSymbolKeyCols == null) {
-                    masterSymbolKeyCols = new IntList();
-                    slaveSymbolKeyCols = new IntList();
-                }
-                masterSymbolKeyCols.add(masterColIndex);
-                slaveSymbolKeyCols.add(slaveColIndex);
-            }
-        }
-        if (masterSymbolKeyCols != null) {
-            return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
-        }
-        return null;
     }
 
     private @NotNull RecordSink createRecordCopierMaster(RecordMetadata masterMetadata) {
