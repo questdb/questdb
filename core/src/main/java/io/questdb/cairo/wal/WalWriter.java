@@ -556,6 +556,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void rollback() {
+        if (columnarAppender != null && columnarAppender.isInColumnarWrite()) {
+            throw CairoException.nonCritical().put("cannot rollback during columnar write, use cancelColumnarWrite() first");
+        }
         try {
             if (!isDistressed() && (inTransaction() || hasDirtyColumns(currentTxnStartRowNum))) {
                 setAppendPosition(currentTxnStartRowNum);
@@ -900,6 +903,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             byte dedupMode
     ) {
         checkDistressed();
+        if (columnarAppender != null && columnarAppender.isInColumnarWrite()) {
+            throw CairoException.nonCritical().put("cannot commit during columnar write");
+        }
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 final long txnRowCount = getUncommittedRowCount();

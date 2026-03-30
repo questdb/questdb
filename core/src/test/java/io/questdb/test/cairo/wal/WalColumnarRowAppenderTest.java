@@ -734,6 +734,33 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitDuringColumnarWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_commit_guard", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(10);
+
+                try {
+                    walWriter.commit();
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot commit during columnar write"));
+                }
+
+                // Cleanup
+                appender.cancelColumnarWrite();
+            }
+        });
+    }
+
+    @Test
     public void testEndColumnarWrite_NotInProgress() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_lifecycle_end", PartitionBy.HOUR)
@@ -7016,6 +7043,33 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 assertNull(record.getVarcharA(0));
 
                 assertFalse(cursor.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackDuringColumnarWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_rollback_guard", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(10);
+
+                try {
+                    walWriter.rollback();
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    assertTrue(e.getMessage().contains("cannot rollback during columnar write"));
+                }
+
+                // Cleanup
+                appender.cancelColumnarWrite();
             }
         });
     }
