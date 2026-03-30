@@ -85,6 +85,12 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
         // Read varint index
         QwpVarint.decode(currentIndexAddress, indicesEnd, decodeResult);
+        if (decodeResult.value > Integer.MAX_VALUE) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
+                    "symbol index exceeds int range: " + decodeResult.value
+            );
+        }
         currentSymbolIndex = (int) decodeResult.value;
         currentIndexAddress += decodeResult.bytesRead;
 
@@ -254,6 +260,12 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                         "dictionary size exceeds data length: " + decodeResult.value
+                );
+            }
+            if (decodeResult.value > Integer.MAX_VALUE) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "dictionary size exceeds int range: " + decodeResult.value
                 );
             }
             this.dictionarySize = (int) decodeResult.value;

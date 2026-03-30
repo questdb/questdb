@@ -43,12 +43,19 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpSchemaCache {
 
+    private static final int DEFAULT_MAX_SIZE = 256;
     private final LongObjHashMap<Entry> cache;
     private final Utf8StringSink lookupSink = new Utf8StringSink();
+    private final int maxSize;
     private long hits;
     private long misses;
 
     public QwpSchemaCache() {
+        this(DEFAULT_MAX_SIZE);
+    }
+
+    public QwpSchemaCache(int maxSize) {
+        this.maxSize = maxSize;
         this.cache = new LongObjHashMap<>();
     }
 
@@ -97,6 +104,9 @@ public class QwpSchemaCache {
 
     public void put(Utf8Sequence tableName, QwpSchema schema) {
         long key = combineKey(Utf8s.hashCode(tableName), schema.getSchemaHash());
+        if (cache.size() >= maxSize && cache.excludes(key)) {
+            evictOne();
+        }
         cache.put(key, new Entry(Utf8String.newInstance(tableName), schema));
     }
 
@@ -106,6 +116,23 @@ public class QwpSchemaCache {
 
     private static long combineKey(int tableNameHash, long schemaHash) {
         return ((long) tableNameHash << 32) ^ schemaHash;
+    }
+
+    /**
+     * Evicts a random entry from the cache. Picks a random starting position
+     * in the backing array and removes the first occupied slot found.
+     */
+    private void evictOne() {
+        long[] keys = cache.keys();
+        // keys.length is always a power of 2
+        int start = (int) System.nanoTime() & (keys.length - 1);
+        for (int i = 0; i < keys.length; i++) {
+            int idx = (start + i) & (keys.length - 1);
+            if (keys[idx] != -1L) { // -1L is the no-entry sentinel
+                cache.remove(keys[idx]);
+                return;
+            }
+        }
     }
 
     private record Entry(Utf8String tableName, QwpSchema schema) {

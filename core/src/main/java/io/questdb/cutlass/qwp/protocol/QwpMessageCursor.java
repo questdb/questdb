@@ -201,20 +201,25 @@ public class QwpMessageCursor implements Mutable {
 
         // Read deltaStartId
         QwpVarint.decode(address, payloadEnd, varintResult);
+        if (varintResult.value < 0 || varintResult.value > Integer.MAX_VALUE) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "deltaStartId out of int range: " + varintResult.value
+            );
+        }
         int deltaStartId = (int) varintResult.value;
         address += varintResult.bytesRead;
 
         // Read deltaCount
         QwpVarint.decode(address, payloadEnd, varintResult);
-        int deltaCount = (int) varintResult.value;
-        address += varintResult.bytesRead;
-
-        if (deltaStartId < 0 || deltaCount < 0) {
+        if (varintResult.value < 0 || varintResult.value > Integer.MAX_VALUE) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                    "negative delta symbol dictionary deltaStartId or deltaCount"
+                    "deltaCount out of int range: " + varintResult.value
             );
         }
+        int deltaCount = (int) varintResult.value;
+        address += varintResult.bytesRead;
 
         // Check for integer overflow and enforce upper bound.
         // A varint can encode billions in just 5 bytes, so without this
@@ -242,10 +247,16 @@ public class QwpMessageCursor implements Mutable {
 
             // Read symbol length
             QwpVarint.decode(address, payloadEnd, varintResult);
+            if (varintResult.value < 0 || varintResult.value > Integer.MAX_VALUE) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "delta symbol length out of int range: " + varintResult.value
+                );
+            }
             int symbolLen = (int) varintResult.value;
             address += varintResult.bytesRead;
 
-            if (symbolLen < 0 || address + symbolLen > payloadEnd) {
+            if (address + symbolLen > payloadEnd) {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                         "truncated delta symbol value"

@@ -67,6 +67,7 @@ public class QwpWalAppender implements QuietCloseable {
 
     private final boolean autoCreateNewColumns;
     private final int maxFileNameLength;
+    private final int maxMetadataChangeRetries;
 
     // Reusable mapping arrays
     private int[] columnIndexMap;  // Maps ILP column index to QuestDB column index
@@ -83,9 +84,10 @@ public class QwpWalAppender implements QuietCloseable {
      * @param autoCreateNewColumns whether to auto-create columns that don't exist
      * @param maxFileNameLength    maximum column name length
      */
-    public QwpWalAppender(boolean autoCreateNewColumns, int maxFileNameLength) {
+    public QwpWalAppender(boolean autoCreateNewColumns, int maxFileNameLength, int maxMetadataChangeRetries) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.maxFileNameLength = maxFileNameLength;
+        this.maxMetadataChangeRetries = maxMetadataChangeRetries;
         this.columnIndexMap = new int[64];
         this.columnTypeMap = new int[64];
         this.ilpTypes = new byte[64];
@@ -110,7 +112,8 @@ public class QwpWalAppender implements QuietCloseable {
             case ColumnType.STRING -> TYPE_STRING;
             case ColumnType.VARCHAR -> TYPE_VARCHAR;
             case ColumnType.SYMBOL -> TYPE_SYMBOL;
-            case ColumnType.TIMESTAMP -> TYPE_TIMESTAMP;
+            case ColumnType.TIMESTAMP ->
+                    columnType == ColumnType.TIMESTAMP_NANO ? TYPE_TIMESTAMP_NANOS : TYPE_TIMESTAMP;
             case ColumnType.DATE -> TYPE_DATE;
             case ColumnType.UUID -> TYPE_UUID;
             case ColumnType.LONG256 -> TYPE_LONG256;
@@ -122,11 +125,11 @@ public class QwpWalAppender implements QuietCloseable {
     /**
      * Maps a QWP v1 type code to QuestDB column type.
      *
-     * @param ilpType QWP v1 type code
+     * @param qwpType QWP v1 type code
      * @return QuestDB column type
      */
-    public static int mapQwpTypeToQuestDB(int ilpType) {
-        return switch (ilpType) {
+    public static int mapQwpTypeToQuestDB(int qwpType) {
+        return switch (qwpType) {
             case TYPE_BOOLEAN -> ColumnType.BOOLEAN;
             case TYPE_BYTE -> ColumnType.BYTE;
             case TYPE_SHORT -> ColumnType.SHORT;
@@ -149,7 +152,7 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
             case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
             case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
-            default -> throw CairoException.nonCritical().put("unknown QWP v1 type: ").put(ilpType);
+            default -> throw CairoException.nonCritical().put("unknown QWP v1 type: ").put(qwpType);
         };
     }
 
@@ -165,14 +168,19 @@ public class QwpWalAppender implements QuietCloseable {
      * @throws CommitFailedException if commit fails
      * @throws QwpParseException     if parsing fails during cursor iteration
      */
-    public void appendToWalStreaming(SecurityContext securityContext, QwpTableBlockCursor tableBlock,
-                                     TableUpdateDetails tud) throws CommitFailedException, QwpParseException {
-        while (!tud.isDropped()) {
+    public void appendToWalStreaming(
+            SecurityContext securityContext,
+            QwpTableBlockCursor tableBlock,
+            TableUpdateDetails tud
+    ) throws CommitFailedException, QwpParseException {
+        for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
                 appendToWalStreaming0(securityContext, tableBlock, tud);
-                break;
+                return;
             } catch (MetadataChangedException e) {
-                // Retry - reset cursor and retry
+                if (retryCount == maxMetadataChangeRetries) {
+                    throw CairoException.nonCritical().put("metadata changed too many times during WAL append");
+                }
                 tableBlock.resetRowIteration();
             }
         }
