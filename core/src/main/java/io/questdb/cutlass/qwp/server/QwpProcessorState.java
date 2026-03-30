@@ -379,7 +379,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     private void ensureCapacity(int required) {
         if (required > bufferSize) {
-            int newSize = Math.max(bufferSize * 2, required);
+            int cappedDoubling = (int) Math.min(bufferSize * 2L, Integer.MAX_VALUE);
+            int newSize = Math.max(required, cappedDoubling);
             bufferAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferSize = newSize;
         }
