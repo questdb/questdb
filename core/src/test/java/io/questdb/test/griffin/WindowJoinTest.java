@@ -4990,6 +4990,106 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinInUnionBranches() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:05.000000Z', 'AX', 100.0),
+                                ('1970-01-02T00:00:05.000000Z', 'AX', 200.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:04.000000Z', 'AX', 10.0),
+                                ('1970-01-01T00:00:06.000000Z', 'AX', 20.0),
+                                ('1970-01-02T00:00:04.000000Z', 'AX', 30.0),
+                                ('1970-01-02T00:00:06.000000Z', 'AX', 40.0)
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym	qty	ts	window_price
+                            AX	100.0	1970-01-01T00:00:05.000000Z	30.0
+                            AX	100.0	1970-01-01T00:00:05.000000Z	30.0
+                            AX	200.0	1970-01-02T00:00:05.000000Z	90.0
+                            AX	200.0	1970-01-02T00:00:05.000000Z	90.0
+                            """,
+                    """
+                             SELECT sym, qty, ts, window_price FROM (
+                                 SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price
+                                 FROM trades t
+                                 WINDOW JOIN prices p ON (sym)
+                                     RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING
+                                 UNION ALL
+                                 SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price
+                                 FROM trades t
+                                 WINDOW JOIN prices p ON (sym)
+                                     RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING
+                             )
+                             ORDER BY ts, sym
+                            """,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinNestedUnderOtherJoin() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, 'A', '2024-01-01T00:01:00.000000Z'),
+                    (1, 11.0, 'A', '2024-01-01T00:02:00.000000Z'),
+                    (2, 20.0, 'B', '2024-01-02T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.5, 'A', '2024-01-01T00:00:30.000000Z'),
+                    (10.5, 'A', '2024-01-01T00:01:30.000000Z'),
+                    (19.0, 'B', '2024-01-02T00:00:30.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            id	sum
+                            1	19.5
+                            1	42.0
+                            2	39.0
+                            """,
+                    """
+                             SELECT i.id, sub.sum
+                             FROM instruments i
+                             JOIN (
+                                 SELECT sum(t.price + q.price) AS sum, t.instrument_id
+                                 FROM trades t
+                                 WINDOW JOIN quotes q ON tag
+                                     RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                             ) sub ON sub.instrument_id = i.id
+                             ORDER BY i.id, sub.sum
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinNoOtherCondition() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
