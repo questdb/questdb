@@ -1290,14 +1290,11 @@ public class PostingIndexWriter implements IndexWriter {
             }
             default -> {}
         }
-        if (valueSize == Long.BYTES) {
-            Unsafe.getUnsafe().putLong(addr, Long.MIN_VALUE);
-        } else if (valueSize == Integer.BYTES) {
-            Unsafe.getUnsafe().putInt(addr, Integer.MIN_VALUE);
-        } else if (valueSize == Short.BYTES) {
-            Unsafe.getUnsafe().putShort(addr, (short) 0);
-        } else {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
+        // Generic null sentinel by size for types not handled by the switch above
+        Unsafe.getUnsafe().setMemory(addr, valueSize, (byte) 0);
+        // Overlay Long.MIN_VALUE for each 8-byte slot (standard QuestDB null sentinel)
+        for (int off = 0; off + Long.BYTES <= valueSize; off += Long.BYTES) {
+            Unsafe.getUnsafe().putLong(addr + off, Long.MIN_VALUE);
         }
     }
 
@@ -1413,17 +1410,17 @@ public class PostingIndexWriter implements IndexWriter {
         return switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE ->
                     AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
                     AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL ->
+            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
                     AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE -> {
+            default -> {
+                // Raw copy for all other fixed-width types: BYTE, SHORT, CHAR, BOOLEAN,
+                // GEOBYTE, GEOSHORT, UUID, LONG256, DECIMAL8/16/128/256, etc.
                 Unsafe.getUnsafe().putInt(destBuf, valueCount);
                 Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
                 yield 4 + (valueCount << shift);
             }
-            default ->
-                    throw new UnsupportedOperationException("unsupported sidecar column type: " + ColumnType.nameOf(colType));
         };
     }
 
@@ -2714,15 +2711,21 @@ public class PostingIndexWriter implements IndexWriter {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
             case ColumnType.FLOAT -> mem.putInt(Float.floatToIntBits(Float.NaN));
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> mem.putLong(Numbers.LONG_NULL);
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 -> mem.putLong(Numbers.LONG_NULL);
             case ColumnType.GEOLONG -> mem.putLong(GeoHashes.NULL);
-            case ColumnType.INT, ColumnType.SYMBOL -> mem.putInt(Numbers.INT_NULL);
+            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> mem.putInt(Numbers.INT_NULL);
             case ColumnType.IPv4 -> mem.putInt(Numbers.IPv4_NULL);
             case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
-            case ColumnType.CHAR, ColumnType.SHORT -> mem.putShort((short) 0);
+            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.DECIMAL16 -> mem.putShort((short) 0);
             case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
-            case ColumnType.BYTE, ColumnType.BOOLEAN -> mem.putByte((byte) 0);
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.DECIMAL8 -> mem.putByte((byte) 0);
             case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);
+            case ColumnType.UUID, ColumnType.DECIMAL128 -> { mem.putLong(Numbers.LONG_NULL); mem.putLong(Numbers.LONG_NULL); }
+            case ColumnType.LONG256, ColumnType.DECIMAL256 -> { for (int i = 0; i < 4; i++) mem.putLong(Numbers.LONG_NULL); }
+            default -> {
+                // Generic fallback: write zero bytes for the value size
+                for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
+            }
         }
     }
 

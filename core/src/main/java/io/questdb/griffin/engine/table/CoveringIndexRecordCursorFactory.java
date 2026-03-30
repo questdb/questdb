@@ -1764,6 +1764,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
                     case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
                             Unsafe.getUnsafe().putByte(addr + count, crc.getCoveredByte(includeIdx));
+                    case ColumnType.DECIMAL64 ->
+                            Unsafe.getUnsafe().putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
+                    case ColumnType.DECIMAL32 ->
+                            Unsafe.getUnsafe().putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
+                    case ColumnType.DECIMAL16 ->
+                            Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
+                    case ColumnType.DECIMAL8 ->
+                            Unsafe.getUnsafe().putByte(addr + count, crc.getCoveredByte(includeIdx));
                     case ColumnType.VARCHAR -> writeVarcharToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredVarcharA(includeIdx));
                     case ColumnType.STRING -> writeStringToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredStrA(includeIdx));
                     default -> {}

@@ -788,7 +788,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 int covType = ColumnType.tagOf(metadata.getColumnType(covIdx));
                 if (covType == ColumnType.BINARY || covType == ColumnType.LONG256
-                        || covType == ColumnType.UUID || ColumnType.isArray(metadata.getColumnType(covIdx))) {
+                        || covType == ColumnType.UUID
+                        || covType == ColumnType.DECIMAL128 || covType == ColumnType.DECIMAL256
+                        || ColumnType.isArray(metadata.getColumnType(covIdx))) {
                     throw CairoException.invalidMetadataRecoverable("INCLUDE column type is not supported", covName);
                 }
                 coveringColumnIndices[i] = covIdx;
