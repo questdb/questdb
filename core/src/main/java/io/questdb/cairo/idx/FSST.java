@@ -96,18 +96,23 @@ public final class FSST {
 
             if (remaining >= 2) {
                 long window = readWindow(srcAddr + srcOff, Math.min(remaining, 8));
-                int h = hash(window, Math.min(remaining, 8));
-                for (int probe = 0; probe < 4; probe++) {
-                    int idx = (h + probe) & (HASH_SIZE - 1);
-                    int code = table.getHashCode(idx);
-                    if (code < 0) break;
-                    int slen = table.getLen(code);
-                    if (slen > remaining || slen <= bestLen) continue;
-                    long sym = table.getSymbol(code);
-                    long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
-                    if ((window & mask) == sym) {
-                        bestLen = slen;
-                        bestCode = code;
+                // Probe the hash table for each candidate symbol length from longest
+                // to shortest. Symbols are inserted at hash(symbol, symbolLen), so we
+                // must hash the corresponding prefix of the window for each length.
+                int maxCandLen = Math.min(remaining, 8);
+                for (int candLen = maxCandLen; candLen >= 2 && candLen > bestLen; candLen--) {
+                    long prefix = candLen == 8 ? window : (window & ((1L << (candLen * 8)) - 1));
+                    int h = hash(prefix, candLen);
+                    for (int probe = 0; probe < 4; probe++) {
+                        int idx = (h + probe) & (HASH_SIZE - 1);
+                        int code = table.getHashCode(idx);
+                        if (code < 0) break;
+                        if (table.getLen(code) != candLen) continue;
+                        if (table.getSymbol(code) == prefix) {
+                            bestLen = candLen;
+                            bestCode = code;
+                            break;
+                        }
                     }
                 }
             }
@@ -291,20 +296,19 @@ public final class FSST {
             int bestLen = 0;
             // Try to find longest matching symbol
             if (remaining >= 2) {
-                // Extract up to 8 bytes starting at bytePos for hash lookup
                 long window = (value >>> (bytePos * 8));
-                int h = hash(window, remaining);
-                for (int probe = 0; probe < 4; probe++) {
-                    int idx = (h + probe) & (HASH_SIZE - 1);
-                    int code = table.getHashCode(idx);
-                    if (code < 0) break;
-                    int slen = table.getLen(code);
-                    if (slen > remaining) continue;
-                    if (slen <= bestLen) continue;
-                    long sym = table.getSymbol(code);
-                    long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
-                    if ((window & mask) == sym) {
-                        bestLen = slen;
+                for (int candLen = Math.min(remaining, 8); candLen >= 2 && candLen > bestLen; candLen--) {
+                    long prefix = candLen == 8 ? window : (window & ((1L << (candLen * 8)) - 1));
+                    int h = hash(prefix, candLen);
+                    for (int probe = 0; probe < 4; probe++) {
+                        int idx = (h + probe) & (HASH_SIZE - 1);
+                        int code = table.getHashCode(idx);
+                        if (code < 0) break;
+                        if (table.getLen(code) != candLen) continue;
+                        if (table.getSymbol(code) == prefix) {
+                            bestLen = candLen;
+                            break;
+                        }
                     }
                 }
             }
@@ -418,6 +422,7 @@ public final class FSST {
         }
 
         SymbolTable table = new SymbolTable();
+        try {
         table.populateFrom(candidateSyms, candidateLens, candidateCount);
 
         // Iterative refinement
@@ -539,6 +544,10 @@ public final class FSST {
         }
 
         return table;
+        } catch (Throwable t) {
+            table.close();
+            throw t;
+        }
     }
 
     private static int encodeValue(SymbolTable table, long value, long dstAddr, int dstOff) {
@@ -551,19 +560,19 @@ public final class FSST {
             // Try hash lookup for multi-byte symbols
             if (remaining >= 2) {
                 long window = (value >>> (bytePos * 8));
-                int h = hash(window, remaining);
-                for (int probe = 0; probe < 4; probe++) {
-                    int idx = (h + probe) & (HASH_SIZE - 1);
-                    int code = table.getHashCode(idx);
-                    if (code < 0) break;
-                    int slen = table.getLen(code);
-                    if (slen > remaining) continue;
-                    if (slen <= bestLen) continue;
-                    long sym = table.getSymbol(code);
-                    long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
-                    if ((window & mask) == sym) {
-                        bestLen = slen;
-                        bestCode = code;
+                for (int candLen = Math.min(remaining, 8); candLen >= 2 && candLen > bestLen; candLen--) {
+                    long prefix = candLen == 8 ? window : (window & ((1L << (candLen * 8)) - 1));
+                    int h = hash(prefix, candLen);
+                    for (int probe = 0; probe < 4; probe++) {
+                        int idx = (h + probe) & (HASH_SIZE - 1);
+                        int code = table.getHashCode(idx);
+                        if (code < 0) break;
+                        if (table.getLen(code) != candLen) continue;
+                        if (table.getSymbol(code) == prefix) {
+                            bestLen = candLen;
+                            bestCode = code;
+                            break;
+                        }
                     }
                 }
             }
@@ -603,19 +612,19 @@ public final class FSST {
 
         if (remaining >= 2) {
             long window = (value >>> (bytePos * 8));
-            int h = hash(window, remaining);
-            for (int probe = 0; probe < 4; probe++) {
-                int idx = (h + probe) & (HASH_SIZE - 1);
-                int code = table.getHashCode(idx);
-                if (code < 0) break;
-                int slen = table.getLen(code);
-                if (slen > remaining) continue;
-                if (slen <= bestLen) continue;
-                long sym = table.getSymbol(code);
-                long mask = slen == 8 ? -1L : (1L << (slen * 8)) - 1;
-                if ((window & mask) == sym) {
-                    bestLen = slen;
-                    bestCode = code;
+            for (int candLen = Math.min(remaining, 8); candLen >= 2 && candLen > bestLen; candLen--) {
+                long prefix = candLen == 8 ? window : (window & ((1L << (candLen * 8)) - 1));
+                int h = hash(prefix, candLen);
+                for (int probe = 0; probe < 4; probe++) {
+                    int idx = (h + probe) & (HASH_SIZE - 1);
+                    int code = table.getHashCode(idx);
+                    if (code < 0) break;
+                    if (table.getLen(code) != candLen) continue;
+                    if (table.getSymbol(code) == prefix) {
+                        bestLen = candLen;
+                        bestCode = code;
+                        break;
+                    }
                 }
             }
         }

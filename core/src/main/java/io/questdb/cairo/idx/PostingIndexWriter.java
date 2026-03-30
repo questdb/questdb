@@ -2523,6 +2523,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (varDataReadBuf == 0 || varDataReadBufCapacity < needed) {
             if (varDataReadBuf != 0) {
                 Unsafe.free(varDataReadBuf, varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
+                varDataReadBuf = 0;
             }
             varDataReadBufCapacity = Math.max(needed, 1024);
             varDataReadBuf = Unsafe.malloc(varDataReadBufCapacity, MemoryTag.NATIVE_INDEX_READER);
