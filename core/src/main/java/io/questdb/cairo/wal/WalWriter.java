@@ -505,21 +505,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    @Override
-    public TableWriter.Row newRowDeferTimestamp() {
-        checkDistressed();
-        try {
-            if (rollSegmentOnNextRow) {
-                rollSegment();
-                rollSegmentOnNextRow = false;
-            }
-            return row;
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        }
-    }
-
     public long renameTable(@NotNull CharSequence oldName, String newTableName, SecurityContext securityContext) {
         if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
             throw CairoException.tableDoesNotExist(oldName);

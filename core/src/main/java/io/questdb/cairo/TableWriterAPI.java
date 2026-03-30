@@ -130,8 +130,6 @@ public interface TableWriterAPI extends Closeable {
 
     TableWriter.Row newRow(long timestamp);
 
-    TableWriter.Row newRowDeferTimestamp();
-
     void rollback();
 
     /**
