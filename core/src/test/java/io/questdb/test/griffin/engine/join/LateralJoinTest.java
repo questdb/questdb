@@ -1110,7 +1110,7 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T102: WINDOW JOIN inside lateral subquery
     @Test
-    @Ignore
+    @Ignore("Unignored after https://github.com/questdb/questdb/pull/6912 merge")
     public void testT102WindowJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1159,7 +1159,6 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T102a: HORIZON JOIN inside lateral subquery
     @Test
     public void testT102aHorizonJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
@@ -1184,28 +1183,125 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ('GOOG', 199.0, 201.0, '2024-01-01T00:02:00.000000Z')
                     """);
 
-            // HORIZON JOIN inside lateral: for each instrument, compute
-            // mid-price markout at different time horizons
             assertQueryNoLeakCheck(
                     """
-                            id\thorizon_sec\tmid
+                            id\thorizon_sec\tavg_mid
                             1\t0\t100.0
                             1\t1\t100.0
                             2\t0\t200.0
                             2\t1\t200.0
                             """,
                     """
-                            SELECT i.id, sub.horizon_sec, sub.mid
+                            SELECT i.id, sub.horizon_sec, sub.avg_mid
                             FROM instruments i
                             JOIN LATERAL (
                                 SELECT h.offset / 1000000 AS horizon_sec,
-                                       (q.bid + q.ask) / 2 AS mid
+                                       avg((q.bid + q.ask) / 2) AS avg_mid
                                 FROM trades t
                                 HORIZON JOIN quotes q ON (symbol)
                                     LIST (0, 1s) AS h
                                 WHERE t.symbol = i.symbol
+                                GROUP BY horizon_sec
                             ) sub
                             ORDER BY i.id, sub.horizon_sec
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT102bHorizonJoinRangeInsideLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'GOOG', '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('AAPL', 100.0, 10.0, '2024-01-01T00:01:00.000000Z'),
+                    ('AAPL', 101.0, 20.0, '2024-01-01T00:02:00.000000Z'),
+                    ('GOOG', 200.0, 30.0, '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('AAPL', 99.0, 101.0, '2024-01-01T00:00:30.000000Z'),
+                    ('AAPL', 100.0, 102.0, '2024-01-01T00:01:30.000000Z'),
+                    ('GOOG', 198.0, 202.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+
+            // RANGE FROM 0s TO 0s STEP 1s = single offset at 0 (ASOF match)
+            // For instrument 1: 2 trades → avg(mid) at horizon 0
+            // For instrument 2: 1 trade → avg(mid) at horizon 0
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcount\tavg_mid
+                            1\t2\t100.5
+                            2\t1\t200.0
+                            """,
+                    """
+                            SELECT i.id, sub.n AS count, sub.avg_mid
+                            FROM instruments i
+                            JOIN LATERAL (
+                                SELECT count() AS n, avg((q.bid + q.ask) / 2) AS avg_mid
+                                FROM trades t
+                                HORIZON JOIN quotes q ON (symbol)
+                                    RANGE FROM 0s TO 0s STEP 1s AS h
+                                WHERE t.symbol = i.symbol
+                            ) sub
+                            ORDER BY i.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testT102cLeftLateralHorizonJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE instruments (id INT, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (symbol SYMBOL, bid DOUBLE, ask DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO instruments VALUES
+                    (1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'GOOG', '2024-01-01T00:00:00.000000Z'),
+                    (3, 'MSFT', '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('AAPL', 100.0, '2024-01-01T00:01:00.000000Z'),
+                    ('GOOG', 200.0, '2024-01-01T00:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('AAPL', 99.0, 101.0, '2024-01-01T00:00:30.000000Z'),
+                    ('GOOG', 198.0, 202.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+
+            // MSFT has no trades → LEFT LATERAL returns NULL for sub columns
+            assertQueryNoLeakCheck(
+                    """
+                            id	n	avg_mid
+                            1	1	100.0
+                            2	1	200.0
+                            3	0	null
+                            """,
+                    """
+                            SELECT i.id, sub.n, sub.avg_mid
+                            FROM instruments i
+                            LEFT JOIN LATERAL (
+                                SELECT count() AS n, avg((q.bid + q.ask) / 2) AS avg_mid
+                                FROM trades t
+                                HORIZON JOIN quotes q ON (symbol)
+                                    RANGE FROM 0s TO 0s STEP 1s AS h
+                                WHERE t.symbol = i.symbol
+                            ) sub ON true
+                            ORDER BY i.id
                             """,
                     null, true, false
             );
@@ -3825,14 +3921,12 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 80, '2024-01-01T01:40:00.000000Z')
                     """);
 
-            // OFFSET 1, LIMIT 2: skip top 1, take next 2 per group (ORDER BY val DESC)
+            // LIMIT 1, 2: rows in [1, 2) — skip 1 row, take 1 row per group (ORDER BY val DESC)
             assertQueryNoLeakCheck(
                     """
                             a\tval
                             1\t30
-                            1\t20
                             2\t70
-                            2\t60
                             """,
                     """
                             SELECT t1.a, sub.val
@@ -6152,7 +6246,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 FROM trades WHERE order_id = o.id
                                 GROUP BY category
                                 ORDER BY total DESC
-                                LIMIT 1, 2
+                                LIMIT 1, 3
                             ) sub
                             ORDER BY o.id, sub.total
                             """,

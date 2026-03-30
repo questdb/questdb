@@ -505,52 +505,48 @@ class LateralJoinRewriter implements Mutable {
             QueryModel innerModel,
             ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns
     ) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.type == ExpressionNode.LITERAL) {
-                int dotPos = Chars.indexOf(node.token, '.');
-                if (dotPos > 0) {
-                    int jmIndex = outerModel.getModelAliasIndex(node.token, 0, dotPos);
-                    if (jmIndex >= 0 && jmIndex < lateralJoinIndex
-                            && cannotResolveAliasLocally(node.token, dotPos, innerModel)) {
-                        ensureCorrelatedColumnSet(correlatedColumns, jmIndex).put(node.token, node.position, dotPos + 1, node.token.length());
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            int dotPos = Chars.indexOf(node.token, '.');
+            if (dotPos > 0) {
+                int jmIndex = outerModel.getModelAliasIndex(node.token, 0, dotPos);
+                if (jmIndex >= 0 && jmIndex < lateralJoinIndex
+                        && cannotResolveAliasLocally(node.token, dotPos, innerModel)) {
+                    ensureCorrelatedColumnSet(correlatedColumns, jmIndex).put(node.token, node.position, dotPos + 1, node.token.length());
+                    node.lateralDepth = lateralDepth;
+                    hasCorrelation = true;
+                }
+            } else if (!canResolveColumn(node.token, innerModel)) {
+                for (int j = 0; j < lateralJoinIndex; j++) {
+                    QueryModel outerJm = outerModel.getJoinModels().getQuick(j);
+                    if (canResolveColumnForOuter(node.token, outerJm)) {
+                        ensureCorrelatedColumnSet(correlatedColumns, j).put(node.token, node.position);
                         node.lateralDepth = lateralDepth;
                         hasCorrelation = true;
-                    }
-                } else if (!canResolveColumn(node.token, innerModel)) {
-                    for (int j = 0; j < lateralJoinIndex; j++) {
-                        QueryModel outerJm = outerModel.getJoinModels().getQuick(j);
-                        if (canResolveColumnForOuter(node.token, outerJm)) {
-                            ensureCorrelatedColumnSet(correlatedColumns, j).put(node.token, node.position);
-                            node.lateralDepth = lateralDepth;
-                            hasCorrelation = true;
-                            break;
-                        }
-                    }
-                }
-            } else if (node.type == ExpressionNode.QUERY && node.queryModel != null) {
-                collectCorrelatedRefs(node.queryModel, outerModel, lateralJoinIndex, lateralDepth, correlatedColumns, false);
-            } else {
-                if (node.rhs != null) {
-                    sqlNodeStack.push(node.rhs);
-                }
-                for (int i = 0, n = node.args.size(); i < n; i++) {
-                    sqlNodeStack.push(node.args.getQuick(i));
-                }
-                if (node.windowExpression != null) {
-                    ObjList<ExpressionNode> partitionBy = node.windowExpression.getPartitionBy();
-                    for (int i = 0, n = partitionBy.size(); i < n; i++) {
-                        sqlNodeStack.push(partitionBy.getQuick(i));
-                    }
-                    ObjList<ExpressionNode> winOrderBy = node.windowExpression.getOrderBy();
-                    for (int i = 0, n = winOrderBy.size(); i < n; i++) {
-                        sqlNodeStack.push(winOrderBy.getQuick(i));
+                        break;
                     }
                 }
             }
-            node = node.lhs != null && node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.QUERY
-                    ? node.lhs
-                    : (sqlNodeStack.poll());
+        } else if (node.type == ExpressionNode.QUERY && node.queryModel != null) {
+            collectCorrelatedRefs(node.queryModel, outerModel, lateralJoinIndex, lateralDepth, correlatedColumns, false);
+        } else {
+            collectCorrelatedRef(node.lhs, outerModel, lateralJoinIndex, lateralDepth, innerModel, correlatedColumns);
+            collectCorrelatedRef(node.rhs, outerModel, lateralJoinIndex, lateralDepth, innerModel, correlatedColumns);
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                collectCorrelatedRef(node.args.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, innerModel, correlatedColumns);
+            }
+            if (node.windowExpression != null) {
+                ObjList<ExpressionNode> partitionBy = node.windowExpression.getPartitionBy();
+                for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                    collectCorrelatedRef(partitionBy.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, innerModel, correlatedColumns);
+                }
+                ObjList<ExpressionNode> winOrderBy = node.windowExpression.getOrderBy();
+                for (int i = 0, n = winOrderBy.size(); i < n; i++) {
+                    collectCorrelatedRef(winOrderBy.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, innerModel, correlatedColumns);
+                }
+            }
         }
     }
 
@@ -876,11 +872,9 @@ class LateralJoinRewriter implements Mutable {
 
         ExpressionNode rnFilter;
         if (limitHi != null && limitLo != null) {
-            ExpressionNode sum = createBinaryOp("+",
-                    ExpressionNode.deepClone(expressionNodePool, limitLo),
-                    ExpressionNode.deepClone(expressionNodePool, limitHi));
             ExpressionNode upperBound = createBinaryOp("<=",
-                    ExpressionNode.deepClone(expressionNodePool, rnRef), sum);
+                    ExpressionNode.deepClone(expressionNodePool, rnRef),
+                    ExpressionNode.deepClone(expressionNodePool, limitHi));
             ExpressionNode lowerBound = createBinaryOp(">",
                     ExpressionNode.deepClone(expressionNodePool, rnRef),
                     ExpressionNode.deepClone(expressionNodePool, limitLo));
@@ -1620,25 +1614,6 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    private boolean hasCorrelatedLiteral(ExpressionNode node, int depth) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.type == ExpressionNode.LITERAL) {
-                if (node.lateralDepth == depth) {
-                    return true;
-                }
-            } else {
-                if (node.rhs != null) {
-                    sqlNodeStack.push(node.rhs);
-                }
-                for (int i = 0, n = node.args.size(); i < n; i++) {
-                    sqlNodeStack.push(node.args.getQuick(i));
-                }
-            }
-            node = node.lhs != null ? node.lhs : (sqlNodeStack.poll());
-        }
-        return false;
-    }
 
     private boolean hasNonEqualityCorrelation(ExpressionNode where, int depth) {
         if (where == null) {
@@ -1647,7 +1622,7 @@ class LateralJoinRewriter implements Mutable {
         if (SqlKeywords.isAndKeyword(where.token)) {
             return hasNonEqualityCorrelation(where.lhs, depth) || hasNonEqualityCorrelation(where.rhs, depth);
         }
-        boolean hasCorrelatedChild = hasCorrelatedLiteral(where, depth);
+        boolean hasCorrelatedChild = hasCorrelatedExprAtDepth(where, depth);
         if (hasCorrelatedChild) {
             return !Chars.equals(where.token, "=");
         }
