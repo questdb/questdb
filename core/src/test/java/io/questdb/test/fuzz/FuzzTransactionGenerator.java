@@ -347,7 +347,6 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
-<<<<<<< HEAD
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
             long lastTimestamp, Rnd rnd
@@ -378,39 +377,6 @@ public class FuzzTransactionGenerator {
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transactionList.add(transaction);
-    }
-
-    private static void generateDropParquetEncoding(
-            ObjList<FuzzTransaction> transactionList,
-            int metadataVersion,
-            int waitBarrierVersion,
-            Rnd rnd,
-            RecordMetadata meta
-    ) {
-        // Pick a random non-timestamp column
-        int colCount = meta.getColumnCount();
-        int tsIndex = meta.getTimestampIndex();
-        int startIndex = rnd.nextInt(colCount);
-        for (int i = 0; i < colCount; i++) {
-            int colIndex = (startIndex + i) % colCount;
-            if (colIndex == tsIndex) {
-                continue;
-            }
-            int colType = meta.getColumnType(colIndex);
-            if (colType < 0) {
-                continue;
-            }
-            String colName = meta.getColumnName(colIndex);
-
-            FuzzTransaction transaction = new FuzzTransaction();
-            transaction.waitBarrierVersion = waitBarrierVersion;
-            transaction.structureVersion = metadataVersion;
-            transaction.waitAllDone = true;
-            transaction.reopenTable = true;
-            transaction.operationList.add(new FuzzDropParquetEncodingOperation(colName));
-            transactionList.add(transaction);
-            return;
-        }
     }
 
     private static void generateDropPartition(

@@ -321,7 +321,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
                 equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
-                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, dropParquetEncodingProb
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb
         );
     }
 
