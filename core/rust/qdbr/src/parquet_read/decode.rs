@@ -1023,10 +1023,11 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 let dict_page = dict.ok_or_else(|| {
                     fmt_err!(Layout, "missing dictionary page for RleDictionary UUID")
                 })?;
-                let dict_decoder = ConvertablePrimitiveDictDecoder::<u128, u128, Int128ToUuidConverter>::try_new(
-                    dict_page,
-                    Int128ToUuidConverter::new(),
-                )?;
+                let dict_decoder =
+                    ConvertablePrimitiveDictDecoder::<u128, u128, Int128ToUuidConverter>::try_new(
+                        dict_page,
+                        Int128ToUuidConverter::new(),
+                    )?;
                 let row_hi = mode.source_row_count();
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
