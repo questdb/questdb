@@ -30,11 +30,11 @@ import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
@@ -59,18 +59,14 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final StringSink rejectMsg = new StringSink();
-    private QwpStreamingDecoder streamingDecoder;
     // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
-    private QwpTudCache tudCache;
-    private QwpWalAppender walAppender;
     // Buffer to accumulate incoming data
     private long bufferAddress;
     private int bufferPosition;
     private int bufferSize;
     private Status currentStatus = Status.OK;
     private long fd = -1;
-
     // WebSocket connection state — persists across ILP messages, reset by onDisconnected()
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
@@ -80,6 +76,9 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private SecurityContext securityContext;
     private SendState sendState = SendState.READY;
     private long sequenceInBuffer = -1;
+    private QwpStreamingDecoder streamingDecoder;
+    private QwpTudCache tudCache;
+    private QwpWalAppender walAppender;
     private boolean wsHandshakeSent;
 
     public QwpProcessorState(
