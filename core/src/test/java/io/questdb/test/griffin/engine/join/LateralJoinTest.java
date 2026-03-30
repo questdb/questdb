@@ -1992,6 +1992,150 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testT110OuterAliasSaveStackTwoBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fees VALUES
+                    (1, 0.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tfee
+                            1\t10.0\t0.5
+                            1\t20.0\t0.5
+                            2\t30.0\t1.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.fee
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, f.fee
+                                FROM (SELECT qty, order_id FROM trades WHERE order_id = o.id) t
+                                JOIN (SELECT fee, order_id FROM fees WHERE order_id = o.id) f
+                                    ON f.order_id = t.order_id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testT110bOuterAliasSaveStackThreeBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fees VALUES
+                    (1, 0.5, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO discounts VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (2, 0.2, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tfee\tdisc
+                            1\t10.0\t0.5\t0.1
+                            2\t30.0\t1.0\t0.2
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.fee, sub.disc
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, f.fee, d.disc
+                                FROM (SELECT qty, order_id FROM trades WHERE order_id = o.id) t
+                                JOIN (SELECT fee, order_id FROM fees WHERE order_id = o.id) f
+                                    ON f.order_id = t.order_id
+                                JOIN (SELECT disc, order_id FROM discounts WHERE order_id = o.id) d
+                                    ON d.order_id = t.order_id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testT110cOuterAliasSaveStackMultipleOuterCols() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, cat SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE limits (order_id INT, cat SYMBOL, max_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 'B', 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO limits VALUES
+                    (1, 'A', 100.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', 200.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tmax_qty
+                            1\t10.0\t100.0
+                            2\t30.0\t200.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.max_qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, l.max_qty
+                                FROM (SELECT qty, order_id FROM trades
+                                      WHERE order_id = o.id) t
+                                JOIN (SELECT max_qty, order_id FROM limits
+                                      WHERE order_id = o.id AND cat = o.category) l
+                                    ON l.order_id = t.order_id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
     // T11: Inner JOIN inside LATERAL, INNER, equality correlation — inner JOIN ON rewrite
     @Test
     public void testT11InnerJoinInLateral() throws Exception {

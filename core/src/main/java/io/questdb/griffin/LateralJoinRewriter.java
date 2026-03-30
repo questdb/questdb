@@ -153,16 +153,6 @@ class LateralJoinRewriter implements Mutable {
         }
     }
 
-    private static void copyColumnNameToAliasMap(QueryModel src, QueryModel dst) {
-        LowerCaseCharSequenceObjHashMap<CharSequence> srcMap = src.getColumnNameToAliasMap();
-        LowerCaseCharSequenceObjHashMap<CharSequence> dstMap = dst.getColumnNameToAliasMap();
-        ObjList<CharSequence> keys = srcMap.keys();
-        for (int k = 0, kn = keys.size(); k < kn; k++) {
-            CharSequence key = keys.getQuick(k);
-            dstMap.put(key, srcMap.get(key));
-        }
-    }
-
     private static LowerCaseCharSequenceIntHashMap ensureCorrelatedColumnSet(
             ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns,
             int index
@@ -926,7 +916,6 @@ class LateralJoinRewriter implements Mutable {
             branchOuterRef.setNestedModel(outerRefJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
             branchOuterRef.setAlias(outerRefJm.getAlias());
             branchOuterRef.setJoinType(QueryModel.JOIN_CROSS);
-            copyColumnNameToAliasMap(outerRefJm, branchOuterRef);
             current.addJoinModel(branchOuterRef);
             if (branchOuterRef.getAlias() != null) {
                 current.addModelAliasIndex(branchOuterRef.getAlias(), current.getJoinModels().size() - 1);
@@ -1017,7 +1006,6 @@ class LateralJoinRewriter implements Mutable {
                     deepOuterRef.setNestedModel(branchOuterRef.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
                     deepOuterRef.setAlias(branchOuterRef.getAlias());
                     deepOuterRef.setJoinType(QueryModel.JOIN_CROSS);
-                    copyColumnNameToAliasMap(branchOuterRef, deepOuterRef);
                     subCountColAliases.clear();
                     pushDownOuterRefs(
                             current, current.getNestedModel(), outerToInnerAlias,
@@ -1372,7 +1360,6 @@ class LateralJoinRewriter implements Mutable {
             clonedOuterRef.setNestedModel(outerRefJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
             clonedOuterRef.setAlias(outerRefJm.getAlias());
             clonedOuterRef.setJoinType(QueryModel.JOIN_CROSS);
-            copyColumnNameToAliasMap(outerRefJm, clonedOuterRef);
 
             subCountColAliases.clear();
             pushDownOuterRefs(
@@ -2148,16 +2135,17 @@ class LateralJoinRewriter implements Mutable {
 
     // Handles a single join branch (ji > 0) inside the lateral subquery.
     //
-    // 1. Correlated ON is rewritten in place using main chain aliases
-    //    (before save/replace). Main delim is at the join level.
+    // 1. Correlated ON is always rewritten in place using main chain aliases.
+    //    Main delim is at the join level, visible from ON.
     //
     // 2. Table-model branches (jmNested == null): return after ON rewrite.
     //
-    // 3. Subquery branches with no correlation (nested + ON): return.
+    // 3. Subquery branches with non-correlated nested model: return after ON
+    //    rewrite. No clone needed — no nested compensation required.
     //
-    // 4. Subquery branches with correlation: create cloned __qdb_outer_ref__,
-    //    push inside for compensation, build alignment criteria
-    //    (clone_col = main_col) appended to branch ON.
+    // 4. Subquery branches with correlated nested model: create cloned
+    //    __qdb_outer_ref__, push inside for compensation, build alignment
+    //    criteria (clone_col = main_col) appended to branch ON.
     //
     // hasCorrelatedCriteria is false when extractCorrelatedFromInnerJoins
     // already handled ON (terminate=1); true at levels above terminateHere.
@@ -2172,20 +2160,12 @@ class LateralJoinRewriter implements Mutable {
     ) throws SqlException {
         boolean hasCorrelatedCriteria = jm.getJoinCriteria() != null
                 && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
-
-        if (jmNested == null) {
-            if (hasCorrelatedCriteria) {
-                jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
-            }
-            return;
-        }
-        boolean isJmCorrelated = jmNested.isCorrelatedAtDepth(depth);
-        if (!(isJmCorrelated || hasCorrelatedCriteria)) {
-            return;
-        }
-
         if (hasCorrelatedCriteria) {
             jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
+        }
+
+        if (jmNested == null || !jmNested.isCorrelatedAtDepth(depth)) {
+            return;
         }
 
         characterStore.newEntry();
@@ -2197,8 +2177,6 @@ class LateralJoinRewriter implements Mutable {
         QueryModel origSubquery = outerRefJoinModel.getNestedModel();
         cloneSubquery.setNestedModel(origSubquery.getNestedModel()
                 .deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
-
-        copyColumnNameToAliasMap(origSubquery, cloneSubquery);
 
         ObjList<QueryColumn> origCols = origSubquery.getBottomUpColumns();
         for (int oc = 0, ocn = origCols.size(); oc < ocn; oc++) {
