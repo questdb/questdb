@@ -4108,7 +4108,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by DAY",
                 42,
-                "invalid parquet compression codec:"
+                "invalid parquet compression codec"
         );
     }
 
