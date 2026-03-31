@@ -687,9 +687,9 @@ impl From<i32> for ParquetEncodingConfig {
 pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
-        ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::String => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::Varchar => Encoding::RleDictionary,
+        ColumnTypeTag::Binary | ColumnTypeTag::Varchar | ColumnTypeTag::String => {
+            Encoding::DeltaLengthByteArray
+        }
         _ => Encoding::Plain,
     }
 }
@@ -916,10 +916,10 @@ mod tests {
             validate_encoding(col_type(ColumnTypeTag::Symbol), Encoding::Plain),
             Encoding::RleDictionary
         );
-        // VARCHAR should fall back to RleDictionary
+        // VARCHAR should fall back to DeltaLengthByteArray
         assert_eq!(
             validate_encoding(col_type(ColumnTypeTag::Varchar), Encoding::Plain),
-            Encoding::RleDictionary
+            Encoding::DeltaLengthByteArray
         );
     }
 

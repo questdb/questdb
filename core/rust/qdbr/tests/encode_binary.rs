@@ -3,17 +3,19 @@ mod common;
 use arrow::array::{Array, BinaryArray};
 use common::encode::{
     build_qdb_binary_data, generate_nulls, make_string_column, read_parquet_batches, write_parquet,
-    EncodeEncoding, ALL_NULL_PATTERNS,
+    ALL_NULL_PATTERNS,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
 
+use crate::common::Encoding;
+
 const COUNT: usize = 1_000;
 
-const BINARY_ENCODINGS: [EncodeEncoding; 3] = [
-    EncodeEncoding::Plain,
-    EncodeEncoding::RleDictionary,
-    EncodeEncoding::DeltaLengthByteArray,
+const BINARY_ENCODINGS: [Encoding; 3] = [
+    Encoding::Plain,
+    Encoding::RleDictionary,
+    Encoding::DeltaLengthByteArray,
 ];
 
 fn generate_binary_value(i: usize) -> Vec<u8> {
