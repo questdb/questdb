@@ -1634,61 +1634,6 @@ public final class TableUtils {
         }
     }
 
-    /**
-     * Produces a Parquet file from a native partition using a TableReader.
-     * Convenience overload that extracts parameters from the reader and delegates to the core method.
-     * Supports concurrent partition change detection via expectedPartitionNameTxn.
-     *
-     * @param reader                   Table reader
-     * @param path                     Path to the native partition directory (will be modified during execution)
-     * @param other                    Path for the output parquet file (will be modified during execution)
-     * @param pathSize                 Root path size for restoring paths after modifications
-     * @param partitionTimestamp       Timestamp of the partition
-     * @param tableName                Name of the table
-     * @param partitionIndex           Index of the partition in the transaction file
-     * @param configuration            Cairo configuration for parquet encoder options
-     * @param expectedPartitionNameTxn Expected partition name txn captured at PARQUET_MARK time, or -1 to skip the check.
-     *                                 When non-negative, the reader is reloaded before each column to detect concurrent
-     *                                 partition changes (e.g. O3 merge, partition squash). Returns -1 on mismatch.
-     * @param partitionChangeDetector  Reusable change check instance, or null when expectedPartitionNameTxn is -1.
-     *                                 Callers should keep a single instance and pass it on every call to avoid allocation.
-     * @return The length of the produced Parquet file, or -1 if the partition txn changed during conversion
-     */
-    public static long produceParquetFromNative(
-            TableReader reader,
-            SymbolTableProvider symbolTableProvider,
-            Path path,
-            Path other,
-            int pathSize,
-            long partitionTimestamp,
-            String tableName,
-            int partitionIndex,
-            CairoConfiguration configuration,
-            long expectedPartitionNameTxn,
-            @Nullable PartitionChangeDetector partitionChangeDetector
-    ) {
-        final TxReader txReader = reader.getTxFile();
-        final TableMetadata metadata = reader.getMetadata();
-        final long metadataVersion = metadata.getMetadataVersion();
-        final long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
-        final long partitionRowCount = txReader.getPartitionSize(partitionIndex);
-        final ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
-
-        if (expectedPartitionNameTxn != Long.MIN_VALUE && partitionChangeDetector != null) {
-            partitionChangeDetector.of(reader, partitionTimestamp, expectedPartitionNameTxn, metadata, metadataVersion);
-        }
-
-        return produceParquetFromNative(
-                path, other, pathSize,
-                partitionTimestamp, partitionNameTxn, partitionNameTxn,
-                tableName, partitionRowCount,
-                metadata, columnVersionReader,
-                symbolTableProvider,
-                configuration,
-                null, Double.NaN, null,
-                expectedPartitionNameTxn != Long.MIN_VALUE ? partitionChangeDetector : null
-        );
-    }
 
     /**
      * Produces a Parquet file from a native partition. Core method used by both TableReader and TableWriter callers.
@@ -1711,8 +1656,7 @@ public final class TableUtils {
      * @param bloomFilterIndexes      Reusable DirectIntList for bloom filter column indexes. Must be non-null when
      *                                bloomFilterColumns is set. Callers should keep a single instance and pass it
      *                                on every call to avoid per-invocation allocation.
-     * @param partitionChangeDetector Optional check for concurrent partition changes, returns true if changed. Null to skip.
-     * @return The length of the produced Parquet file, or -1 if the partition changed during conversion
+     * @return The length of the produced Parquet file
      */
     public static long produceParquetFromNative(
             Path path,
@@ -1729,8 +1673,7 @@ public final class TableUtils {
             CairoConfiguration configuration,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp,
-            @Nullable DirectIntList bloomFilterIndexes,
-            @Nullable PartitionChangeDetector partitionChangeDetector
+            @Nullable DirectIntList bloomFilterIndexes
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
@@ -1761,10 +1704,6 @@ public final class TableUtils {
                     final int columnType = metadata.getColumnType(columnIndex);
                     if (columnType <= 0) {
                         continue; // skip deleted columns
-                    }
-
-                    if (partitionChangeDetector != null && partitionChangeDetector.hasChanged()) {
-                        return -1L;
                     }
 
                     final String columnName = metadata.getColumnName(columnIndex);
@@ -2688,57 +2627,6 @@ public final class TableUtils {
         boolean containsNullValue(int columnIndex);
 
         int getSymbolCount(int columnIndex);
-    }
-
-    public static class PartitionChangeDetector {
-        private long expectedPartitionNameTxn;
-        private long expectedRowCount;
-        private int expectedSquashCount;
-        private TableMetadata metadata;
-        private long metadataVersion;
-        private long partitionTimestamp;
-        private TableReader reader;
-
-        public void clear() {
-            this.reader = null;
-            this.metadata = null;
-        }
-
-        public boolean hasChanged() {
-            reader.reload();
-            if (metadata.getMetadataVersion() != metadataVersion) {
-                return true;
-            }
-            final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
-            if (index < 0) {
-                return true;
-            }
-            final TxReader txFile = reader.getTxFile();
-            return txFile.getPartitionNameTxn(index) != expectedPartitionNameTxn
-                    || txFile.getPartitionSquashCount(index) != expectedSquashCount
-                    || txFile.getPartitionSize(index) != expectedRowCount;
-        }
-
-        public PartitionChangeDetector of(
-                TableReader reader,
-                long partitionTimestamp,
-                long expectedPartitionNameTxn,
-                TableMetadata metadata,
-                long metadataVersion
-        ) {
-            this.reader = reader;
-            this.partitionTimestamp = partitionTimestamp;
-            this.expectedPartitionNameTxn = expectedPartitionNameTxn;
-            this.metadata = metadata;
-            this.metadataVersion = metadataVersion;
-            final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
-            if (index >= 0) {
-                final TxReader txFile = reader.getTxFile();
-                this.expectedSquashCount = txFile.getPartitionSquashCount(index);
-                this.expectedRowCount = txFile.getPartitionSize(index);
-            }
-            return this;
-        }
     }
 
     public static class SymbolTableProviderFromReader implements SymbolTableProvider {

@@ -8986,14 +8986,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long produceParquetFromNative(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, long parquetNameTxn, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         final long partitionRowCount = getPartitionSize(partitionIndex);
         return TableUtils.produceParquetFromNative(
-                path, other, pathSize,
-                partitionTimestamp, partitionNameTxn, parquetNameTxn,
-                getTableToken().getTableName(), partitionRowCount,
-                metadata, columnVersionWriter,
+                path,
+                other,
+                pathSize,
+                partitionTimestamp,
+                partitionNameTxn,
+                parquetNameTxn,
+                getTableToken().getTableName(),
+                partitionRowCount,
+                metadata,
+                columnVersionWriter,
                 symbolTableProvider,
                 configuration,
-                bloomFilterColumns, bloomFilterFpp,
-                parquetBloomFilterIndexes, null
+                bloomFilterColumns,
+                bloomFilterFpp,
+                parquetBloomFilterIndexes
         );
     }
 
