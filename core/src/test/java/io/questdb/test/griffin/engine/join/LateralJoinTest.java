@@ -608,6 +608,199 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPerSidePushInnerBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO base_data VALUES
+                    (1, 'A', '2024-01-01T00:05:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:05:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttrade_total
+                            1\tA\t30.0
+                            2\tB\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.trade_total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT b.category, t.trade_total
+                                FROM base_data b
+                                INNER JOIN (
+                                    SELECT sum(qty) AS trade_total, order_id
+                                    FROM trades
+                                    WHERE order_id = o.id
+                                    GROUP BY order_id
+                                ) t ON b.order_id = t.order_id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testPerSidePushLeftBranchFallback() throws Exception {
+        // LEFT branch inside the lateral subquery should NOT use per-side push
+        // because LEFT preserves unmatched rows. This test verifies the normal
+        // decorrelation still works for LEFT JOIN LATERAL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\ttotal
+                            1\t30
+                            2\t0
+                            3\t0
+                            """,
+                    """
+                            SELECT t1.id, coalesce(sub.total, 0) AS total
+                            FROM t1
+                            LEFT JOIN LATERAL (
+                                SELECT sum(val) AS total
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testPerSidePushMultipleBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO base_data VALUES
+                    (1, 'A', '2024-01-01T00:05:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:05:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO returns VALUES
+                    (1, 5.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 15.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcategory\ttrade_total\treturn_total
+                            1\tA\t30.0\t5.0
+                            2\tB\t30.0\t15.0
+                            """,
+                    """
+                            SELECT o.id, sub.category, sub.trade_total, sub.return_total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT b.category, t.trade_total, r.return_total
+                                FROM base_data b
+                                INNER JOIN (
+                                    SELECT sum(qty) AS trade_total, order_id
+                                    FROM trades
+                                    WHERE order_id = o.id
+                                    GROUP BY order_id
+                                ) t ON b.order_id = t.order_id
+                                INNER JOIN (
+                                    SELECT sum(qty) AS return_total, order_id
+                                    FROM returns
+                                    WHERE order_id = o.id
+                                    GROUP BY order_id
+                                ) r ON b.order_id = r.order_id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testPerSidePushSimpleLateral() throws Exception {
+        // Simple lateral join (no multi-table join inside the lateral subquery).
+        // Per-side push is NOT applicable here since the main chain has correlation.
+        // This test ensures normal decorrelation still works correctly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\ttotal
+                            1\t30
+                            2\t30
+                            """,
+                    """
+                            SELECT t1.id, sub.total
+                            FROM t1
+                            CROSS JOIN LATERAL (
+                                SELECT sum(val) AS total
+                                FROM t2
+                                WHERE t2.t1_id = t1.id
+                            ) sub
+                            ORDER BY t1.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
     public void testT01ScanInner() throws Exception {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();

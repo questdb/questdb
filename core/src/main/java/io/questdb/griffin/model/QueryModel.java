@@ -31,6 +31,7 @@ import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -128,7 +129,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap columnAliasRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns = new ObjList<>();
-    private final IntHashSet correlatedDepths = new IntHashSet();
+    private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
@@ -1351,7 +1352,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 return true;
             }
         }
-        return correlatedDepths.contains(depth);
+        return correlatedDepths.keyIndex(depth) < 0;
     }
 
     public boolean isCteModel() {
@@ -1376,6 +1377,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
+    }
+
+    public boolean isOwnCorrelatedAtDepth(int depth, int flag) {
+        int ki = correlatedDepths.keyIndex(depth);
+        if (ki >= 0) {
+            return false;
+        }
+        return (correlatedDepths.valueAt(ki) & flag) != 0;
     }
 
     public boolean isPivot() {
@@ -1407,8 +1416,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
-    public void makeCorrelatedAtDepth(int depth) {
-        correlatedDepths.add(depth);
+    public void makeCorrelatedAtDepth(int depth, int flags) {
+        int ki = correlatedDepths.keyIndex(depth);
+        if (ki < 0) {
+            correlatedDepths.putAt(ki, depth, correlatedDepths.valueAt(ki) | flags);
+        } else {
+            correlatedDepths.putAt(ki, depth, flags);
+        }
     }
 
     /**
