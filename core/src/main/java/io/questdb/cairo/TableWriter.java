@@ -1262,6 +1262,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
+    public boolean isCheckpointInProgress() {
+        return engine.getCheckpointStatus().isInProgress();
+    }
+
     @Override
     public void close() {
         if (lifecycleManager.close() && isOpen()) {
@@ -5512,7 +5516,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // When a backup checkpoint is in progress, force async-only purge to prevent
         // deleting column version files that the checkpoint may still reference.
         boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn()
-                || engine.getCheckpointStatus().isInProgress();
+                || isCheckpointInProgress();
         purgingOperator.purge(
                 path.trimTo(pathSize),
                 tableToken,
