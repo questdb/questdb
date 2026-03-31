@@ -112,6 +112,10 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
     private class AsOfJoinDenseRecordCursor extends AsOfJoinDenseRecordCursorBase {
         private final SingleRecordSink masterSinkTarget;
         private final SingleRecordSink slaveSinkTarget;
+        // Record used for master key serialization. Set once in of() to either
+        // masterRecord or SymbolTranslatingRecord wrapping it, so that getInt()
+        // on symbol key columns returns slave symbol IDs.
+        private Record masterKeyRecord;
 
         AsOfJoinDenseRecordCursor(
                 int columnSplit,
@@ -149,6 +153,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterKeyRecord = masterRecord;
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
             if (symbolTranslatingRecord != null) {

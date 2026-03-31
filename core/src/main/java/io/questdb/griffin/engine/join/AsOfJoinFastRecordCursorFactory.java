@@ -138,6 +138,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
         private final SingleRecordSink masterSinkTarget;
         private final SingleRecordSink slaveSinkTarget;
+        // Record used for master key serialization. Set once in of() to either
+        // masterRecord or SymbolTranslatingRecord wrapping it, so that getInt()
+        // on symbol key columns returns slave symbol IDs.
+        private Record masterKeyRecord;
 
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
@@ -165,34 +169,38 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterKeyRecord = masterRecord;
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
-            symbolShortCircuit.of(slaveCursor);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
+            } else {
+                symbolShortCircuit.of(slaveCursor);
             }
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
             if (symbolTranslatingRecord != null) {
+                // The non-keyed matcher found a record with a matching timestamp.
+                // We have to make sure the JOIN keys match as well.
                 symbolTranslatingRecord.resetNonExistentKeyFlag();
-            } else if (symbolShortCircuit.isShortCircuit(masterRecord)) {
-                record.hasSlave(false);
-                return;
-            }
-
-            // The non-keyed matcher found a record with a matching timestamp.
-            // We have to make sure the JOIN keys match as well.
-            masterSinkTarget.clear();
-            masterKeySink.copy(masterKeyRecord, masterSinkTarget);
-
-            // Check if any symbol key was VALUE_NOT_FOUND during copy.
-            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
-                record.hasSlave(false);
-                return;
+                masterSinkTarget.clear();
+                masterKeySink.copy(masterKeyRecord, masterSinkTarget);
+                // Check if any symbol key was VALUE_NOT_FOUND during copy.
+                if (symbolTranslatingRecord.hadNonExistentKey()) {
+                    record.hasSlave(false);
+                    return;
+                }
+            } else {
+                if (symbolShortCircuit.isShortCircuit(masterRecord)) {
+                    record.hasSlave(false);
+                    return;
+                }
+                masterSinkTarget.clear();
+                masterKeySink.copy(masterKeyRecord, masterSinkTarget);
             }
 
             long rowLo = slaveTimeFrame.getRowLo();

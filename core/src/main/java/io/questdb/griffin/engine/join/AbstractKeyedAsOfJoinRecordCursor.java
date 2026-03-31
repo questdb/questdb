@@ -38,11 +38,6 @@ import io.questdb.std.Rows;
  */
 public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoinFastRecordCursor {
     protected SqlExecutionCircuitBreaker circuitBreaker;
-    // The record used for master key operations (key serialization, map lookups).
-    // Initialized once per query execution in of(). By default, this is the raw
-    // masterRecord. Subclasses may set this to a SymbolTranslatingRecord wrapper
-    // to translate master symbol IDs to slave symbol IDs.
-    protected Record masterKeyRecord;
     protected boolean origHasSlave;
     protected int origSlaveFrameIndex = -1;
     protected long origSlaveRowId = -1;
@@ -108,7 +103,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
     public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         super.of(masterCursor, slaveCursor);
         this.circuitBreaker = circuitBreaker;
-        this.masterKeyRecord = masterRecord;
     }
 
     @Override

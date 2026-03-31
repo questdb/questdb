@@ -137,7 +137,7 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
 
         @Override
         protected int setupSymbolKeyToFind() {
-            return joinKeyMapping.getSlaveKey(masterKeyRecord);
+            return joinKeyMapping.getSlaveKey(masterRecord);
         }
     }
 }
