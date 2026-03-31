@@ -2186,11 +2186,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         assert timestampMergeIndexAddr != 0;
 
-        // Even-split: when totalRows > 1.5x maxRowGroupSize, split into ceil(totalRows / (1.5 * maxRowGroupSize))
-        // chunks. Each chunk gets between 0.75x and 1.5x maxRowGroupSize rows.
+        // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
+        // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
+        // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2.
+        // Integer division of maxRowGroupSize / 2 is intentional: the target
+        // must be representable exactly in integer arithmetic to avoid off-by-one
+        // overflows when distributing remainder rows across chunks.
+        final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
         int numChunks;
-        if (2L * mergeRowCount > 3L * maxRowGroupSize) {
-            numChunks = (int) ((2L * mergeRowCount + 3L * maxRowGroupSize - 1) / (3L * maxRowGroupSize));
+        if (mergeRowCount > maxChunkTarget) {
+            numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
         } else {
             numChunks = 1;
         }
