@@ -10668,6 +10668,9 @@ public class SqlOptimiser implements Mutable {
         }
 
         validateWindowJoins(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            validateWindowJoins(model.getJoinModels().get(i).getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        }
         validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
     }
 

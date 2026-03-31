@@ -35,6 +35,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
@@ -47,6 +48,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
@@ -218,6 +220,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     entry.getId()
             );
 
+            int nowTimestampType = executionContext.getNowTimestampType();
+            long now = executionContext.getNow(nowTimestampType);
+            BindVariableService bindVariableSnapshot = BindVariableServiceImpl.snapshot(
+                    executionContext.getBindVariableService(),
+                    executionContext.getCairoEngine().getConfiguration()
+            );
+
             do {
                 processingCursor = copyRequestPubSeq.next();
             } while (processingCursor == -2);
@@ -228,8 +237,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
             try {
                 final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
-                int nowTimestampType = executionContext.getNowTimestampType();
-                long now = executionContext.getNow(nowTimestampType);
                 task.of(
                         entry,
                         createOp,
@@ -252,7 +259,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         resolvedSelectText,
                         bloomFilterColumns,
                         bloomFilterColumnsPosition,
-                        bloomFilterFpp
+                        bloomFilterFpp,
+                        bindVariableSnapshot
                 );
                 task.setSelectFactory(selectFactory);
                 selectFactory = null;
