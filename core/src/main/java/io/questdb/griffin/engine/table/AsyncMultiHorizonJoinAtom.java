@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,8 +31,6 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -42,9 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -52,35 +48,32 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Atom for keyed HORIZON JOIN GROUP BY that uses Maps for aggregation.
+ * Atom for keyed multi-slave HORIZON JOIN GROUP BY that uses Maps for aggregation.
  * <p>
- * This class extends {@link BaseAsyncHorizonJoinAtom} and adds:
+ * This class extends {@link BaseAsyncMultiHorizonJoinAtom} and adds:
  * - Per-worker aggregation Maps (key -> value) via {@link GroupByShardingContext}
  * - Per-worker map sinks for populating map keys (supports expression keys)
  * - Radix partitioning (sharding) for high-cardinality GROUP BY
  */
-public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
+public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final GroupByShardingContext shardingCtx;
 
-    public AsyncHorizonJoinAtom(
+    public AsyncMultiHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata markoutMetadata,
-            @NotNull RecordCursorFactory slaveFactory,
+            @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
+            @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
-            @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            int masterColumnCount,
-            int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             @NotNull ObjList<Function> keyFunctions,
             @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
@@ -94,22 +87,17 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @Nullable Function ownerFilter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            long masterTsScale,
-            long slaveTsScale,
             int workerCount
     ) {
         super(
                 asm,
                 configuration,
-                slaveFactory,
+                slaveStates,
+                perSlaveAsOfJoinKeyTypes,
+                masterAsOfJoinMapSinkClasses,
+                slaveAsOfJoinMapSinkClasses,
                 masterTimestampColumnIndex,
                 offsets,
-                asOfJoinKeyTypes,
-                masterAsOfJoinMapSinkClass,
-                slaveAsOfJoinMapSinkClass,
-                masterColumnCount,
-                masterSymbolKeyColumnIndices,
-                slaveSymbolKeyColumnIndices,
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
@@ -120,8 +108,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 ownerFilter,
                 filterUsedColumnIndexes,
                 perWorkerFilters,
-                masterTsScale,
-                slaveTsScale,
                 workerCount
         );
 
@@ -208,31 +194,15 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
     }
 
     @Override
-    public void initTimeFrameCursors(
+    public void initGroupByFunctions(
             SqlExecutionContext executionContext,
-            SymbolTableSource masterSymbolTableSource,
-            TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            SymbolTableSource masterSource,
+            ObjList<SymbolTableSource> slaveSources
     ) throws SqlException {
-        super.initTimeFrameCursors(
-                executionContext,
-                masterSymbolTableSource,
-                slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount
-        );
+        super.initGroupByFunctions(executionContext, masterSource, slaveSources);
 
         // Initialize key functions (for expression keys) with combined symbol table source
-        final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
+        final MultiHorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
         if (ownerKeyFunctions != null) {
             Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
         }
@@ -273,23 +243,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("AsyncHorizonGroupByAtom");
-    }
-
-    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId == -1 || perWorkerGroupByFunctions == null) {
-            return ownerGroupByFunctions;
-        }
-        return perWorkerGroupByFunctions.getQuick(slotId);
-    }
-
-    private long getTotalFunctionCardinality(int slotId) {
-        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
-        long totalCardinality = 0;
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
-        }
-        return totalCardinality;
+        sink.val("AsyncMultiHorizonGroupByAtom");
     }
 
     @Override
@@ -306,5 +260,21 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
             }
         }
+    }
+
+    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
+    }
+
+    private long getTotalFunctionCardinality(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        long totalCardinality = 0;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
+        }
+        return totalCardinality;
     }
 }
