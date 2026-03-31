@@ -836,7 +836,7 @@ public final class Utf8s {
         return true;
     }
 
-    // checks 8 consequent bytes at once for non-ASCII chars, convenient for SWAR
+    // checks 8 consecutive bytes at once for non-ASCII chars
     public static boolean isAscii(long w) {
         return (w & ASCII_MASK) == 0;
     }
