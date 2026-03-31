@@ -164,7 +164,7 @@ public class ArgMaxVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
                     ('B', 'gamma', '2023-01-05T00:00:00.000000Z'),
                     ('B', 'delta', '2023-01-04T00:00:00.000000Z')
                 """);
-        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, false, true);
+        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, true, true);
     }
 
     @Test

@@ -164,7 +164,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
                     ('B', 'gamma', 5),
                     ('B', 'delta', 4)
                 """);
-        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, false, true);
+        assertQuery("sym\targ_max\nA\tbeta\nB\tgamma\n", "SELECT sym, arg_max(value, key) FROM tab ORDER BY sym", null, true, true);
     }
 
     @Test
