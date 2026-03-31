@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
@@ -48,7 +49,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * Field 3 was previously "parquet file size" and is now "parquet metadata file size."
  * For non-parquet partitions, the field is set to -1.
  */
-final class Mig940 {
+public final class Mig940 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
 
     // Local copies of constants to avoid depending on values that may change.
@@ -63,7 +64,7 @@ final class Mig940 {
     private static final long META_OFFSET_COLUMN_TYPES = 128;
     private static final long META_COLUMN_DATA_SIZE = 32;
 
-    static void migrate(MigrationContext migrationContext) {
+    public static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
@@ -77,8 +78,9 @@ final class Mig940 {
 
         final int partitionBy;
         final int timestampType;
+        long metaFileSize = ff.length(path.$());
         try (MemoryMARW metaMem = Vm.getCMARWInstance(
-                ff, path.$(), ff.getPageSize(), META_OFFSET_COLUMN_TYPES, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
+                ff, path.$(), ff.getPageSize(), metaFileSize, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
         )) {
             partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -108,7 +110,7 @@ final class Mig940 {
         }
         EngineMigration.backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, 426);
 
-        LOG.info().$("generating pm metadata files [path=").$(path).I$();
+        LOG.info().$("generating parquet metadata files [path=").$(path).I$();
         try (MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$())) {
             long version = txMem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
             boolean isA = (version & 1) == 0;
@@ -175,7 +177,7 @@ final class Mig940 {
             return -1L;
         }
 
-        int parquetFd = (int) ff.openRO(path.$());
+        long parquetFd = ff.openRO(path.$());
         if (parquetFd < 0) {
             LOG.error().$("cannot open parquet file [path=").$(path).$(", errno=").$(ff.errno()).I$();
             path.trimTo(partitionDirLen);
@@ -184,7 +186,7 @@ final class Mig940 {
 
         // Create _pm for writing.
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-        int parquetMetaFd = (int) ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
         if (parquetMetaFd < 0) {
             LOG.error().$("cannot create parquet metadata file [path=").$(path).$(", errno=").$(ff.errno()).I$();
             ff.close(parquetFd);
@@ -193,7 +195,7 @@ final class Mig940 {
         }
 
         try {
-            long parquetMetaSize = ParquetMetadataWriter.generate(parquetFd, parquetFileSize, parquetMetaFd);
+            long parquetMetaSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
             LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
             return parquetMetaSize;
         } catch (Throwable t) {

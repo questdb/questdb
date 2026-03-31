@@ -27,13 +27,20 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileWriter;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class ParquetMetaFileReaderTest extends AbstractCairoTest {
+    @BeforeClass
+    public static void loadNativeLib() {
+        Os.init();
+    }
 
     // ── Helper to build a _pm file via the real Rust writer ────────────
 
@@ -109,7 +116,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     @Test
     public void testMultipleRowGroups() throws Exception {
         assertMemoryLeak(() -> {
-            try (PmTestFile file = buildFile(3, 100, 200, 500, 1_000_000)) {
+            try (PmTestFile file = buildFile(3, 0, 0, 100, 200, 500, 1_000_000)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 reader.of(file.dataPtr, file.dataLen);
 
@@ -146,8 +153,8 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testReopenWithOf() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PmTestFile file1 = buildFile(1, 42);
-                    PmTestFile file2 = buildFile(2, 99, 101)
+                    PmTestFile file1 = buildFile(1, 0, 0, 42);
+                    PmTestFile file2 = buildFile(2, 0, 0, 99, 101)
             ) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
@@ -217,7 +224,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     @Test
     public void testManyColumnsAffectsBlockSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (PmTestFile file = buildFile(50, 777, 888)) {
+            try (PmTestFile file = buildFile(50, 0, 0, 777, 888)) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 reader.of(file.dataPtr, file.dataLen);
 
@@ -288,7 +295,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     public void testFileTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             // Allocate a tiny buffer that's too small for any valid _pm file
-            long addr = Unsafe.malloc(8, 0);
+            long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
             try {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
@@ -298,7 +305,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Assert.assertTrue(e.getMessage().contains("pm file too small"));
                 }
             } finally {
-                Unsafe.free(addr, 8, 0);
+                Unsafe.free(addr, 8, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -343,8 +350,8 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             // Same row group sizes but different column counts produce different
             // file layouts (block sizes differ). Verify the reader handles both.
             try (
-                    PmTestFile file1 = buildFile(1, 500, 600);
-                    PmTestFile file2 = buildFile(10, 500, 600)
+                    PmTestFile file1 = buildFile(1, 0, 0, 500, 600);
+                    PmTestFile file2 = buildFile(10, 0, 0, 500, 600)
             ) {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
 
