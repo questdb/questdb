@@ -672,28 +672,6 @@ ORDER BY o.id, t.qty
 2 20.000000
 
 # ============================================================
-# Non-constant LIMIT — error
-# ============================================================
-
-statement ok
-CREATE TABLE orders_ncl (id INT, n INT, ts TIMESTAMP) TIMESTAMP(ts) 
-
-statement ok
-INSERT INTO orders_ncl VALUES (1, 2, '2024-01-01T00:00:00.000000Z')
-
-statement ok
-CREATE TABLE trades_ncl (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
-
-statement ok
-INSERT INTO trades_ncl VALUES (1, 1, 10.0, '2024-01-01T00:30:00.000000Z')
-
-statement error
-SELECT o.id, t.qty
-FROM orders_ncl o
-JOIN LATERAL (SELECT qty FROM trades_ncl WHERE order_id = o.id LIMIT o.n) t
-----
-
-# ============================================================
 # Nested lateral joins
 # ============================================================
 

@@ -2349,6 +2349,7 @@ class LateralJoinRewriter implements Mutable {
             }
             terminateLevel = nested;
         }
+        assert terminateLevel != null;
 
         CharSequence firstCloneAlias = null;
         for (int bi = 1, bn = terminateLevel.getJoinModels().size(); bi < bn; bi++) {
