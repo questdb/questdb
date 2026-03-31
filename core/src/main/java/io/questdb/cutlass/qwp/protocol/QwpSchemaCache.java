@@ -115,7 +115,8 @@ public class QwpSchemaCache {
     }
 
     private static long combineKey(int tableNameHash, long schemaHash) {
-        return ((long) tableNameHash << 32) ^ schemaHash;
+        long key = ((long) tableNameHash << 32) ^ schemaHash;
+        return key != -1L ? key : -2L;
     }
 
     /**
