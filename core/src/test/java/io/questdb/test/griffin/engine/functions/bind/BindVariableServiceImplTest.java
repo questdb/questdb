@@ -1168,12 +1168,13 @@ public class BindVariableServiceImplTest {
                             bindVariableService.setGeoHash(0, 12345L, type);
                     case ColumnType.UUID -> bindVariableService.setUuid(0, 100L, 200L);
                     case ColumnType.VARCHAR -> bindVariableService.setVarchar(0, new Utf8String("test"));
-                    case ColumnType.ARRAY -> {} // snapshot does not deep-copy array values
+                    case ColumnType.ARRAY -> {
+                    } // snapshot does not deep-copy array values
                     case ColumnType.DECIMAL, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
                          ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL128,
-                         ColumnType.DECIMAL256 ->
-                            bindVariableService.setDecimal(0, 0, 0, 0, 42, type);
-                    default -> Assert.fail("add snapshot coverage for " + ColumnType.nameOf(tag) + " (tag=" + tag + ")");
+                         ColumnType.DECIMAL256 -> bindVariableService.setDecimal(0, 0, 0, 0, 42, type);
+                    default ->
+                            Assert.fail("add snapshot coverage for " + ColumnType.nameOf(tag) + " (tag=" + tag + ")");
                 }
 
                 Function original = bindVariableService.getFunction(0);
@@ -1351,9 +1352,7 @@ public class BindVariableServiceImplTest {
 
     @Test
     public void testSnapshotNull() throws Exception {
-        assertMemoryLeak(() -> {
-            Assert.assertNull(BindVariableServiceImpl.snapshot(null, new DefaultTestCairoConfiguration(null)));
-        });
+        assertMemoryLeak(() -> Assert.assertNull(BindVariableServiceImpl.snapshot(null, new DefaultTestCairoConfiguration(null))));
     }
 
     @Test
@@ -1800,7 +1799,7 @@ public class BindVariableServiceImplTest {
             TestUtils.assertEquals("9", bindVariableService.getFunction(0).getVarcharA(null));
             Assert.assertEquals(1, bindVariableService.getFunction(0).getVarcharSize(null));
 
-            bindVariableService.setChar(0, '\u03B1'); // Greek alpha
+            bindVariableService.setChar(0, 'α'); // Greek alpha
             TestUtils.assertEquals("α", bindVariableService.getFunction(0).getVarcharA(null));
             Assert.assertEquals(2, bindVariableService.getFunction(0).getVarcharSize(null)); // UTF-8 encoding
         });
