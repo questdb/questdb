@@ -70,7 +70,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from async_auto_flush", "count\n25\n");
+            assertSql("SELECT count() FROM async_auto_flush", "count\n25\n");
         });
     }
 
@@ -88,7 +88,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from async_large", "count\n25000000\n");
+            assertSql("SELECT count() FROM async_large", "count\n25000000\n");
         });
     }
 
@@ -105,7 +105,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from async_multi", "count\n200000\n");
+            assertSql("SELECT count() FROM async_multi", "count\n200000\n");
         });
     }
 
@@ -120,8 +120,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from async_single", "count\n1\n");
-            assertSql("select value from async_single", "value\n42\n");
+            assertSql("SELECT count() FROM async_single", "count\n1\n");
+            assertSql("SELECT value FROM async_single", "value\n42\n");
         });
     }
 
@@ -153,7 +153,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ack_stress", "count\n200\n");
+            assertSql("SELECT count() FROM ack_stress", "count\n200\n");
         });
     }
 
@@ -175,8 +175,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             drainWalQueue();
-            assertSql("select count() from async_table_a", "count\n50\n");
-            assertSql("select count() from async_table_b", "count\n50\n");
+            assertSql("SELECT count() FROM async_table_a", "count\n50\n");
+            assertSql("SELECT count() FROM async_table_b", "count\n50\n");
         });
     }
 
@@ -201,7 +201,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from async_row_flush", "count\n50\n");
+            assertSql("SELECT count() FROM async_row_flush", "count\n50\n");
         });
     }
 
@@ -215,7 +215,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from test_at_now", "count\n1\n");
+            assertSql("SELECT count() FROM test_at_now", "count\n1\n");
         });
     }
 

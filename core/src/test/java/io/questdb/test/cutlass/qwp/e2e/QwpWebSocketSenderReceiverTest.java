@@ -91,7 +91,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_10000rows", "count\n10000\n");
+            assertSql("SELECT count() FROM ws_test_10000rows", "count\n10000\n");
         });
     }
 
@@ -109,7 +109,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_1000_rows", "count\n1000\n");
+            assertSql("SELECT count() FROM ws_test_1000_rows", "count\n1000\n");
         });
     }
 
@@ -127,8 +127,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_100_rows", "count\n100\n");
-            assertSql("select sum(value) from ws_test_100_rows", "sum\n4950\n");
+            assertSql("SELECT count() FROM ws_test_100_rows", "count\n100\n");
+            assertSql("SELECT sum(value) FROM ws_test_100_rows", "sum\n4950\n");
         });
     }
 
@@ -145,7 +145,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_10rows", "count\n10\n");
+            assertSql("SELECT count() FROM ws_test_10rows", "count\n10\n");
         });
     }
 
@@ -160,7 +160,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_1d_double_array", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_1d_double_array", "count\n1\n");
         });
     }
 
@@ -176,7 +176,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_2d_double_array", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_2d_double_array", "count\n1\n");
         });
     }
 
@@ -192,7 +192,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_3d_double_array", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_3d_double_array", "count\n1\n");
         });
     }
 
@@ -214,7 +214,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_all_types", "count\n1\n");
+            assertSql("SELECT count() FROM ws_all_types", "count\n1\n");
         });
     }
 
@@ -271,7 +271,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_all_numeric", "count\n100\n");
+            assertSql("SELECT count() FROM ws_all_numeric", "count\n100\n");
         });
     }
 
@@ -287,17 +287,17 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_at_now", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_at_now", "count\n1\n");
 
             // Verify a timestamp column was auto-created
             assertSql(
-                    "select \"column\" from table_columns('ws_test_at_now') order by \"column\"",
+                    "SELECT \"column\" FROM table_columns('ws_test_at_now') ORDER BY \"column\"",
                     "column\ntag\ntimestamp\nvalue\n"
             );
 
             // Verify the timestamp was assigned by the server (should be recent)
             assertSql(
-                    "select count() from ws_test_at_now where timestamp >= '2025-01-01'",
+                    "SELECT count() FROM ws_test_at_now WHERE timestamp >= '2025-01-01'",
                     "count\n1\n"
             );
         });
@@ -331,7 +331,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_unique_ts_test", "count\n" + rowCount + "\n");
+            assertSql("SELECT count() FROM ws_unique_ts_test", "count\n" + rowCount + "\n");
 
             // Verify that timestamps are NOT all identical.
             // If bug exists: all rows have identical timestamps, so count_distinct = 1
@@ -339,7 +339,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // (may not be exactly rowCount due to microsecond resolution)
             // Use a query that returns 'true' if we have more than 1 distinct timestamp
             assertSql(
-                    "select count_distinct(timestamp) > 1 as has_multiple_timestamps from ws_unique_ts_test",
+                    "SELECT count_distinct(timestamp) > 1 AS has_multiple_timestamps FROM ws_unique_ts_test",
                     "has_multiple_timestamps\ntrue\n"
             );
         });
@@ -363,17 +363,17 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Verify row was inserted
-            assertSql("select count() from ws_custom_ts_table", "count\n1\n");
+            assertSql("SELECT count() FROM ws_custom_ts_table", "count\n1\n");
 
             // Verify the table has ONLY the expected columns (sym, value, ts)
             assertSql(
-                    "select \"column\" from table_columns('ws_custom_ts_table') order by \"column\"",
+                    "SELECT \"column\" FROM table_columns('ws_custom_ts_table') ORDER BY \"column\"",
                     "column\nsym\nts\nvalue\n"
             );
 
             // Verify the timestamp was assigned by the server
             assertSql(
-                    "select count() from ws_custom_ts_table where ts >= '2025-01-01'",
+                    "SELECT count() FROM ws_custom_ts_table WHERE ts >= '2025-01-01'",
                     "count\n1\n"
             );
         });
@@ -398,17 +398,17 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Verify row was inserted
-            assertSql("select count() from ws_custom_ts_at_table", "count\n1\n");
+            assertSql("SELECT count() FROM ws_custom_ts_at_table", "count\n1\n");
 
             // Verify the table has ONLY the expected columns
             assertSql(
-                    "select \"column\" from table_columns('ws_custom_ts_at_table') order by \"column\"",
+                    "SELECT \"column\" FROM table_columns('ws_custom_ts_at_table') ORDER BY \"column\"",
                     "column\nsym\nts\nvalue\n"
             );
 
             // Verify the explicit timestamp was correctly stored
             assertSql(
-                    "select ts from ws_custom_ts_at_table",
+                    "SELECT ts FROM ws_custom_ts_at_table",
                     "ts\n2023-11-14T22:13:20.000000Z\n"
             );
         });
@@ -475,7 +475,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // If bug exists: col_c value will be wrong or in wrong column
             // If fixed: col_c should be 999
             assertSql(
-                    "select tag, col_b, col_c from ws_drop_add_test where tag = 'after_drop'",
+                    "SELECT tag, col_b, col_c FROM ws_drop_add_test WHERE tag = 'after_drop'",
                     "tag\tcol_b\tcol_c\nafter_drop\t300\t999\n"
             );
         });
@@ -512,7 +512,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             // Verify both columns have correct values
             assertSql(
-                    "select tag, existing_col, new_col from ws_autocreate_test",
+                    "SELECT tag, existing_col, new_col FROM ws_autocreate_test",
                     "tag\texisting_col\tnew_col\ntest\t100\t42\n"
             );
         });
@@ -559,7 +559,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_autoflush_bytes", "count\n20\n");
+            assertSql("SELECT count() FROM ws_autoflush_bytes", "count\n20\n");
         });
     }
 
@@ -609,7 +609,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            assertSql("select count() from ws_autoflush_interval", "count\n2\n");
+            assertSql("SELECT count() FROM ws_autoflush_interval", "count\n2\n");
             assertSql(
                     "SELECT value FROM ws_autoflush_interval ORDER BY timestamp",
                     """
@@ -635,7 +635,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_batch", "count\n100\n");
+            assertSql("SELECT count() FROM ws_test_batch", "count\n100\n");
         });
     }
 
@@ -662,7 +662,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_bool_test", "count\n12\n");
+            assertSql("SELECT count() FROM ws_bool_test", "count\n12\n");
         });
     }
 
@@ -715,7 +715,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select byte_val from ws_test_byte_range", "byte_val\n127\n");
+            assertSql("SELECT byte_val FROM ws_test_byte_range", "byte_val\n127\n");
         });
     }
 
@@ -782,8 +782,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_char_test", "count\n1\n");
-            assertSql("select x from ws_char_test", "x\nA\n");
+            assertSql("SELECT count() FROM ws_char_test", "count\n1\n");
+            assertSql("SELECT x FROM ws_char_test", "x\nA\n");
         });
     }
 
@@ -832,7 +832,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select x from ws_test_col_short", "x\n42\n");
+            assertSql("SELECT x FROM ws_test_col_short", "x\n42\n");
         });
     }
 
@@ -847,7 +847,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select my_column from ws_test_col_underscore", "my_column\n42\n");
+            assertSql("SELECT my_column FROM ws_test_col_underscore", "my_column\n42\n");
         });
     }
 
@@ -903,7 +903,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_complex_multi", "count\n50\n");
+            assertSql("SELECT count() FROM ws_complex_multi", "count\n50\n");
         });
     }
 
@@ -955,7 +955,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_decimal_negative", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_decimal_negative", "count\n1\n");
         });
     }
 
@@ -972,7 +972,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_decimal_null", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_decimal_null", "count\n1\n");
         });
     }
 
@@ -1016,7 +1016,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_decimal_mixed", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_decimal_mixed", "count\n1\n");
         });
     }
 
@@ -1032,7 +1032,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_decimal_zero", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_decimal_zero", "count\n1\n");
         });
     }
 
@@ -1070,9 +1070,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_async", "count\n50\n");
-            assertSql("select count(distinct batch) from ws_delta_async", "count_distinct\n10\n");
-            assertSql("select count(distinct ticker) from ws_delta_async", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_delta_async", "count\n50\n");
+            assertSql("SELECT count(distinct batch) FROM ws_delta_async", "count_distinct\n10\n");
+            assertSql("SELECT count(distinct ticker) FROM ws_delta_async", "count_distinct\n2\n");
         });
     }
 
@@ -1110,8 +1110,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             drainWalQueue();
-            assertSql("select count() from ws_delta_no_sym", "count\n2\n");
-            assertSql("select count() from ws_delta_no_sym_data", "count\n1\n");
+            assertSql("SELECT count() FROM ws_delta_no_sym", "count\n2\n");
+            assertSql("SELECT count() FROM ws_delta_no_sym_data", "count\n1\n");
         });
     }
 
@@ -1138,7 +1138,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_empty_sym", "count\n3\n");
+            assertSql("SELECT count() FROM ws_delta_empty_sym", "count\n3\n");
         });
     }
 
@@ -1172,7 +1172,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_high_vol",
+            assertSql("SELECT count() FROM ws_delta_high_vol",
                     "count\n" + (numBatches * rowsPerBatch) + "\n");
         });
     }
@@ -1229,11 +1229,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             drainWalQueue();
             // Table A: 5 even (batch 1) + 3 triple (batch 2) = 8 rows
-            assertSql("select count() from ws_delta_inter_a", "count\n8\n");
+            assertSql("SELECT count() FROM ws_delta_inter_a", "count\n8\n");
             // Table B: 5 odd (batch 1) + 4 even-reuse (batch 2) = 9 rows
-            assertSql("select count() from ws_delta_inter_b", "count\n9\n");
+            assertSql("SELECT count() FROM ws_delta_inter_b", "count\n9\n");
             // Table C: 3 remainder rows (batch 2)
-            assertSql("select count() from ws_delta_inter_c", "count\n3\n");
+            assertSql("SELECT count() FROM ws_delta_inter_c", "count\n3\n");
         });
     }
 
@@ -1275,8 +1275,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_long_sym", "count\n3\n");
-            assertSql("select count(distinct tag) from ws_delta_long_sym", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_delta_long_sym", "count\n3\n");
+            assertSql("SELECT count(distinct tag) FROM ws_delta_long_sym", "count_distinct\n2\n");
         });
     }
 
@@ -1320,8 +1320,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_same_syms", "count\n30\n");
-            assertSql("select count(distinct ticker) from ws_delta_same_syms", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_delta_same_syms", "count\n30\n");
+            assertSql("SELECT count(distinct ticker) FROM ws_delta_same_syms", "count_distinct\n2\n");
         });
     }
 
@@ -1362,10 +1362,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_multi_col", "count\n3\n");
-            assertSql("select count(distinct region) from ws_delta_multi_col", "count_distinct\n3\n");
-            assertSql("select count(distinct currency) from ws_delta_multi_col", "count_distinct\n3\n");
-            assertSql("select count(distinct status) from ws_delta_multi_col", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_delta_multi_col", "count\n3\n");
+            assertSql("SELECT count(distinct region) FROM ws_delta_multi_col", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct currency) FROM ws_delta_multi_col", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct status) FROM ws_delta_multi_col", "count_distinct\n2\n");
         });
     }
 
@@ -1415,9 +1415,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             drainWalQueue();
             drainWalQueue();
-            assertSql("select count() from ws_delta_table_a", "count\n2\n");
-            assertSql("select count() from ws_delta_table_b", "count\n2\n");
-            assertSql("select count() from ws_delta_table_c", "count\n2\n");
+            assertSql("SELECT count() FROM ws_delta_table_a", "count\n2\n");
+            assertSql("SELECT count() FROM ws_delta_table_b", "count\n2\n");
+            assertSql("SELECT count() FROM ws_delta_table_c", "count\n2\n");
         });
     }
 
@@ -1473,8 +1473,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_progressive", "count\n7\n");
-            assertSql("select count(distinct ticker) from ws_delta_progressive", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_delta_progressive", "count\n7\n");
+            assertSql("SELECT count(distinct ticker) FROM ws_delta_progressive", "count_distinct\n4\n");
         });
     }
 
@@ -1503,8 +1503,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_rapid_reconnect", "count\n25\n");
-            assertSql("select count(distinct cycle) from ws_delta_rapid_reconnect", "count_distinct\n5\n");
+            assertSql("SELECT count() FROM ws_delta_rapid_reconnect", "count\n25\n");
+            assertSql("SELECT count(distinct cycle) FROM ws_delta_rapid_reconnect", "count_distinct\n5\n");
         });
     }
 
@@ -1541,8 +1541,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_reconnect", "count\n20\n");
-            assertSql("select count(distinct region) from ws_delta_reconnect", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_delta_reconnect", "count\n20\n");
+            assertSql("SELECT count(distinct region) FROM ws_delta_reconnect", "count_distinct\n3\n");
         });
     }
 
@@ -1577,8 +1577,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_unicode", "count\n4\n");
-            assertSql("select count(distinct city) from ws_delta_unicode", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_delta_unicode", "count\n4\n");
+            assertSql("SELECT count(distinct city) FROM ws_delta_unicode", "count_distinct\n3\n");
         });
     }
 
@@ -1618,8 +1618,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_delta_complex", "count\n3\n");
-            assertSql("select count(distinct ticker) from ws_delta_complex", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_delta_complex", "count\n3\n");
+            assertSql("SELECT count(distinct ticker) FROM ws_delta_complex", "count_distinct\n2\n");
         });
     }
 
@@ -1636,7 +1636,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_double_special", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_double_special", "count\n1\n");
         });
     }
 
@@ -1852,7 +1852,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select a,b,c,d,e from ws_test_bools_true", "a\tb\tc\td\te\ntrue\ttrue\ttrue\ttrue\ttrue\n");
+            assertSql("SELECT a,b,c,d,e FROM ws_test_bools_true", "a\tb\tc\td\te\ntrue\ttrue\ttrue\ttrue\ttrue\n");
         });
     }
 
@@ -1872,7 +1872,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select a,b,c,d,e from ws_test_five_syms", "a\tb\tc\td\te\n1\t2\t3\t4\t5\n");
+            assertSql("SELECT a,b,c,d,e FROM ws_test_five_syms", "a\tb\tc\td\te\n1\t2\t3\t4\t5\n");
         });
     }
 
@@ -1926,7 +1926,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_flush_each", "count\n10\n");
+            assertSql("SELECT count() FROM ws_test_flush_each", "count\n10\n");
         });
     }
 
@@ -1958,7 +1958,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_flush_10", "count\n100\n");
+            assertSql("SELECT count() FROM ws_test_flush_10", "count\n100\n");
         });
     }
 
@@ -1978,7 +1978,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_flush_5", "count\n50\n");
+            assertSql("SELECT count() FROM ws_test_flush_5", "count\n50\n");
         });
     }
 
@@ -2240,10 +2240,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_gorilla_disabled", "count\n100\n");
-            assertSql("select sum(value) from ws_gorilla_disabled", "sum\n4950\n");
+            assertSql("SELECT count() FROM ws_gorilla_disabled", "count\n100\n");
+            assertSql("SELECT sum(value) FROM ws_gorilla_disabled", "sum\n4950\n");
             assertSql(
-                    "select min(timestamp), max(timestamp) from ws_gorilla_disabled",
+                    "SELECT min(timestamp), max(timestamp) FROM ws_gorilla_disabled",
                     """
                             min\tmax
                             2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000099Z
@@ -2289,7 +2289,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_ack_test", "count\n" + totalRows + "\n");
+            assertSql("SELECT count() FROM ws_ack_test", "count\n" + totalRows + "\n");
         });
     }
 
@@ -2388,8 +2388,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             drainWalQueue();
-            assertSql("select count() from ws_interleave_a", "count\n20\n");
-            assertSql("select count() from ws_interleave_b", "count\n20\n");
+            assertSql("SELECT count() FROM ws_interleave_a", "count\n20\n");
+            assertSql("SELECT count() FROM ws_interleave_b", "count\n20\n");
         });
     }
 
@@ -2408,7 +2408,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_large_array", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_large_array", "count\n1\n");
         });
     }
 
@@ -2459,7 +2459,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select length(large_data) from ws_test_large_string", "length\n1000\n");
+            assertSql("SELECT length(large_data) FROM ws_test_large_string", "length\n1000\n");
         });
     }
 
@@ -2491,15 +2491,15 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_narrow_all", "count\n100\n");
+            assertSql("SELECT count() FROM ws_narrow_all", "count\n100\n");
 
             // Verify first and last rows
             assertSql(
-                    "select byte_val, short_val, int_val, float_val from ws_narrow_all order by ts limit 1",
+                    "SELECT byte_val, short_val, int_val, float_val FROM ws_narrow_all ORDER BY ts LIMIT 1",
                     "byte_val\tshort_val\tint_val\tfloat_val\n0\t0\t0\t0.0\n"
             );
             assertSql(
-                    "select byte_val, short_val, int_val, float_val from ws_narrow_all order by ts desc limit 1",
+                    "SELECT byte_val, short_val, int_val, float_val FROM ws_narrow_all ORDER BY ts DESC LIMIT 1",
                     "byte_val\tshort_val\tint_val\tfloat_val\n99\t9900\t990000\t148.5\n"
             );
         });
@@ -2535,10 +2535,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_narrow_float", "count\n4\n");
+            assertSql("SELECT count() FROM ws_narrow_float", "count\n4\n");
             // Note: FLOAT has less precision than DOUBLE, so values are rounded
             assertSql(
-                    "select value from ws_narrow_float order by ts",
+                    "SELECT value FROM ws_narrow_float ORDER BY ts",
                     "value\n0.0\n3.14159\n-2.71828\n1000.5\n"
             );
         });
@@ -2574,9 +2574,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_narrow_byte", "count\n4\n");
+            assertSql("SELECT count() FROM ws_narrow_byte", "count\n4\n");
             assertSql(
-                    "select value from ws_narrow_byte order by ts",
+                    "SELECT value FROM ws_narrow_byte ORDER BY ts",
                     "value\n0\n127\n-128\n-1\n"
             );
         });
@@ -2612,9 +2612,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_narrow_int", "count\n4\n");
+            assertSql("SELECT count() FROM ws_narrow_int", "count\n4\n");
             assertSql(
-                    "select value from ws_narrow_int order by ts",
+                    "SELECT value FROM ws_narrow_int ORDER BY ts",
                     "value\n0\n2147483647\nnull\n123456789\n"
             );
         });
@@ -2650,9 +2650,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_narrow_short", "count\n4\n");
+            assertSql("SELECT count() FROM ws_narrow_short", "count\n4\n");
             assertSql(
-                    "select value from ws_narrow_short order by ts",
+                    "SELECT value FROM ws_narrow_short ORDER BY ts",
                     "value\n0\n32767\n-32768\n1000\n"
             );
         });
@@ -2672,7 +2672,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_negative", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_negative", "count\n1\n");
         });
     }
 
@@ -2694,7 +2694,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             // Verify the table exists and is non-WAL
             assertSql(
-                    "select walEnabled from tables() where table_name = 'non_wal_table'",
+                    "SELECT walEnabled FROM tables() WHERE table_name = 'non_wal_table'",
                     "walEnabled\nfalse\n"
             );
 
@@ -2745,9 +2745,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_schema_evo_add", "count\n3\n");
+            assertSql("SELECT count() FROM ws_schema_evo_add", "count\n3\n");
             assertSql(
-                    "select sym, val, extra from ws_schema_evo_add ORDER BY val",
+                    "SELECT sym, val, extra FROM ws_schema_evo_add ORDER BY val",
                     """
                             sym\tval\textra
                             AAA\t10\tnull
@@ -2802,9 +2802,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_schema_evo_multi", "count\n4\n");
+            assertSql("SELECT count() FROM ws_schema_evo_multi", "count\n4\n");
             assertSql(
-                    "select sym, val, col_x, col_y, col_z from ws_schema_evo_multi ORDER BY val",
+                    "SELECT sym, val, col_x, col_y, col_z FROM ws_schema_evo_multi ORDER BY val",
                     """
                             sym\tval\tcol_x\tcol_y\tcol_z
                             A\t1\tnull\t\tfalse
@@ -2843,9 +2843,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_schema_evo_reorder", "count\n2\n");
+            assertSql("SELECT count() FROM ws_schema_evo_reorder", "count\n2\n");
             assertSql(
-                    "select sym, alpha, beta from ws_schema_evo_reorder ORDER BY alpha",
+                    "SELECT sym, alpha, beta FROM ws_schema_evo_reorder ORDER BY alpha",
                     """
                             sym\talpha\tbeta
                             first\t10\t1.5
@@ -2992,7 +2992,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_special_str", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_special_str", "count\n1\n");
         });
     }
 
@@ -3009,7 +3009,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertSql(
-                    "select special from ws_test_special_sym",
+                    "SELECT special FROM ws_test_special_sym",
                     "special\nhello-world_123\n"
             );
         });
@@ -3060,9 +3060,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_stac_q", "count\n2\n");
+            assertSql("SELECT count() FROM ws_stac_q", "count\n2\n");
             assertSql(
-                    "select s, x, b, a, v, w, m from ws_stac_q order by T",
+                    "SELECT s, x, b, a, v, w, m FROM ws_stac_q ORDER BY T",
                     """
                             s\tx\tb\ta\tv\tw\tm
                             AAPL\tN\t150.25\t150.5\t100\t200\ttrue
@@ -3147,8 +3147,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_cache_invalidate", "count\n11\n");
-            assertSql("select count(distinct tag) from ws_cache_invalidate", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_cache_invalidate", "count\n11\n");
+            assertSql("SELECT count(distinct tag) FROM ws_cache_invalidate", "count_distinct\n3\n");
         });
     }
 
@@ -3200,9 +3200,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             // 12 + 12 + 1000 = 1024 rows
-            assertSql("select count() from ws_cache_high_volume", "count\n1024\n");
-            assertSql("select count(distinct level) from ws_cache_high_volume", "count_distinct\n4\n");
-            assertSql("select count(distinct source) from ws_cache_high_volume", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_cache_high_volume", "count\n1024\n");
+            assertSql("SELECT count(distinct level) FROM ws_cache_high_volume", "count_distinct\n4\n");
+            assertSql("SELECT count(distinct source) FROM ws_cache_high_volume", "count_distinct\n3\n");
         });
     }
 
@@ -3244,10 +3244,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             // 6 rows * 10 rounds = 60 rows
-            assertSql("select count() from ws_cache_many_rounds", "count\n60\n");
-            assertSql("select count(distinct tag) from ws_cache_many_rounds", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_cache_many_rounds", "count\n60\n");
+            assertSql("SELECT count(distinct tag) FROM ws_cache_many_rounds", "count_distinct\n3\n");
             // Verify all rounds are present
-            assertSql("select count(distinct round) from ws_cache_many_rounds", "count_distinct\n10\n");
+            assertSql("SELECT count(distinct round) FROM ws_cache_many_rounds", "count_distinct\n10\n");
         });
     }
 
@@ -3345,8 +3345,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_cache_mixed", "count\n15\n");
-            assertSql("select count(distinct type) from ws_cache_mixed", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_cache_mixed", "count\n15\n");
+            assertSql("SELECT count(distinct type) FROM ws_cache_mixed", "count_distinct\n4\n");
         });
     }
 
@@ -3404,10 +3404,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_cache_multi_col", "count\n16\n");
-            assertSql("select count(distinct col_a) from ws_cache_multi_col", "count_distinct\n3\n");
-            assertSql("select count(distinct col_b) from ws_cache_multi_col", "count_distinct\n3\n");
-            assertSql("select count(distinct col_c) from ws_cache_multi_col", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_cache_multi_col", "count\n16\n");
+            assertSql("SELECT count(distinct col_a) FROM ws_cache_multi_col", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct col_b) FROM ws_cache_multi_col", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct col_c) FROM ws_cache_multi_col", "count_distinct\n4\n");
         });
     }
 
@@ -3473,9 +3473,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_cache_fast_path", "count\n40\n");
-            assertSql("select count(distinct device) from ws_cache_fast_path", "count_distinct\n3\n");
-            assertSql("select count(distinct status) from ws_cache_fast_path", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_cache_fast_path", "count\n40\n");
+            assertSql("SELECT count(distinct device) FROM ws_cache_fast_path", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct status) FROM ws_cache_fast_path", "count_distinct\n2\n");
         });
     }
 
@@ -3522,8 +3522,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_cache_fast_path", "count\n40\n");
-            assertSql("select count(distinct device) from ws_cache_fast_path", "count_distinct\n1\n");
+            assertSql("SELECT count() FROM ws_cache_fast_path", "count\n40\n");
+            assertSql("SELECT count(distinct device) FROM ws_cache_fast_path", "count_distinct\n1\n");
         });
     }
     // These tests exercise the server-side symbol ID cache optimization
@@ -3558,9 +3558,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_symbol_cache_test", "count\n1000\n");
-            assertSql("select count(distinct region) from ws_symbol_cache_test", "count_distinct\n5\n");
-            assertSql("select count(distinct host) from ws_symbol_cache_test", "count_distinct\n10\n");
+            assertSql("SELECT count() FROM ws_symbol_cache_test", "count\n1000\n");
+            assertSql("SELECT count(distinct region) FROM ws_symbol_cache_test", "count_distinct\n5\n");
+            assertSql("SELECT count(distinct host) FROM ws_symbol_cache_test", "count_distinct\n10\n");
         });
     }
 
@@ -3586,10 +3586,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_multi_symbol_cols", "count\n100\n");
-            assertSql("select count(distinct device) from ws_multi_symbol_cols", "count_distinct\n3\n");
-            assertSql("select count(distinct location) from ws_multi_symbol_cols", "count_distinct\n2\n");
-            assertSql("select count(distinct measurement_type) from ws_multi_symbol_cols", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_multi_symbol_cols", "count\n100\n");
+            assertSql("SELECT count(distinct device) FROM ws_multi_symbol_cols", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct location) FROM ws_multi_symbol_cols", "count_distinct\n2\n");
+            assertSql("SELECT count(distinct measurement_type) FROM ws_multi_symbol_cols", "count_distinct\n3\n");
         });
     }
 
@@ -3622,12 +3622,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Verify table1
-            assertSql("select count() from ws_cache_table1", "count\n10\n");
-            assertSql("select count(distinct status) from ws_cache_table1", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_cache_table1", "count\n10\n");
+            assertSql("SELECT count(distinct status) FROM ws_cache_table1", "count_distinct\n2\n");
 
             // Verify table2
-            assertSql("select count() from ws_cache_table2", "count\n10\n");
-            assertSql("select count(distinct status) from ws_cache_table2", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_cache_table2", "count\n10\n");
+            assertSql("SELECT count(distinct status) FROM ws_cache_table2", "count_distinct\n3\n");
         });
     }
 
@@ -3663,9 +3663,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_reconnect_test", "count\n20\n");
+            assertSql("SELECT count() FROM ws_reconnect_test", "count\n20\n");
             // Should have 6 distinct tags: conn1_val0, conn1_val1, conn1_val2, conn2_val0, conn2_val1, conn2_val2
-            assertSql("select count(distinct tag) from ws_reconnect_test", "count_distinct\n6\n");
+            assertSql("SELECT count(distinct tag) FROM ws_reconnect_test", "count_distinct\n6\n");
         });
     }
     // These tests exercise various interleavings of server-side commits,
@@ -3686,8 +3686,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_sym_dedup", "count\n100\n");
-            assertSql("select count(distinct region) from ws_test_sym_dedup", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_test_sym_dedup", "count\n100\n");
+            assertSql("SELECT count(distinct region) FROM ws_test_sym_dedup", "count_distinct\n3\n");
         });
     }
 
@@ -3721,10 +3721,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             drainWalQueue();
 
-            assertSql("select count() from ws_alt_table_a", "count\n25\n");
-            assertSql("select count(distinct color) from ws_alt_table_a", "count_distinct\n2\n");
-            assertSql("select count() from ws_alt_table_b", "count\n25\n");
-            assertSql("select count(distinct size) from ws_alt_table_b", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_alt_table_a", "count\n25\n");
+            assertSql("SELECT count(distinct color) FROM ws_alt_table_a", "count_distinct\n2\n");
+            assertSql("SELECT count() FROM ws_alt_table_b", "count\n25\n");
+            assertSql("SELECT count(distinct size) FROM ws_alt_table_b", "count_distinct\n3\n");
         });
     }
 
@@ -3775,9 +3775,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_drop_reconnect", "count\n30\n");
-            assertSql("select count(distinct source) from ws_drop_reconnect", "count_distinct\n3\n");
-            assertSql("select count(distinct type) from ws_drop_reconnect", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_drop_reconnect", "count\n30\n");
+            assertSql("SELECT count(distinct source) FROM ws_drop_reconnect", "count_distinct\n3\n");
+            assertSql("SELECT count(distinct type) FROM ws_drop_reconnect", "count_distinct\n4\n");
         });
     }
 
@@ -3798,8 +3798,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_flush_each_row", "count\n20\n");
-            assertSql("select count(distinct tag) from ws_flush_each_row", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_flush_each_row", "count\n20\n");
+            assertSql("SELECT count(distinct tag) FROM ws_flush_each_row", "count_distinct\n4\n");
         });
     }
 
@@ -3824,9 +3824,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_high_cardinality", "count\n500\n");
-            assertSql("select count(distinct user_id) from ws_high_cardinality", "count_distinct\n500\n");
-            assertSql("select count(distinct action) from ws_high_cardinality", "count_distinct\n5\n");
+            assertSql("SELECT count() FROM ws_high_cardinality", "count\n500\n");
+            assertSql("SELECT count(distinct user_id) FROM ws_high_cardinality", "count_distinct\n500\n");
+            assertSql("SELECT count(distinct action) FROM ws_high_cardinality", "count_distinct\n5\n");
         });
     }
 
@@ -3871,10 +3871,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            assertSql("select count() from ws_interleave_t1", "count\n10\n");
-            assertSql("select count(distinct sym) from ws_interleave_t1", "count_distinct\n3\n");
-            assertSql("select count() from ws_interleave_t2", "count\n10\n");
-            assertSql("select count(distinct sym) from ws_interleave_t2", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_interleave_t1", "count\n10\n");
+            assertSql("SELECT count(distinct sym) FROM ws_interleave_t1", "count_distinct\n3\n");
+            assertSql("SELECT count() FROM ws_interleave_t2", "count\n10\n");
+            assertSql("SELECT count(distinct sym) FROM ws_interleave_t2", "count_distinct\n4\n");
         });
     }
 
@@ -3909,9 +3909,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_many_symbols_wal", "count\n100\n");
-            assertSql("select count(distinct unique_tag) from ws_many_symbols_wal", "count_distinct\n100\n");
-            assertSql("select count(distinct \"group\") from ws_many_symbols_wal", "count_distinct\n10\n");
+            assertSql("SELECT count() FROM ws_many_symbols_wal", "count\n100\n");
+            assertSql("SELECT count(distinct unique_tag) FROM ws_many_symbols_wal", "count_distinct\n100\n");
+            assertSql("SELECT count(distinct \"group\") FROM ws_many_symbols_wal", "count_distinct\n10\n");
         });
     }
 
@@ -3972,11 +3972,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_new_after_wal", "count\n8\n");
-            assertSql("select count(distinct category) from ws_new_after_wal", "count_distinct\n5\n");
+            assertSql("SELECT count() FROM ws_new_after_wal", "count\n8\n");
+            assertSql("SELECT count(distinct category) FROM ws_new_after_wal", "count_distinct\n5\n");
             // Verify all categories exist
             assertSql(
-                    "select category from ws_new_after_wal order by category",
+                    "SELECT category FROM ws_new_after_wal ORDER BY category",
                     "category\ncat_a\ncat_a\ncat_a\ncat_b\ncat_b\ncat_c\ncat_d\ncat_e\n"
             );
         });
@@ -4008,10 +4008,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_null_interleave", "count\n30\n");
+            assertSql("SELECT count() FROM ws_null_interleave", "count\n30\n");
             // 10 nulls (i % 3 == 0), 20 non-nulls with values val_1, val_2, val_3, val_4 (not val_0 since those are null rows)
-            assertSql("select count() from ws_null_interleave where optional is null", "count\n10\n");
-            assertSql("select count() from ws_null_interleave where optional is not null", "count\n20\n");
+            assertSql("SELECT count() FROM ws_null_interleave WHERE optional IS NULL", "count\n10\n");
+            assertSql("SELECT count() FROM ws_null_interleave WHERE optional IS NOT NULL", "count\n20\n");
         });
     }
 
@@ -4046,9 +4046,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             drainWalQueue();
-            assertSql("select count() from ws_rapid_flush", "count\n50\n");
-            assertSql("select count(distinct env) from ws_rapid_flush", "count_distinct\n4\n");
-            assertSql("select count(distinct service) from ws_rapid_flush", "count_distinct\n5\n");
+            assertSql("SELECT count() FROM ws_rapid_flush", "count\n50\n");
+            assertSql("SELECT count(distinct env) FROM ws_rapid_flush", "count_distinct\n4\n");
+            assertSql("SELECT count(distinct service) FROM ws_rapid_flush", "count_distinct\n5\n");
         });
     }
 
@@ -4093,8 +4093,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_same_conn_wal", "count\n30\n");
-            assertSql("select count(distinct status) from ws_same_conn_wal", "count_distinct\n4\n");
+            assertSql("SELECT count() FROM ws_same_conn_wal", "count\n30\n");
+            assertSql("SELECT count(distinct status) FROM ws_same_conn_wal", "count_distinct\n4\n");
         });
     }
     // These tests specifically exercise the cache hit (fast path) in writeSymbolWithCache().
@@ -4147,9 +4147,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            assertSql("select count() from ws_wal_apply_test", "count\n30\n");
+            assertSql("SELECT count() FROM ws_wal_apply_test", "count\n30\n");
             // east, west, central, north, south = 5 distinct
-            assertSql("select count(distinct region) from ws_wal_apply_test", "count_distinct\n5\n");
+            assertSql("SELECT count(distinct region) FROM ws_wal_apply_test", "count_distinct\n5\n");
         });
     }
 
@@ -4182,7 +4182,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             // Verify the timestamp was correctly converted to nanos
             assertSql(
-                    "select ts_field from ws_ts_convert_nano",
+                    "SELECT ts_field FROM ws_ts_convert_nano",
                     """
                             ts_field
                             2024-01-01T00:00:00.000000000Z
@@ -4226,7 +4226,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // If bug exists: value will be 1704067200000000000 (nanos, ~year 55970)
             // If fixed: value will be 1704067200000000 (micros, 2024-01-01)
             assertSql(
-                    "select ts_field from ws_ts_convert",
+                    "SELECT ts_field FROM ws_ts_convert",
                     """
                             ts_field
                             2024-01-01T00:00:00.000000Z
@@ -4426,7 +4426,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_wide_table", "count\n10\n");
+            assertSql("SELECT count() FROM ws_wide_table", "count\n10\n");
         });
     }
 
@@ -4444,7 +4444,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("select count() from ws_test_zeros", "count\n1\n");
+            assertSql("SELECT count() FROM ws_test_zeros", "count\n1\n");
         });
     }
 
