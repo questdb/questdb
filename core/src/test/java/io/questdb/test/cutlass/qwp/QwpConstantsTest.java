@@ -35,7 +35,6 @@ public class QwpConstantsTest {
     @Test
     public void testDefaultLimits() {
         Assert.assertEquals(16 * 1024 * 1024, DEFAULT_MAX_BATCH_SIZE);
-        Assert.assertEquals(256, DEFAULT_MAX_TABLES_PER_BATCH);
         Assert.assertEquals(1_000_000, DEFAULT_MAX_ROWS_PER_TABLE);
         Assert.assertEquals(2048, MAX_COLUMNS_PER_TABLE);
         Assert.assertEquals(64 * 1024, DEFAULT_INITIAL_RECV_BUFFER_SIZE);

@@ -51,10 +51,6 @@ public final class QwpConstants {
      */
     public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
     /**
-     * Default maximum tables per batch.
-     */
-    public static final int DEFAULT_MAX_TABLES_PER_BATCH = 256;
-    /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.
      */
