@@ -310,23 +310,24 @@ public class QwpWalAppender implements QuietCloseable {
     private static int mapQwpTypeToQuestDB(int ilpType, QwpTableBlockCursor tableBlock, int colIndex) {
         // For decimal types, we need to get the scale from the cursor
         switch (ilpType) {
-            case TYPE_DECIMAL64: {
+            case TYPE_DECIMAL64 -> {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
                 int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64);
                 return ColumnType.getDecimalType(ColumnType.DECIMAL64, precision, scale);
             }
-            case TYPE_DECIMAL128: {
+            case TYPE_DECIMAL128 -> {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
                 int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128);
                 return ColumnType.getDecimalType(ColumnType.DECIMAL128, precision, scale);
             }
-            case TYPE_DECIMAL256: {
+            case TYPE_DECIMAL256 -> {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
                 int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
                 return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
             }
-            default:
+            default -> {
                 return mapQwpTypeToQuestDB(ilpType);
+            }
         }
     }
 
@@ -408,8 +409,8 @@ public class QwpWalAppender implements QuietCloseable {
                     tsCursor.advanceRow();
                     if (!tsCursor.isNull()) {
                         long ts;
-                        if (tsCursor instanceof QwpTimestampColumnCursor) {
-                            ts = ((QwpTimestampColumnCursor) tsCursor).getTimestamp();
+                        if (tsCursor instanceof QwpTimestampColumnCursor realTsCursor) {
+                            ts = realTsCursor.getTimestamp();
                         } else {
                             ts = ((QwpFixedWidthColumnCursor) tsCursor).getTimestamp();
                         }
