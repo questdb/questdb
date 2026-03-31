@@ -395,8 +395,10 @@ public class QwpWalAppender implements QuietCloseable {
                 int tsColumnType = columnTypeMap[timestampColumnInBlock];
                 boolean wireIsNanos = (tsQwpType == TYPE_TIMESTAMP_NANOS);
                 boolean columnIsNanos = (tsColumnType == ColumnType.TIMESTAMP_NANO);
-                needsNanosToMicros = wireIsNanos && !columnIsNanos;
-                needsMicrosToNanos = !wireIsNanos && columnIsNanos;
+                boolean wireIsMicros = (tsQwpType == TYPE_TIMESTAMP);
+                boolean columnIsMicros = (tsColumnType == ColumnType.TIMESTAMP);
+                needsNanosToMicros = wireIsNanos && columnIsMicros;
+                needsMicrosToNanos = wireIsMicros && columnIsNanos;
             }
 
             // First pass: determine min/max timestamps (in column precision, not wire precision)

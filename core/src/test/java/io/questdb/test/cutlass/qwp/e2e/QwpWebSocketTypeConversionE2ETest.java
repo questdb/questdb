@@ -35,6 +35,7 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
 
 /**
  * End-to-end tests for QWP WebSocket type conversions.
@@ -1032,6 +1033,90 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
                     "SELECT col FROM tc_long_dec64 ORDER BY ts",
                     "col\n42.0000\n\n-100.0000\n\n0.0000\n"
             );
+        });
+    }
+
+    @Test
+    public void testLongToDesignatedTimestampMicroColumn() throws Exception {
+        // Verify that sending the designated timestamp as a named LONG column
+        // to a regular TIMESTAMP (microsecond) column stores values as-is,
+        // with no spurious nanos-to-micros conversion.
+        runInContext((port) -> {
+            String table = "tc_long_designated_ts_micro";
+            execute("CREATE TABLE " + table + " (" +
+                    "value LONG, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
+                QwpWebSocketSender wsSender = (QwpWebSocketSender) sender;
+                QwpTableBuffer buf = wsSender.getTableBuffer(table);
+                QwpTableBuffer.ColumnBuffer valueCol = buf.getOrCreateColumn("value", TYPE_LONG, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("ts", TYPE_LONG, true);
+
+                // 2022-02-25T00:00:00.000000Z in micros
+                valueCol.addLong(42L);
+                tsCol.addLong(1_645_747_200_000_000L);
+                sender.atNow();
+
+                // 2022-02-25T00:00:01.000000Z in micros
+                valueCol.addLong(99L);
+                tsCol.addLong(1_645_747_201_000_000L);
+                sender.atNow();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT value, ts FROM " + table + " ORDER BY ts",
+                    """
+                            value\tts
+                            42\t2022-02-25T00:00:00.000000Z
+                            99\t2022-02-25T00:00:01.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testLongToDesignatedTimestampNanoColumn() throws Exception {
+        // Regression test: when a client sends the designated timestamp as a named
+        // LONG column (wire type TYPE_LONG) to a TIMESTAMP_NS column, the min/max
+        // computation must not apply micros-to-nanos conversion (x1000).
+        runInContext((port) -> {
+            String table = "tc_long_designated_ts_nano";
+            execute("CREATE TABLE " + table + " (" +
+                    "value LONG, " +
+                    "ts TIMESTAMP_NS" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
+                QwpWebSocketSender wsSender = (QwpWebSocketSender) sender;
+                QwpTableBuffer buf = wsSender.getTableBuffer(table);
+                QwpTableBuffer.ColumnBuffer valueCol = buf.getOrCreateColumn("value", TYPE_LONG, true);
+                QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("ts", TYPE_LONG, true);
+
+                // 2022-02-25T00:00:00.000000000Z in nanos
+                valueCol.addLong(42L);
+                tsCol.addLong(1_645_747_200_000_000_000L);
+                sender.atNow();
+
+                // 2022-02-25T00:00:01.000000000Z in nanos
+                valueCol.addLong(99L);
+                tsCol.addLong(1_645_747_201_000_000_000L);
+                sender.atNow();
+            }
+
+            drainWalQueue();
+            // The stored timestamps must be the literal nanosecond values sent.
+            // BUG: the appender treats the LONG wire type as microseconds because
+            // wireIsNanos is false, then tries to multiply by 1000, which overflows
+            // for realistic nanosecond values and drops the rows.
+            assertSql(
+                    "SELECT value, ts FROM " + table + " ORDER BY ts",
+                    """
+                            value\tts
+                            42\t2022-02-25T00:00:00.000000000Z
+                            99\t2022-02-25T00:00:01.000000000Z
+                            """);
         });
     }
 
