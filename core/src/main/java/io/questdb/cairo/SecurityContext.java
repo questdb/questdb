@@ -56,6 +56,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableAttachPartition(TableToken tableToken);
 
+    void authorizeAlterTableConvertPartitionToNative(TableToken tableToken);
+
+    void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken);
+
     void authorizeAlterTableDedupDisable(TableToken tableToken);
 
     void authorizeAlterTableDedupEnable(TableToken tableToken);
@@ -72,6 +76,8 @@ public interface SecurityContext extends Mutable {
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeAlterTableSetParam(TableToken tableToken);
+
+    void authorizeAlterTableSetParquetSettings(TableToken tableToken);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
