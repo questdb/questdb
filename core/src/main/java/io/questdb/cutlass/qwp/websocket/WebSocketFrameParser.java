@@ -72,13 +72,13 @@ public class WebSocketFrameParser {
     // Parsed frame data
     private boolean fin;
     private int headerSize;
+    private boolean isStrictMode = false;  // If true, reject non-minimal length encodings
     private int maskKey;
     private boolean masked;
     private int opcode;
     private long payloadLength;
     // Parser state
     private int state = STATE_HEADER;
-    private boolean isStrictMode = false;  // If true, reject non-minimal length encodings
 
     public int getErrorCode() {
         return errorCode;
