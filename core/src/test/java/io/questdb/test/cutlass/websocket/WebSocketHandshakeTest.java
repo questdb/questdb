@@ -150,6 +150,12 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("")));
         Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive")));
         Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("close")));
+        // must not match "upgrade" as a substring of another token
+        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("notupgrade")));
+        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("upgradex")));
+        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("xupgradex")));
+        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("keep-alive, notupgrade")));
+        Assert.assertFalse(QwpWebSocketHttpProcessor.isConnectionUpgrade(new Utf8String("preupgrade, keep-alive")));
     }
 
     @Test

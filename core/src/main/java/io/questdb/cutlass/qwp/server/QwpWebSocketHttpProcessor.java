@@ -146,7 +146,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             return false;
         }
         // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
-        // Perform case-insensitive substring search for "upgrade"
+        // Perform case-insensitive token match for "upgrade"
         return containsUpgrade(connectionHeader);
     }
 
@@ -320,7 +320,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
 
     private static boolean containsUpgrade(Utf8Sequence seq) {
         int seqLen = seq.size();
-        // "upgrade" is 7 bytes
+        // "upgrade" is 7 bytes; match it only at comma-separated token boundaries
         for (int i = 0, n = seqLen - 6; i < n; i++) {
             if ((seq.byteAt(i) | 32) == 'u'
                     && (seq.byteAt(i + 1) | 32) == 'p'
@@ -329,7 +329,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
                     && (seq.byteAt(i + 4) | 32) == 'a'
                     && (seq.byteAt(i + 5) | 32) == 'd'
                     && (seq.byteAt(i + 6) | 32) == 'e') {
-                return true;
+                boolean startOk = i == 0 || seq.byteAt(i - 1) == ',' || seq.byteAt(i - 1) == ' ';
+                boolean endOk = i + 7 >= seqLen || seq.byteAt(i + 7) == ',' || seq.byteAt(i + 7) == ' ';
+                if (startOk && endOk) {
+                    return true;
+                }
             }
         }
         return false;
