@@ -1262,6 +1262,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
+    public boolean isCheckpointInProgress() {
+        return engine.getCheckpointStatus().isInProgress();
+    }
+
     @Override
     public void close() {
         if (lifecycleManager.close() && isOpen()) {
@@ -5509,7 +5513,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (purgingOperator == null) {
             return;
         }
-        boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // When a backup checkpoint is in progress, force async-only purge to prevent
+        // deleting column version files that the checkpoint may still reference.
+        boolean asyncOnly = checkScoreboardHasReadersBeforeLastCommittedTxn()
+                || isCheckpointInProgress();
         purgingOperator.purge(
                 path.trimTo(pathSize),
                 tableToken,
@@ -7735,6 +7742,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void processPartitionRemoveCandidates0(int n) {
         boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // When a backup checkpoint is in progress, defer partition removal to async purge.
+        // The backup reads partition data from the live db directory, and removing old partition
+        // versions while the checkpoint is snapshotting metadata can cause the backup to reference
+        // partition directories that no longer exist.
+        boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
         long lastCommittedTxn = this.getTxn();
@@ -7744,8 +7756,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
                 final long txn = partitionRemoveCandidates.get(i + 1);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
-                // that are not attached to the table most likely as a result of a rollback
-                if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
+                // that are not attached to the table most likely as a result of a rollback.
+                // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
+                // so no checkpoint or reader can reference them — safe to remove immediately.
+                if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
                     setPathForNativePartition(
                             other,
                             timestampType,

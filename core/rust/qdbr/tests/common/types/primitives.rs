@@ -9,7 +9,6 @@ use parquet::{
 };
 use qdb_core::col_type::{self, nulls, ColumnTypeTag};
 
-use crate::common::encode::EncodeEncoding;
 use crate::common::Encoding;
 
 pub trait PrimitiveType {
@@ -24,13 +23,6 @@ pub trait PrimitiveType {
     ];
     const LOGICAL_TYPE: Option<LogicalType> = None;
     const FIXED_LEN: Option<i32> = None;
-
-    /// Valid encodings for QDB encoder (encode tests).
-    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[
-        EncodeEncoding::Plain,
-        EncodeEncoding::RleDictionary,
-        EncodeEncoding::DeltaBinaryPacked,
-    ];
 
     /// Whether the QDB encoder detects nulls via a sentinel value in the data.
     /// Types without null sentinels (Boolean, Byte, Short, Char) are always Required.
@@ -89,7 +81,6 @@ impl PrimitiveType for Boolean {
     const NULL: Self::T = 0;
     const TAG: ColumnTypeTag = ColumnTypeTag::Boolean;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[EncodeEncoding::Plain];
     const HAS_NULL_SENTINEL: bool = false;
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -297,7 +288,6 @@ impl PrimitiveType for DateInt32 {
     const NULL: Self::T = nulls::LONG;
     const TAG: ColumnTypeTag = ColumnTypeTag::Date;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[]; // decode-only
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Date);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -335,8 +325,6 @@ impl PrimitiveType for Float {
     const NULL: Self::T = nulls::FLOAT;
     const TAG: ColumnTypeTag = ColumnTypeTag::Float;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] =
-        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
@@ -357,7 +345,6 @@ impl PrimitiveType for DoubleInt32 {
     const NULL: Self::T = nulls::DOUBLE;
     const TAG: ColumnTypeTag = ColumnTypeTag::Double;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[]; // decode-only
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Decimal {
         scale: 2,
         precision: 9,
@@ -385,8 +372,6 @@ impl PrimitiveType for Double {
     const NULL: Self::T = nulls::DOUBLE;
     const TAG: ColumnTypeTag = ColumnTypeTag::Double;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] =
-        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         let s = rnd(s);
@@ -408,9 +393,7 @@ impl PrimitiveType for Long128 {
     type U = FixedLenByteArrayType;
     const NULL: Self::T = col_type::Long128::NULL;
     const TAG: ColumnTypeTag = ColumnTypeTag::Long128;
-    const ENCODINGS: &[Encoding] = &[Encoding::Plain];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] =
-        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
+    const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
     const FIXED_LEN: Option<i32> = Some(16);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -437,9 +420,7 @@ impl PrimitiveType for Long256 {
     type U = FixedLenByteArrayType;
     const NULL: Self::T = col_type::Long256::NULL;
     const TAG: ColumnTypeTag = ColumnTypeTag::Long256;
-    const ENCODINGS: &[Encoding] = &[Encoding::Plain];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] =
-        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
+    const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
     const FIXED_LEN: Option<i32> = Some(32);
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
@@ -470,9 +451,7 @@ impl PrimitiveType for Uuid {
     type U = FixedLenByteArrayType;
     const NULL: Self::T = nulls::UUID;
     const TAG: ColumnTypeTag = ColumnTypeTag::Uuid;
-    const ENCODINGS: &[Encoding] = &[Encoding::Plain];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] =
-        &[EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
+    const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
     const FIXED_LEN: Option<i32> = Some(16);
     const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Uuid);
 
@@ -498,7 +477,6 @@ impl PrimitiveType for TimestampInt96 {
     const NULL: Self::T = nulls::LONG;
     const TAG: ColumnTypeTag = ColumnTypeTag::Timestamp;
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
-    const ENCODE_ENCODINGS: &[EncodeEncoding] = &[]; // decode-only
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
         const JULIAN_UNIX_EPOCH: u32 = 2_440_588;
