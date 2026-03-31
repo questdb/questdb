@@ -1613,10 +1613,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
             final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            if (slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
-                    && masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
+            if (masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
+                    && slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
                     && masterMetadata.isSymbolTableStatic(masterColIndex)
                     && slaveMetadata.isSymbolTableStatic(slaveColIndex)
+                    && writeSymbolAsString.get(masterColIndex)
                     && writeSymbolAsString.get(slaveColIndex)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
                 writeSymbolAsString.unset(slaveColIndex);
